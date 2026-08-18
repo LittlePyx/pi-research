@@ -2,6 +2,8 @@ export type ResearchTrackRole = "foundation" | "milestone" | "frontier";
 export type ResearchDirectionRole = "core" | "support" | "explore";
 export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
 export type ResearchTrackBuildStatus = "queued" | "ready";
+export type ResearchPaperEdgeKind = "citation" | "semantic" | "path";
+export type ResearchPaperNetworkStatus = "idle" | "building" | "ready" | "partial" | "error";
 
 export type ResearchDirectionIntelligence = {
   assessmentZh: string;
@@ -64,9 +66,36 @@ export type ResearchTrackEdge = {
   strength: number;
 };
 
+export type ResearchPaperEdge = {
+  id: string;
+  sourcePaperId: string;
+  targetPaperId: string;
+  kind: ResearchPaperEdgeKind;
+  relationKind: string;
+  relationshipZh: string;
+  relationshipEn: string;
+  confidence: number;
+  evidenceSource: string;
+};
+
+export type ResearchPaperNetworkState = {
+  status: ResearchPaperNetworkStatus;
+  paperCount: number;
+  builtPaperCount: number;
+  citationEdgeCount: number;
+  semanticEdgeCount: number;
+  pathEdgeCount: number;
+  model: string;
+  sources: string[];
+  updatedAt: string | null;
+  error: string | null;
+};
+
 export type ResearchMapState = {
   tracks: ResearchTrack[];
   edges: ResearchTrackEdge[];
+  paperEdges: ResearchPaperEdge[];
+  paperNetwork: ResearchPaperNetworkState;
   model: string;
   generated: boolean;
   needsStructure?: boolean;

@@ -309,6 +309,41 @@ export const researchTrackPapers = sqliteTable(
   ],
 );
 
+export const researchPaperEdges = sqliteTable(
+  "research_paper_edges",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    sourcePaperId: text("source_paper_id").notNull().references(() => researchTrackPapers.id, { onDelete: "cascade" }),
+    targetPaperId: text("target_paper_id").notNull().references(() => researchTrackPapers.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    relationKind: text("relation_kind").notNull().default("related"),
+    relationshipZh: text("relationship_zh").notNull().default(""),
+    relationshipEn: text("relationship_en").notNull().default(""),
+    confidence: integer("confidence").notNull().default(0),
+    evidenceSource: text("evidence_source").notNull().default(""),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_paper_edges_pair_kind_relation").on(table.sourcePaperId, table.targetPaperId, table.kind, table.relationKind),
+    index("idx_research_paper_edges_space_kind").on(table.spaceId, table.kind),
+  ],
+);
+
+export const researchPaperNetworkStates = sqliteTable(
+  "research_paper_network_states",
+  {
+    spaceId: text("space_id").primaryKey().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("idle"),
+    builtPaperCount: integer("built_paper_count").notNull().default(0),
+    model: text("model").notNull().default(""),
+    sourcesJson: text("sources_json").notNull().default("[]"),
+    error: text("error"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [index("idx_research_paper_network_states_status").on(table.status, table.updatedAt)],
+);
+
 export const learningPaths = sqliteTable(
   "learning_paths",
   {

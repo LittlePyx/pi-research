@@ -130,13 +130,25 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /function heatEvidence/);
   assert.match(mapRoute, /last14Days \* 30 \+ last6Months \* 10/);
   assert.match(mapRoute, /recentPaperCount/);
+  assert.match(mapRoute, /api\.semanticscholar\.org\/graph\/v1\/paper\/batch/);
+  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "interpret" \| "structure" \| "activity" \| "network"/);
+  assert.match(mapRoute, /generatePaperNetworkEdges/);
+  assert.match(mapRoute, /never invent citation claims/);
+  assert.match(mapRoute, /kind: "citation"/);
+  assert.match(mapRoute, /kind \(semantic\|path\)/);
+  assert.match(mapRoute, /research_paper_edges/);
+  assert.match(mapRoute, /research_paper_network_states/);
   assert.match(schema, /researchTracks/);
   assert.match(schema, /researchTrackPapers/);
   assert.match(schema, /researchTrackEdges/);
+  assert.match(schema, /researchPaperEdges/);
+  assert.match(schema, /researchPaperNetworkStates/);
   assert.match(schema, /intelligenceJson/);
   assert.match(repository, /CREATE TABLE IF NOT EXISTS research_tracks/);
   assert.match(repository, /intelligence_json TEXT NOT NULL DEFAULT/);
-  assert.match(client, /领域发展地图/);
+  assert.match(repository, /CREATE TABLE IF NOT EXISTS research_paper_edges/);
+  assert.match(repository, /CREATE TABLE IF NOT EXISTS research_paper_network_states/);
+  assert.match(client, /研究地图/);
   assert.match(client, /继续填充这条路线/);
   assert.match(client, /v2-field-network/);
   assert.match(client, /setResearchDirectionRole/);
@@ -150,6 +162,13 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /切换页面不会丢失已经完成的内容/);
   assert.match(client, /refreshDirectionIntelligence/);
   assert.match(client, /PI 方向研判/);
+  assert.match(client, /论文网络/);
+  assert.match(client, /引用关系/);
+  assert.match(client, /发展路径/);
+  assert.match(client, /PaperNetworkGraph/);
+  assert.match(client, /数据库确认的引用/);
+  assert.match(client, /Pi 语义判断/);
+  assert.match(client, /加入学习路径/);
   assert.match(client, /关键机会/);
   assert.match(client, /观察信号/);
   assert.doesNotMatch(client, /Gaussian Extremality for Rate-Distortion/);
@@ -162,6 +181,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-map-build-progress/);
   assert.match(css, /evidence-grounded LLM direction intelligence/);
   assert.match(css, /\.v2-direction-intelligence-line/);
+  assert.match(css, /dual-layer direction and paper network/);
+  assert.match(css, /\.v2-paper-network-canvas/);
+  assert.match(css, /\.v2-paper-network-drawer/);
 });
 
 test("builds persistent personalized learning paths from real research papers", async () => {

@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
-import type { ResearchDirectionRole, ResearchMapState, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../lib/research-map";
+import type { ResearchDirectionRole, ResearchMapState, ResearchPaperEdge, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../lib/research-map";
 import type { LearningPathState, LearningPathStep, LearningStepKind } from "../lib/learning-path";
 
 type Locale = "zh" | "en";
@@ -11,6 +11,8 @@ type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memor
 type LibraryFilter = "inbox" | "accepted" | "all" | "dismissed";
 type InboxFilter = "all" | "unseen" | "seen" | "snoozed";
 type LibrarySort = "priority" | "newest" | "quality";
+type ResearchMapMode = "directions" | "papers";
+type PaperNetworkMode = "citations" | "path";
 type Space = {
   id: string;
   name: string;
@@ -824,6 +826,157 @@ async function extractMaterialText(file: File) {
   throw new Error("Unsupported file type");
 }
 
+type NetworkPaperNode = {
+  paper: ResearchTrackPaper;
+  track: ResearchTrack;
+  trackIds: string[];
+};
+
+const paperNetworkPalette = ["#2f6650", "#9b6848", "#416c83", "#745f8c", "#8a7b3e"];
+
+function buildNetworkPaperNodes(map: ResearchMapState) {
+  const unique = new Map<string, NetworkPaperNode>();
+  for (const track of map.tracks) {
+    for (const paper of track.papers) {
+      const previous = unique.get(paper.canonicalId);
+      if (!previous) {
+        unique.set(paper.canonicalId, { paper, track, trackIds: [track.id] });
+        continue;
+      }
+      const trackIds = Array.from(new Set([...previous.trackIds, track.id]));
+      if ((!previous.paper.doi && paper.doi) || paper.citationCount > previous.paper.citationCount) {
+        unique.set(paper.canonicalId, { paper, track, trackIds });
+      } else {
+        unique.set(paper.canonicalId, { ...previous, trackIds });
+      }
+    }
+  }
+  return Array.from(unique.values()).slice(0, 40);
+}
+
+function networkRelationLabel(edge: ResearchPaperEdge, locale: Locale) {
+  if (edge.kind === "citation") return locale === "zh" ? "真实引用" : "Verified citation";
+  const labels: Record<string, Localized> = {
+    extends: { zh: "扩展", en: "Extends" }, challenges: { zh: "挑战", en: "Challenges" }, applies: { zh: "应用", en: "Applies" },
+    unifies: { zh: "统一", en: "Unifies" }, bridges: { zh: "桥接", en: "Bridges" }, reframes: { zh: "重构", en: "Reframes" },
+    prepares: { zh: "铺垫", en: "Prepares" }, advances: { zh: "推进", en: "Advances" },
+  };
+  return labels[edge.relationKind]?.[locale] || (locale === "zh" ? "语义关联" : "Semantic link");
+}
+
+function PaperNetworkGraph({
+  map,
+  mode,
+  trackFilter,
+  locale,
+  selectedPaperId,
+  paperStates,
+  onSelect,
+}: {
+  map: ResearchMapState;
+  mode: PaperNetworkMode;
+  trackFilter: string;
+  locale: Locale;
+  selectedPaperId: string | null;
+  paperStates: Record<string, MonitorPaper["userState"]>;
+  onSelect: (paperId: string) => void;
+}) {
+  const layout = useMemo(() => {
+    const allNodes = buildNetworkPaperNodes(map);
+    const nodes = allNodes.filter((node) => trackFilter === "all" || node.trackIds.includes(trackFilter));
+    const activeTracks = map.tracks.filter((track) => nodes.some((node) => node.trackIds.includes(track.id)));
+    const laneIndex = new Map(activeTracks.map((track, index) => [track.id, index]));
+    const laneHeight = trackFilter === "all" ? 108 : 300;
+    const height = Math.max(470, activeTracks.length * laneHeight + 92);
+    const width = 1120;
+    const years = nodes.map((node) => Number(researchPaperYear(node.paper))).filter(Number.isFinite);
+    const minYear = years.length ? Math.min(...years) : new Date().getFullYear() - 5;
+    const maxYear = years.length ? Math.max(...years) : new Date().getFullYear();
+    const yearSpan = Math.max(1, maxYear - minYear);
+    const grouped = new Map<string, NetworkPaperNode[]>();
+    for (const node of nodes) {
+      const effectiveTrackId = trackFilter !== "all" && node.trackIds.includes(trackFilter) ? trackFilter : node.track.id;
+      const key = effectiveTrackId + ":" + node.paper.role;
+      grouped.set(key, [...(grouped.get(key) || []), node]);
+    }
+    const positions = new Map<string, { x: number; y: number; radius: number; trackId: string; color: string }>();
+    nodes.forEach((node, index) => {
+      const effectiveTrackId = trackFilter !== "all" && node.trackIds.includes(trackFilter) ? trackFilter : node.track.id;
+      const lane = laneIndex.get(effectiveTrackId) || 0;
+      const baseY = 76 + lane * laneHeight + laneHeight / 2;
+      const roleGroup = grouped.get(effectiveTrackId + ":" + node.paper.role) || [node];
+      const roleIndex = Math.max(0, roleGroup.findIndex((item) => item.paper.id === node.paper.id));
+      const roleOffset = (roleIndex - (roleGroup.length - 1) / 2) * (trackFilter === "all" ? 16 : 30);
+      const year = Number(researchPaperYear(node.paper));
+      const x = mode === "path"
+        ? ({ foundation: 230, milestone: 585, frontier: 940 })[node.paper.role]
+        : 170 + ((Number.isFinite(year) ? year : maxYear) - minYear) / yearSpan * 830;
+      const y = mode === "path" ? baseY + roleOffset : baseY + ((index % 5) - 2) * 12;
+      const radius = 8 + Math.min(7, Math.log10(Math.max(1, node.paper.citationCount + 1)) * 2.4);
+      const trackPosition = Math.max(0, map.tracks.findIndex((track) => track.id === effectiveTrackId));
+      positions.set(node.paper.id, { x, y, radius, trackId: effectiveTrackId, color: paperNetworkPalette[trackPosition % paperNetworkPalette.length] });
+    });
+    const visibleIds = new Set(nodes.map((node) => node.paper.id));
+    const edges = map.paperEdges.filter((edge) => visibleIds.has(edge.sourcePaperId) && visibleIds.has(edge.targetPaperId)
+      && (mode === "citations" ? edge.kind === "citation" : edge.kind !== "citation"));
+    const labelIds = new Set<string>();
+    for (const track of activeTracks) {
+      for (const role of ["foundation", "milestone", "frontier"] as ResearchTrackRole[]) {
+        const candidate = nodes.filter((node) => node.trackIds.includes(track.id) && node.paper.role === role)
+          .sort((left, right) => right.paper.citationCount - left.paper.citationCount)[0];
+        if (candidate) labelIds.add(candidate.paper.id);
+      }
+    }
+    return { nodes, edges, positions, activeTracks, height, width, minYear, maxYear, labelIds };
+  }, [map, mode, trackFilter]);
+
+  return (
+    <div className="v2-paper-network-canvas" aria-label={locale === "zh" ? "论文关系网络" : "Paper relationship network"}>
+      <svg viewBox={`0 0 ${layout.width} ${layout.height}`} role="img">
+        <defs>
+          <marker id="v2-paper-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker>
+          <marker id="v2-path-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker>
+        </defs>
+        {layout.activeTracks.map((track, index) => {
+          const laneHeight = trackFilter === "all" ? 108 : 300;
+          const y = 76 + index * laneHeight;
+          return <g className="v2-paper-network-lane" key={track.id}><rect x="18" y={y} width="1084" height={laneHeight - 8} rx="12" /><text x="35" y={y + 24}>{locale === "zh" ? track.titleZh : track.titleEn}</text></g>;
+        })}
+        {mode === "path" ? <g className="v2-paper-network-columns">
+          <text x="230" y="39">{locale === "zh" ? "奠基" : "Foundation"}</text><text x="585" y="39">{locale === "zh" ? "里程碑" : "Milestone"}</text><text x="940" y="39">{locale === "zh" ? "前沿" : "Frontier"}</text>
+        </g> : <g className="v2-paper-network-columns"><text x="170" y="39">{layout.minYear}</text><text x="1000" y="39" textAnchor="end">{layout.maxYear}</text></g>}
+        <g className="v2-paper-network-edges">
+          {layout.edges.map((edge) => {
+            const source = layout.positions.get(edge.sourcePaperId);
+            const target = layout.positions.get(edge.targetPaperId);
+            if (!source || !target) return null;
+            const middle = (source.x + target.x) / 2;
+            return <path key={edge.id} className={edge.kind} d={`M ${source.x} ${source.y} C ${middle} ${source.y}, ${middle} ${target.y}, ${target.x} ${target.y}`} markerEnd={edge.kind === "path" ? "url(#v2-path-arrow)" : "url(#v2-paper-arrow)"}><title>{networkRelationLabel(edge, locale)} · {locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</title></path>;
+          })}
+        </g>
+        <g className="v2-paper-network-nodes">
+          {layout.nodes.map((node) => {
+            const position = layout.positions.get(node.paper.id);
+            if (!position) return null;
+            const selected = selectedPaperId === node.paper.id;
+            const state = paperStates[node.paper.canonicalId];
+            const showLabel = selected || layout.labelIds.has(node.paper.id);
+            const label = node.paper.title.length > 30 ? node.paper.title.slice(0, 29) + "…" : node.paper.title;
+            return <g key={node.paper.id} className={`v2-paper-network-node ${selected ? "selected" : ""} ${state || ""}`} transform={`translate(${position.x} ${position.y})`} role="button" tabIndex={0} onClick={() => onSelect(node.paper.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(node.paper.id); }}>
+              <circle className="state-ring" r={position.radius + 5} />
+              <circle className="paper-dot" r={position.radius} style={{ fill: position.color }} />
+              <circle className="paper-core" r="3" />
+              {showLabel && <text className="v2-paper-node-label" y={-(position.radius + 9)} textAnchor="middle">{label}</text>}
+              <title>{node.paper.title} · {researchPaperYear(node.paper)} · {node.paper.citationCount} {locale === "zh" ? "次引用" : "citations"}</title>
+            </g>;
+          })}
+        </g>
+      </svg>
+      {!layout.nodes.length && <div className="v2-paper-network-empty">{locale === "zh" ? "这个方向还没有足够的真实论文节点。" : "This direction does not yet have enough real paper nodes."}</div>}
+    </div>
+  );
+}
+
 export default function ResearchApp({ user }: { user: User }) {
   const [locale, setLocale] = useState<Locale>("zh");
   const [view, setView] = useState<View>("today");
@@ -833,8 +986,17 @@ export default function ResearchApp({ user }: { user: User }) {
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [newSpace, setNewSpace] = useState({ name: "", memberName: "", description: "" });
   const [selectedMonitorPaper, setSelectedMonitorPaper] = useState<MonitorPaper | null>(null);
-  const [researchMap, setResearchMap] = useState<ResearchMapState>({ tracks: [], edges: [], model: "deepseek-v4-pro", generated: false });
+  const [researchMap, setResearchMap] = useState<ResearchMapState>({
+    tracks: [], edges: [], paperEdges: [],
+    paperNetwork: { status: "idle", paperCount: 0, builtPaperCount: 0, citationEdgeCount: 0, semanticEdgeCount: 0, pathEdgeCount: 0, model: "", sources: [], updatedAt: null, error: null },
+    model: "deepseek-v4-pro", generated: false,
+  });
   const [selectedThread, setSelectedThread] = useState<ResearchTrack | null>(null);
+  const [researchMapMode, setResearchMapMode] = useState<ResearchMapMode>("directions");
+  const [paperNetworkMode, setPaperNetworkMode] = useState<PaperNetworkMode>("citations");
+  const [paperNetworkTrackId, setPaperNetworkTrackId] = useState("all");
+  const [selectedNetworkPaperId, setSelectedNetworkPaperId] = useState<string | null>(null);
+  const [paperNetworkLoading, setPaperNetworkLoading] = useState(false);
   const [mapLoading, setMapLoading] = useState(false);
   const [mapAction, setMapAction] = useState<string | null>(null);
   const [mapOutlinePhase, setMapOutlinePhase] = useState(0);
@@ -914,6 +1076,20 @@ export default function ResearchApp({ user }: { user: User }) {
   const scanPhase = monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
   const confirmedProfile = latestConfirmedImport?.analysis || null;
+  const paperStateByCanonicalId = useMemo(() => {
+    const states: Record<string, MonitorPaper["userState"]> = {};
+    for (const paper of historyPapers) if (paper.doi) states["doi:" + paper.doi.trim().toLocaleLowerCase()] = paper.userState;
+    return states;
+  }, [historyPapers]);
+  const networkPaperNodes = useMemo(() => buildNetworkPaperNodes(researchMap), [researchMap]);
+  const selectedNetworkNode = useMemo(
+    () => networkPaperNodes.find((node) => node.paper.id === selectedNetworkPaperId) || null,
+    [networkPaperNodes, selectedNetworkPaperId],
+  );
+  const selectedNetworkRelations = useMemo(
+    () => selectedNetworkNode ? researchMap.paperEdges.filter((edge) => edge.sourcePaperId === selectedNetworkNode.paper.id || edge.targetPaperId === selectedNetworkNode.paper.id).slice(0, 6) : [],
+    [researchMap.paperEdges, selectedNetworkNode],
+  );
 
   useEffect(() => {
     ensureAnonymousWorkspace();
@@ -1113,6 +1289,32 @@ export default function ResearchApp({ user }: { user: User }) {
   }, [activeSpace.id, locale, mapViewActive]);
 
   useEffect(() => {
+    const stale = researchMap.paperNetwork.builtPaperCount < researchMap.paperNetwork.paperCount;
+    if (researchMapMode !== "papers" || researchMap.paperNetwork.paperCount < 2
+      || (!stale && researchMap.paperNetwork.status !== "idle")) return;
+    let cancelled = false;
+    const build = async () => {
+      setPaperNetworkLoading(true);
+      try {
+        const response = await fetch("/api/research-map", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spaceId: activeSpace.id, action: "network" }),
+        });
+        const data = await response.json() as ResearchMapState & { error?: string };
+        if (!response.ok) throw new Error(data.error || "paper network unavailable");
+        if (!cancelled) setResearchMap(data);
+      } catch {
+        if (!cancelled) setToast(locale === "zh" ? "论文关系暂时只显示已有节点，可稍后重试" : "Paper nodes remain available; relationships can be retried later");
+      } finally {
+        if (!cancelled) setPaperNetworkLoading(false);
+      }
+    };
+    void build();
+    return () => { cancelled = true; };
+  }, [activeSpace.id, locale, researchMap.paperNetwork.builtPaperCount, researchMap.paperNetwork.paperCount, researchMap.paperNetwork.status, researchMapMode]);
+
+  useEffect(() => {
     if (!mapLoading) return;
     const timer = window.setInterval(() => setMapOutlinePhase((current) => Math.min(3, current + 1)), 2600);
     return () => window.clearInterval(timer);
@@ -1217,6 +1419,8 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const switchSpace = (space: Space) => {
     setActiveSpaceId(space.id);
+    setSelectedNetworkPaperId(null);
+    setPaperNetworkTrackId("all");
     window.localStorage.setItem("pi-active-space", space.id);
     setSpaceDialog(false);
     navigate("today");
@@ -1587,6 +1791,39 @@ export default function ResearchApp({ user }: { user: User }) {
     }).catch(() => undefined);
   };
 
+  const refreshPaperNetwork = async () => {
+    if (paperNetworkLoading || researchMap.paperNetwork.paperCount < 2) return;
+    setPaperNetworkLoading(true);
+    try {
+      const response = await fetch("/api/research-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, action: "network", force: true }),
+      });
+      const data = await response.json() as ResearchMapState & { error?: string };
+      if (!response.ok) throw new Error(data.error || "paper network refresh failed");
+      setResearchMap(data);
+      setToast(locale === "zh" ? "论文网络已根据当前真实论文更新" : "The paper network now reflects the current real papers");
+    } catch {
+      setToast(locale === "zh" ? "论文关系暂时无法更新，已有节点仍可浏览" : "Relationships could not refresh; existing nodes remain available");
+    } finally {
+      setPaperNetworkLoading(false);
+    }
+  };
+
+  const askAboutNetworkPaper = (node: NetworkPaperNode) => {
+    setQuestion(locale === "zh"
+      ? `请结合当前研究空间，解释《${node.paper.title}》在“${node.track.titleZh}”发展路线中的位置，以及它与前后代表论文的关键关系。`
+      : `Explain where “${node.paper.title}” sits in the “${node.track.titleEn}” development route and its key relationships to representative work before and after it.`);
+    setAskOpen(true);
+  };
+
+  const addNetworkPaperToLearningPath = (node: NetworkPaperNode) => {
+    setLearningTarget(locale === "zh" ? node.track.titleZh : node.track.titleEn);
+    setSelectedNetworkPaperId(null);
+    navigate("learn");
+  };
+
   const setResearchDirectionRole = async (thread: ResearchTrack, userRole: ResearchDirectionRole) => {
     if (mapAction) return;
     setMapAction(`role:${thread.id}`);
@@ -1831,11 +2068,12 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "threads" && (
           <main className="v2-page v2-map-page">
-            <section className="v2-page-head v2-map-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {modelDisplayName(researchMap.model)}</p><h1>{locale === "zh" ? "领域发展地图" : "Field development map"}</h1><p>{locale === "zh" ? "沿着真实论文看清奠基工作、关键转折与近年前沿。" : "Follow real papers from foundations through decisive milestones to the recent frontier."}</p></div><span className="v2-map-total"><strong>{researchMap.tracks.reduce((sum, track) => sum + track.papers.length, 0)}</strong>{locale === "zh" ? "篇代表作" : "representative works"}</span></section>
+            <section className="v2-page-head v2-map-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {modelDisplayName(researchMap.model)}</p><h1>{locale === "zh" ? "研究地图" : "Research map"}</h1><p>{researchMapMode === "directions" ? (locale === "zh" ? "先看领域分支，再下钻到每篇论文。" : "See the field structure, then move down to individual papers.") : (locale === "zh" ? "真实引用与 Pi 策展路径分开呈现。" : "Verified citations and Pi-curated paths stay visibly distinct.")}</p></div><div className="v2-map-head-actions"><div className="v2-map-view-switch" role="tablist" aria-label={locale === "zh" ? "研究地图视图" : "Research map view"}><button type="button" role="tab" aria-selected={researchMapMode === "directions"} className={researchMapMode === "directions" ? "active" : ""} onClick={() => { setResearchMapMode("directions"); setSelectedNetworkPaperId(null); }}>{locale === "zh" ? "方向路径" : "Direction paths"}</button><button type="button" role="tab" aria-selected={researchMapMode === "papers"} className={researchMapMode === "papers" ? "active" : ""} onClick={() => setResearchMapMode("papers")}>{locale === "zh" ? "论文网络" : "Paper network"}</button></div><span className="v2-map-total"><strong>{researchMap.paperNetwork.paperCount || networkPaperNodes.length}</strong>{locale === "zh" ? "篇代表作" : "representative works"}</span></div></section>
             {mapLoading ? (
               <section className="v2-map-loading v2-outline-loading" role="status"><span>π</span><div><strong>{locale === "zh" ? "先建立可浏览的方向骨架" : "Building a browsable direction outline first"}</strong><p>{mapOutlineLabels[mapOutlinePhase]}</p><i><b style={{ width: `${22 + mapOutlinePhase * 21}%` }} /></i><small>{locale === "zh" ? "骨架出现后，你可以立即浏览；真实论文会逐条路线继续补充。" : "You can browse as soon as the outline appears while real papers continue filling each route."}</small></div></section>
             ) : researchMap.tracks.length ? (
               <>
+                {researchMapMode === "directions" ? <>
                 {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `还有 ${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes are waiting to be filled`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成的部分已经保存，可以打开路线浏览或选择失败方向重试。" : "Completed work is saved; browse ready routes or retry a pending direction.")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i><small>{locale === "zh" ? "切换页面不会丢失已经完成的内容，下次进入会从未完成处继续。" : "Completed work will not be lost if you leave; the next visit resumes unfinished routes."}</small></section> : null}
                 {(researchMap.intelligenceProgress?.pendingTrackIds.length || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress" role="status"><div><span className={mapIntelligenceTrackId ? "working" : "paused"}><i>π</i></span><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "DeepSeek Pro 正在形成方向研判" : "DeepSeek Pro is forming a direction assessment") : (locale === "zh" ? "部分方向等待 Pi 研判" : "Some directions await Pi's assessment")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "路线和论文已经可以正常浏览，研判将在下次进入时继续。" : "Routes and papers remain available; interpretation resumes on the next visit.")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i><small>{locale === "zh" ? "Pi 会给出当前判断、关键机会和应关注的变化信号，并绑定真实论文证据。" : "Pi adds a current assessment, key opportunity, and watch signal grounded in real paper evidence."}</small></section> : null}
                 <section className="v2-field-network">
@@ -1854,6 +2092,32 @@ export default function ResearchApp({ user }: { user: User }) {
                   </div>
                 </section>
                 {researchMap.edges.length ? <section className="v2-network-links"><header><p className="v2-kicker">{locale === "zh" ? "方向关联" : "Cross-direction links"}</p><h2>{locale === "zh" ? "主干之外的桥接关系" : "Bridges beyond the backbone"}</h2></header><div>{researchMap.edges.map((edge) => { const source = researchMap.tracks.find((track) => track.id === edge.sourceTrackId); const target = researchMap.tracks.find((track) => track.id === edge.targetTrackId); if (!source || !target) return null; return <button type="button" key={edge.id} onClick={() => openThread(target)}><span>{locale === "zh" ? source.titleZh : source.titleEn}</span><i>{edge.kind === "bridges" ? "⇄" : "→"}</i><span>{locale === "zh" ? target.titleZh : target.titleEn}</span><small>{locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</small><b>{edge.strength}</b></button>; })}</div></section> : null}
+                </> : <section className="v2-paper-network-panel">
+                  <header className="v2-paper-network-toolbar">
+                    <div className="v2-paper-network-mode" role="tablist" aria-label={locale === "zh" ? "论文网络模式" : "Paper network mode"}>
+                      <button type="button" role="tab" aria-selected={paperNetworkMode === "citations"} className={paperNetworkMode === "citations" ? "active" : ""} onClick={() => setPaperNetworkMode("citations")}><span>{locale === "zh" ? "引用关系" : "Citation graph"}</span><b>{researchMap.paperNetwork.citationEdgeCount}</b></button>
+                      <button type="button" role="tab" aria-selected={paperNetworkMode === "path"} className={paperNetworkMode === "path" ? "active" : ""} onClick={() => setPaperNetworkMode("path")}><span>{locale === "zh" ? "发展路径" : "Development path"}</span><b>{researchMap.paperNetwork.semanticEdgeCount + researchMap.paperNetwork.pathEdgeCount}</b></button>
+                    </div>
+                    <div className="v2-paper-network-filters"><label><span>{locale === "zh" ? "方向" : "Direction"}</span><select value={paperNetworkTrackId} onChange={(event) => { setPaperNetworkTrackId(event.target.value); setSelectedNetworkPaperId(null); }}><option value="all">{locale === "zh" ? "全部方向" : "All directions"}</option>{researchMap.tracks.map((track) => <option value={track.id} key={track.id}>{locale === "zh" ? track.titleZh : track.titleEn}</option>)}</select></label><button type="button" onClick={() => void refreshPaperNetwork()} disabled={paperNetworkLoading || researchMap.paperNetwork.paperCount < 2}>{paperNetworkLoading ? (locale === "zh" ? "构建中…" : "Building…") : (locale === "zh" ? "更新关系" : "Refresh links")}</button></div>
+                  </header>
+                  {(paperNetworkLoading || researchMap.paperNetwork.status === "building") && <div className="v2-paper-network-progress" role="status"><span><i /></span><div><strong>{locale === "zh" ? "论文节点已经可以浏览" : "Paper nodes are ready to explore"}</strong><p>{locale === "zh" ? "正在匹配真实引用，并由 DeepSeek Pro 形成语义关系与发展主线。" : "Matching verified citations while DeepSeek Pro builds semantic links and the development backbone."}</p></div></div>}
+                  {!paperNetworkLoading && ["partial", "error"].includes(researchMap.paperNetwork.status) && <div className="v2-paper-network-note"><span>i</span><p>{locale === "zh" ? "部分关系源暂时不可用，当前已保存的真实节点和关系仍可浏览。" : "Some relationship sources are temporarily unavailable; saved real nodes and links remain browsable."}</p><button type="button" onClick={() => void refreshPaperNetwork()}>{locale === "zh" ? "重试" : "Retry"}</button></div>}
+                  <div className={`v2-paper-network-stage ${selectedNetworkNode ? "has-drawer" : ""}`}>
+                    <div className="v2-paper-network-main">
+                      <PaperNetworkGraph map={researchMap} mode={paperNetworkMode} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} paperStates={paperStateByCanonicalId} onSelect={setSelectedNetworkPaperId} />
+                      <footer className="v2-paper-network-legend"><span><i className="citation" />{locale === "zh" ? "实线：数据库确认的引用" : "Solid: database-verified citation"}</span><span><i className="semantic" />{locale === "zh" ? "虚线：Pi 语义判断" : "Dashed: Pi semantic judgment"}</span><span><i className="path" />{locale === "zh" ? "金线：推荐发展路径" : "Gold: recommended development path"}</span><small>{locale === "zh" ? "点击节点查看依据与路线位置" : "Select a node for evidence and route position"}</small></footer>
+                    </div>
+                    {selectedNetworkNode && <aside className="v2-paper-network-drawer" aria-label={locale === "zh" ? "论文详情" : "Paper details"}>
+                      <button className="v2-paper-drawer-close" type="button" onClick={() => setSelectedNetworkPaperId(null)} aria-label={t.close}>×</button>
+                      <p className="v2-kicker">{researchRoleLabel(selectedNetworkNode.paper.role, locale)} · {researchPaperYear(selectedNetworkNode.paper)}</p>
+                      <h2>{selectedNetworkNode.paper.title}</h2>
+                      <small>{[selectedNetworkNode.paper.authors, selectedNetworkNode.paper.venue, `${selectedNetworkNode.paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</small>
+                      <div className="v2-paper-drawer-copy"><b>{t.introLabel}</b><p>{locale === "zh" ? selectedNetworkNode.paper.summaryZh : selectedNetworkNode.paper.summaryEn}</p><b>{locale === "zh" ? "路线位置" : "Place in the route"}</b><p>{locale === "zh" ? selectedNetworkNode.paper.rationaleZh : selectedNetworkNode.paper.rationaleEn}</p></div>
+                      {selectedNetworkRelations.length > 0 && <div className="v2-paper-drawer-relations"><b>{locale === "zh" ? "关键关系" : "Key relationships"}</b>{selectedNetworkRelations.map((edge) => { const otherId = edge.sourcePaperId === selectedNetworkNode.paper.id ? edge.targetPaperId : edge.sourcePaperId; const other = networkPaperNodes.find((node) => node.paper.id === otherId); if (!other) return null; return <button type="button" key={edge.id} onClick={() => setSelectedNetworkPaperId(other.paper.id)}><span>{networkRelationLabel(edge, locale)} · {edge.confidence}%</span><strong>{other.paper.title}</strong><small>{locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</small></button>; })}</div>}
+                      <footer><a href={selectedNetworkNode.paper.url || (selectedNetworkNode.paper.doi ? "https://doi.org/" + selectedNetworkNode.paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedNetworkNode.track.id)}>{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutNetworkPaper(selectedNetworkNode)}>{locale === "zh" ? "让 Pi 解释" : "Ask Pi"}</button><button type="button" onClick={() => addNetworkPaperToLearningPath(selectedNetworkNode)}>{locale === "zh" ? "加入学习路径" : "Add to learning path"}</button></footer>
+                    </aside>}
+                  </div>
+                </section>}
               </>
             ) : <section className="v2-map-empty"><span>◎</span><h2>{locale === "zh" ? "暂时没有可展示的真实路线" : "No real route is available yet"}</h2><p>{locale === "zh" ? "Pi 不会用演示论文填充这里。稍后重新进入即可再次尝试。" : "Pi will not fill this area with demo papers. Return later to retry."}</p></section>}
           </main>

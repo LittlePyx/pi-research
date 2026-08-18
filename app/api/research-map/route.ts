@@ -1,5 +1,5 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
-import type { ResearchDirectionIntelligence, ResearchDirectionRole, ResearchHeatLevel, ResearchMapState, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
+import type { ResearchDirectionIntelligence, ResearchDirectionRole, ResearchHeatLevel, ResearchMapState, ResearchPaperEdge, ResearchPaperEdgeKind, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type TrackRow = {
@@ -45,6 +45,25 @@ type TrackPaperRow = {
   rationale_zh: string;
   rationale_en: string;
   position: number;
+};
+type PaperEdgeRow = {
+  id: string;
+  source_paper_id: string;
+  target_paper_id: string;
+  kind: ResearchPaperEdgeKind;
+  relation_kind: string;
+  relationship_zh: string;
+  relationship_en: string;
+  confidence: number;
+  evidence_source: string;
+};
+type PaperNetworkStateRow = {
+  status: "idle" | "building" | "ready" | "partial" | "error";
+  built_paper_count: number;
+  model: string;
+  sources_json: string;
+  error: string | null;
+  updated_at: string;
 };
 type ExistingPaperEvidence = {
   canonical_id: string;
@@ -119,6 +138,19 @@ type DirectionIntelligenceDraft = {
   confidence: number;
   evidenceCanonicalIds: string[];
 };
+type PaperNetworkEdgeDraft = {
+  sourcePaperId: string;
+  targetPaperId: string;
+  kind: "semantic" | "path";
+  relationKind: string;
+  relationshipZh: string;
+  relationshipEn: string;
+  confidence: number;
+};
+type SemanticScholarPaper = {
+  externalIds?: { DOI?: string } | null;
+  references?: Array<{ externalIds?: { DOI?: string } | null }> | null;
+};
 type DeepSeekResponse = {
   choices?: Array<{ message?: { content?: string | null } }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -131,6 +163,8 @@ const NON_PAPER_PHRASES = /(publication information|information for authors|inst
 const ROLES = new Set<ResearchTrackRole>(["foundation", "milestone", "frontier"]);
 const DIRECTION_ROLES = new Set<ResearchDirectionRole>(["core", "support", "explore"]);
 const EDGE_KINDS = new Set(["builds_on", "bridges", "supports"]);
+const PAPER_RELATION_KINDS = new Set(["extends", "challenges", "applies", "unifies", "bridges", "reframes", "prepares", "advances"]);
+const NETWORK_PAPER_LIMIT = 40;
 const GLOBAL_DAILY_LIMIT = 120;
 const WORKSPACE_DAILY_LIMIT = 16;
 
@@ -513,6 +547,193 @@ function toPaper(row: TrackPaperRow): ResearchTrackPaper {
   };
 }
 
+function toPaperEdge(row: PaperEdgeRow): ResearchPaperEdge {
+  return {
+    id: row.id,
+    sourcePaperId: row.source_paper_id,
+    targetPaperId: row.target_paper_id,
+    kind: row.kind,
+    relationKind: row.relation_kind,
+    relationshipZh: row.relationship_zh,
+    relationshipEn: row.relationship_en,
+    confidence: row.confidence,
+    evidenceSource: row.evidence_source,
+  };
+}
+
+function uniqueNetworkPapers(rows: TrackPaperRow[]) {
+  const unique = new Map<string, TrackPaperRow>();
+  for (const row of rows) {
+    const previous = unique.get(row.canonical_id);
+    if (!previous || (!previous.doi && row.doi) || row.citation_count > previous.citation_count) unique.set(row.canonical_id, row);
+  }
+  return Array.from(unique.values()).slice(0, NETWORK_PAPER_LIMIT);
+}
+
+async function fetchCitationEdges(papers: TrackPaperRow[]) {
+  const eligible = papers.filter((paper) => paper.doi).slice(0, NETWORK_PAPER_LIMIT);
+  if (eligible.length < 2) return [] as Array<Omit<ResearchPaperEdge, "id">>;
+  const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/batch");
+  endpoint.searchParams.set("fields", "paperId,externalIds,references.paperId,references.externalIds");
+  const options: RequestInit = {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+    body: JSON.stringify({ ids: eligible.map((paper) => "DOI:" + paper.doi) }),
+    signal: AbortSignal.timeout(24_000),
+  };
+  let response = await fetch(endpoint, options);
+  if (response.status === 429) {
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    response = await fetch(endpoint, options);
+  }
+  if (!response.ok) throw new Error(`Semantic Scholar returned ${response.status}`);
+  const results = await response.json() as Array<SemanticScholarPaper | null>;
+  const doiToPaperId = new Map(eligible.map((paper) => [paper.doi!.toLocaleLowerCase(), paper.id]));
+  const unique = new Map<string, Omit<ResearchPaperEdge, "id">>();
+  results.forEach((result, index) => {
+    const source = eligible[index];
+    if (!source || !result?.references) return;
+    for (const reference of result.references) {
+      const doi = reference.externalIds?.DOI?.trim().toLocaleLowerCase();
+      const targetPaperId = doi ? doiToPaperId.get(doi) : null;
+      if (!targetPaperId || targetPaperId === source.id) continue;
+      const key = source.id + ":" + targetPaperId;
+      unique.set(key, {
+        sourcePaperId: source.id,
+        targetPaperId,
+        kind: "citation",
+        relationKind: "cites",
+        relationshipZh: "该论文的参考文献中包含目标论文。",
+        relationshipEn: "The source paper includes the target paper in its references.",
+        confidence: 100,
+        evidenceSource: "semantic-scholar",
+      });
+      if (unique.size >= 60) break;
+    }
+  });
+  return Array.from(unique.values());
+}
+
+async function generatePaperNetworkEdges(
+  database: D1Database,
+  workspaceId: string,
+  space: SpaceRow,
+  memory: string,
+  papers: TrackPaperRow[],
+  citationEdges: Array<Omit<ResearchPaperEdge, "id">>,
+) {
+  if (papers.length < 2) return [] as Array<Omit<ResearchPaperEdge, "id">>;
+  const compact = papers.map((paper) => ({
+    id: paper.id,
+    trackId: paper.track_id,
+    title: paper.title,
+    year: paper.published_at?.slice(0, 4) || null,
+    role: paper.role,
+    citations: paper.citation_count,
+    summary: cleanText(paper.summary_en).slice(0, 320),
+    routeRationale: cleanText(paper.rationale_en).slice(0, 260),
+  }));
+  const parsed = await callDeepSeek<{ edges?: Array<Partial<PaperNetworkEdgeDraft>> }>(
+    database,
+    workspaceId,
+    "You are Pi Research's evidence-disciplined scholarly network editor. Return strict JSON and never invent citation claims.",
+    [
+      "Return {\"edges\":[...]} using only supplied paper ids.",
+      "Create up to 18 semantic edges and 4-12 path edges. Every edge needs sourcePaperId, targetPaperId, kind (semantic|path), relationKind, relationshipZh, relationshipEn, confidence (0-100).",
+      "Semantic relationKind must be extends, challenges, applies, unifies, bridges, or reframes. It describes an evidence-grounded intellectual relationship, not a factual citation unless it appears in actualCitationPairs.",
+      "Path relationKind must be prepares or advances. Direct path edges from earlier foundations or milestones toward the later work a researcher should read next. Build one readable backbone and only a few meaningful branches.",
+      "Use the supplied summaries and route rationales. Omit uncertain relationships, avoid generic 'related work' wording, and explain the precise conceptual or methodological connection in one concise sentence per language.",
+      "Do not duplicate an actual citation as a semantic edge. Do not connect papers merely because they share a direction label.",
+      `Research space: ${space.name} — ${space.description}`,
+      `User-confirmed research memory: ${memory || "none"}`,
+      `Papers: ${JSON.stringify(compact)}`,
+      `Actual citation pairs (source cites target): ${JSON.stringify(citationEdges.map((edge) => [edge.sourcePaperId, edge.targetPaperId]))}`,
+    ].join("\n"),
+    10000,
+  );
+  const validIds = new Set(papers.map((paper) => paper.id));
+  const citationPairs = new Set(citationEdges.map((edge) => edge.sourcePaperId + ":" + edge.targetPaperId));
+  const counts = { semantic: 0, path: 0 };
+  const unique = new Map<string, Omit<ResearchPaperEdge, "id">>();
+  for (const item of parsed.edges || []) {
+    const sourcePaperId = cleanText(item.sourcePaperId || "");
+    const targetPaperId = cleanText(item.targetPaperId || "");
+    const kind = item.kind === "path" ? "path" : "semantic";
+    if (!validIds.has(sourcePaperId) || !validIds.has(targetPaperId) || sourcePaperId === targetPaperId) continue;
+    if (kind === "semantic" && citationPairs.has(sourcePaperId + ":" + targetPaperId)) continue;
+    const relationKind = PAPER_RELATION_KINDS.has(String(item.relationKind)) ? String(item.relationKind) : kind === "path" ? "advances" : "extends";
+    const relationshipZh = cleanText(item.relationshipZh || "").slice(0, 320);
+    const relationshipEn = cleanText(item.relationshipEn || "").slice(0, 440);
+    if (!relationshipZh || !relationshipEn || counts[kind] >= (kind === "semantic" ? 18 : 12)) continue;
+    counts[kind] += 1;
+    unique.set(`${sourcePaperId}:${targetPaperId}:${kind}:${relationKind}`, {
+      sourcePaperId,
+      targetPaperId,
+      kind,
+      relationKind,
+      relationshipZh,
+      relationshipEn,
+      confidence: boundedScore(item.confidence, 60),
+      evidenceSource: MODEL,
+    });
+  }
+  return Array.from(unique.values());
+}
+
+async function rebuildPaperNetwork(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, force = false) {
+  const allPapers = await database.prepare(
+    "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY track_id, position, created_at",
+  ).bind(space.id).all<TrackPaperRow>();
+  const papers = uniqueNetworkPapers(allPapers.results);
+  const state = await database.prepare("SELECT status, built_paper_count, model, sources_json, error, updated_at FROM research_paper_network_states WHERE space_id = ? LIMIT 1")
+    .bind(space.id).first<PaperNetworkStateRow>();
+  if (!force && state?.status === "ready" && state.built_paper_count >= papers.length) return;
+  await database.prepare(
+    `INSERT INTO research_paper_network_states (space_id, status, built_paper_count, model, sources_json, error)
+     VALUES (?, 'building', ?, '', '[]', NULL)
+     ON CONFLICT(space_id) DO UPDATE SET status = 'building', error = NULL, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(space.id, papers.length).run();
+  if (papers.length < 2) {
+    await database.prepare("UPDATE research_paper_network_states SET status = 'ready', built_paper_count = ?, model = '', sources_json = '[]', updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
+      .bind(papers.length, space.id).run();
+    return;
+  }
+  let citationEdges: Array<Omit<ResearchPaperEdge, "id">> = [];
+  let curatedEdges: Array<Omit<ResearchPaperEdge, "id">> = [];
+  const sources: string[] = [];
+  const errors: string[] = [];
+  try {
+    citationEdges = await fetchCitationEdges(papers);
+    sources.push("semantic-scholar");
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : "Citation lookup failed");
+  }
+  try {
+    curatedEdges = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers, citationEdges);
+    sources.push(MODEL);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : "Pi path analysis failed");
+  }
+  const allEdges = [...citationEdges, ...curatedEdges];
+  const status = errors.length ? (allEdges.length ? "partial" : "error") : "ready";
+  const statements = [database.prepare("DELETE FROM research_paper_edges WHERE space_id = ?").bind(space.id)];
+  for (const edge of allEdges) {
+    statements.push(database.prepare(
+      `INSERT OR IGNORE INTO research_paper_edges
+       (id, space_id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), space.id, edge.sourcePaperId, edge.targetPaperId, edge.kind, edge.relationKind,
+      edge.relationshipZh, edge.relationshipEn, edge.confidence, edge.evidenceSource));
+  }
+  statements.push(database.prepare(
+    `INSERT INTO research_paper_network_states (space_id, status, built_paper_count, model, sources_json, error, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(space_id) DO UPDATE SET status = excluded.status, built_paper_count = excluded.built_paper_count,
+     model = excluded.model, sources_json = excluded.sources_json, error = excluded.error, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(space.id, status, papers.length, curatedEdges.length ? MODEL : "", JSON.stringify(sources), errors.join("; ").slice(0, 800) || null));
+  await database.batch(statements);
+}
+
 function heatEvidence(papers: ResearchTrackPaper[]) {
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
@@ -576,13 +797,17 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 }
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  const [tracksResult, papersResult, edgesResult] = await Promise.all([
+  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare("SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackPaperRow>(),
     database.prepare("SELECT id, source_track_id, target_track_id, kind, relationship_zh, relationship_en, strength FROM research_track_edges WHERE space_id = ? ORDER BY strength DESC, created_at")
       .bind(spaceId).all<TrackEdgeRow>(),
+    database.prepare("SELECT id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source FROM research_paper_edges WHERE space_id = ? ORDER BY kind, confidence DESC, created_at")
+      .bind(spaceId).all<PaperEdgeRow>(),
+    database.prepare("SELECT status, built_paper_count, model, sources_json, error, updated_at FROM research_paper_network_states WHERE space_id = ? LIMIT 1")
+      .bind(spaceId).first<PaperNetworkStateRow>(),
   ]);
   const papersByTrack = new Map<string, ResearchTrackPaper[]>();
   for (const row of papersResult.results) papersByTrack.set(row.track_id, [...(papersByTrack.get(row.track_id) || []), toPaper(row)]);
@@ -623,6 +848,14 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     relationshipEn: row.relationship_en,
     strength: row.strength,
   }));
+  const paperEdges = paperEdgesResult.results.map(toPaperEdge);
+  const uniquePaperCount = new Set(papersResult.results.map((paper) => paper.canonical_id)).size;
+  let networkSources: string[] = [];
+  try {
+    networkSources = paperNetworkState ? parseJsonArray(paperNetworkState.sources_json) : [];
+  } catch {
+    networkSources = [];
+  }
   const needsStructure = tracks.length > 1 && !edges.length;
   const pendingTrackIds = tracks.filter((track) => track.buildStatus === "queued").map((track) => track.id);
   const intelligenceEligibleTracks = tracks.filter((track) => track.buildStatus === "ready" && track.papers.length > 0);
@@ -630,6 +863,19 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   return {
     tracks,
     edges,
+    paperEdges,
+    paperNetwork: {
+      status: paperNetworkState?.status || "idle",
+      paperCount: uniquePaperCount,
+      builtPaperCount: paperNetworkState?.built_paper_count || 0,
+      citationEdgeCount: paperEdges.filter((edge) => edge.kind === "citation").length,
+      semanticEdgeCount: paperEdges.filter((edge) => edge.kind === "semantic").length,
+      pathEdgeCount: paperEdges.filter((edge) => edge.kind === "path").length,
+      model: paperNetworkState?.model || "",
+      sources: networkSources,
+      updatedAt: paperNetworkState?.updated_at || null,
+      error: paperNetworkState?.error || null,
+    },
     model: MODEL,
     generated: tracks.length > 0,
     needsStructure,
@@ -653,7 +899,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "interpret" | "structure" | "activity"; trackId?: string; activityKind?: "paper_opened" | "track_opened" };
+    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "interpret" | "structure" | "activity" | "network"; trackId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -661,6 +907,11 @@ export async function POST(request: Request) {
     const { database, space, user } = context;
     const workspaceId = user.userId.replace(/^anonymous:/, "");
     const memory = await importedMemory(database, space.id);
+
+    if (payload.action === "network") {
+      await rebuildPaperNetwork(database, workspaceId, space, memory, payload.force === true);
+      return Response.json(await readMap(database, space.id, { networkRefreshed: true }));
+    }
 
     if (payload.action === "activity") {
       const weight = payload.activityKind === "paper_opened" ? 2 : 1;
