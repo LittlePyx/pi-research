@@ -186,3 +186,24 @@ test("keeps a durable, view-aware paper inbox with reversible decisions", async 
   assert.match(css, /\.v2-library-overview/);
   assert.match(css, /\.v2-library-paper-actions/);
 });
+
+test("uses the official Pi Research and P&I Lab logos across product surfaces", async () => {
+  const [client, sharePage, layout, css, productMark, teamMark] = await Promise.all([
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/share/[token]/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/pi-research-mark.png", import.meta.url)),
+    readFile(new URL("../public/pi-lab-logo.png", import.meta.url)),
+  ]);
+
+  assert.ok(productMark.length > 10_000);
+  assert.ok(teamMark.length > 100_000);
+  assert.match(client, /src="\/pi-research-mark\.png"/);
+  assert.match(client, /src="\/pi-lab-logo\.png"/);
+  assert.match(client, /v2-team-credit/);
+  assert.match(sharePage, /share-product-mark/);
+  assert.match(sharePage, /share-team-mark/);
+  assert.match(layout, /icon: "\/pi-research-mark\.png"/);
+  assert.match(css, /Pi Research V8 — official product and P&I Lab branding/);
+});

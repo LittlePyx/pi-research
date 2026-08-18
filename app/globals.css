@@ -2129,3 +2129,61 @@ main { min-width: 0; }
   .v2-library-paper h2 { font-size: 19px; }
   .v2-library-paper-main footer b { width: 100%; margin-left: 0; }
 }
+
+/* Pi Research V8 — official product and P&I Lab branding */
+.v2-logo > span.v2-product-mark {
+  width: 41px;
+  height: 35px;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+.v2-product-mark img { width: 100%; height: 100%; object-fit: contain; }
+.v2-team-credit {
+  min-height: 56px;
+  margin: 0 4px 10px;
+  padding: 9px 11px;
+  border: 1px solid #d9dbd5;
+  border-radius: 7px;
+  background: rgba(255,255,255,.46);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.v2-team-credit small { color: #8a9189; font-size: 9px !important; font-weight: 800; letter-spacing: .1em; line-height: 1.25; }
+.v2-team-credit img { width: 112px; height: auto; object-fit: contain; }
+
+.share-brand > span.share-product-mark {
+  width: 42px;
+  height: 36px;
+  border: 0;
+  border-radius: 0;
+}
+.share-product-mark img { width: 100%; height: 100%; object-fit: contain; }
+.share-page-footer > span.share-footer-mark {
+  width: 32px;
+  height: 28px;
+  border: 0;
+  border-radius: 0;
+}
+.share-footer-mark img { width: 100%; height: 100%; object-fit: contain; }
+.share-page-footer > span.share-team-mark {
+  width: auto;
+  height: 32px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.share-team-mark small { color: #919b93; font-size: 8px; font-weight: 850; letter-spacing: .1em; }
+.share-team-mark img { width: 88px; height: auto; object-fit: contain; }
+.share-page-footer > .share-team-mark + a { margin-left: 8px; }
+
+@media (max-width: 620px) {
+  .v2-team-credit img { width: 105px; }
+  .share-page-footer > span.share-team-mark { width: auto; margin: 5px 0 0 41px; }
+  .share-page-footer > .share-team-mark + a { margin-left: 41px; }
+}

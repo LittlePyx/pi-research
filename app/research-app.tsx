@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 
 type Locale = "zh" | "en";
@@ -1474,7 +1475,7 @@ export default function ResearchApp({ user }: { user: User }) {
   return (
     <div className="v2-app">
       <aside className={"v2-sidebar " + (mobileNav ? "open" : "")}>
-        <div className="v2-logo"><span>π</span><div><strong>Pi Research</strong><small>RESEARCH AGENT</small></div><button type="button" aria-label={t.close} onClick={() => setMobileNav(false)}>×</button></div>
+        <div className="v2-logo"><span className="v2-product-mark"><Image src="/pi-research-mark.png" width={38} height={32} alt="Pi Research logo" priority /></span><div><strong>Pi Research</strong><small>RESEARCH AGENT</small></div><button type="button" aria-label={t.close} onClick={() => setMobileNav(false)}>×</button></div>
         <button className="v2-space-switch" type="button" onClick={() => setSpaceDialog(true)}>
           <span className={"v2-space-avatar " + activeSpace.accent}>{initials(activeSpace.name)}</span>
           <span><small>{t.currentSpace}</small><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><em>{activeSpace.memberName}</em></span>
@@ -1499,6 +1500,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         <div className="v2-sidebar-bottom">
           <div className={"v2-openai-state " + (modelConfigured ? "live" : "pending")}><i /><span><strong>{modelConfigured ? t.connected : t.setupRequired}</strong><small>{modelConfigured ? modelDisplayName(connectedModel) : "Safe preview mode"}</small></span></div>
+          <div className="v2-team-credit"><small>RESEARCH TEAM</small><Image src="/pi-lab-logo.png" width={118} height={37} alt="P&amp;I Lab" /></div>
           <button className="v2-account" type="button" onClick={() => navigate("memory")}><span>◎</span><span><strong>Pi Workspace</strong><small>{t.workspaceLabel}</small></span><b>•••</b></button>
         </div>
       </aside>

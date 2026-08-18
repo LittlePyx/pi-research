@@ -17,6 +17,11 @@ export const metadata: Metadata = {
   title: "Pi Research — Your AI Research Agent",
   description:
     "A quiet, context-aware research agent that tracks important work and builds personalized learning paths.",
+  icons: {
+    icon: "/pi-research-mark.png",
+    shortcut: "/pi-research-mark.png",
+    apple: "/pi-research-mark.png",
+  },
   openGraph: {
     title: "Pi Research — Your AI Research Agent",
     description:

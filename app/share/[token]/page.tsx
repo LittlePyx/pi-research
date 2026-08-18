@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getShareSnapshot, type SharePaper } from "../../../db/share-snapshots";
@@ -57,7 +58,7 @@ export default async function SharePage({ params }: SharePageProps) {
     <main className="share-page">
       <div className="share-shell">
         <header className="share-header">
-          <Link className="share-brand" href="/"><span>π</span><span><strong>Pi Research</strong><small>RESEARCH SNAPSHOT</small></span></Link>
+          <Link className="share-brand" href="/"><span className="share-product-mark"><Image src="/pi-research-mark.png" width={40} height={34} alt="Pi Research logo" /></span><span><strong>Pi Research</strong><small>RESEARCH SNAPSHOT</small></span></Link>
           <ShareActions title={snapshot.title} locale={locale} />
         </header>
 
@@ -87,7 +88,7 @@ export default async function SharePage({ params }: SharePageProps) {
           ))}
         </div>
 
-        <footer className="share-page-footer"><span>π</span><p>{locale === "zh" ? "由 Pi Research 生成的研究推荐快照" : "A research recommendation snapshot by Pi Research"}</p><Link href="/">{locale === "zh" ? "打开 Pi Research" : "Open Pi Research"} →</Link></footer>
+        <footer className="share-page-footer"><span className="share-footer-mark"><Image src="/pi-research-mark.png" width={30} height={25} alt="" /></span><p>{locale === "zh" ? "由 Pi Research 生成的研究推荐快照" : "A research recommendation snapshot by Pi Research"}</p><span className="share-team-mark"><small>BY</small><Image src="/pi-lab-logo.png" width={94} height={30} alt="P&amp;I Lab" /></span><Link href="/">{locale === "zh" ? "打开 Pi Research" : "Open Pi Research"} →</Link></footer>
       </div>
     </main>
   );
