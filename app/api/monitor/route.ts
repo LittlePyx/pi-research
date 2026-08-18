@@ -18,13 +18,46 @@ type CrossrefItem = {
   type?: string;
 };
 type CrossrefResponse = { message?: { items?: CrossrefItem[] } };
+type SemanticScholarPaper = {
+  paperId?: string;
+  externalIds?: { DOI?: string; ArXiv?: string } | null;
+  title?: string;
+  abstract?: string | null;
+  authors?: Array<{ name?: string }>;
+  venue?: string | null;
+  url?: string;
+  publicationDate?: string | null;
+  year?: number | null;
+  citationCount?: number;
+};
+type SemanticScholarResponse = { data?: SemanticScholarPaper[] };
+type OpenAlexWork = {
+  id?: string;
+  doi?: string | null;
+  title?: string;
+  display_name?: string;
+  relevance_score?: number;
+  publication_date?: string | null;
+  cited_by_count?: number;
+  authorships?: Array<{ author?: { display_name?: string } }>;
+  primary_location?: { landing_page_url?: string | null; source?: { display_name?: string } | null } | null;
+  abstract_inverted_index?: Record<string, number[]> | null;
+};
+type OpenAlexResponse = { results?: OpenAlexWork[] };
 type DeepSeekResponse = {
   choices?: Array<{ message?: { content?: string | null } }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 };
 
-type SpaceRow = { id: string; name: string; description: string; memoryContext?: string };
+type SpaceRow = {
+  id: string;
+  name: string;
+  description: string;
+  memoryContext?: string;
+  positiveExamples?: string;
+  negativeExamples?: string;
+};
 type PreferenceRow = { profile_key: string; priority_venues: string; user_modified: number };
 type RunRow = {
   status: string;
@@ -81,8 +114,18 @@ type Candidate = {
   relevanceScore: number;
   qualityScore: number;
   priorityVenue: boolean;
+  source: "crossref" | "semantic_scholar" | "openalex";
+  discoveryChannel: "topic" | "journal" | "semantic";
 };
-type DiscoveryQuery = { key: string; query: string; sort: "relevance" | "is-referenced-by-count" | "published"; rotating: boolean };
+type DiscoveryQuery = {
+  key: string;
+  query: string;
+  sort: "relevance" | "is-referenced-by-count" | "published";
+  rotating: boolean;
+  channel: "topic" | "journal";
+  venue?: string;
+  issn?: string;
+};
 type PaperReview = {
   canonicalId: string;
   isPaper: boolean;
@@ -103,6 +146,12 @@ type MapTrackContext = { id: string; title_zh: string; title_en: string; summary
 
 const CADENCE_MS = 24 * 60 * 60 * 1000;
 const MANUAL_COOLDOWN_MS = 60 * 60 * 1000;
+const ERROR_RETRY_MS = 15 * 60 * 1000;
+const STALE_RUN_MS = 20 * 60 * 1000;
+const DISCOVERY_OFFSET_LIMIT = 3000;
+const REVIEW_BATCH_SIZE = 14;
+const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
+const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
 const HORIZONS = [
   { key: "days" as const, daysFrom: 14, daysUntil: 0, sort: "relevance" },
   { key: "months" as const, daysFrom: 180, daysUntil: 15, sort: "relevance" },
@@ -120,6 +169,31 @@ const GENERIC_TERMS = new Set([
 ]);
 const NON_PAPER_TITLES = /^(introduction|editorial|preface|foreword|contents|index)$/i;
 const NON_PAPER_PHRASES = /(publication information|information for authors|instructions for authors|author information|table of contents|editorial board|front matter|back matter|issue information|journal masthead)/i;
+const PRIORITY_JOURNAL_ISSNS = new Map<string, string>([
+  ["ieee transactions on information theory", "0018-9448"],
+  ["journal of machine learning research", "1532-4435"],
+  ["communications on pure and applied mathematics", "0010-3640"],
+  ["archive for rational mechanics and analysis", "0003-9527"],
+  ["journal of functional analysis", "0022-1236"],
+  ["siam journal on mathematical analysis", "0036-1410"],
+  ["calculus of variations and partial differential equations", "0944-2669"],
+  ["annals of probability", "0091-1798"],
+  ["inventiones mathematicae", "0020-9910"],
+  ["annals of statistics", "0090-5364"],
+  ["journal of the american statistical association", "0162-1459"],
+  ["biometrika", "0006-3444"],
+  ["journal of the royal statistical society series b", "1369-7412"],
+  ["bernoulli", "1350-7265"],
+  ["journal of the acm", "0004-5411"],
+  ["siam journal on computing", "0097-5397"],
+  ["transactions of the association for computational linguistics", "2307-387X"],
+  ["physical review letters", "0031-9007"],
+  ["nature physics", "1745-2473"],
+  ["physical review x", "2160-3308"],
+  ["reviews of modern physics", "0034-6861"],
+  ["journal of high energy physics", "1029-8479"],
+  ["nature communications", "2041-1723"],
+]);
 
 function isoDate(date: Date) {
   return date.toISOString().slice(0, 10);
@@ -243,6 +317,58 @@ async function normalizeItem(item: CrossrefItem, horizon: Horizon): Promise<Omit
     horizon,
     citationCount: Math.max(0, Math.round(item["is-referenced-by-count"] || 0)),
     relevanceScore: Math.max(0, Math.round(item.score || 0)),
+    source: "crossref",
+    discoveryChannel: "topic",
+  };
+}
+
+async function normalizeSemanticScholarItem(item: SemanticScholarPaper, horizon: Horizon): Promise<Omit<Candidate, "qualityScore" | "priorityVenue"> | null> {
+  const title = cleanText(item.title || "");
+  if (!title || !isResearchPaper(title)) return null;
+  const doi = item.externalIds?.DOI?.trim().toLocaleLowerCase() || null;
+  const publishedAt = item.publicationDate || (item.year ? `${item.year}-01-01` : null);
+  return {
+    canonicalId: doi ? "doi:" + doi : await titleFingerprint(title),
+    doi,
+    title,
+    authors: (item.authors || []).slice(0, 8).map((author) => cleanText(author.name || "")).filter(Boolean).join(", "),
+    venue: cleanText(item.venue || ""),
+    url: item.url || (doi ? "https://doi.org/" + doi : item.externalIds?.ArXiv ? "https://arxiv.org/abs/" + item.externalIds.ArXiv : ""),
+    publishedAt,
+    abstractText: cleanText(item.abstract || "").slice(0, 2200),
+    horizon,
+    citationCount: Math.max(0, Math.round(item.citationCount || 0)),
+    relevanceScore: 0,
+    source: "semantic_scholar",
+    discoveryChannel: "semantic",
+  };
+}
+
+function openAlexAbstract(index: Record<string, number[]> | null | undefined) {
+  if (!index) return "";
+  const words: Array<[number, string]> = [];
+  for (const [word, positions] of Object.entries(index)) for (const position of positions) words.push([position, word]);
+  return cleanText(words.sort((left, right) => left[0] - right[0]).map((entry) => entry[1]).join(" ")).slice(0, 2200);
+}
+
+async function normalizeOpenAlexItem(item: OpenAlexWork, horizon: Horizon): Promise<Omit<Candidate, "qualityScore" | "priorityVenue"> | null> {
+  const title = cleanText(item.display_name || item.title || "");
+  if (!title || !isResearchPaper(title)) return null;
+  const doi = item.doi?.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "").trim().toLocaleLowerCase() || null;
+  return {
+    canonicalId: doi ? "doi:" + doi : await titleFingerprint(title),
+    doi,
+    title,
+    authors: (item.authorships || []).slice(0, 8).map((authorship) => cleanText(authorship.author?.display_name || "")).filter(Boolean).join(", "),
+    venue: cleanText(item.primary_location?.source?.display_name || ""),
+    url: item.primary_location?.landing_page_url || item.doi || item.id || "",
+    publishedAt: item.publication_date || null,
+    abstractText: openAlexAbstract(item.abstract_inverted_index),
+    horizon,
+    citationCount: Math.max(0, Math.round(item.cited_by_count || 0)),
+    relevanceScore: Math.max(0, Math.round(item.relevance_score || 0)),
+    source: "openalex",
+    discoveryChannel: "semantic",
   };
 }
 
@@ -260,48 +386,65 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
   const profile = getDomainProfile(profileKey);
   const description = cleanText(`${space.name} ${space.description}`).slice(0, 320);
   const profileTerms = profile.keywords.filter(asciiOnly);
-  const memoryTerms = (space.memoryContext || "").split(";").map(cleanText).filter((term) => term.length >= 4 && asciiOnly(term));
-  const cluster = round % 4;
-  const profileWindow = rotatedSlice(profileTerms, round, 6);
-  const memoryWindow = rotatedSlice(memoryTerms, round, 7);
+  const memoryTerms = `${space.memoryContext || ""}; ${space.positiveExamples || ""}`.split(";").map(cleanText).filter((term) => term.length >= 4 && asciiOnly(term));
+  const profileWindow = rotatedSlice(profileTerms, round, 3);
+  const memoryWindow = rotatedSlice(memoryTerms, round, 3);
   const venueWindow = rotatedSlice(priorityVenues.filter(asciiOnly), round, 2);
   const queries: DiscoveryQuery[] = [
-    { key: "latest-anchor", query: `${description} ${profileTerms.slice(0, 3).join(" ")}`, sort: horizon.key === "days" ? "published" : horizon.sort, rotating: false },
-    { key: `profile-cluster-${cluster}`, query: `${space.name} ${profileWindow.join(" ")}`, sort: "relevance", rotating: true },
+    { key: "topic-anchor", query: description, sort: horizon.key === "days" ? "published" : horizon.sort, rotating: false, channel: "topic" },
+    { key: "profile-cluster", query: `${space.description} ${profileWindow.join(" ")}`, sort: "relevance", rotating: true, channel: "topic" },
   ];
   if (memoryWindow.length) {
-    queries.push({ key: `memory-cluster-${cluster}`, query: `${space.name} ${memoryWindow.join(" ")}`, sort: horizon.key === "years" ? "is-referenced-by-count" : "relevance", rotating: true });
+    queries.push({ key: "memory-cluster", query: `${space.name} ${memoryWindow.join(" ")}`, sort: horizon.key === "years" ? "is-referenced-by-count" : "relevance", rotating: true, channel: "topic" });
   }
-  if (venueWindow.length) {
-    queries.push({ key: `venue-cluster-${cluster}`, query: `${profileWindow.slice(0, 3).join(" ")} ${venueWindow.join(" ")}`, sort: horizon.key === "days" ? "published" : "relevance", rotating: true });
+  for (const venue of venueWindow) {
+    queries.push({
+      key: "priority-journal",
+      query: `${space.description} ${profileWindow.slice(0, 2).join(" ")}`,
+      venue,
+      sort: horizon.key === "years" ? "is-referenced-by-count" : horizon.key === "days" ? "published" : "relevance",
+      rotating: horizon.key !== "days",
+      channel: "journal",
+      issn: PRIORITY_JOURNAL_ISSNS.get(normalizeVenue(venue)),
+    });
   }
   if (horizon.key === "years") {
     queries.push({
-      key: `durable-cluster-${cluster}`,
+      key: "durable-cluster",
       query: `${space.name} ${memoryWindow.join(" ") || profileWindow.join(" ")}`,
       sort: "is-referenced-by-count",
       rotating: true,
+      channel: "topic",
     });
   }
   return queries.map((item) => ({ ...item, query: cleanText(item.query).slice(0, 480) })).filter((item) => item.query.length >= 4);
 }
 
+async function discoveryQueryKey(query: DiscoveryQuery) {
+  const identity = [query.key, query.channel, query.query.toLocaleLowerCase(), query.venue?.toLocaleLowerCase() || "", query.issn || "", query.sort].join("|");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
+  const suffix = Array.from(new Uint8Array(digest)).slice(0, 10).map((value) => value.toString(16).padStart(2, "0")).join("");
+  return `${query.key}:${suffix}`;
+}
+
 async function discoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery) {
   if (!query.rotating) return 0;
+  const queryKey = await discoveryQueryKey(query);
   const row = await database.prepare(
     "SELECT next_offset FROM monitor_discovery_pages WHERE space_id = ? AND horizon = ? AND query_key = ? LIMIT 1",
-  ).bind(spaceId, horizon, query.key).first<{ next_offset: number }>();
+  ).bind(spaceId, horizon, queryKey).first<{ next_offset: number }>();
   return Math.max(0, row?.next_offset || 0);
 }
 
 async function advanceDiscoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery, offset: number, rows: number) {
   if (!query.rotating) return;
-  const nextOffset = offset + rows >= 600 ? 0 : offset + rows;
+  const queryKey = await discoveryQueryKey(query);
+  const nextOffset = offset + rows >= DISCOVERY_OFFSET_LIMIT ? 0 : offset + rows;
   await database.prepare(
     `INSERT INTO monitor_discovery_pages (id, space_id, horizon, query_key, next_offset)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(space_id, horizon, query_key) DO UPDATE SET next_offset = excluded.next_offset, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(crypto.randomUUID(), spaceId, horizon, query.key, nextOffset).run();
+  ).bind(crypto.randomUUID(), spaceId, horizon, queryKey, nextOffset).run();
 }
 
 async function fetchHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, priorityVenues: string[], profileKey: string, round: number) {
@@ -313,35 +456,123 @@ async function fetchHorizon(database: D1Database, space: SpaceRow, horizon: type
   };
   const fetched = await Promise.all(plans.map(async (plan) => {
     const offset = await discoveryOffset(database, space.id, horizon.key, plan);
-  const endpoint = new URL("https://api.crossref.org/works");
+    const endpoint = new URL(plan.channel === "journal" && plan.issn
+      ? `https://api.crossref.org/journals/${encodeURIComponent(plan.issn)}/works`
+      : "https://api.crossref.org/works");
+    if (plan.channel === "journal" && plan.venue && !plan.issn) endpoint.searchParams.set("query.container-title", plan.venue);
     endpoint.searchParams.set("query.bibliographic", plan.query);
-  endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
+    endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
     endpoint.searchParams.set("rows", String(rows));
     endpoint.searchParams.set("offset", String(offset));
     endpoint.searchParams.set("sort", plan.sort);
-  endpoint.searchParams.set("order", "desc");
-  endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
-  let response = await fetch(endpoint, requestOptions);
-  if (response.status === 429) {
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    response = await fetch(endpoint, requestOptions);
-  }
-  if (!response.ok) throw new Error(`Crossref returned ${response.status}`);
-  const data = await response.json() as CrossrefResponse;
+    endpoint.searchParams.set("order", "desc");
+    endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
+    let response = await fetch(endpoint, requestOptions);
+    if (response.status === 429) {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      response = await fetch(endpoint, requestOptions);
+    }
+    if (!response.ok) throw new Error(`Crossref returned ${response.status}`);
+    const data = await response.json() as CrossrefResponse;
     await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, rows);
-    return data.message?.items || [];
+    return (data.message?.items || []).map((item) => ({ item, channel: plan.channel }));
   }));
-  const normalized = await Promise.all(fetched.flat().map((item) => normalizeItem(item, horizon.key)));
+  const normalizedCrossref = await Promise.all(fetched.flat().map(async ({ item, channel }) => {
+    const normalized = await normalizeItem(item, horizon.key);
+    return normalized ? { ...normalized, discoveryChannel: channel } : null;
+  }));
+  const [semantic, openAlex] = await Promise.all([
+    fetchSemanticScholarHorizon(database, space, horizon, now),
+    fetchOpenAlexHorizon(database, space, horizon, now),
+  ]);
+  const normalized = [...normalizedCrossref, ...semantic, ...openAlex];
   const unique = new Map<string, Candidate>();
   for (const item of normalized
     .filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item))
-    .map((item) => ({ item, signals: relevanceSignals(item.title, space, profileKey) }))
+    .map((item) => ({ item, signals: relevanceSignals(`${item.title} ${item.abstractText} ${item.venue}`, space, profileKey) }))
     .map(({ item, signals }) => scoreCandidate({ ...item, relevanceScore: item.relevanceScore + signals.score * 20 }, priorityVenues, now))) {
     const previous = unique.get(item.canonicalId);
-    if (!previous || item.qualityScore > previous.qualityScore) unique.set(item.canonicalId, item);
+    if (!previous) {
+      unique.set(item.canonicalId, item);
+      continue;
+    }
+    const preferred = item.qualityScore > previous.qualityScore ? item : previous;
+    unique.set(item.canonicalId, {
+      ...preferred,
+      abstractText: item.abstractText.length > previous.abstractText.length ? item.abstractText : previous.abstractText,
+      citationCount: Math.max(item.citationCount, previous.citationCount),
+      relevanceScore: Math.max(item.relevanceScore, previous.relevanceScore),
+      source: item.source !== "crossref" && item.abstractText ? item.source : previous.source,
+    });
   }
-  const limit = horizon.key === "years" ? 28 : horizon.key === "months" ? 16 : 12;
-  return Array.from(unique.values()).sort((left, right) => right.qualityScore - left.qualityScore).slice(0, limit);
+  return Array.from(unique.values()).sort((left, right) => right.qualityScore - left.qualityScore).slice(0, HORIZON_POOL_LIMITS[horizon.key]);
+}
+
+async function fetchSemanticScholarHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date) {
+  const profileQuery = cleanText(`${space.description} ${space.positiveExamples || ""}`).slice(0, 260);
+  if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
+  const plan: DiscoveryQuery = { key: "semantic-topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "topic" };
+  const limit = 40;
+  const offset = await discoveryOffset(database, space.id, horizon.key, plan);
+  const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
+  endpoint.searchParams.set("query", profileQuery);
+  endpoint.searchParams.set("offset", String(offset));
+  endpoint.searchParams.set("limit", String(limit));
+  endpoint.searchParams.set("publicationDateOrYear", `${isoDate(dateBefore(now, horizon.daysFrom))}:${isoDate(dateBefore(now, horizon.daysUntil))}`);
+  endpoint.searchParams.set("fields", "paperId,externalIds,title,abstract,authors,venue,url,publicationDate,year,citationCount");
+  const options: RequestInit = {
+    headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+    signal: AbortSignal.timeout(20_000),
+  };
+  try {
+    let response = await fetch(endpoint, options);
+    if (response.status === 429) {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      response = await fetch(endpoint, options);
+    }
+    if (!response.ok) return [];
+    const data = await response.json() as SemanticScholarResponse;
+    await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
+    const normalized = await Promise.all((data.data || []).map((item) => normalizeSemanticScholarItem(item, horizon.key)));
+    return normalized.filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item));
+  } catch {
+    // Crossref and journal discovery remain available when this enrichment source is temporarily unavailable.
+    return [];
+  }
+}
+
+async function fetchOpenAlexHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date) {
+  const profileQuery = cleanText(`${space.description} ${space.positiveExamples || ""}`).slice(0, 260);
+  if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
+  const plan: DiscoveryQuery = { key: "openalex-topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "topic" };
+  const limit = 40;
+  const offset = await discoveryOffset(database, space.id, horizon.key, plan);
+  const endpoint = new URL("https://api.openalex.org/works");
+  endpoint.searchParams.set("search", profileQuery);
+  endpoint.searchParams.set("filter", `from_publication_date:${isoDate(dateBefore(now, horizon.daysFrom))},to_publication_date:${isoDate(dateBefore(now, horizon.daysUntil))},is_paratext:false`);
+  endpoint.searchParams.set("page", String(Math.floor(offset / limit) + 1));
+  endpoint.searchParams.set("per-page", String(limit));
+  endpoint.searchParams.set("sort", horizon.key === "days" ? "publication_date:desc" : horizon.key === "years" ? "cited_by_count:desc" : "relevance_score:desc");
+  endpoint.searchParams.set("select", "id,doi,title,display_name,relevance_score,publication_date,cited_by_count,authorships,primary_location,abstract_inverted_index");
+  endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
+  const options: RequestInit = {
+    headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+    signal: AbortSignal.timeout(20_000),
+  };
+  try {
+    let response = await fetch(endpoint, options);
+    if (response.status === 429) {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      response = await fetch(endpoint, options);
+    }
+    if (!response.ok) return [];
+    const data = await response.json() as OpenAlexResponse;
+    await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
+    const normalized = await Promise.all((data.results || []).map((item) => normalizeOpenAlexItem(item, horizon.key)));
+    return normalized.filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item));
+  } catch {
+    return [];
+  }
 }
 
 async function ownedSpace(request: Request, spaceId: string) {
@@ -397,13 +628,19 @@ function boundedScore(value: unknown) {
 }
 
 async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceRow): Promise<SpaceRow> {
-  const [rows, tracks] = await Promise.all([
+  const [rows, tracks, feedbackRows] = await Promise.all([
     database.prepare(
       "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 6",
     ).bind(space.id).all<{ analysis_json: string }>(),
     database.prepare(
       "SELECT title_en, summary_en, search_queries FROM research_tracks WHERE space_id = ? ORDER BY interaction_score DESC, depth_score DESC, position LIMIT 8",
     ).bind(space.id).all<{ title_en: string; summary_en: string; search_queries: string }>(),
+    database.prepare(
+      `SELECT p.title, p.venue, f.feedback, f.saved FROM paper_feedback f
+       JOIN monitored_papers p ON p.id = f.paper_id AND p.space_id = f.space_id
+       WHERE f.space_id = ? AND (f.saved = 1 OR f.feedback IN ('relevant', 'not_relevant'))
+       ORDER BY f.updated_at DESC LIMIT 30`,
+    ).bind(space.id).all<{ title: string; venue: string; feedback: string | null; saved: number }>(),
   ]);
   const context: string[] = [];
   for (const row of rows.results) {
@@ -429,7 +666,30 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
   for (const track of tracks.results) {
     context.push(track.title_en, cleanText(track.summary_en).slice(0, 240), ...parseVenues(track.search_queries).slice(0, 4));
   }
-  return { ...space, memoryContext: Array.from(new Set(context.map((item) => cleanText(item)).filter(Boolean))).join("; ").slice(0, 2600) };
+  const positive = feedbackRows.results
+    .filter((row) => row.saved || row.feedback === "relevant")
+    .map((row) => cleanText(`${row.title}${row.venue ? ` — ${row.venue}` : ""}`));
+  const negative = feedbackRows.results
+    .filter((row) => row.feedback === "not_relevant")
+    .map((row) => cleanText(`${row.title}${row.venue ? ` — ${row.venue}` : ""}`));
+  return {
+    ...space,
+    memoryContext: Array.from(new Set(context.map((item) => cleanText(item)).filter(Boolean))).join("; ").slice(0, 2600),
+    positiveExamples: Array.from(new Set(positive)).slice(0, 12).join("; ").slice(0, 1800),
+    negativeExamples: Array.from(new Set(negative)).slice(0, 12).join("; ").slice(0, 1800),
+  };
+}
+
+function parseReviewPayload(content: string) {
+  const cleaned = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  try {
+    return JSON.parse(cleaned) as { reviews?: Array<Partial<PaperReview>> };
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("DeepSeek Pro returned malformed JSON");
+    return JSON.parse(cleaned.slice(start, end + 1)) as { reviews?: Array<Partial<PaperReview>> };
+  }
 }
 
 async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[]) {
@@ -438,126 +698,207 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
   if (!runtime.DEEPSEEK_API_KEY) throw new Error("DeepSeek Pro is required before papers can be recommended");
   const usageDate = new Date().toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.slice("anonymous:".length);
+  const expectedCalls = Math.ceil(candidates.length / REVIEW_BATCH_SIZE);
   const [globalCount, workspaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate),
     usageCount(database, workspaceScope, usageDate),
   ]);
-  if (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+  if (globalCount + expectedCalls > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount + expectedCalls > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
     throw new Error("DeepSeek Pro review budget reached; unreviewed papers were not published");
   }
   const mapTracks = await database.prepare(
     "SELECT id, title_zh, title_en, summary_en, search_queries FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 10",
   ).bind(space.id).all<MapTrackContext>();
   const validTrackIds = new Set(mapTracks.results.map((track) => track.id));
+  const completed: PaperReview[] = [];
 
-  const prompt = [
-    "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
-    "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, summaryZh, summaryEn, whyReadZh, whyReadEn, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
-    "Act as a strict academic editor, not a search-result summarizer. A real paper can still be irrelevant and must then be rejected.",
-    "Set isPaper=false for mastheads, publication information, author instructions, contents, editorials without research content, corrections, calls for papers, or other non-paper records.",
-    `Set recommended=true only when relevanceScore >= ${RECOMMENDATION_THRESHOLD}, the work directly advances the research-space scope, and it satisfies its horizon standard. Recency, citations, or a priority venue alone never justify recommendation.`,
-    "Horizon standards: days = genuinely relevant new development; months = relevant, new, and high quality; years = highly relevant, durable, useful, and methodologically or strategically instructive.",
-    "Use only supplied title, abstract, authors, venue, date, citation, and priority-venue evidence. Never invent a theorem, method, experiment, result, section, or conclusion.",
-    "For recommended papers, summaryZh must be a concrete 100-180 Chinese-character introduction explaining the research question, approach, and evidence-backed contribution; summaryEn must convey the same substance in 55-95 words.",
-    "For recommended papers, whyReadZh must be a specific 80-150 Chinese-character explanation of how the paper helps this exact research space and which idea, method, comparison, or decision the reader should extract; whyReadEn must convey the same substance in 45-80 words.",
-    "Do not write generic phrases such as 'it is recent', 'it has a high score', or 'it comes from a priority venue' as the main reason to read.",
-    "For rejected records, set all four summary/whyRead fields to empty strings and give a short screeningReason. Never put rejection language inside whyRead.",
-    "When research-map directions are supplied, assign a recommended paper to the single best-fitting trackId only when the fit is direct. Otherwise use an empty trackId.",
-    "For a track assignment, use mapRole=frontier for current active work or mapRole=milestone for a durable development, and write a concrete bilingual map rationale explaining how it extends that direction. For no assignment, keep both map rationales empty.",
-    `Research space: ${space.name} — ${space.description}`,
-    `User-confirmed imported research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
-    `Priority venues: ${priorityVenues.join("; ")}`,
-    `Existing research-map directions: ${JSON.stringify(mapTracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryEn: track.summary_en, searchQueries: parseVenues(track.search_queries) })))}`,
-    "JSON records to review:",
-    JSON.stringify(candidates.map((paper) => ({
-      canonicalId: paper.canonicalId,
-      title: paper.title,
-      authors: paper.authors,
-      venue: paper.venue,
-      publishedAt: paper.publishedAt,
-      horizon: paper.horizon,
-      citations: paper.citationCount,
-      priorityVenue: paper.priorityVenue,
-      abstract: paper.abstractText.slice(0, 1400),
-    }))),
-  ].join("\n");
+  for (let start = 0; start < candidates.length; start += REVIEW_BATCH_SIZE) {
+    const batch = candidates.slice(start, start + REVIEW_BATCH_SIZE);
+    const prompt = [
+      "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
+      "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, summaryZh, summaryEn, whyReadZh, whyReadEn, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
+      "Act as a strict academic editor, not a search-result summarizer. A real paper can still be irrelevant and must then be rejected.",
+      "Set isPaper=false for mastheads, publication information, author instructions, contents, editorials without research content, corrections, calls for papers, or other non-paper records.",
+      `Set recommended=true only when relevanceScore >= ${RECOMMENDATION_THRESHOLD}, the work directly advances the research-space scope, and it satisfies its horizon standard. Recency, citations, or a priority venue alone never justify recommendation.`,
+      "Horizon standards: days = genuinely relevant new development; months = relevant, new, and high quality; years = highly relevant, durable, useful, and methodologically or strategically instructive.",
+      "Use only supplied title, abstract, authors, venue, date, citation, and priority-venue evidence. Never invent a theorem, method, experiment, result, section, or conclusion.",
+      "For recommended papers, summaryZh must be a concrete 100-180 Chinese-character introduction explaining the research question, approach, and evidence-backed contribution; summaryEn must convey the same substance in 55-95 words.",
+      "For recommended papers, whyReadZh must be a specific 80-150 Chinese-character explanation of how the paper helps this exact research space and which idea, method, comparison, or decision the reader should extract; whyReadEn must convey the same substance in 45-80 words.",
+      "Do not write generic phrases such as 'it is recent', 'it has a high score', or 'it comes from a priority venue' as the main reason to read.",
+      "For rejected records, set all four summary/whyRead fields to empty strings and give a short screeningReason. Never put rejection language inside whyRead.",
+      "When research-map directions are supplied, assign a recommended paper to the single best-fitting trackId only when the fit is direct. Otherwise use an empty trackId.",
+      "For a track assignment, use mapRole=frontier for current active work or mapRole=milestone for a durable development, and write a concrete bilingual map rationale explaining how it extends that direction. For no assignment, keep both map rationales empty.",
+      `Research space: ${space.name} — ${space.description}`,
+      `User-confirmed imported research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
+      `Papers the user explicitly valued or saved: ${space.positiveExamples || "No positive paper feedback yet"}`,
+      `Papers the user explicitly marked not relevant: ${space.negativeExamples || "No negative paper feedback yet"}`,
+      "Treat positive examples as preference evidence, not as permission to recommend loosely related papers. Use negative examples to recognize and reject recurring topic drift.",
+      `Priority venues: ${priorityVenues.join("; ")}`,
+      `Existing research-map directions: ${JSON.stringify(mapTracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryEn: track.summary_en, searchQueries: parseVenues(track.search_queries) })))}`,
+      "JSON records to review:",
+      JSON.stringify(batch.map((paper) => ({
+        canonicalId: paper.canonicalId,
+        title: paper.title,
+        authors: paper.authors,
+        venue: paper.venue,
+        publishedAt: paper.publishedAt,
+        horizon: paper.horizon,
+        citations: paper.citationCount,
+        priorityVenue: paper.priorityVenue,
+        discoverySource: paper.source,
+        discoveryChannel: paper.discoveryChannel,
+        abstract: paper.abstractText.slice(0, 1400),
+      }))),
+    ].join("\n");
 
-  const response = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: MONITOR_MODEL,
-      messages: [
-        { role: "system", content: "You are Pi Research's evidence-disciplined paper screening and briefing editor. Produce strict JSON." },
-        { role: "user", content: prompt },
-      ],
-      thinking: { type: "enabled" },
-      reasoning_effort: "high",
-      response_format: { type: "json_object" },
-      // The review includes bilingual briefs for every accepted paper. DeepSeek's
-      // JSON-mode guidance recommends leaving enough output room so the object is
-      // not truncated after a long thinking trace.
-      max_tokens: 24000,
-      stream: false,
-    }),
-  });
-  const data = await response.json() as DeepSeekResponse;
-  if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro review failed");
-  const content = data.choices?.[0]?.message?.content || "";
-  if (!content.trim()) throw new Error("DeepSeek Pro returned an empty review");
-  const parsed = JSON.parse(content) as { reviews?: Array<Partial<PaperReview>> };
-  const byId = new Map((parsed.reviews || []).map((item) => [item.canonicalId, item]));
-  const reviews = candidates.map((candidate) => {
-    const item = byId.get(candidate.canonicalId);
-    if (!item) throw new Error("DeepSeek Pro did not review every candidate");
-    const relevanceScore = boundedScore(item.relevanceScore);
-    const qualityScore = boundedScore(item.qualityScore);
-    const summaryZh = cleanText(item.summaryZh || "").slice(0, 900);
-    const summaryEn = cleanText(item.summaryEn || "").slice(0, 1200);
-    const whyReadZh = cleanText(item.whyReadZh || "").slice(0, 800);
-    const whyReadEn = cleanText(item.whyReadEn || "").slice(0, 1000);
-    const hasBrief = Boolean(summaryZh && summaryEn && whyReadZh && whyReadEn);
-    const recommended = item.isPaper === true && item.recommended === true && relevanceScore >= RECOMMENDATION_THRESHOLD && qualityScore >= 65 && hasBrief;
-    const trackId = recommended && validTrackIds.has(cleanText(item.trackId || "")) ? cleanText(item.trackId || "") : "";
-    const mapRationaleZh = trackId ? cleanText(item.mapRationaleZh || "").slice(0, 700) : "";
-    const mapRationaleEn = trackId ? cleanText(item.mapRationaleEn || "").slice(0, 900) : "";
-    return {
-      canonicalId: candidate.canonicalId,
-      isPaper: item.isPaper === true,
-      recommended,
-      relevanceScore,
-      qualityScore,
-      summaryZh: recommended ? summaryZh : "",
-      summaryEn: recommended ? summaryEn : "",
-      whyReadZh: recommended ? whyReadZh : "",
-      whyReadEn: recommended ? whyReadEn : "",
-      screeningReason: cleanText(item.screeningReason || (recommended ? "Recommended by DeepSeek Pro" : "Rejected by DeepSeek Pro")).slice(0, 500),
-      trackId: mapRationaleZh && mapRationaleEn ? trackId : "",
-      mapRole: item.mapRole === "milestone" ? "milestone" : "frontier",
-      mapRationaleZh,
-      mapRationaleEn,
-    } satisfies PaperReview;
-  });
-  const inputTokens = data.usage?.prompt_tokens || 0;
-  const outputTokens = data.usage?.completion_tokens || 0;
-  await Promise.all([
-    recordUsage(database, "monitor:global", usageDate, inputTokens, outputTokens),
-    recordUsage(database, workspaceScope, usageDate, inputTokens, outputTokens),
-  ]);
-  return reviews;
+    let parsed: { reviews?: Array<Partial<PaperReview>> } | null = null;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2 && !parsed; attempt += 1) {
+      try {
+        const response = await fetch("https://api.deepseek.com/chat/completions", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: MONITOR_MODEL,
+            messages: [
+              { role: "system", content: "You are Pi Research's evidence-disciplined paper screening and briefing editor. Produce strict JSON." },
+              { role: "user", content: prompt },
+            ],
+            thinking: { type: "enabled" },
+            reasoning_effort: "high",
+            response_format: { type: "json_object" },
+            max_tokens: 24000,
+            stream: false,
+          }),
+          signal: AbortSignal.timeout(75_000),
+        });
+        const data = await response.json() as DeepSeekResponse;
+        if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro review failed");
+        await Promise.all([
+          recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+          recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+        ]);
+        const content = data.choices?.[0]?.message?.content || "";
+        if (!content.trim()) throw new Error("DeepSeek Pro returned an empty review");
+        parsed = parseReviewPayload(content);
+      } catch (error) {
+        lastError = error;
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+    }
+    if (!parsed) throw lastError instanceof Error ? lastError : new Error("DeepSeek Pro review failed twice");
+    const byId = new Map((parsed.reviews || []).map((item) => [item.canonicalId, item]));
+    for (const candidate of batch) {
+      const item = byId.get(candidate.canonicalId);
+      if (!item) throw new Error("DeepSeek Pro did not review every candidate");
+      const relevanceScore = boundedScore(item.relevanceScore);
+      const qualityScore = boundedScore(item.qualityScore);
+      const summaryZh = cleanText(item.summaryZh || "").slice(0, 900);
+      const summaryEn = cleanText(item.summaryEn || "").slice(0, 1200);
+      const whyReadZh = cleanText(item.whyReadZh || "").slice(0, 800);
+      const whyReadEn = cleanText(item.whyReadEn || "").slice(0, 1000);
+      const hasBrief = Boolean(summaryZh && summaryEn && whyReadZh && whyReadEn);
+      const recommended = item.isPaper === true && item.recommended === true && relevanceScore >= RECOMMENDATION_THRESHOLD && qualityScore >= 65 && hasBrief;
+      const trackId = recommended && validTrackIds.has(cleanText(item.trackId || "")) ? cleanText(item.trackId || "") : "";
+      const mapRationaleZh = trackId ? cleanText(item.mapRationaleZh || "").slice(0, 700) : "";
+      const mapRationaleEn = trackId ? cleanText(item.mapRationaleEn || "").slice(0, 900) : "";
+      completed.push({
+        canonicalId: candidate.canonicalId,
+        isPaper: item.isPaper === true,
+        recommended,
+        relevanceScore,
+        qualityScore,
+        summaryZh: recommended ? summaryZh : "",
+        summaryEn: recommended ? summaryEn : "",
+        whyReadZh: recommended ? whyReadZh : "",
+        whyReadEn: recommended ? whyReadEn : "",
+        screeningReason: cleanText(item.screeningReason || (recommended ? "Recommended by DeepSeek Pro" : "Rejected by DeepSeek Pro")).slice(0, 500),
+        trackId: mapRationaleZh && mapRationaleEn ? trackId : "",
+        mapRole: item.mapRole === "milestone" ? "milestone" : "frontier",
+        mapRationaleZh,
+        mapRationaleEn,
+      });
+    }
+  }
+  return completed;
 }
 
-async function candidatesNeedingReview(database: D1Database, spaceId: string, candidates: Candidate[]) {
-  if (!candidates.length) return [];
-  const placeholders = candidates.map(() => "?").join(", ");
-  const reviewed = await database.prepare(
-    `SELECT p.canonical_id FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
-     WHERE p.space_id = ? AND p.canonical_id IN (${placeholders}) AND i.analysis_model = ?
-     AND (i.analysis_source = 'deepseek' OR
-       (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) >= datetime('now', '-90 days')))`,
-  ).bind(spaceId, ...candidates.map((candidate) => candidate.canonicalId), MONITOR_MODEL).all<{ canonical_id: string }>();
-  const reviewedIds = new Set(reviewed.results.map((row) => row.canonical_id));
-  return candidates.filter((candidate) => !reviewedIds.has(candidate.canonicalId));
+async function persistCandidatePool(database: D1Database, spaceId: string, candidates: Candidate[]) {
+  const candidateByCanonical = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const paperIds = new Map<string, string>();
+  for (let start = 0; start < candidates.length; start += 70) {
+    const chunk = candidates.slice(start, start + 70);
+    await database.batch(chunk.map((candidate) => database.prepare(
+      `INSERT INTO monitored_papers
+       (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon, citation_count, relevance_score)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(space_id, canonical_id) DO UPDATE SET title = excluded.title, authors = excluded.authors,
+       venue = excluded.venue, url = excluded.url, published_at = excluded.published_at, source = excluded.source,
+       horizon = excluded.horizon, last_seen_at = CURRENT_TIMESTAMP,
+       citation_count = MAX(monitored_papers.citation_count, excluded.citation_count),
+       relevance_score = MAX(monitored_papers.relevance_score, excluded.relevance_score)`,
+    ).bind(crypto.randomUUID(), spaceId, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
+      candidate.url, candidate.publishedAt, candidate.source, candidate.horizon, candidate.citationCount, candidate.relevanceScore)));
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = await database.prepare(`SELECT id, canonical_id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`)
+      .bind(spaceId, ...chunk.map((candidate) => candidate.canonicalId)).all<{ id: string; canonical_id: string }>();
+    for (const row of rows.results) paperIds.set(row.canonical_id, row.id);
+  }
+  const metadataStatements = Array.from(paperIds.entries()).map(([canonicalId, paperId]) => {
+    const candidate = candidateByCanonical.get(canonicalId)!;
+    return database.prepare(
+      `INSERT INTO paper_insights (paper_id, space_id, abstract_text, quality_score, priority_venue, analysis_source)
+       VALUES (?, ?, ?, ?, ?, 'metadata')
+       ON CONFLICT(paper_id) DO UPDATE SET
+       abstract_text = CASE WHEN LENGTH(excluded.abstract_text) > LENGTH(paper_insights.abstract_text) THEN excluded.abstract_text ELSE paper_insights.abstract_text END,
+       quality_score = MAX(paper_insights.quality_score, excluded.quality_score),
+       priority_venue = MAX(paper_insights.priority_venue, excluded.priority_venue), updated_at = CURRENT_TIMESTAMP
+       WHERE paper_insights.analysis_source = 'metadata'`,
+    ).bind(paperId, spaceId, candidate.abstractText, candidate.qualityScore, candidate.priorityVenue ? 1 : 0);
+  });
+  for (let start = 0; start < metadataStatements.length; start += 70) {
+    await database.batch(metadataStatements.slice(start, start + 70));
+  }
+}
+
+async function pendingCandidateQueue(database: D1Database, spaceId: string) {
+  const rows = await database.prepare(
+    `SELECT p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
+     p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
+     FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
+     WHERE p.space_id = ? AND (i.analysis_model = '' OR
+       (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days')))
+     ORDER BY i.quality_score DESC, p.citation_count DESC, p.discovered_at DESC LIMIT 360`,
+  ).bind(spaceId).all<{
+    canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
+    published_at: string | null; source: string; horizon: Horizon; citation_count: number; relevance_score: number;
+    abstract_text: string; quality_score: number; priority_venue: number;
+  }>();
+  return rows.results.map((row) => ({
+    canonicalId: row.canonical_id,
+    doi: row.doi,
+    title: row.title,
+    authors: row.authors,
+    venue: row.venue,
+    url: row.url,
+    publishedAt: row.published_at,
+    abstractText: row.abstract_text,
+    horizon: row.horizon,
+    citationCount: row.citation_count,
+    relevanceScore: row.relevance_score,
+    qualityScore: row.quality_score,
+    priorityVenue: Boolean(row.priority_venue),
+    source: row.source === "semantic_scholar" ? "semantic_scholar" as const : row.source === "openalex" ? "openalex" as const : "crossref" as const,
+    discoveryChannel: row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
+  }));
+}
+
+function selectUnseenReviewBatch(candidates: Candidate[]) {
+  const selected: Candidate[] = [];
+  for (const horizon of ["days", "months", "years"] as Horizon[]) {
+    selected.push(...candidates.filter((candidate) => candidate.horizon === horizon).slice(0, HORIZON_REVIEW_LIMITS[horizon]));
+  }
+  return selected;
 }
 
 async function updateRunPhase(database: D1Database, spaceId: string, status: string, scannedCount: number, newCount = 0) {
@@ -661,7 +1002,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       knownCount: known?.count || 0,
       error: run?.error || null,
       cadenceHours: 24,
-      source: "Crossref",
+      source: "Crossref · OpenAlex · Semantic Scholar · priority journals",
       horizons: ["days", "months", "years"],
       preferences: preference,
       papers: selected.map((paper) => toPaper(paper, now)),
@@ -735,11 +1076,19 @@ export async function POST(request: Request) {
     const { database, space, user } = context;
     const preference = await ensurePreference(database, space);
     const enrichedSpace = await enrichSpaceWithImportedMemory(database, space);
-    const previous = await database.prepare("SELECT last_run_at, discovery_round FROM monitor_runs WHERE space_id = ? LIMIT 1")
-      .bind(space.id).first<{ last_run_at: string | null; discovery_round: number }>();
+    const previous = await database.prepare("SELECT status, last_run_at, next_run_at, updated_at, discovery_round FROM monitor_runs WHERE space_id = ? LIMIT 1")
+      .bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number }>();
     const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
     const now = new Date();
     const discoveryRound = Math.max(0, previous?.discovery_round || 0);
+    const runUpdatedAt = previous?.updated_at ? databaseTime(previous.updated_at) : 0;
+    if (previous && !["idle", "ready", "error"].includes(previous.status) && now.getTime() - runUpdatedAt < STALE_RUN_MS) {
+      return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }));
+    }
+    const retryTime = previous?.next_run_at ? Date.parse(previous.next_run_at) : 0;
+    if (!payload.force && previous?.status === "error" && retryTime > now.getTime()) {
+      return Response.json(await readState(database, space, { cached: true, retryScheduled: true }));
+    }
     const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
     if (previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
       return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
@@ -770,22 +1119,24 @@ export async function POST(request: Request) {
       }
       const candidateList = Array.from(candidates.values());
       const scannedCount = candidateList.length;
-      const pendingCandidates = await candidatesNeedingReview(database, space.id, candidateList);
+      await persistCandidatePool(database, space.id, candidateList);
+      const pendingQueue = await pendingCandidateQueue(database, space.id);
+      const pendingCandidates = selectUnseenReviewBatch(pendingQueue);
       await updateRunPhase(database, space.id, "reviewing", scannedCount);
       const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates);
       const reviewsById = new Map(reviews.map((review) => [review.canonicalId, review]));
 
       const newCount = reviews.filter((review) => review.recommended).length;
       await updateRunPhase(database, space.id, "saving", scannedCount, newCount);
-      for (const candidate of candidateList) {
+      for (const candidate of pendingCandidates) {
         const review = reviewsById.get(candidate.canonicalId);
         const generatedId = crypto.randomUUID();
         await database.prepare(
           `INSERT OR IGNORE INTO monitored_papers
            (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon, citation_count, relevance_score)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'crossref', ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(generatedId, space.id, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
-          candidate.url, candidate.publishedAt, candidate.horizon, candidate.citationCount, candidate.relevanceScore).run();
+          candidate.url, candidate.publishedAt, candidate.source, candidate.horizon, candidate.citationCount, candidate.relevanceScore).run();
         const paper = await database.prepare("SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id = ? LIMIT 1")
           .bind(space.id, candidate.canonicalId).first<{ id: string }>();
         if (!paper) continue;
@@ -810,10 +1161,7 @@ export async function POST(request: Request) {
           ).bind(paper.id, space.id, candidate.abstractText, review.summaryZh, review.summaryEn, review.whyReadZh, review.whyReadEn,
             review.qualityScore, candidate.priorityVenue ? 1 : 0, review.recommended ? "deepseek" : "deepseek_rejected",
             MONITOR_MODEL, review.recommended ? 1 : 0, review.relevanceScore, review.screeningReason).run();
-        } else {
-          await database.prepare("UPDATE paper_insights SET abstract_text = ?, priority_venue = ?, updated_at = CURRENT_TIMESTAMP WHERE paper_id = ?")
-            .bind(candidate.abstractText, candidate.priorityVenue ? 1 : 0, paper.id).run();
-        }
+         }
         if (review?.recommended && review.trackId) {
           await database.prepare(
             `INSERT OR IGNORE INTO research_track_papers
@@ -837,8 +1185,8 @@ export async function POST(request: Request) {
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 300) : "Monitoring scan failed";
       const failedAt = new Date();
-      await database.prepare("UPDATE monitor_runs SET status = 'error', last_run_at = ?, next_run_at = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
-        .bind(failedAt.toISOString(), new Date(failedAt.getTime() + CADENCE_MS).toISOString(), message, space.id).run();
+      await database.prepare("UPDATE monitor_runs SET status = 'error', next_run_at = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
+        .bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id).run();
       return Response.json(await readState(database, space), { status: 502 });
     }
   } catch (error) {

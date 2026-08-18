@@ -21,6 +21,28 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext) {
+  const due = await env.DB.prepare(
+    `SELECT s.id, s.owner_user_id FROM research_spaces s
+     JOIN monitor_runs r ON r.space_id = s.id
+     WHERE s.owner_user_id LIKE 'anonymous:%' AND (
+       (r.status IN ('ready', 'error', 'idle') AND (r.next_run_at IS NULL OR datetime(r.next_run_at) <= CURRENT_TIMESTAMP))
+       OR (r.status NOT IN ('ready', 'error', 'idle') AND datetime(r.updated_at) <= datetime('now', '-20 minutes'))
+     )
+     ORDER BY COALESCE(r.next_run_at, r.last_run_at, r.updated_at) ASC LIMIT 1`,
+  ).all<{ id: string; owner_user_id: string }>();
+  for (const space of due.results) {
+    const workspaceId = space.owner_user_id.startsWith("anonymous:") ? space.owner_user_id.slice("anonymous:".length) : "";
+    if (!workspaceId) continue;
+    const request = new Request("https://pi-research.internal/api/monitor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${workspaceId}` },
+      body: JSON.stringify({ spaceId: space.id }),
+    });
+    await handler.fetch(request, env, ctx);
+  }
+}
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -43,6 +65,9 @@ const worker = {
     }
 
     return handler.fetch(request, env, ctx);
+  },
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runScheduledMonitorSweep(env, ctx));
   },
 };
 

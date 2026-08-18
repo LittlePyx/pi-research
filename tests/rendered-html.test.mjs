@@ -89,20 +89,36 @@ test("ships live monitoring, deduplication, and readable type", async () => {
 });
 
 test("continuously explores new discovery branches and grows a connected research map", async () => {
-  const [monitor, mapRoute, schema, repository, client, css] = await Promise.all([
+  const [monitor, mapRoute, schema, repository, client, css, worker, viteConfig] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(monitor, /monitor_discovery_pages/);
   assert.match(monitor, /query\.bibliographic/);
-  assert.match(monitor, /horizon\.key === "years" \? 28/);
-  assert.match(monitor, /nextOffset = offset \+ rows >= 600 \? 0 : offset \+ rows/);
-  assert.match(monitor, /profile-cluster-\$\{cluster\}/);
+  assert.match(monitor, /HORIZON_REVIEW_LIMITS[^\n]+years: 28/);
+  assert.match(monitor, /HORIZON_POOL_LIMITS[^\n]+years: 140/);
+  assert.match(monitor, /nextOffset = offset \+ rows >= DISCOVERY_OFFSET_LIMIT \? 0 : offset \+ rows/);
+  assert.match(monitor, /discoveryQueryKey/);
+  assert.match(monitor, /query\.container-title/);
+  assert.match(monitor, /api\.crossref\.org\/journals\/\$\{encodeURIComponent\(plan\.issn\)\}\/works/);
+  assert.match(monitor, /PRIORITY_JOURNAL_ISSNS/);
+  assert.match(monitor, /priority-journal/);
+  assert.match(monitor, /api\.semanticscholar\.org\/graph\/v1\/paper\/search/);
+  assert.match(monitor, /api\.openalex\.org\/works/);
+  assert.match(monitor, /persistCandidatePool/);
+  assert.match(monitor, /pendingCandidateQueue/);
+  assert.match(monitor, /selectUnseenReviewBatch/);
+  assert.match(monitor, /positiveExamples/);
+  assert.match(monitor, /negativeExamples/);
+  assert.match(monitor, /REVIEW_BATCH_SIZE = 14/);
+  assert.match(monitor, /ERROR_RETRY_MS/);
   assert.match(monitor, /sort: horizon\.key === "days" \? "published"/);
   assert.match(monitor, /discovery_round = discovery_round \+ 1/);
   assert.match(monitor, /Existing research-map directions/);
@@ -184,6 +200,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /dual-layer direction and paper network/);
   assert.match(css, /\.v2-paper-network-canvas/);
   assert.match(css, /\.v2-paper-network-drawer/);
+  assert.match(worker, /runScheduledMonitorSweep/);
+  assert.match(worker, /async scheduled/);
+  assert.match(viteConfig, /crons: \["\*\/30 \* \* \* \*"\]/);
 });
 
 test("builds persistent personalized learning paths from real research papers", async () => {
