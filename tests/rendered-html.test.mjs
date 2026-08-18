@@ -31,8 +31,9 @@ test("server-renders the Pi Research application", async () => {
 });
 
 test("ships live monitoring, deduplication, and readable type", async () => {
-  const [route, profiles, repository, css, client] = await Promise.all([
+  const [route, feedback, profiles, repository, css, client] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/feedback/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/monitor/domain-profiles.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -52,6 +53,10 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /discovering_\$\{horizon\.key\}/);
   assert.match(route, /updateRunPhase\(database, space\.id, "reviewing"/);
   assert.match(route, /updateRunPhase\(database, space\.id, "saving"/);
+  assert.match(route, /paper_delivery_state/);
+  assert.match(route, /historyPapers/);
+  assert.match(route, /paper\.show_count === 1 \? 1 : paper\.show_count === 2 \? 3 : 14/);
+  assert.match(route, /datetime\('now', '-90 days'\)/);
   assert.doesNotMatch(route, /fallbackInsight/);
   assert.match(profiles, /IEEE Transactions on Information Theory/);
   assert.match(profiles, /International Conference on Machine Learning/);
@@ -60,6 +65,9 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(repository, /paper_insights/);
   assert.match(repository, /llm_recommended/);
   assert.match(repository, /idx_paper_insights_space_recommended_quality/);
+  assert.match(repository, /idx_paper_delivery_space_paper/);
+  assert.match(feedback, /kind === "shown"/);
+  assert.match(feedback, /kind === "later"/);
   assert.match(css, /Pi Research V3 — readable type and live discovery monitor/);
   assert.match(css, /\.v2-app \{ font-size: 16px; \}/);
   assert.match(css, /\.v2-scan-progress/);
@@ -70,6 +78,9 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(client, /startMonitorPolling/);
   assert.match(client, /window\.setInterval\(\(\) => void poll\(\), 1500\)/);
   assert.match(client, /DeepSeek Pro 正在逐篇筛选并撰写/);
+  assert.match(client, /libraryFilter/);
+  assert.match(client, /reportedImpressions/);
+  assert.match(client, /没有处理的论文不会消失/);
   assert.match(client, /rankedMonitorPapers/);
   assert.match(client, /openMonitorPaper/);
   assert.match(client, /为什么适合读/);

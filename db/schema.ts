@@ -123,6 +123,26 @@ export const monitoredPapers = sqliteTable(
   ],
 );
 
+export const paperDeliveryState = sqliteTable(
+  "paper_delivery_state",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    showCount: integer("show_count").notNull().default(0),
+    firstShownAt: text("first_shown_at"),
+    lastShownAt: text("last_shown_at"),
+    openedAt: text("opened_at"),
+    snoozedUntil: text("snoozed_until"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_delivery_space_paper").on(table.spaceId, table.paperId),
+    index("idx_paper_delivery_space_last_shown").on(table.spaceId, table.lastShownAt),
+  ],
+);
+
 export const monitorPreferences = sqliteTable(
   "monitor_preferences",
   {

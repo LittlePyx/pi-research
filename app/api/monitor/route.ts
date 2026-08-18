@@ -58,6 +58,13 @@ type PaperRow = {
   analysis_model: string;
   llm_recommended: number;
   llm_relevance_score: number;
+  show_count: number;
+  first_shown_at: string | null;
+  last_shown_at: string | null;
+  opened_at: string | null;
+  snoozed_until: string | null;
+  saved: number;
+  feedback: string | null;
 };
 type Candidate = {
   canonicalId: string;
@@ -420,7 +427,8 @@ async function candidatesNeedingReview(database: D1Database, spaceId: string, ca
   const reviewed = await database.prepare(
     `SELECT p.canonical_id FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
      WHERE p.space_id = ? AND p.canonical_id IN (${placeholders}) AND i.analysis_model = ?
-     AND i.analysis_source IN ('deepseek', 'deepseek_rejected')`,
+     AND (i.analysis_source = 'deepseek' OR
+       (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) >= datetime('now', '-90 days')))`,
   ).bind(spaceId, ...candidates.map((candidate) => candidate.canonicalId), MONITOR_MODEL).all<{ canonical_id: string }>();
   const reviewedIds = new Set(reviewed.results.map((row) => row.canonical_id));
   return candidates.filter((candidate) => !reviewedIds.has(candidate.canonicalId));
@@ -430,6 +438,57 @@ async function updateRunPhase(database: D1Database, spaceId: string, status: str
   await database.prepare(
     "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
   ).bind(status, scannedCount, newCount, spaceId).run();
+}
+
+function paperUserState(paper: PaperRow, now: number) {
+  if (paper.feedback === "not_relevant") return "dismissed" as const;
+  if (paper.saved || paper.feedback === "relevant") return "accepted" as const;
+  if (paper.snoozed_until && Date.parse(paper.snoozed_until) > now) return "snoozed" as const;
+  if (paper.opened_at || paper.show_count > 0) return "seen" as const;
+  return "unseen" as const;
+}
+
+function databaseTime(value: string) {
+  return Date.parse(value.includes("T") ? value : value.replace(" ", "T") + "Z");
+}
+
+function isPaperDue(paper: PaperRow, now: number) {
+  const state = paperUserState(paper, now);
+  if (state === "accepted" || state === "dismissed" || state === "snoozed") return false;
+  if (!paper.last_shown_at || paper.show_count <= 0) return true;
+  const reminderDays = paper.show_count === 1 ? 1 : paper.show_count === 2 ? 3 : 14;
+  return now - databaseTime(paper.last_shown_at) >= reminderDays * 24 * 60 * 60 * 1000;
+}
+
+function toPaper(paper: PaperRow, now: number) {
+  return {
+    id: paper.id,
+    doi: paper.doi,
+    title: paper.title,
+    authors: paper.authors,
+    venue: paper.venue,
+    url: paper.url,
+    publishedAt: paper.published_at,
+    horizon: paper.horizon,
+    citationCount: paper.citation_count,
+    relevanceScore: paper.llm_relevance_score,
+    discoveredAt: paper.discovered_at,
+    summaryZh: paper.summary_zh,
+    summaryEn: paper.summary_en,
+    whyReadZh: paper.why_read_zh,
+    whyReadEn: paper.why_read_en,
+    qualityScore: paper.quality_score,
+    priorityVenue: Boolean(paper.priority_venue),
+    analysisSource: paper.analysis_source,
+    userState: paperUserState(paper, now),
+    showCount: paper.show_count,
+    saved: Boolean(paper.saved),
+    feedback: paper.feedback,
+    firstShownAt: paper.first_shown_at,
+    lastShownAt: paper.last_shown_at,
+    openedAt: paper.opened_at,
+    snoozedUntil: paper.snoozed_until,
+  };
 }
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
@@ -444,17 +503,27 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.why_read_zh, '') AS why_read_zh, COALESCE(i.why_read_en, '') AS why_read_en,
        COALESCE(i.quality_score, 0) AS quality_score, COALESCE(i.priority_venue, 0) AS priority_venue,
        COALESCE(i.analysis_source, 'metadata') AS analysis_source, COALESCE(i.analysis_model, '') AS analysis_model,
-       COALESCE(i.llm_recommended, 0) AS llm_recommended, COALESCE(i.llm_relevance_score, 0) AS llm_relevance_score
+       COALESCE(i.llm_recommended, 0) AS llm_recommended, COALESCE(i.llm_relevance_score, 0) AS llm_relevance_score,
+       COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
+       COALESCE(f.saved, 0) AS saved, f.feedback
        FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
+       LEFT JOIN paper_delivery_state d ON d.paper_id = p.id AND d.space_id = p.space_id
+       LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
        WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek' AND i.analysis_model = ?
-       ORDER BY i.quality_score DESC, p.discovered_at DESC LIMIT 60`,
+       ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 300`,
     ).bind(space.id, MONITOR_MODEL).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
   ]);
+  const now = Date.now();
+  const duePapers = papers.results
+    .filter((paper) => isPaperDue(paper, now))
+    .sort((left, right) => left.show_count - right.show_count || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at));
   const selected: PaperRow[] = [];
   for (const horizon of ["days", "months", "years"] as Horizon[]) {
-    selected.push(...papers.results.filter((paper) => paper.horizon === horizon).slice(0, 2));
+    selected.push(...duePapers.filter((paper) => paper.horizon === horizon).slice(0, 2));
   }
+  const historyPapers = papers.results.map((paper) => toPaper(paper, now));
+  const pendingPapers = historyPapers.filter((paper) => paper.userState !== "accepted" && paper.userState !== "dismissed");
   return {
     monitor: {
       status: run?.status || "idle",
@@ -468,26 +537,16 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       source: "Crossref",
       horizons: ["days", "months", "years"],
       preferences: preference,
-      papers: selected.map((paper) => ({
-        id: paper.id,
-        doi: paper.doi,
-        title: paper.title,
-        authors: paper.authors,
-        venue: paper.venue,
-        url: paper.url,
-        publishedAt: paper.published_at,
-        horizon: paper.horizon,
-        citationCount: paper.citation_count,
-        relevanceScore: paper.llm_relevance_score,
-        discoveredAt: paper.discovered_at,
-        summaryZh: paper.summary_zh,
-        summaryEn: paper.summary_en,
-        whyReadZh: paper.why_read_zh,
-        whyReadEn: paper.why_read_en,
-        qualityScore: paper.quality_score,
-        priorityVenue: Boolean(paper.priority_venue),
-        analysisSource: paper.analysis_source,
-      })),
+      papers: selected.map((paper) => toPaper(paper, now)),
+      historyPapers,
+      historyCounts: {
+        all: historyPapers.length,
+        inbox: pendingPapers.length,
+        unseen: pendingPapers.filter((paper) => paper.userState === "unseen").length,
+        accepted: historyPapers.filter((paper) => paper.userState === "accepted").length,
+        saved: historyPapers.filter((paper) => paper.saved).length,
+        dismissed: historyPapers.filter((paper) => paper.userState === "dismissed").length,
+      },
       ...extra,
     },
   };
@@ -527,8 +586,10 @@ export async function PATCH(request: Request) {
          user_modified = 1, updated_at = CURRENT_TIMESTAMP`,
       ).bind(crypto.randomUUID(), space.id, current.profileKey, JSON.stringify(venues)).run();
     }
-    await database.prepare("UPDATE monitor_runs SET last_run_at = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
-      .bind(space.id).run();
+    await database.batch([
+      database.prepare("UPDATE monitor_runs SET last_run_at = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?").bind(space.id),
+      database.prepare("UPDATE paper_insights SET analysis_model = '', updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND analysis_source = 'deepseek_rejected'").bind(space.id),
+    ]);
     return Response.json(await readState(database, space, { preferencesSaved: true }));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to save monitoring preferences" }, { status: 500 });
