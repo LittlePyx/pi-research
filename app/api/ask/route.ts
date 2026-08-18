@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     if (!space) return Response.json({ error: "Research space not found" }, { status: 404 });
 
     const runtime = getRuntimeEnv();
-    const model = runtime.DEEPSEEK_MODEL || "deepseek-v4-flash";
+    const model = runtime.DEEPSEEK_MODEL || "deepseek-v4-pro";
     let answer: string;
     let mode: "deepseek" | "preview" = "preview";
     let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
@@ -104,9 +104,9 @@ export async function POST(request: Request) {
             { role: "system", content: systemText },
             { role: "user", content: question },
           ],
-          thinking: { type: "disabled" },
+          thinking: { type: "enabled" },
+          reasoning_effort: "high",
           max_tokens: 1200,
-          temperature: 0.2,
           stream: false,
           user_id: "space-" + space.id,
         }),

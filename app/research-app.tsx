@@ -91,7 +91,7 @@ const copy = {
     reviewed: "Pi 正在监控三个研究时间层级",
     matched: "每个空间超过 24 小时后，会在你首次打开时自动扫描。",
     attention: "篇为本轮新发现",
-    briefTime: "发现不耗 Token；仅对精选去重论文批量解读一次",
+    briefTime: "Crossref 负责发现；DeepSeek Pro 负责筛选与撰写，未通过评审的论文不会展示",
     mustRead: "必须读",
     worthReading: "值得读",
     whyYou: "为什么与你有关",
@@ -178,8 +178,8 @@ const copy = {
     feedbackSaved: "已写入当前研究空间的记忆",
     profile: "工作区与设置",
     signOut: "退出",
-    liveMonitor: "真实论文发现",
-    monitorIntro: "三个时间层使用不同标准，并结合本领域重点期刊与会议推荐。",
+    liveMonitor: "DeepSeek Pro 审核后的真实论文",
+    monitorIntro: "Crossref 提供候选，DeepSeek Pro 按研究空间逐篇判断、淘汰不相关记录，并撰写论文介绍和适读理由。",
     daysHorizon: "近 14 天",
     monthsHorizon: "近 6 个月",
     yearsHorizon: "近 5 年",
@@ -197,8 +197,8 @@ const copy = {
     scanningButton: "扫描中",
     knownPapers: "篇已去重记录",
     scannedPapers: "条入选候选",
-    dedupeNote: "按 DOI 或标题指纹去重；每次最多只对三段各 2 篇尚未解读的精选论文做一次批量分析，已有解读不会重复消耗 Token。",
-    noLivePapers: "首轮扫描完成后，这里会显示真实匹配论文。",
+    dedupeNote: "按 DOI 或标题指纹去重；只有尚未评审的新候选会送入 DeepSeek Pro。模型判定不相关、非论文或不值得推荐的记录会被保留用于去重，但绝不会出现在推荐列表。",
+    noLivePapers: "当前没有通过 DeepSeek Pro 严格评审的论文，Pi 不会用不相关结果填满列表。",
     manualCooling: "手动扫描一小时内只执行一次，已返回缓存结果。",
     prioritySources: "重点期刊与会议",
     editSources: "设置重点来源",
@@ -215,11 +215,12 @@ const copy = {
     introLabel: "论文介绍",
     whySuitable: "为什么适合读",
     priorityVenueLabel: "重点来源",
-    aiBrief: "Pi 批量解读",
-    metadataBrief: "元数据解读",
+    aiBrief: "DeepSeek Pro 评审",
+    metadataBrief: "等待模型评审",
     openOriginal: "打开原文",
     citations: "引用",
     qualityScore: "推荐分",
+    relevanceScoreLabel: "相关分",
     noHorizonPaper: "本轮没有足够强的推荐，Pi 不会为了填满列表而凑数。",
     realBrief: "真实研究简报",
     realBriefIntro: "以下内容全部来自当前研究空间最近一次真实扫描。",
@@ -257,7 +258,7 @@ const copy = {
     reviewed: "Pi monitors three research horizons",
     matched: "Each space scans on its first visit after the 24-hour window expires.",
     attention: "new in this scan",
-    briefTime: "Discovery uses no tokens; selected deduplicated papers are analyzed once in a batch",
+    briefTime: "Crossref discovers candidates; DeepSeek Pro screens and writes every recommendation, and rejected papers never appear",
     mustRead: "Must read",
     worthReading: "Worth reading",
     whyYou: "Why it matters to you",
@@ -344,8 +345,8 @@ const copy = {
     feedbackSaved: "Saved to this research space's memory",
     profile: "Workspace & settings",
     signOut: "Sign out",
-    liveMonitor: "Live paper discovery",
-    monitorIntro: "Each time horizon uses a different standard, weighted by priority venues for this field.",
+    liveMonitor: "Real papers approved by DeepSeek Pro",
+    monitorIntro: "Crossref supplies candidates; DeepSeek Pro judges each one against this research space, rejects weak matches, and writes the introduction and reading rationale.",
     daysHorizon: "Past 14 days",
     monthsHorizon: "Past 6 months",
     yearsHorizon: "Past 5 years",
@@ -363,8 +364,8 @@ const copy = {
     scanningButton: "Scanning",
     knownPapers: "deduplicated papers",
     scannedPapers: "shortlisted candidates",
-    dedupeNote: "Deduplicated by DOI or title fingerprint. Each run batch-analyzes at most two previously unenriched papers per horizon; existing explanations are never regenerated with tokens.",
-    noLivePapers: "Real matching papers will appear here after the first scan.",
+    dedupeNote: "Deduplicated by DOI or title fingerprint. Only previously unreviewed candidates go to DeepSeek Pro. Irrelevant, non-paper, or non-recommended records remain stored for deduplication but never appear in recommendations.",
+    noLivePapers: "No paper passed DeepSeek Pro's strict review in this scan; Pi will not fill the list with weak matches.",
     manualCooling: "Manual scans run at most once per hour; cached results were returned.",
     prioritySources: "Priority journals & conferences",
     editSources: "Set priority sources",
@@ -381,11 +382,12 @@ const copy = {
     introLabel: "Paper introduction",
     whySuitable: "Why it is worth reading",
     priorityVenueLabel: "Priority venue",
-    aiBrief: "Pi batch analysis",
-    metadataBrief: "Metadata brief",
+    aiBrief: "DeepSeek Pro review",
+    metadataBrief: "Awaiting AI review",
     openOriginal: "Open original",
     citations: "Citations",
     qualityScore: "Score",
+    relevanceScoreLabel: "Relevance",
     noHorizonPaper: "No recommendation was strong enough in this window; Pi will not fill the list for appearance's sake.",
     realBrief: "Real research brief",
     realBriefIntro: "Everything below comes from the latest real scan of this research space.",
@@ -897,7 +899,7 @@ export default function ResearchApp({ user }: { user: User }) {
                             <p className="v2-research-meta">{[paper.authors, paper.venue, paper.publishedAt].filter(Boolean).join(" · ")}</p>
                             <div className="v2-paper-intro"><span>{t.introLabel}</span><p>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p></div>
                             <div className="v2-paper-why"><span>{t.whySuitable}</span><p>{locale === "zh" ? paper.whyReadZh : paper.whyReadEn}</p></div>
-                            <footer><span>{t.qualityScore} {paper.qualityScore}</span><span>{t.citations} {paper.citationCount}</span><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></footer>
+                            <footer><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><span>{t.qualityScore} {paper.qualityScore}</span><span>{t.citations} {paper.citationCount}</span><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></footer>
                           </article>
                         )) : <p className="v2-horizon-empty">{t.noHorizonPaper}</p>}
                       </section>
@@ -925,7 +927,7 @@ export default function ResearchApp({ user }: { user: User }) {
                       <div><p>{t.introLabel}</p><strong>{locale === "zh" ? rankedMonitorPapers[0].summaryZh : rankedMonitorPapers[0].summaryEn}</strong></div>
                     </div>
                     <div className="v2-paper-footer">
-                      <span>{rankedMonitorPapers[0].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[0].horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {t.qualityScore} <b>{rankedMonitorPapers[0].qualityScore}</b> · {t.citations} {rankedMonitorPapers[0].citationCount}</span>
+                      <span>{rankedMonitorPapers[0].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[0].horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {t.relevanceScoreLabel} <b>{rankedMonitorPapers[0].relevanceScore}</b> · {t.qualityScore} {rankedMonitorPapers[0].qualityScore} · {t.citations} {rankedMonitorPapers[0].citationCount}</span>
                       <div><button className={saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ? "active" : ""} type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "save")}>{saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "not_relevant")}>× {t.notRelevant}</button></div>
                       <button className="v2-open-paper" type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[0])}>{t.openAnalysis} →</button>
                     </div>
@@ -1050,7 +1052,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div>
                 <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><span>{t.qualityScore}</span><strong>{selectedMonitorPaper.qualityScore}</strong></div></section>
                 <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><h2>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</h2></section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.qualityScore}</dt><dd>{selectedMonitorPaper.qualityScore}</dd></div><div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
+                <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div><div><dt>{t.qualityScore}</dt><dd>{selectedMonitorPaper.qualityScore}</dd></div><div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
               </div>
               <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{t.publicationInfo}</p><dl><div><dt>{t.currentSpaceFit}</dt><dd>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
             </div>

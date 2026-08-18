@@ -55,6 +55,9 @@ type PaperRow = {
   quality_score: number;
   priority_venue: number;
   analysis_source: string;
+  analysis_model: string;
+  llm_recommended: number;
+  llm_relevance_score: number;
 };
 type Candidate = {
   canonicalId: string;
@@ -71,13 +74,17 @@ type Candidate = {
   qualityScore: number;
   priorityVenue: boolean;
 };
-type InsightDraft = {
+type PaperReview = {
   canonicalId: string;
+  isPaper: boolean;
+  recommended: boolean;
+  relevanceScore: number;
+  qualityScore: number;
   summaryZh: string;
   summaryEn: string;
   whyReadZh: string;
   whyReadEn: string;
-  source: "deepseek" | "metadata";
+  screeningReason: string;
 };
 
 const CADENCE_MS = 24 * 60 * 60 * 1000;
@@ -87,9 +94,11 @@ const HORIZONS = [
   { key: "months" as const, daysFrom: 180, daysUntil: 15, sort: "relevance" },
   { key: "years" as const, daysFrom: 365 * 5, daysUntil: 181, sort: "is-referenced-by-count" },
 ];
-const MONITOR_RELEVANCE_FILTER_RELEASED_AT = Date.parse("2026-08-18T08:45:00.000Z");
-const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 40;
-const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 3;
+const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse("2026-08-18T09:03:00.000Z");
+const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 200;
+const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 20;
+const MONITOR_MODEL = "deepseek-v4-pro";
+const RECOMMENDATION_THRESHOLD = 75;
 const PAPER_TYPES = new Set(["journal-article", "proceedings-article", "posted-content"]);
 const GENERIC_TERMS = new Set([
   "about", "after", "against", "analysis", "and", "applied", "are", "based", "between", "current", "for", "from", "into", "its", "modern",
@@ -166,12 +175,6 @@ function relevanceSignals(title: string, space: SpaceRow, profileKey: string) {
 function isResearchPaper(title: string) {
   const normalized = cleanText(title);
   return normalized.length >= 12 && !NON_PAPER_TITLES.test(normalized) && !NON_PAPER_PHRASES.test(normalized);
-}
-
-function isRelevantPaper(title: string, venue: string, space: SpaceRow, profileKey: string, priorityVenues: string[]) {
-  if (!isResearchPaper(title)) return false;
-  const signals = relevanceSignals(title, space, profileKey);
-  return isPriorityVenue(venue, priorityVenues) || signals.strongProfileMatches > 0 || signals.singleProfileMatches >= 2 || signals.focusedMatches >= 2;
 }
 
 function isPriorityVenue(venue: string, priorityVenues: string[]) {
@@ -254,7 +257,6 @@ async function fetchHorizon(space: SpaceRow, horizon: typeof HORIZONS[number], n
   return normalized
     .filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item))
     .map((item) => ({ item, signals: relevanceSignals(item.title, space, profileKey) }))
-    .filter(({ item, signals }) => isPriorityVenue(item.venue, priorityVenues) || signals.strongProfileMatches > 0 || signals.singleProfileMatches >= 2 || signals.focusedMatches >= 2)
     .map(({ item, signals }) => scoreCandidate({ ...item, relevanceScore: item.relevanceScore + signals.score * 20 }, priorityVenues, now))
     .sort((left, right) => right.qualityScore - left.qualityScore)
     .slice(0, 8);
@@ -291,24 +293,6 @@ async function ensurePreference(database: D1Database, space: SpaceRow) {
   };
 }
 
-function fallbackInsight(candidate: Candidate): InsightDraft {
-  const venueZh = candidate.venue ? `发表于 ${candidate.venue}` : "已登记在学术元数据中";
-  const venueEn = candidate.venue ? `Published in ${candidate.venue}` : "Indexed in scholarly metadata";
-  const summaryZh = `${venueZh}，这项工作围绕“${candidate.title}”展开。${candidate.abstractText ? "Pi 已结合作者摘要提取其研究主题，建议进入精读前先核对问题设定与主要结论。" : "当前元数据没有摘要，Pi 的介绍仅依据题目、来源和引用信号。"}`;
-  const summaryEn = candidate.abstractText
-    ? candidate.abstractText.slice(0, 420)
-    : `${venueEn}, this work focuses on “${candidate.title}”. The current record has no abstract, so this introduction is based on its title, venue, and citation signals.`;
-  const priority = candidate.priorityVenue ? "它还来自当前领域的重点期刊或会议。" : "";
-  const priorityEn = candidate.priorityVenue ? " It also appears in a priority venue for this research space." : "";
-  if (candidate.horizon === "days") {
-    return { canonicalId: candidate.canonicalId, summaryZh, summaryEn, whyReadZh: `它位于近 14 天新作窗口，适合快速判断这个方向刚发生了什么。${priority}`, whyReadEn: `It is in the 14-day new-work window, making it useful for seeing what just changed in this field.${priorityEn}`, source: "metadata" };
-  }
-  if (candidate.horizon === "months") {
-    return { canonicalId: candidate.canonicalId, summaryZh, summaryEn, whyReadZh: `它在近 6 个月窗口中同时获得较高相关性与质量评分${candidate.citationCount ? `，已有 ${candidate.citationCount} 次引用信号` : ""}。${priority}`, whyReadEn: `Within the six-month window, it combines research relevance with quality signals${candidate.citationCount ? ` and ${candidate.citationCount} citations` : ""}.${priorityEn}`, source: "metadata" };
-  }
-  return { canonicalId: candidate.canonicalId, summaryZh, summaryEn, whyReadZh: `它在近 5 年窗口中具有较强的质量与可复用性信号${candidate.citationCount ? `，引用量为 ${candidate.citationCount}` : ""}，适合作为方法、框架或研究路线参考。${priority}`, whyReadEn: `In the five-year window, it has strong quality and reuse signals${candidate.citationCount ? `, including ${candidate.citationCount} citations` : ""}, making it useful as a methodological or strategic guide.${priorityEn}`, source: "metadata" };
-}
-
 async function usageCount(database: D1Database, scope: string, date: string) {
   const row = await database.prepare("SELECT request_count FROM ai_usage_daily WHERE scope = ? AND usage_date = ? LIMIT 1")
     .bind(scope, date).first<{ request_count: number }>();
@@ -325,84 +309,118 @@ async function recordUsage(database: D1Database, scope: string, date: string, in
   ).bind(crypto.randomUUID(), scope, date, inputTokens, outputTokens).run();
 }
 
-async function analyzeCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[]) {
-  if (!candidates.length) return [] as InsightDraft[];
-  const fallback = candidates.map(fallbackInsight);
+function boundedScore(value: unknown) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : 0;
+}
+
+async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[]) {
+  if (!candidates.length) return [] as PaperReview[];
   const runtime = getRuntimeEnv();
-  if (!runtime.DEEPSEEK_API_KEY) return fallback;
+  if (!runtime.DEEPSEEK_API_KEY) throw new Error("DeepSeek Pro is required before papers can be recommended");
   const usageDate = new Date().toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.slice("anonymous:".length);
   const [globalCount, workspaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate),
     usageCount(database, workspaceScope, usageDate),
   ]);
-  if (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) return fallback;
+  if (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+    throw new Error("DeepSeek Pro review budget reached; unreviewed papers were not published");
+  }
 
   const prompt = [
-    "You are Pi Research. Return a JSON array only, with no markdown.",
-    "For every paper provide: canonicalId, summaryZh, summaryEn, whyReadZh, whyReadEn.",
-    "Be evidence-disciplined. Never invent methods or results absent from the supplied title/abstract.",
-    "summaryZh: 60-120 Chinese characters. summaryEn: 35-65 words.",
-    "whyRead fields: explain fit to the research space and its time-horizon objective.",
-    "Horizon objectives: days = newest developments; months = new plus high quality; years = high quality, useful, and strategically or methodologically instructive.",
+    "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
+    "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, summaryZh, summaryEn, whyReadZh, whyReadEn, screeningReason.",
+    "Act as a strict academic editor, not a search-result summarizer. A real paper can still be irrelevant and must then be rejected.",
+    "Set isPaper=false for mastheads, publication information, author instructions, contents, editorials without research content, corrections, calls for papers, or other non-paper records.",
+    `Set recommended=true only when relevanceScore >= ${RECOMMENDATION_THRESHOLD}, the work directly advances the research-space scope, and it satisfies its horizon standard. Recency, citations, or a priority venue alone never justify recommendation.`,
+    "Horizon standards: days = genuinely relevant new development; months = relevant, new, and high quality; years = highly relevant, durable, useful, and methodologically or strategically instructive.",
+    "Use only supplied title, abstract, authors, venue, date, citation, and priority-venue evidence. Never invent a theorem, method, experiment, result, section, or conclusion.",
+    "For recommended papers, summaryZh must be a concrete 100-180 Chinese-character introduction explaining the research question, approach, and evidence-backed contribution; summaryEn must convey the same substance in 55-95 words.",
+    "For recommended papers, whyReadZh must be a specific 80-150 Chinese-character explanation of how the paper helps this exact research space and which idea, method, comparison, or decision the reader should extract; whyReadEn must convey the same substance in 45-80 words.",
+    "Do not write generic phrases such as 'it is recent', 'it has a high score', or 'it comes from a priority venue' as the main reason to read.",
+    "For rejected records, set all four summary/whyRead fields to empty strings and give a short screeningReason. Never put rejection language inside whyRead.",
     `Research space: ${space.name} — ${space.description}`,
     `Priority venues: ${priorityVenues.join("; ")}`,
-    "Papers:",
+    "JSON records to review:",
     JSON.stringify(candidates.map((paper) => ({
       canonicalId: paper.canonicalId,
       title: paper.title,
+      authors: paper.authors,
       venue: paper.venue,
       publishedAt: paper.publishedAt,
       horizon: paper.horizon,
       citations: paper.citationCount,
       priorityVenue: paper.priorityVenue,
-      abstract: paper.abstractText.slice(0, 900),
+      abstract: paper.abstractText.slice(0, 1400),
     }))),
   ].join("\n");
 
-  try {
-    const response = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: runtime.DEEPSEEK_MODEL || "deepseek-v4-flash",
-        messages: [{ role: "user", content: prompt }],
-        thinking: { type: "disabled" },
-        max_tokens: 2200,
-        temperature: 0.15,
-        stream: false,
-      }),
-    });
-    const data = await response.json() as DeepSeekResponse;
-    if (!response.ok) throw new Error(data.error?.message || "DeepSeek analysis failed");
-    const content = data.choices?.[0]?.message?.content || "";
-    const start = content.indexOf("[");
-    const end = content.lastIndexOf("]");
-    if (start < 0 || end <= start) throw new Error("DeepSeek returned invalid JSON");
-    const parsed = JSON.parse(content.slice(start, end + 1)) as Array<Partial<InsightDraft>>;
-    const byId = new Map(parsed.map((item) => [item.canonicalId, item]));
-    const result = fallback.map((base) => {
-      const item = byId.get(base.canonicalId);
-      if (!item?.summaryZh || !item.summaryEn || !item.whyReadZh || !item.whyReadEn) return base;
-      return {
-        canonicalId: base.canonicalId,
-        summaryZh: cleanText(item.summaryZh).slice(0, 700),
-        summaryEn: cleanText(item.summaryEn).slice(0, 900),
-        whyReadZh: cleanText(item.whyReadZh).slice(0, 600),
-        whyReadEn: cleanText(item.whyReadEn).slice(0, 800),
-        source: "deepseek" as const,
-      };
-    });
-    const inputTokens = data.usage?.prompt_tokens || 0;
-    const outputTokens = data.usage?.completion_tokens || 0;
-    await Promise.all([
-      recordUsage(database, "monitor:global", usageDate, inputTokens, outputTokens),
-      recordUsage(database, workspaceScope, usageDate, inputTokens, outputTokens),
-    ]);
-    return result;
-  } catch {
-    return fallback;
-  }
+  const response = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: MONITOR_MODEL,
+      messages: [
+        { role: "system", content: "You are Pi Research's evidence-disciplined paper screening and briefing editor. Produce strict JSON." },
+        { role: "user", content: prompt },
+      ],
+      thinking: { type: "enabled" },
+      reasoning_effort: "high",
+      response_format: { type: "json_object" },
+      max_tokens: 8000,
+      stream: false,
+    }),
+  });
+  const data = await response.json() as DeepSeekResponse;
+  if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro review failed");
+  const content = data.choices?.[0]?.message?.content || "";
+  if (!content.trim()) throw new Error("DeepSeek Pro returned an empty review");
+  const parsed = JSON.parse(content) as { reviews?: Array<Partial<PaperReview>> };
+  const byId = new Map((parsed.reviews || []).map((item) => [item.canonicalId, item]));
+  const reviews = candidates.map((candidate) => {
+    const item = byId.get(candidate.canonicalId);
+    if (!item) throw new Error("DeepSeek Pro did not review every candidate");
+    const relevanceScore = boundedScore(item.relevanceScore);
+    const qualityScore = boundedScore(item.qualityScore);
+    const summaryZh = cleanText(item.summaryZh || "").slice(0, 900);
+    const summaryEn = cleanText(item.summaryEn || "").slice(0, 1200);
+    const whyReadZh = cleanText(item.whyReadZh || "").slice(0, 800);
+    const whyReadEn = cleanText(item.whyReadEn || "").slice(0, 1000);
+    const hasBrief = Boolean(summaryZh && summaryEn && whyReadZh && whyReadEn);
+    const recommended = item.isPaper === true && item.recommended === true && relevanceScore >= RECOMMENDATION_THRESHOLD && qualityScore >= 65 && hasBrief;
+    return {
+      canonicalId: candidate.canonicalId,
+      isPaper: item.isPaper === true,
+      recommended,
+      relevanceScore,
+      qualityScore,
+      summaryZh: recommended ? summaryZh : "",
+      summaryEn: recommended ? summaryEn : "",
+      whyReadZh: recommended ? whyReadZh : "",
+      whyReadEn: recommended ? whyReadEn : "",
+      screeningReason: cleanText(item.screeningReason || (recommended ? "Recommended by DeepSeek Pro" : "Rejected by DeepSeek Pro")).slice(0, 500),
+    } satisfies PaperReview;
+  });
+  const inputTokens = data.usage?.prompt_tokens || 0;
+  const outputTokens = data.usage?.completion_tokens || 0;
+  await Promise.all([
+    recordUsage(database, "monitor:global", usageDate, inputTokens, outputTokens),
+    recordUsage(database, workspaceScope, usageDate, inputTokens, outputTokens),
+  ]);
+  return reviews;
+}
+
+async function candidatesNeedingReview(database: D1Database, spaceId: string, candidates: Candidate[]) {
+  if (!candidates.length) return [];
+  const placeholders = candidates.map(() => "?").join(", ");
+  const reviewed = await database.prepare(
+    `SELECT p.canonical_id FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
+     WHERE p.space_id = ? AND p.canonical_id IN (${placeholders}) AND i.analysis_model = ?
+     AND i.analysis_source IN ('deepseek', 'deepseek_rejected')`,
+  ).bind(spaceId, ...candidates.map((candidate) => candidate.canonicalId), MONITOR_MODEL).all<{ canonical_id: string }>();
+  const reviewedIds = new Set(reviewed.results.map((row) => row.canonical_id));
+  return candidates.filter((candidate) => !reviewedIds.has(candidate.canonicalId));
 }
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
@@ -416,16 +434,17 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.summary_zh, '') AS summary_zh, COALESCE(i.summary_en, '') AS summary_en,
        COALESCE(i.why_read_zh, '') AS why_read_zh, COALESCE(i.why_read_en, '') AS why_read_en,
        COALESCE(i.quality_score, 0) AS quality_score, COALESCE(i.priority_venue, 0) AS priority_venue,
-       COALESCE(i.analysis_source, 'metadata') AS analysis_source
-       FROM monitored_papers p LEFT JOIN paper_insights i ON i.paper_id = p.id
-       WHERE p.space_id = ? ORDER BY i.quality_score DESC, p.discovered_at DESC LIMIT 60`,
-    ).bind(space.id).all<PaperRow>(),
+       COALESCE(i.analysis_source, 'metadata') AS analysis_source, COALESCE(i.analysis_model, '') AS analysis_model,
+       COALESCE(i.llm_recommended, 0) AS llm_recommended, COALESCE(i.llm_relevance_score, 0) AS llm_relevance_score
+       FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
+       WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek' AND i.analysis_model = ?
+       ORDER BY i.quality_score DESC, p.discovered_at DESC LIMIT 60`,
+    ).bind(space.id, MONITOR_MODEL).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
   ]);
-  const relevantPapers = papers.results.filter((paper) => isRelevantPaper(paper.title, paper.venue, space, preference.profileKey, preference.priorityVenues));
   const selected: PaperRow[] = [];
   for (const horizon of ["days", "months", "years"] as Horizon[]) {
-    selected.push(...relevantPapers.filter((paper) => paper.horizon === horizon).slice(0, 2));
+    selected.push(...papers.results.filter((paper) => paper.horizon === horizon).slice(0, 2));
   }
   return {
     monitor: {
@@ -450,7 +469,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         publishedAt: paper.published_at,
         horizon: paper.horizon,
         citationCount: paper.citation_count,
-        relevanceScore: paper.relevance_score,
+        relevanceScore: paper.llm_relevance_score,
         discoveredAt: paper.discovered_at,
         summaryZh: paper.summary_zh,
         summaryEn: paper.summary_en,
@@ -521,10 +540,7 @@ export async function POST(request: Request) {
     const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
     const now = new Date();
     const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
-    const missingInsights = await database.prepare(
-      "SELECT COUNT(*) AS count FROM monitored_papers p LEFT JOIN paper_insights i ON i.paper_id = p.id WHERE p.space_id = ? AND i.paper_id IS NULL",
-    ).bind(space.id).first<{ count: number }>();
-    if (previousTime >= MONITOR_RELEVANCE_FILTER_RELEASED_AT && now.getTime() - previousTime < minimumAge && !(missingInsights?.count || 0)) {
+    if (previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
       return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
     }
 
@@ -537,73 +553,56 @@ export async function POST(request: Request) {
     try {
       const batches: Candidate[][] = [];
       for (const horizon of HORIZONS) batches.push(await fetchHorizon(space, horizon, now, preference.priorityVenues, preference.profileKey));
-      const scannedCount = batches.reduce((total, batch) => total + batch.length, 0);
       const candidates = new Map<string, Candidate>();
       for (const candidate of batches.flat()) {
         const existing = candidates.get(candidate.canonicalId);
         if (!existing || candidate.qualityScore > existing.qualityScore) candidates.set(candidate.canonicalId, candidate);
       }
+      const candidateList = Array.from(candidates.values());
+      const scannedCount = candidateList.length;
+      const pendingCandidates = await candidatesNeedingReview(database, space.id, candidateList);
+      const reviews = await reviewCandidates(database, space, user.userId, preference.priorityVenues, pendingCandidates);
+      const reviewsById = new Map(reviews.map((review) => [review.canonicalId, review]));
 
       let newCount = 0;
-      for (const candidate of candidates.values()) {
+      for (const candidate of candidateList) {
+        const review = reviewsById.get(candidate.canonicalId);
+        if (review?.recommended) newCount += 1;
         const generatedId = crypto.randomUUID();
-        const inserted = await database.prepare(
+        await database.prepare(
           `INSERT OR IGNORE INTO monitored_papers
            (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon, citation_count, relevance_score)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'crossref', ?, ?, ?)`,
         ).bind(generatedId, space.id, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
           candidate.url, candidate.publishedAt, candidate.horizon, candidate.citationCount, candidate.relevanceScore).run();
-        if ((inserted.meta?.changes || 0) > 0) newCount += 1;
         const paper = await database.prepare("SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id = ? LIMIT 1")
           .bind(space.id, candidate.canonicalId).first<{ id: string }>();
         if (!paper) continue;
-        if ((inserted.meta?.changes || 0) === 0) {
+        await database.prepare(
+          `UPDATE monitored_papers SET title = ?, authors = ?, venue = ?, url = ?, published_at = ?, horizon = ?,
+           last_seen_at = CURRENT_TIMESTAMP, citation_count = MAX(citation_count, ?), relevance_score = MAX(relevance_score, ?)
+           WHERE id = ?`,
+        ).bind(candidate.title, candidate.authors, candidate.venue, candidate.url, candidate.publishedAt, candidate.horizon,
+          candidate.citationCount, candidate.relevanceScore, paper.id).run();
+        if (review) {
           await database.prepare(
-            `UPDATE monitored_papers SET title = ?, authors = ?, venue = ?, url = ?, published_at = ?, horizon = ?,
-             last_seen_at = CURRENT_TIMESTAMP, citation_count = MAX(citation_count, ?), relevance_score = MAX(relevance_score, ?)
-             WHERE id = ?`,
-          ).bind(candidate.title, candidate.authors, candidate.venue, candidate.url, candidate.publishedAt, candidate.horizon,
-            candidate.citationCount, candidate.relevanceScore, paper.id).run();
+            `INSERT INTO paper_insights
+             (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en, quality_score,
+              priority_venue, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text, summary_zh = excluded.summary_zh,
+             summary_en = excluded.summary_en, why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
+             quality_score = excluded.quality_score, priority_venue = excluded.priority_venue,
+             analysis_source = excluded.analysis_source, analysis_model = excluded.analysis_model,
+             llm_recommended = excluded.llm_recommended, llm_relevance_score = excluded.llm_relevance_score,
+             screening_reason = excluded.screening_reason, updated_at = CURRENT_TIMESTAMP`,
+          ).bind(paper.id, space.id, candidate.abstractText, review.summaryZh, review.summaryEn, review.whyReadZh, review.whyReadEn,
+            review.qualityScore, candidate.priorityVenue ? 1 : 0, review.recommended ? "deepseek" : "deepseek_rejected",
+            MONITOR_MODEL, review.recommended ? 1 : 0, review.relevanceScore, review.screeningReason).run();
+        } else {
+          await database.prepare("UPDATE paper_insights SET abstract_text = ?, priority_venue = ?, updated_at = CURRENT_TIMESTAMP WHERE paper_id = ?")
+            .bind(candidate.abstractText, candidate.priorityVenue ? 1 : 0, paper.id).run();
         }
-        const fallback = fallbackInsight(candidate);
-        await database.prepare(
-          `INSERT INTO paper_insights
-           (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en, quality_score, priority_venue)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text,
-           quality_score = excluded.quality_score, priority_venue = excluded.priority_venue, updated_at = CURRENT_TIMESTAMP`,
-        ).bind(paper.id, space.id, candidate.abstractText, fallback.summaryZh, fallback.summaryEn, fallback.whyReadZh,
-          fallback.whyReadEn, candidate.qualityScore, candidate.priorityVenue ? 1 : 0).run();
-      }
-
-      const analysisTargets: Candidate[] = [];
-      for (const horizon of ["days", "months", "years"] as Horizon[]) {
-        const rows = await database.prepare(
-          `SELECT p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.horizon,
-           p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
-           FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
-           WHERE p.space_id = ? AND p.horizon = ? AND i.analysis_source != 'deepseek'
-           ORDER BY i.quality_score DESC LIMIT 20`,
-        ).bind(space.id, horizon).all<{
-          canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
-          published_at: string | null; horizon: Horizon; citation_count: number; relevance_score: number;
-          abstract_text: string; quality_score: number; priority_venue: number;
-        }>();
-        analysisTargets.push(...rows.results.filter((row) => isRelevantPaper(row.title, row.venue, space, preference.profileKey, preference.priorityVenues)).slice(0, 2).map((row) => ({
-          canonicalId: row.canonical_id, doi: row.doi, title: row.title, authors: row.authors, venue: row.venue,
-          url: row.url, publishedAt: row.published_at, horizon: row.horizon, citationCount: row.citation_count,
-          relevanceScore: row.relevance_score, abstractText: row.abstract_text, qualityScore: row.quality_score,
-          priorityVenue: Boolean(row.priority_venue),
-        })));
-      }
-      const insights = await analyzeCandidates(database, space, user.userId, preference.priorityVenues, analysisTargets);
-      for (const insight of insights) {
-        await database.prepare(
-          `UPDATE paper_insights SET summary_zh = ?, summary_en = ?, why_read_zh = ?, why_read_en = ?,
-           analysis_source = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE paper_id = (SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id = ? LIMIT 1)`,
-        ).bind(insight.summaryZh, insight.summaryEn, insight.whyReadZh, insight.whyReadEn, insight.source,
-          space.id, insight.canonicalId).run();
       }
 
       const completedAt = new Date();
@@ -613,8 +612,9 @@ export async function POST(request: Request) {
       return Response.json(await readState(database, space, { cached: false }));
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 300) : "Monitoring scan failed";
-      await database.prepare("UPDATE monitor_runs SET status = 'error', error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
-        .bind(message, space.id).run();
+      const failedAt = new Date();
+      await database.prepare("UPDATE monitor_runs SET status = 'error', last_run_at = ?, next_run_at = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
+        .bind(failedAt.toISOString(), new Date(failedAt.getTime() + CADENCE_MS).toISOString(), message, space.id).run();
       return Response.json(await readState(database, space), { status: 502 });
     }
   } catch (error) {

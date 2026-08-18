@@ -29,6 +29,13 @@
       "when": 1787040817367,
       "tag": "0003_bizarre_proteus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787043639709,
+      "tag": "0004_sour_sentinels",
+      "breakpoints": true
     }
   ]
 }

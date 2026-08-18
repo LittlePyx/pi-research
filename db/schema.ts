@@ -149,7 +149,14 @@ export const paperInsights = sqliteTable(
     qualityScore: integer("quality_score").notNull().default(0),
     priorityVenue: integer("priority_venue", { mode: "boolean" }).notNull().default(false),
     analysisSource: text("analysis_source").notNull().default("metadata"),
+    analysisModel: text("analysis_model").notNull().default(""),
+    llmRecommended: integer("llm_recommended", { mode: "boolean" }).notNull().default(false),
+    llmRelevanceScore: integer("llm_relevance_score").notNull().default(0),
+    screeningReason: text("screening_reason").notNull().default(""),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
-  (table) => [index("idx_paper_insights_space_quality").on(table.spaceId, table.qualityScore)],
+  (table) => [
+    index("idx_paper_insights_space_quality").on(table.spaceId, table.qualityScore),
+    index("idx_paper_insights_space_recommended_quality").on(table.spaceId, table.llmRecommended, table.qualityScore),
+  ],
 );
