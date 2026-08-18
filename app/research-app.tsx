@@ -5,6 +5,9 @@ import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } 
 
 type Locale = "zh" | "en";
 type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
+type LibraryFilter = "inbox" | "accepted" | "all" | "dismissed";
+type InboxFilter = "all" | "unseen" | "seen" | "snoozed";
+type LibrarySort = "priority" | "newest" | "quality";
 type Space = {
   id: string;
   name: string;
@@ -74,7 +77,7 @@ type MonitorState = {
   preferences?: MonitorPreferences;
   papers: MonitorPaper[];
   historyPapers?: MonitorPaper[];
-  historyCounts?: { all: number; inbox: number; unseen: number; accepted: number; saved: number; dismissed: number };
+  historyCounts?: { all: number; inbox: number; unseen: number; seen: number; snoozed: number; accepted: number; saved: number; dismissed: number };
   cached?: boolean;
   throttled?: boolean;
 };
@@ -121,6 +124,19 @@ const copy = {
     accepted: "已接受",
     ignored: "已忽略",
     unseen: "未看过",
+    seenPending: "看过未处理",
+    snoozed: "稍后提醒",
+    historyOverview: "阅读收件箱",
+    historyPromise: "只有真正进入屏幕并停留的论文才算看过；未决定的论文会按节奏再次出现。",
+    historySearch: "搜索标题、作者、期刊或论文介绍",
+    sortPriority: "优先处理",
+    sortNewest: "最新发现",
+    sortQuality: "质量最高",
+    returnPending: "回到待处理",
+    nextReminder: "再次进入推荐队列",
+    neverViewed: "尚未实际看到",
+    decisionNeeded: "等待你的决定",
+    viewAnalysis: "查看分析",
     agentNote: "Pi 的本轮判断",
     spacePulse: "空间概况",
     activeThreads: "活跃线索",
@@ -330,6 +346,19 @@ const copy = {
     accepted: "Accepted",
     ignored: "Ignored",
     unseen: "Unseen",
+    seenPending: "Seen, undecided",
+    snoozed: "Remind later",
+    historyOverview: "Reading inbox",
+    historyPromise: "A paper counts as seen only after it actually enters the viewport. Undecided papers return on a deliberate cadence.",
+    historySearch: "Search title, author, venue, or brief",
+    sortPriority: "Action priority",
+    sortNewest: "Newest found",
+    sortQuality: "Highest quality",
+    returnPending: "Return to inbox",
+    nextReminder: "Returns to recommendations",
+    neverViewed: "Not actually viewed",
+    decisionNeeded: "Waiting for your decision",
+    viewAnalysis: "View analysis",
     agentNote: "Pi's scan judgment",
     spacePulse: "Space pulse",
     activeThreads: "Active threads",
@@ -617,6 +646,43 @@ function formatPaperDate(value: string | null, locale: Locale) {
   }).format(new Date(value));
 }
 
+function timeValue(value: string | null | undefined) {
+  if (!value) return 0;
+  const normalized = value.includes("T") ? value : value.replace(" ", "T") + "Z";
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function reminderLabel(paper: MonitorPaper, locale: Locale) {
+  if (paper.userState === "unseen") return copy[locale].neverViewed;
+  if (paper.userState === "snoozed" && paper.snoozedUntil) {
+    return locale === "zh"
+      ? `${formatPaperDate(paper.snoozedUntil, locale)}再次提醒`
+      : `Remind on ${formatPaperDate(paper.snoozedUntil, locale)}`;
+  }
+  if (paper.userState !== "seen") return "";
+  const reminderDays = paper.showCount <= 1 ? 1 : paper.showCount === 2 ? 3 : 14;
+  const dueAt = timeValue(paper.lastShownAt) + reminderDays * 24 * 60 * 60 * 1000;
+  if (!paper.lastShownAt || dueAt <= Date.now()) return locale === "zh" ? "已进入再次推荐队列" : "Back in the recommendation queue";
+  return locale === "zh"
+    ? `${formatPaperDate(new Date(dueAt).toISOString(), locale)}${copy.zh.nextReminder}`
+    : `${copy.en.nextReminder} ${formatPaperDate(new Date(dueAt).toISOString(), locale)}`;
+}
+
+function historyCountsFor(papers: MonitorPaper[]) {
+  const unresolved = papers.filter((paper) => !["accepted", "dismissed"].includes(paper.userState));
+  return {
+    all: papers.length,
+    inbox: unresolved.length,
+    unseen: unresolved.filter((paper) => paper.userState === "unseen").length,
+    seen: unresolved.filter((paper) => paper.userState === "seen").length,
+    snoozed: unresolved.filter((paper) => paper.userState === "snoozed").length,
+    accepted: papers.filter((paper) => paper.userState === "accepted").length,
+    saved: papers.filter((paper) => paper.saved).length,
+    dismissed: papers.filter((paper) => paper.userState === "dismissed").length,
+  };
+}
+
 const monitorProgressByStatus: Record<MonitorStatus, number> = {
   idle: 0,
   scanning: 4,
@@ -799,7 +865,11 @@ export default function ResearchApp({ user }: { user: User }) {
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
   const [venueDraft, setVenueDraft] = useState("");
   const [savingPreferences, setSavingPreferences] = useState(false);
-  const [libraryFilter, setLibraryFilter] = useState<"inbox" | "accepted" | "all" | "dismissed">("inbox");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("inbox");
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>("all");
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [librarySort, setLibrarySort] = useState<LibrarySort>("priority");
+  const [paperReturnView, setPaperReturnView] = useState<"today" | "library">("today");
   const [sharingSnapshot, setSharingSnapshot] = useState<string | null>(null);
   const [researchImports, setResearchImports] = useState<ResearchImportRecord[]>([]);
   const [importOpen, setImportOpen] = useState(false);
@@ -824,12 +894,25 @@ export default function ResearchApp({ user }: { user: User }) {
   const priorityPaperCount = rankedMonitorPapers.filter((paper) => paper.priorityVenue).length;
   const aiBriefCount = rankedMonitorPapers.filter((paper) => paper.analysisSource === "deepseek").length;
   const historyPapers = useMemo(() => monitor?.historyPapers || monitor?.papers || [], [monitor?.historyPapers, monitor?.papers]);
-  const libraryPapers = useMemo(() => historyPapers.filter((paper) => {
-    if (libraryFilter === "inbox") return paper.userState !== "accepted" && paper.userState !== "dismissed";
-    if (libraryFilter === "accepted") return paper.userState === "accepted";
-    if (libraryFilter === "dismissed") return paper.userState === "dismissed";
-    return true;
-  }), [historyPapers, libraryFilter]);
+  const libraryPapers = useMemo(() => {
+    const query = librarySearch.trim().toLocaleLowerCase();
+    const stateRank: Record<MonitorPaper["userState"], number> = { unseen: 0, seen: 1, snoozed: 2, accepted: 3, dismissed: 4 };
+    return historyPapers.filter((paper) => {
+      if (libraryFilter === "inbox" && ["accepted", "dismissed"].includes(paper.userState)) return false;
+      if (libraryFilter === "accepted" && paper.userState !== "accepted") return false;
+      if (libraryFilter === "dismissed" && paper.userState !== "dismissed") return false;
+      if (libraryFilter === "inbox" && inboxFilter !== "all" && paper.userState !== inboxFilter) return false;
+      if (!query) return true;
+      return [paper.title, paper.authors, paper.venue, paper.summaryZh, paper.summaryEn, paper.whyReadZh, paper.whyReadEn]
+        .join(" ").toLocaleLowerCase().includes(query);
+    }).sort((first, second) => {
+      if (librarySort === "newest") return timeValue(second.discoveredAt) - timeValue(first.discoveredAt);
+      if (librarySort === "quality") return second.qualityScore - first.qualityScore || second.relevanceScore - first.relevanceScore;
+      return stateRank[first.userState] - stateRank[second.userState]
+        || second.qualityScore - first.qualityScore
+        || timeValue(first.firstShownAt) - timeValue(second.firstShownAt);
+    });
+  }, [historyPapers, inboxFilter, libraryFilter, librarySearch, librarySort]);
   const scanIsActive = monitoring || isMonitorScanning(monitor?.status);
   const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
   const scanProgress = scanIsActive ? monitorProgressByStatus[effectiveScanStatus] : monitor?.status === "ready" ? 100 : 0;
@@ -877,6 +960,17 @@ export default function ResearchApp({ user }: { user: User }) {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
     window.localStorage.setItem("pi-locale", locale);
   }, [locale]);
+
+  useEffect(() => {
+    const mainViews = new Set<View>(["today", "threads", "learn", "library", "memory"]);
+    const restoreView = () => {
+      const candidate = window.location.hash.slice(1) as View;
+      if (mainViews.has(candidate)) setView(candidate);
+    };
+    restoreView();
+    window.addEventListener("popstate", restoreView);
+    return () => window.removeEventListener("popstate", restoreView);
+  }, []);
 
   useEffect(() => {
     if (activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
@@ -938,24 +1032,50 @@ export default function ResearchApp({ user }: { user: User }) {
 
   useEffect(() => {
     if (view !== "today" || !monitor?.papers.length || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
-    const reportShown = () => {
-      if (document.visibilityState !== "visible") return;
-      for (const paper of monitor.papers) {
-        const key = activeSpace.id + ":" + paper.id;
-        if (reportedImpressions.current.has(key)) continue;
-        reportedImpressions.current.add(key);
-        fetch("/api/feedback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, kind: "shown", value: true }),
-        }).catch(() => reportedImpressions.current.delete(key));
+    const dwellTimers = new Map<Element, number>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const paperId = entry.target.getAttribute("data-paper-impression");
+        if (!paperId) continue;
+        const key = activeSpace.id + ":" + paperId;
+        const existingTimer = dwellTimers.get(entry.target);
+        if ((!entry.isIntersecting || entry.intersectionRatio < 0.55) && existingTimer) {
+          window.clearTimeout(existingTimer);
+          dwellTimers.delete(entry.target);
+          continue;
+        }
+        if (!entry.isIntersecting || entry.intersectionRatio < 0.55 || existingTimer || reportedImpressions.current.has(key)) continue;
+        const timer = window.setTimeout(() => {
+          dwellTimers.delete(entry.target);
+          if (document.visibilityState !== "visible" || reportedImpressions.current.has(key)) return;
+          reportedImpressions.current.add(key);
+          const shownAt = new Date().toISOString();
+          setMonitor((current) => {
+            if (!current) return current;
+            const updatePaper = (paper: MonitorPaper): MonitorPaper => paper.id === paperId ? {
+              ...paper,
+              userState: paper.userState === "unseen" ? "seen" : paper.userState,
+              showCount: paper.showCount + 1,
+              firstShownAt: paper.firstShownAt || shownAt,
+              lastShownAt: shownAt,
+            } : paper;
+            const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
+            return { ...current, papers: current.papers.map(updatePaper), historyPapers, historyCounts: historyCountsFor(historyPapers) };
+          });
+          fetch("/api/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ spaceId: activeSpace.id, paperId, kind: "shown", value: true }),
+          }).catch(() => reportedImpressions.current.delete(key));
+        }, 1400);
+        dwellTimers.set(entry.target, timer);
       }
-    };
-    const timer = window.setTimeout(reportShown, 4000);
-    document.addEventListener("visibilitychange", reportShown);
+    }, { threshold: [0.55] });
+    const elements = document.querySelectorAll("[data-paper-impression]");
+    elements.forEach((element) => observer.observe(element));
     return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", reportShown);
+      observer.disconnect();
+      dwellTimers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [activeSpace.id, monitor?.papers, view]);
 
@@ -976,16 +1096,18 @@ export default function ResearchApp({ user }: { user: User }) {
   }, []);
 
   const navigate = (next: View) => {
+    const hash = next === "paper-detail" ? "paper" : next === "thread-detail" ? "thread" : next;
+    if (window.location.hash !== "#" + hash) window.history.pushState({ piView: next }, "", "#" + hash);
     setView(next);
     setMobileNav(false);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "auto" });
   };
 
   const switchSpace = (space: Space) => {
     setActiveSpaceId(space.id);
     window.localStorage.setItem("pi-active-space", space.id);
     setSpaceDialog(false);
-    setView("today");
+    navigate("today");
     setAnswer("");
     setAnswerModel(null);
     setQuestion("");
@@ -1132,20 +1254,11 @@ export default function ResearchApp({ user }: { user: User }) {
         snoozedUntil: kind === "later" ? new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() : null,
       };
       const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
-      const accepted = historyPapers.filter((item) => item.userState === "accepted");
-      const pending = historyPapers.filter((item) => item.userState !== "accepted" && item.userState !== "dismissed");
       return {
         ...current,
         papers: ["accepted", "dismissed", "snoozed"].includes(nextState) ? current.papers.filter((item) => item.id !== paper.id) : current.papers.map(updatePaper),
         historyPapers,
-        historyCounts: {
-          all: historyPapers.length,
-          inbox: pending.length,
-          unseen: pending.filter((item) => item.userState === "unseen").length,
-          accepted: accepted.length,
-          saved: historyPapers.filter((item) => item.saved).length,
-          dismissed: historyPapers.filter((item) => item.userState === "dismissed").length,
-        },
+        historyCounts: historyCountsFor(historyPapers),
       };
     });
     fetch("/api/feedback", {
@@ -1156,9 +1269,38 @@ export default function ResearchApp({ user }: { user: User }) {
     setToast(kind === "later" ? t.remindLater : t.feedbackSaved);
   };
 
+  const returnPaperToInbox = (paper: MonitorPaper) => {
+    const kind = paper.userState === "dismissed" ? "not_relevant" : paper.feedback === "relevant" ? "relevant" : "save";
+    setMonitor((current) => {
+      if (!current) return current;
+      const updatePaper = (item: MonitorPaper): MonitorPaper => item.id === paper.id ? {
+        ...item,
+        userState: "seen",
+        saved: kind === "save" ? false : item.saved,
+        feedback: null,
+        snoozedUntil: null,
+      } : item;
+      const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
+      return { ...current, historyPapers, historyCounts: historyCountsFor(historyPapers) };
+    });
+    fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, kind, value: false }),
+    }).catch(() => undefined);
+    setToast(t.returnPending);
+  };
+
   const openMonitorPaper = (paper: MonitorPaper) => {
     const openedPaper = { ...paper, openedAt: new Date().toISOString(), userState: paper.userState === "unseen" ? "seen" as const : paper.userState };
+    setPaperReturnView(view === "library" ? "library" : "today");
     setSelectedMonitorPaper(openedPaper);
+    setMonitor((current) => {
+      if (!current) return current;
+      const updatePaper = (item: MonitorPaper): MonitorPaper => item.id === paper.id ? openedPaper : item;
+      const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
+      return { ...current, papers: current.papers.map(updatePaper), historyPapers, historyCounts: historyCountsFor(historyPapers) };
+    });
     fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1327,7 +1469,7 @@ export default function ResearchApp({ user }: { user: User }) {
     { id: "library", label: t.library, mark: "04" },
     { id: "memory", label: t.memory, mark: "05" },
   ];
-  const activeNav = view === "paper-detail" ? "today" : view === "thread-detail" ? "threads" : view;
+  const activeNav = view === "paper-detail" ? paperReturnView : view === "thread-detail" ? "threads" : view;
 
   return (
     <div className="v2-app">
@@ -1343,14 +1485,14 @@ export default function ResearchApp({ user }: { user: User }) {
         <nav className="v2-nav" aria-label="Primary navigation">
           <p>{t.researchRadar}</p>
           {navItems.slice(0, 2).map((item) => (
-            <button type="button" key={item.id} className={activeNav === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
+            <button type="button" key={item.id} className={activeNav === item.id ? "active" : ""} aria-current={activeNav === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>
               <span>{item.mark}</span>{item.label}{item.id === "today" && Boolean(monitor?.newCount || rankedMonitorPapers.length) && <b>{Math.min(99, monitor?.newCount || rankedMonitorPapers.length)}</b>}
             </button>
           ))}
           <p>{t.knowledge}</p>
           {navItems.slice(2).map((item) => (
-            <button type="button" key={item.id} className={activeNav === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
-              <span>{item.mark}</span>{item.label}
+            <button type="button" key={item.id} className={activeNav === item.id ? "active" : ""} aria-current={activeNav === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>
+              <span>{item.mark}</span>{item.label}{item.id === "library" && Boolean(monitor?.historyCounts?.inbox) && <b>{Math.min(99, monitor?.historyCounts?.inbox || 0)}</b>}
             </button>
           ))}
         </nav>
@@ -1395,7 +1537,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   <small>{monitor?.scannedCount || 0} {t.scannedPapers} · {locale === "zh" ? "页面其他功能仍可继续使用" : "The rest of the page remains available"}</small>
                 </div>
               )}
-              <button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); navigate("library"); }}>
+              <button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); navigate("library"); }}>
                 <span>◎</span><div><strong>{monitor?.historyCounts?.inbox || 0} {t.inbox}</strong><small>{monitor?.historyCounts?.unseen || 0} {t.unseen} · {locale === "zh" ? "没有处理的论文不会消失" : "Unresolved papers will not disappear"}</small></div><b>→</b>
               </button>
               <div className="v2-source-profile">
@@ -1423,7 +1565,7 @@ export default function ResearchApp({ user }: { user: User }) {
                       <section key={horizon} className={"v2-paper-horizon " + horizon}>
                         <header><span>{label}</span><p>{focus}</p></header>
                         {horizonPapers.length ? horizonPapers.map((paper) => (
-                          <article className="v2-research-card" key={paper.id}>
+                          <article className="v2-research-card" key={paper.id} data-paper-impression={paper.id}>
                             <div className="v2-research-card-badges">
                               {paper.priorityVenue && <span className="priority">◆ {t.priorityVenueLabel}</span>}
                               <span>{paper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span>
@@ -1447,7 +1589,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-feed">
                 <div className="v2-section-title"><div><p className="v2-kicker warm">{t.realBrief}</p><h2>{t.topRecommendation}</h2><small>{t.realBriefIntro}</small></div><span>{rankedMonitorPapers.length} {t.realPapers}</span></div>
                 {rankedMonitorPapers[0] ? (
-                  <article className="v2-primary-paper">
+                  <article className="v2-primary-paper" data-paper-impression={rankedMonitorPapers[0].id}>
                     <div className="v2-paper-top">
                       {rankedMonitorPapers[0].priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}
                       <span>{rankedMonitorPapers[0].analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span>
@@ -1467,7 +1609,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   </article>
                 ) : <p className="v2-monitor-empty">{scanIsActive ? scanPhase : t.noLivePapers}</p>}
 
-                {rankedMonitorPapers[1] && <article className="v2-secondary-paper">
+                {rankedMonitorPapers[1] && <article className="v2-secondary-paper" data-paper-impression={rankedMonitorPapers[1].id}>
                   <div><span className="v2-real-badge">{rankedMonitorPapers[1].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[1].horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><button type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[1])}><h3>{rankedMonitorPapers[1].title}</h3></button><p>{rankedMonitorPapers[1].authors} · {rankedMonitorPapers[1].venue}</p></div>
                   <div><p>{t.whySuitable}</p><span>{locale === "zh" ? rankedMonitorPapers[1].whyReadZh : rankedMonitorPapers[1].whyReadEn}</span></div>
                   <button type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[1])}>→</button>
@@ -1476,7 +1618,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-section-title v2-worth-title"><div><h2>{t.moreRealPapers}</h2></div><span>{Math.max(0, rankedMonitorPapers.length - 2)}</span></div>
                 <div className="v2-compact-list">
                   {rankedMonitorPapers.slice(2).map((paper) => (
-                    <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}>
+                    <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}>
                       <span className="v2-paper-index">{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span>
                       <span><strong>{paper.title}</strong><small>{paper.authors} · {formatPaperDate(paper.publishedAt, locale)}</small></span>
                       <span className="v2-thread-chip">{t.qualityScore} {paper.qualityScore}</span>
@@ -1550,19 +1692,40 @@ export default function ResearchApp({ user }: { user: User }) {
         )}
 
         {view === "library" && (
-          <main className="v2-page">
-            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.libraryTitle}</h1><p>{t.libraryIntro}</p></div><button type="button">＋ {locale === "zh" ? "添加论文" : "Add paper"}</button></section>
+          <main className="v2-page v2-library-page">
+            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.libraryTitle}</h1><p>{t.historyPromise}</p></div><button type="button" onClick={() => navigate("today")}>← {locale === "zh" ? "今日推荐" : "Today"}</button></section>
+            <section className="v2-library-overview" aria-label={t.historyOverview}>
+              <div><p className="v2-kicker">{t.historyOverview}</p><h2>{locale === "zh" ? "每篇论文都有明确去处" : "Every paper has a clear place"}</h2><p>{t.libraryIntro}</p></div>
+              <button className={libraryFilter === "inbox" && inboxFilter === "unseen" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("unseen"); }}><span>01</span><strong>{monitor?.historyCounts?.unseen || 0}</strong><b>{t.unseen}</b><small>{t.neverViewed}</small></button>
+              <button className={libraryFilter === "inbox" && inboxFilter === "seen" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("seen"); }}><span>02</span><strong>{monitor?.historyCounts?.seen || 0}</strong><b>{t.seenPending}</b><small>{t.decisionNeeded}</small></button>
+              <button className={libraryFilter === "inbox" && inboxFilter === "snoozed" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("snoozed"); }}><span>03</span><strong>{monitor?.historyCounts?.snoozed || 0}</strong><b>{t.snoozed}</b><small>{locale === "zh" ? "到期后自动回到推荐队列" : "Returns automatically when due"}</small></button>
+            </section>
             <div className="v2-library-tabs">
-              <button className={libraryFilter === "inbox" ? "active" : ""} type="button" onClick={() => setLibraryFilter("inbox")}>{t.inbox}<span>{monitor?.historyCounts?.inbox || 0}</span></button>
+              <button className={libraryFilter === "inbox" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); }}>{t.inbox}<span>{monitor?.historyCounts?.inbox || 0}</span></button>
               <button className={libraryFilter === "accepted" ? "active" : ""} type="button" onClick={() => setLibraryFilter("accepted")}>{t.accepted}<span>{monitor?.historyCounts?.accepted || 0}</span></button>
-              <button className={libraryFilter === "all" ? "active" : ""} type="button" onClick={() => setLibraryFilter("all")}>{t.all}<span>{monitor?.historyCounts?.all || historyPapers.length}</span></button>
               <button className={libraryFilter === "dismissed" ? "active" : ""} type="button" onClick={() => setLibraryFilter("dismissed")}>{t.ignored}<span>{monitor?.historyCounts?.dismissed || 0}</span></button>
+              <button className={libraryFilter === "all" ? "active" : ""} type="button" onClick={() => setLibraryFilter("all")}>{t.all}<span>{monitor?.historyCounts?.all || historyPapers.length}</span></button>
+            </div>
+            <div className="v2-library-toolbar">
+              <label><span>⌕</span><input value={librarySearch} onChange={(event) => setLibrarySearch(event.target.value)} placeholder={t.historySearch} aria-label={t.historySearch} /></label>
+              <select value={librarySort} onChange={(event) => setLibrarySort(event.target.value as LibrarySort)} aria-label={locale === "zh" ? "历史记录排序" : "Sort history"}>
+                <option value="priority">{t.sortPriority}</option><option value="newest">{t.sortNewest}</option><option value="quality">{t.sortQuality}</option>
+              </select>
             </div>
             <div className="v2-library-list">
               {libraryPapers.map((paper) => (
-                <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}>
-                  <span className="v2-doc-icon">□</span><span><strong>{paper.title}</strong><small>{paper.authors} · {paper.venue}</small></span><span><small>{t.currentSpaceFit}</small><strong>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</strong></span><span><small>{t.added}</small><strong>{formatPaperDate(paper.publishedAt, locale)}</strong></span><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.readLater : t.reading}</span><span className="v2-real-badge">{t.qualityScore} {paper.qualityScore}</span><b>→</b>
-                </button>
+                <article className={"v2-library-paper " + paper.userState} key={paper.id}>
+                  <button className="v2-library-paper-main" type="button" onClick={() => openMonitorPaper(paper)}>
+                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><span>{t.qualityScore} {paper.qualityScore}</span></div>
+                    <h2>{paper.title}</h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p>
+                    <p className="v2-library-paper-why"><b>{t.whySuitable}</b>{locale === "zh" ? paper.whyReadZh : paper.whyReadEn}</p>
+                    <footer><span>◎ {reminderLabel(paper, locale)}</span><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><b>{t.viewAnalysis} →</b></footer>
+                  </button>
+                  <div className="v2-library-paper-actions">
+                    {!["accepted", "dismissed"].includes(paper.userState) ? <><button type="button" onClick={() => saveFeedback(paper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant")}>× {t.notRelevant}</button></> : <button type="button" onClick={() => returnPaperToInbox(paper)}>↶ {t.returnPending}</button>}
+                    <button type="button" onClick={() => shareSnapshot("paper", [paper])} disabled={Boolean(sharingSnapshot)}>↗ {t.sharePaper}</button>
+                  </div>
+                </article>
               ))}
               {!libraryPapers.length && <p className="v2-monitor-empty">{scanIsActive ? scanPhase : locale === "zh" ? "这个分类暂时没有论文。未处理的推荐不会因为错过一天而消失。" : "No papers are in this category yet. Pending recommendations do not disappear when you miss a day."}</p>}
             </div>
@@ -1591,7 +1754,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
-            <button className="v2-back" type="button" onClick={() => navigate("today")}>← {t.paperBack}</button>
+            <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "library" ? t.library : t.paperBack}</button>
             <section className="v2-paper-head"><div className="v2-paper-top">{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div></section>
             <div className="v2-paper-detail-grid">
               <div>

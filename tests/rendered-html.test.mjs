@@ -157,3 +157,32 @@ test("imports public research materials into reviewed, space-isolated profile me
   assert.match(css, /\.v2-import-warning/);
   assert.match(css, /\.v2-draft-opportunities/);
 });
+
+test("keeps a durable, view-aware paper inbox with reversible decisions", async () => {
+  const [monitor, feedback, ask, spaces, client, css] = await Promise.all([
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/feedback/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ask/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/spaces/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(monitor, /seen: pendingPapers\.filter/);
+  assert.match(monitor, /snoozed: pendingPapers\.filter/);
+  assert.match(feedback, /snoozed_until/);
+  assert.match(client, /IntersectionObserver/);
+  assert.match(client, /intersectionRatio < 0\.55/);
+  assert.match(client, /data-paper-impression/);
+  assert.match(client, /librarySearch/);
+  assert.match(client, /LibrarySort/);
+  assert.match(client, /returnPaperToInbox/);
+  assert.match(client, /paperReturnView/);
+  assert.match(client, /window\.history\.pushState/);
+  assert.match(client, /每篇论文都有明确去处/);
+  assert.match(ask, /const model = "deepseek-v4-pro"/);
+  assert.match(spaces, /modelConfigured \? "deepseek-v4-pro"/);
+  assert.match(css, /Pi Research V7 — durable reading inbox and calmer navigation/);
+  assert.match(css, /\.v2-library-overview/);
+  assert.match(css, /\.v2-library-paper-actions/);
+});

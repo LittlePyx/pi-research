@@ -72,7 +72,7 @@ export async function GET(request: Request) {
       user,
       modelConfigured,
       provider: modelConfigured ? "deepseek" : null,
-      model: modelConfigured ? runtime.DEEPSEEK_MODEL || "deepseek-v4-pro" : null,
+      model: modelConfigured ? "deepseek-v4-pro" : null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load research spaces";

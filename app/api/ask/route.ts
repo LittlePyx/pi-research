@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     if (!space) return Response.json({ error: "Research space not found" }, { status: 404 });
 
     const runtime = getRuntimeEnv();
-    const model = runtime.DEEPSEEK_MODEL || "deepseek-v4-pro";
+    const model = "deepseek-v4-pro";
     let answer: string;
     let mode: "deepseek" | "preview" = "preview";
     let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };

@@ -572,6 +572,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         all: historyPapers.length,
         inbox: pendingPapers.length,
         unseen: pendingPapers.filter((paper) => paper.userState === "unseen").length,
+        seen: pendingPapers.filter((paper) => paper.userState === "seen").length,
+        snoozed: pendingPapers.filter((paper) => paper.userState === "snoozed").length,
         accepted: historyPapers.filter((paper) => paper.userState === "accepted").length,
         saved: historyPapers.filter((paper) => paper.saved).length,
         dismissed: historyPapers.filter((paper) => paper.userState === "dismissed").length,
