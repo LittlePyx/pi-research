@@ -24,7 +24,7 @@ test("server-renders the Pi Research application", async () => {
   assert.match(html, /Pi Research/);
   assert.match(html, /DeepSeek Pro 审核后的真实论文/);
   assert.match(html, /近 14 天/);
-  assert.match(html, /主打最新/);
+  assert.match(html, /三层扫描，严格筛选/);
   assert.match(html, /设置重点来源/);
   assert.match(html, /真实研究简报/);
   assert.match(html, /匿名浏览器工作区/);
@@ -86,6 +86,34 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(client, /rankedMonitorPapers/);
   assert.match(client, /openMonitorPaper/);
   assert.match(client, /为什么适合读/);
+});
+
+test("mines deeper five-year pages and builds a real expandable research map", async () => {
+  const [monitor, mapRoute, schema, repository, client, css] = await Promise.all([
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(monitor, /monitor_discovery_pages/);
+  assert.match(monitor, /query\.bibliographic/);
+  assert.match(monitor, /horizon\.key === "years" \? 28/);
+  assert.match(monitor, /nextOffset = offset \+ rows >= 600 \? 0 : offset \+ rows/);
+  assert.match(mapRoute, /MODEL = "deepseek-v4-pro"/);
+  assert.match(mapRoute, /Foundation = field-defining concepts or methods/);
+  assert.match(mapRoute, /action\?: "initialize" \| "expand"/);
+  assert.match(mapRoute, /INSERT OR IGNORE INTO research_track_papers/);
+  assert.match(schema, /researchTracks/);
+  assert.match(schema, /researchTrackPapers/);
+  assert.match(repository, /CREATE TABLE IF NOT EXISTS research_tracks/);
+  assert.match(client, /领域发展地图/);
+  assert.match(client, /继续填充这条路线/);
+  assert.doesNotMatch(client, /Gaussian Extremality for Rate-Distortion/);
+  assert.match(css, /Focused Today brief \+ real research map/);
+  assert.match(css, /\.v2-research-timeline/);
 });
 
 test("creates immutable public snapshots with live paper links and independent metadata", async () => {

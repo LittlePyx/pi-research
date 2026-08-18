@@ -81,6 +81,7 @@ type Candidate = {
   qualityScore: number;
   priorityVenue: boolean;
 };
+type DiscoveryQuery = { key: string; query: string; sort: "relevance" | "is-referenced-by-count"; rotating: boolean };
 type PaperReview = {
   canonicalId: string;
   isPaper: boolean;
@@ -239,20 +240,73 @@ async function normalizeItem(item: CrossrefItem, horizon: Horizon): Promise<Omit
   };
 }
 
-async function fetchHorizon(space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, priorityVenues: string[], profileKey: string) {
+function asciiOnly(value: string) {
+  return Array.from(value).every((character) => (character.codePointAt(0) || 0) <= 127);
+}
+
+function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], profileKey: string): DiscoveryQuery[] {
   const profile = getDomainProfile(profileKey);
-  const endpoint = new URL("https://api.crossref.org/works");
-  const profileQuery = profile.keywords.filter((keyword) => Array.from(keyword).every((character) => (character.codePointAt(0) || 0) <= 127)).slice(0, 5).join(" ");
-  endpoint.searchParams.set("query.title", cleanText(`${space.name} ${space.description} ${space.memoryContext || ""} ${profileQuery}`).slice(0, 520));
-  endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
-  endpoint.searchParams.set("rows", "40");
-  endpoint.searchParams.set("sort", horizon.sort);
-  endpoint.searchParams.set("order", "desc");
-  endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
+  const description = cleanText(`${space.name} ${space.description}`).slice(0, 320);
+  const profileTerms = profile.keywords.filter(asciiOnly);
+  const memoryTerms = (space.memoryContext || "").split(";").map(cleanText).filter((term) => term.length >= 4 && asciiOnly(term));
+  const queries: DiscoveryQuery[] = [
+    { key: "scope", query: `${description} ${profileTerms.slice(0, 4).join(" ")}`, sort: horizon.sort, rotating: horizon.key !== "days" },
+  ];
+  if (horizon.key !== "days") {
+    queries.push({ key: "domain", query: `${space.name} ${profileTerms.slice(1, 8).join(" ")}`, sort: "relevance", rotating: true });
+  }
+  if (horizon.key === "years") {
+    queries.push({
+      key: "memory",
+      query: `${space.name} ${memoryTerms.slice(0, 8).join(" ") || profileTerms.slice(4, 10).join(" ")}`,
+      sort: "is-referenced-by-count",
+      rotating: true,
+    });
+    queries.push({
+      key: "methods",
+      query: `${space.description} ${memoryTerms.slice(8, 16).join(" ") || profileTerms.slice(0, 10).join(" ")}`,
+      sort: "relevance",
+      rotating: true,
+    });
+  }
+  return queries.map((item) => ({ ...item, query: cleanText(item.query).slice(0, 480) })).filter((item) => item.query.length >= 4);
+}
+
+async function discoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery) {
+  if (!query.rotating) return 0;
+  const row = await database.prepare(
+    "SELECT next_offset FROM monitor_discovery_pages WHERE space_id = ? AND horizon = ? AND query_key = ? LIMIT 1",
+  ).bind(spaceId, horizon, query.key).first<{ next_offset: number }>();
+  return Math.max(0, row?.next_offset || 0);
+}
+
+async function advanceDiscoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery, offset: number, rows: number) {
+  if (!query.rotating) return;
+  const nextOffset = offset + rows >= 600 ? 0 : offset + rows;
+  await database.prepare(
+    `INSERT INTO monitor_discovery_pages (id, space_id, horizon, query_key, next_offset)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(space_id, horizon, query_key) DO UPDATE SET next_offset = excluded.next_offset, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(crypto.randomUUID(), spaceId, horizon, query.key, nextOffset).run();
+}
+
+async function fetchHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, priorityVenues: string[], profileKey: string) {
+  const rows = horizon.key === "years" ? 36 : 30;
+  const plans = discoveryQueries(space, horizon, profileKey);
   const requestOptions: RequestInit = {
     headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
     signal: AbortSignal.timeout(20_000),
   };
+  const fetched = await Promise.all(plans.map(async (plan) => {
+    const offset = await discoveryOffset(database, space.id, horizon.key, plan);
+  const endpoint = new URL("https://api.crossref.org/works");
+    endpoint.searchParams.set("query.bibliographic", plan.query);
+  endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
+    endpoint.searchParams.set("rows", String(rows));
+    endpoint.searchParams.set("offset", String(offset));
+    endpoint.searchParams.set("sort", plan.sort);
+  endpoint.searchParams.set("order", "desc");
+  endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
   let response = await fetch(endpoint, requestOptions);
   if (response.status === 429) {
     await new Promise((resolve) => setTimeout(resolve, 900));
@@ -260,13 +314,20 @@ async function fetchHorizon(space: SpaceRow, horizon: typeof HORIZONS[number], n
   }
   if (!response.ok) throw new Error(`Crossref returned ${response.status}`);
   const data = await response.json() as CrossrefResponse;
-  const normalized = await Promise.all((data.message?.items || []).map((item) => normalizeItem(item, horizon.key)));
-  return normalized
+    await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, rows);
+    return data.message?.items || [];
+  }));
+  const normalized = await Promise.all(fetched.flat().map((item) => normalizeItem(item, horizon.key)));
+  const unique = new Map<string, Candidate>();
+  for (const item of normalized
     .filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item))
     .map((item) => ({ item, signals: relevanceSignals(item.title, space, profileKey) }))
-    .map(({ item, signals }) => scoreCandidate({ ...item, relevanceScore: item.relevanceScore + signals.score * 20 }, priorityVenues, now))
-    .sort((left, right) => right.qualityScore - left.qualityScore)
-    .slice(0, 8);
+    .map(({ item, signals }) => scoreCandidate({ ...item, relevanceScore: item.relevanceScore + signals.score * 20 }, priorityVenues, now))) {
+    const previous = unique.get(item.canonicalId);
+    if (!previous || item.qualityScore > previous.qualityScore) unique.set(item.canonicalId, item);
+  }
+  const limit = horizon.key === "years" ? 28 : horizon.key === "months" ? 16 : 12;
+  return Array.from(unique.values()).sort((left, right) => right.qualityScore - left.qualityScore).slice(0, limit);
 }
 
 async function ownedSpace(request: Request, spaceId: string) {
@@ -658,7 +719,7 @@ export async function POST(request: Request) {
       let discoveredCount = 0;
       for (const horizon of HORIZONS) {
         await updateRunPhase(database, space.id, `discovering_${horizon.key}`, discoveredCount);
-        const batch = await fetchHorizon(enrichedSpace, horizon, now, preference.priorityVenues, preference.profileKey);
+        const batch = await fetchHorizon(database, enrichedSpace, horizon, now, preference.priorityVenues, preference.profileKey);
         batches.push(batch);
         discoveredCount += batch.length;
         await updateRunPhase(database, space.id, `discovering_${horizon.key}`, discoveredCount);

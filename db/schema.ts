@@ -98,6 +98,21 @@ export const monitorRuns = sqliteTable(
   (table) => [uniqueIndex("idx_monitor_runs_space").on(table.spaceId)],
 );
 
+export const monitorDiscoveryPages = sqliteTable(
+  "monitor_discovery_pages",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    horizon: text("horizon").notNull(),
+    queryKey: text("query_key").notNull(),
+    nextOffset: integer("next_offset").notNull().default(0),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_monitor_discovery_space_horizon_query").on(table.spaceId, table.horizon, table.queryKey),
+  ],
+);
+
 export const monitoredPapers = sqliteTable(
   "monitored_papers",
   {
@@ -218,5 +233,51 @@ export const researchImports = sqliteTable(
   (table) => [
     uniqueIndex("idx_research_imports_space_hash").on(table.spaceId, table.contentHash),
     index("idx_research_imports_space_status_created").on(table.spaceId, table.status, table.createdAt),
+  ],
+);
+
+export const researchTracks = sqliteTable(
+  "research_tracks",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    titleZh: text("title_zh").notNull(),
+    titleEn: text("title_en").notNull(),
+    summaryZh: text("summary_zh").notNull().default(""),
+    summaryEn: text("summary_en").notNull().default(""),
+    searchQueries: text("search_queries").notNull().default("[]"),
+    position: integer("position").notNull().default(0),
+    expansionCount: integer("expansion_count").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [index("idx_research_tracks_space_position").on(table.spaceId, table.position)],
+);
+
+export const researchTrackPapers = sqliteTable(
+  "research_track_papers",
+  {
+    id: text("id").primaryKey(),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    canonicalId: text("canonical_id").notNull(),
+    doi: text("doi"),
+    title: text("title").notNull(),
+    authors: text("authors").notNull().default(""),
+    venue: text("venue").notNull().default(""),
+    url: text("url").notNull().default(""),
+    publishedAt: text("published_at"),
+    citationCount: integer("citation_count").notNull().default(0),
+    role: text("role").notNull(),
+    summaryZh: text("summary_zh").notNull().default(""),
+    summaryEn: text("summary_en").notNull().default(""),
+    rationaleZh: text("rationale_zh").notNull().default(""),
+    rationaleEn: text("rationale_en").notNull().default(""),
+    position: integer("position").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_track_papers_track_canonical").on(table.trackId, table.canonicalId),
+    index("idx_research_track_papers_track_position").on(table.trackId, table.position),
   ],
 );

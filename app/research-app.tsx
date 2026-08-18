@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
+import type { ResearchMapState, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../lib/research-map";
 
 type Locale = "zh" | "en";
 type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
@@ -20,14 +21,6 @@ type Space = {
 };
 type User = { userId: string; displayName: string; email: string; fullName: string | null };
 type Localized = { zh: string; en: string };
-type Thread = {
-  id: string;
-  title: Localized;
-  question: Localized;
-  status: "active" | "learning" | "watching";
-  updates: Localized;
-  priority: "high" | "medium" | "low";
-};
 type MonitorPaper = {
   id: string;
   doi: string | null;
@@ -537,41 +530,6 @@ const fallbackSpaces: Space[] = [
   { id: "space-ml-reading", name: "ML Reading", memberName: "Sarah", description: "Foundation models, efficient learning, and generative compression", accent: "sage" },
 ];
 
-const threads: Thread[] = [
-  {
-    id: "gaussian",
-    title: { zh: "高斯极值与率失真", en: "Gaussian Extremality for Rate-Distortion" },
-    question: { zh: "在超出二次失真的情形下，哪些结构条件仍能保证高斯源或测试信道的极值性？", en: "Which structural conditions preserve Gaussian extremality beyond quadratic distortion?" },
-    status: "active",
-    updates: { zh: "本周 3 个重要进展", en: "3 important updates this week" },
-    priority: "high",
-  },
-  {
-    id: "ot-info",
-    title: { zh: "最优传输 × 信息论", en: "Optimal Transport × Information Theory" },
-    question: { zh: "传输与耦合方法能否给出新的逆向界和强数据处理不等式？", en: "Can transport and coupling methods yield new converses and SDPIs?" },
-    status: "active",
-    updates: { zh: "2 篇值得阅读", en: "2 papers worth reading" },
-    priority: "high",
-  },
-  {
-    id: "rd-existence",
-    title: { zh: "一般空间上的率失真存在性", en: "Rate-Distortion Existence on General Spaces" },
-    question: { zh: "最优测试信道存在性所需的最弱紧性与连续性条件是什么？", en: "What are the weakest tightness and continuity conditions for existence?" },
-    status: "active",
-    updates: { zh: "今天无重要进展", en: "No significant updates today" },
-    priority: "medium",
-  },
-  {
-    id: "bridge",
-    title: { zh: "薛定谔桥", en: "Schrödinger Bridge" },
-    question: { zh: "如何从最优传输背景进入现代薛定谔桥理论？", en: "How can an optimal transport background bridge into modern Schrödinger theory?" },
-    status: "learning",
-    updates: { zh: "学习路径完成 35%", en: "Learning path · 35%" },
-    priority: "medium",
-  },
-];
-
 const pathItems = [
   {
     stage: "01",
@@ -645,6 +603,19 @@ function formatPaperDate(value: string | null, locale: Locale) {
     month: "short",
     day: "numeric",
   }).format(new Date(value));
+}
+
+function researchRoleLabel(role: ResearchTrackRole, locale: Locale) {
+  const labels: Record<ResearchTrackRole, Localized> = {
+    foundation: { zh: "奠基", en: "Foundation" },
+    milestone: { zh: "发展节点", en: "Milestone" },
+    frontier: { zh: "近年前沿", en: "Frontier" },
+  };
+  return labels[role][locale];
+}
+
+function researchPaperYear(paper: ResearchTrackPaper) {
+  return paper.publishedAt?.slice(0, 4) || "—";
 }
 
 function timeValue(value: string | null | undefined) {
@@ -849,7 +820,10 @@ export default function ResearchApp({ user }: { user: User }) {
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [newSpace, setNewSpace] = useState({ name: "", memberName: "", description: "" });
   const [selectedMonitorPaper, setSelectedMonitorPaper] = useState<MonitorPaper | null>(null);
-  const [selectedThread, setSelectedThread] = useState<Thread>(threads[0]);
+  const [researchMap, setResearchMap] = useState<ResearchMapState>({ tracks: [], model: "deepseek-v4-pro", generated: false });
+  const [selectedThread, setSelectedThread] = useState<ResearchTrack | null>(null);
+  const [mapLoading, setMapLoading] = useState(false);
+  const [mapAction, setMapAction] = useState<string | null>(null);
   const [modelConfigured, setModelConfigured] = useState(false);
   const [connectedModel, setConnectedModel] = useState<string | null>(null);
   const [askOpen, setAskOpen] = useState(false);
@@ -892,8 +866,6 @@ export default function ResearchApp({ user }: { user: User }) {
     () => [...(monitor?.papers || [])].sort((first, second) => second.qualityScore - first.qualityScore),
     [monitor?.papers],
   );
-  const priorityPaperCount = rankedMonitorPapers.filter((paper) => paper.priorityVenue).length;
-  const aiBriefCount = rankedMonitorPapers.filter((paper) => paper.analysisSource === "deepseek").length;
   const historyPapers = useMemo(() => monitor?.historyPapers || monitor?.papers || [], [monitor?.historyPapers, monitor?.papers]);
   const libraryPapers = useMemo(() => {
     const query = librarySearch.trim().toLocaleLowerCase();
@@ -1030,6 +1002,39 @@ export default function ResearchApp({ user }: { user: User }) {
     }, 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [view, activeSpace.id]);
+
+  useEffect(() => {
+    if (!new Set<View>(["threads", "thread-detail"]).has(view) || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    let cancelled = false;
+    const load = async () => {
+      setMapLoading(true);
+      try {
+        let response = await fetch("/api/research-map?spaceId=" + encodeURIComponent(activeSpace.id));
+        let data = await response.json() as ResearchMapState & { error?: string };
+        if (!response.ok) throw new Error(data.error || "map unavailable");
+        if (!data.generated) {
+          setMapAction("initialize");
+          response = await fetch("/api/research-map", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ spaceId: activeSpace.id, action: "initialize" }),
+          });
+          data = await response.json() as ResearchMapState & { error?: string };
+          if (!response.ok) throw new Error(data.error || "map generation failed");
+        }
+        if (!cancelled) {
+          setResearchMap(data);
+          setSelectedThread((current) => data.tracks.find((track) => track.id === current?.id) || data.tracks[0] || null);
+        }
+      } catch {
+        if (!cancelled) setToast(locale === "zh" ? "研究路线暂时无法生成，请稍后重试" : "The research map could not be built just now");
+      } finally {
+        if (!cancelled) { setMapLoading(false); setMapAction(null); }
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [activeSpace.id, locale, view]);
 
   useEffect(() => {
     if (view !== "today" || !monitor?.papers.length || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
@@ -1458,9 +1463,31 @@ export default function ResearchApp({ user }: { user: User }) {
     setAskOpen(true);
   };
 
-  const openThread = (thread: Thread) => {
+  const openThread = (thread: ResearchTrack) => {
     setSelectedThread(thread);
     navigate("thread-detail");
+  };
+
+  const expandResearchTrack = async (thread: ResearchTrack) => {
+    if (mapAction || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    setMapAction(thread.id);
+    try {
+      const response = await fetch("/api/research-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, action: "expand", trackId: thread.id }),
+      });
+      const data = await response.json() as ResearchMapState & { addedCount?: number; error?: string };
+      if (!response.ok) throw new Error(data.error || "expand failed");
+      setResearchMap(data);
+      const updated = data.tracks.find((item) => item.id === thread.id) || null;
+      setSelectedThread(updated);
+      setToast(locale === "zh" ? (data.addedCount ? `新增 ${data.addedCount} 篇代表性论文` : "本轮没有发现足够有代表性的新论文") : (data.addedCount ? `Added ${data.addedCount} representative papers` : "No sufficiently representative additions in this pass"));
+    } catch {
+      setToast(locale === "zh" ? "继续挖掘失败，请稍后重试" : "Could not continue mining this direction");
+    } finally {
+      setMapAction(null);
+    }
   };
 
   const navItems: Array<{ id: View; label: string; mark: string }> = [
@@ -1519,13 +1546,13 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "today" && (
           <main className="v2-page v2-today">
             <section className="v2-today-hero">
-              <div><p className="v2-kicker">{t.todayDate}</p><h1>{t.goodMorning}，{activeSpace.memberName}。</h1><p><strong>{t.reviewed}</strong> · {t.matched}</p></div>
-              <div className="v2-attention-number"><strong>{monitor ? monitor.newCount : "—"}</strong><span>{t.attention}</span><small>{t.briefTime}</small><button className="v2-share-action v2-today-share" type="button" onClick={() => shareSnapshot("daily", rankedMonitorPapers.slice(0, 6))} disabled={!rankedMonitorPapers.length || Boolean(sharingSnapshot)}>{sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily} ↗</button></div>
+              <div><p className="v2-kicker">{t.todayDate}</p><h1>{t.goodMorning}，{activeSpace.memberName}。</h1></div>
+              <div className="v2-attention-number"><strong>{rankedMonitorPapers.length || "—"}</strong><span>{locale === "zh" ? "篇待看" : "to review"}</span><button className="v2-share-action v2-today-share" type="button" onClick={() => shareSnapshot("daily", rankedMonitorPapers.slice(0, 6))} disabled={!rankedMonitorPapers.length || Boolean(sharingSnapshot)}>{sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily} ↗</button></div>
             </section>
 
             <section className="v2-monitor-panel">
               <div className="v2-monitor-head">
-                <div><p className="v2-kicker">{t.liveMonitor}</p><h2>{t.monitorIntro}</h2></div>
+                <div><p className="v2-kicker">{t.liveMonitor}</p><h2>{locale === "zh" ? "三层扫描，严格筛选" : "Three horizons, strictly screened"}</h2></div>
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
@@ -1542,49 +1569,15 @@ export default function ResearchApp({ user }: { user: User }) {
               <button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); navigate("library"); }}>
                 <span>◎</span><div><strong>{monitor?.historyCounts?.inbox || 0} {t.inbox}</strong><small>{monitor?.historyCounts?.unseen || 0} {t.unseen} · {locale === "zh" ? "没有处理的论文不会消失" : "Unresolved papers will not disappear"}</small></div><b>→</b>
               </button>
-              <div className="v2-source-profile">
-                <div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div>
-                <div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 5).map((venue) => <i key={venue}>{venue}</i>)}{(monitor?.preferences?.priorityVenues.length || 0) > 5 && <b>+{(monitor?.preferences?.priorityVenues.length || 0) - 5}</b>}</p></div>
+              <div className="v2-horizon-strip">
+                {(["days", "months", "years"] as const).map((horizon) => <span key={horizon}><b>{monitor?.papers.filter((paper) => paper.horizon === horizon).length || 0}</b>{horizon === "days" ? t.daysHorizon : horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span>)}
               </div>
-              <div className="v2-horizon-logic">
-                <article><span>01 · {t.daysHorizon}</span><p>{t.daysFocus}</p></article>
-                <article><span>02 · {t.monthsHorizon}</span><p>{t.monthsFocus}</p></article>
-                <article><span>03 · {t.yearsHorizon}</span><p>{t.yearsFocus}</p></article>
-              </div>
-              <p className="v2-monitor-explainer">{t.autoVisit}</p>
-              <dl className="v2-monitor-metrics">
-                <div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div>
-                <div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div>
-                <div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div>
-              </dl>
-              {monitor?.papers?.length ? (
-                <div className="v2-paper-horizons">
-                  {(["days", "months", "years"] as const).map((horizon) => {
-                    const label = horizon === "days" ? t.daysHorizon : horizon === "months" ? t.monthsHorizon : t.yearsHorizon;
-                    const focus = horizon === "days" ? t.daysFocus : horizon === "months" ? t.monthsFocus : t.yearsFocus;
-                    const horizonPapers = monitor.papers.filter((paper) => paper.horizon === horizon);
-                    return (
-                      <section key={horizon} className={"v2-paper-horizon " + horizon}>
-                        <header><span>{label}</span><p>{focus}</p></header>
-                        {horizonPapers.length ? horizonPapers.map((paper) => (
-                          <article className="v2-research-card" key={paper.id} data-paper-impression={paper.id}>
-                            <div className="v2-research-card-badges">
-                              {paper.priorityVenue && <span className="priority">◆ {t.priorityVenueLabel}</span>}
-                              <span>{paper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span>
-                            </div>
-                            <h3>{paper.title}</h3>
-                            <p className="v2-research-meta">{[paper.authors, paper.venue, paper.publishedAt].filter(Boolean).join(" · ")}</p>
-                            <div className="v2-paper-intro"><span>{t.introLabel}</span><p>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p></div>
-                            <div className="v2-paper-why"><span>{t.whySuitable}</span><p>{locale === "zh" ? paper.whyReadZh : paper.whyReadEn}</p></div>
-                            <footer><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><span>{t.qualityScore} {paper.qualityScore}</span><span>{t.citations} {paper.citationCount}</span><button className="v2-share-action" type="button" onClick={() => shareSnapshot("paper", [paper])} disabled={Boolean(sharingSnapshot)}>{sharingSnapshot === paper.id ? t.creatingShare : t.sharePaper}</button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></footer>
-                          </article>
-                        )) : <p className="v2-horizon-empty">{t.noHorizonPaper}</p>}
-                      </section>
-                    );
-                  })}
-                </div>
-              ) : <p className="v2-monitor-empty">{scanIsActive ? scanPhase : t.noLivePapers}</p>}
-              <p className="v2-dedupe-note">◎ {t.dedupeNote}</p>
+              <details className="v2-scan-details">
+                <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
+                <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div></div>
+                <dl className="v2-monitor-metrics"><div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div><div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div><div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div></dl>
+                <p>{t.autoVisit}</p>
+              </details>
             </section>
 
             <div className="v2-dashboard-grid">
@@ -1611,15 +1604,9 @@ export default function ResearchApp({ user }: { user: User }) {
                   </article>
                 ) : <p className="v2-monitor-empty">{scanIsActive ? scanPhase : t.noLivePapers}</p>}
 
-                {rankedMonitorPapers[1] && <article className="v2-secondary-paper" data-paper-impression={rankedMonitorPapers[1].id}>
-                  <div><span className="v2-real-badge">{rankedMonitorPapers[1].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[1].horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><button type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[1])}><h3>{rankedMonitorPapers[1].title}</h3></button><p>{rankedMonitorPapers[1].authors} · {rankedMonitorPapers[1].venue}</p></div>
-                  <div><p>{t.whySuitable}</p><span>{locale === "zh" ? rankedMonitorPapers[1].whyReadZh : rankedMonitorPapers[1].whyReadEn}</span></div>
-                  <button type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[1])}>→</button>
-                </article>}
-
-                <div className="v2-section-title v2-worth-title"><div><h2>{t.moreRealPapers}</h2></div><span>{Math.max(0, rankedMonitorPapers.length - 2)}</span></div>
+                <div className="v2-section-title v2-worth-title"><div><h2>{t.moreRealPapers}</h2></div><span>{Math.max(0, rankedMonitorPapers.length - 1)}</span></div>
                 <div className="v2-compact-list">
-                  {rankedMonitorPapers.slice(2).map((paper) => (
+                  {rankedMonitorPapers.slice(1).map((paper) => (
                     <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}>
                       <span className="v2-paper-index">{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span>
                       <span><strong>{paper.title}</strong><small>{paper.authors} · {formatPaperDate(paper.publishedAt, locale)}</small></span>
@@ -1629,55 +1616,59 @@ export default function ResearchApp({ user }: { user: User }) {
                   ))}
                 </div>
 
-                <section className="v2-quiet">
-                  <span>◎</span><div><p className="v2-kicker">{t.sourceRecord}</p><h3>{monitor?.source || "Crossref"}</h3><small>{t.dedupeNote}</small></div>
-                  <div><strong>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</strong><small>{monitor?.knownCount || 0} {t.knownPapers}</small></div>
-                </section>
               </div>
-
-              <aside className="v2-right-rail">
-                <section className="v2-agent-note"><div><span>π</span><p className="v2-kicker">{t.agentNote}</p></div><p>{locale === "zh" ? `本轮从 ${monitor?.scannedCount || 0} 条入选候选中保留 ${rankedMonitorPapers.length} 篇真实论文，其中 ${priorityPaperCount} 篇来自重点来源，${aiBriefCount} 篇已经完成 Pi 批量解读。` : `This scan kept ${rankedMonitorPapers.length} real papers from ${monitor?.scannedCount || 0} shortlisted candidates. ${priorityPaperCount} came from priority venues and ${aiBriefCount} received Pi batch analysis.`}</p><button type="button" onClick={() => setAskOpen(true)}>{t.askPi} →</button></section>
-                <section className="v2-pulse">
-                  <div className="v2-rail-heading"><p className="v2-kicker">{t.spacePulse}</p><span className={"v2-space-avatar small " + activeSpace.accent}>{initials(activeSpace.name)}</span></div>
-                  <dl><div><dt>{t.realPapers}</dt><dd>{rankedMonitorPapers.length}</dd></div><div><dt>{t.knownPapers}</dt><dd>{monitor?.knownCount || 0}</dd></div><div><dt>{t.scanCandidates}</dt><dd>{monitor?.scannedCount || 0}</dd></div></dl>
-                  <p>{activeSpace.description}</p>
-                </section>
-                <section className="v2-change-log"><div className="v2-rail-heading"><p className="v2-kicker">{t.recentDiscoveries}</p><span>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</span></div>{rankedMonitorPapers.slice(0, 2).map((paper, index) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><i className={index === 0 ? "blue" : "umber"} /><p><strong>{paper.title}</strong><span>{paper.venue}</span></p><small>{formatPaperDate(paper.publishedAt, locale)}</small></button>)}</section>
-              </aside>
             </div>
           </main>
         )}
 
         {view === "threads" && (
-          <main className="v2-page">
-            <section className="v2-page-head"><div><p className="v2-kicker">{t.currentSpace} · {defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.allThreads}</h1><p>{t.threadSubtitle}</p></div><button type="button" onClick={() => setToast(locale === "zh" ? "研究线索创建器将在下一步接入" : "Thread creator is ready for the next step")}>＋ {t.createThread}</button></section>
-            <div className="v2-thread-table">
-              {threads.map((thread, index) => (
-                <button type="button" key={thread.id} onClick={() => openThread(thread)}>
-                  <span className={"v2-thread-status " + thread.status} />
-                  <span className="v2-thread-number">0{index + 1}</span>
-                  <span><strong>{thread.title[locale]}</strong><small>{thread.question[locale]}</small></span>
-                  <span className="v2-thread-update">{thread.updates[locale]}</span>
-                  <span className={"v2-priority " + thread.priority}>{thread.priority}</span>
-                  <b>→</b>
-                </button>
-              ))}
-            </div>
+          <main className="v2-page v2-map-page">
+            <section className="v2-page-head v2-map-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {modelDisplayName(researchMap.model)}</p><h1>{locale === "zh" ? "领域发展地图" : "Field development map"}</h1><p>{locale === "zh" ? "沿着真实论文看清奠基工作、关键转折与近年前沿。" : "Follow real papers from foundations through decisive milestones to the recent frontier."}</p></div><span className="v2-map-total"><strong>{researchMap.tracks.reduce((sum, track) => sum + track.papers.length, 0)}</strong>{locale === "zh" ? "篇代表作" : "representative works"}</span></section>
+            {mapLoading ? (
+              <section className="v2-map-loading" role="status"><span>π</span><div><strong>{locale === "zh" ? "正在建立真实研究路线" : "Building the real research map"}</strong><p>{locale === "zh" ? "先划分方向，再从不同年代检索真实论文，最后由 DeepSeek Pro 判断其代表性。" : "Defining directions, retrieving real papers across eras, then asking DeepSeek Pro to judge representativeness."}</p><i><b /></i></div></section>
+            ) : researchMap.tracks.length ? (
+              <div className="v2-map-grid">
+                {researchMap.tracks.map((thread, index) => (
+                  <article className="v2-map-card" key={thread.id}>
+                    <header><span>0{index + 1}</span><div><b>{thread.papers.length}</b>{locale === "zh" ? "篇" : "papers"}</div></header>
+                    <button className="v2-map-card-main" type="button" onClick={() => openThread(thread)}><h2>{locale === "zh" ? thread.titleZh : thread.titleEn}</h2><p>{locale === "zh" ? thread.summaryZh : thread.summaryEn}</p></button>
+                    <div className="v2-map-mini-route">
+                      {(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => {
+                        const paper = thread.papers.find((item) => item.role === role);
+                        return <span key={role} className={paper ? "filled" : ""}><i /> <small>{researchRoleLabel(role, locale)}</small><b>{paper ? researchPaperYear(paper) : "—"}</b></span>;
+                      })}
+                    </div>
+                    <footer><button type="button" onClick={() => openThread(thread)}>{locale === "zh" ? "查看路线" : "Open route"} →</button><button className="secondary" type="button" onClick={() => void expandResearchTrack(thread)} disabled={Boolean(mapAction)}>{mapAction === thread.id ? (locale === "zh" ? "挖掘中…" : "Mining…") : (locale === "zh" ? "继续填充" : "Continue mining")}</button></footer>
+                  </article>
+                ))}
+              </div>
+            ) : <section className="v2-map-empty"><span>◎</span><h2>{locale === "zh" ? "暂时没有可展示的真实路线" : "No real route is available yet"}</h2><p>{locale === "zh" ? "Pi 不会用演示论文填充这里。稍后重新进入即可再次尝试。" : "Pi will not fill this area with demo papers. Return later to retry."}</p></section>}
           </main>
         )}
 
         {view === "thread-detail" && (
-          <main className="v2-page v2-detail-page">
+          <main className="v2-page v2-detail-page v2-map-detail">
             <button className="v2-back" type="button" onClick={() => navigate("threads")}>← {t.backThreads}</button>
-            <section className="v2-detail-head"><div><span className={"v2-priority " + selectedThread.priority}>{selectedThread.priority}</span><span className={"v2-status-pill " + selectedThread.status}>{selectedThread.status}</span><h1>{selectedThread.title[locale]}</h1><p>{selectedThread.question[locale]}</p></div><button type="button" onClick={() => navigate("learn")}>{t.buildPath} →</button></section>
-            <div className="v2-detail-layout">
-              <div>
-                <section className="v2-content-section"><p className="v2-kicker">{t.researchQuestion}</p><h2>{selectedThread.question[locale]}</h2></section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.understands}</p><div className="v2-understanding"><div><h3>{t.interested}</h3><ul><li>{locale === "zh" ? "理论极值结果" : "Theoretical extremality results"}</li><li>{locale === "zh" ? "逆向方法与信息不等式" : "Converse methods and information inequalities"}</li><li>{locale === "zh" ? "最优传输论证" : "Optimal transport arguments"}</li></ul></div><div><h3>{t.lessInterested}</h3><ul><li>{locale === "zh" ? "仅有基准测试的论文" : "Benchmark-only work"}</li><li>{locale === "zh" ? "工程实现与系统优化" : "Engineering implementations"}</li></ul></div></div></section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.developments}</p>{rankedMonitorPapers.slice(0, 2).map((paper) => <button className="v2-development-row" type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><strong>{paper.title}</strong><small>{formatPaperDate(paper.publishedAt, locale)}</small><b>→</b></button>)}</section>
+            {selectedThread ? <>
+              <section className="v2-map-detail-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {selectedThread.papers.length} {locale === "zh" ? "篇代表作" : "representative works"}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction)}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在继续挖掘…" : "Mining deeper…") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></section>
+              <nav className="v2-map-legend">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span key={role} className={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</nav>
+              <div className="v2-research-timeline">
+                {(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => (
+                  <section key={role} className={"v2-map-era " + role}>
+                    <header><span>{researchRoleLabel(role, locale)}</span><p>{role === "foundation" ? (locale === "zh" ? "定义问题与基本工具" : "Defines the problem and core tools") : role === "milestone" ? (locale === "zh" ? "改变领域走向的关键节点" : "Decisive turns in the field") : (locale === "zh" ? "展示当前活跃方向" : "Shows the active frontier")}</p></header>
+                    <div>
+                      {selectedThread.papers.filter((paper) => paper.role === role).map((paper) => (
+                        <article className="v2-map-paper" key={paper.id}>
+                          <div className="v2-map-paper-year"><strong>{researchPaperYear(paper)}</strong><i /></div>
+                          <div className="v2-map-paper-body"><p className="v2-kicker">{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</p><h2>{paper.title}</h2><small>{paper.authors}</small><div className="v2-map-paper-copy"><p><b>{t.introLabel}</b>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p><p><b>{locale === "zh" ? "路线位置" : "Place in the route"}</b>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p></div><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div>
+                        </article>
+                      ))}
+                      {!selectedThread.papers.some((paper) => paper.role === role) && <p className="v2-map-era-empty">{locale === "zh" ? "这一阶段尚未找到足够有代表性的真实论文。" : "No sufficiently representative real paper has been found for this stage yet."}</p>}
+                    </div>
+                  </section>
+                ))}
               </div>
-              <aside className="v2-detail-aside"><p className="v2-kicker">{t.monitoring}</p><dl><div><dt>{t.status}</dt><dd>{selectedThread.status}</dd></div><div><dt>Priority</dt><dd>{selectedThread.priority}</dd></div><div><dt>Cadence</dt><dd>{t.cadence}</dd></div><div><dt>Space</dt><dd>{defaultSpaceName(activeSpace.name, locale)}</dd></div></dl><div className="v2-boundary-mini"><i />{t.isolated}</div></aside>
-            </div>
+            </> : <section className="v2-map-loading"><span>π</span><div><strong>{locale === "zh" ? "正在载入研究路线" : "Loading the research route"}</strong></div></section>}
           </main>
         )}
 
