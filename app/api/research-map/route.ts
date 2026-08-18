@@ -1,5 +1,5 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
-import type { ResearchDirectionRole, ResearchMapState, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
+import type { ResearchDirectionRole, ResearchHeatLevel, ResearchMapState, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type TrackRow = {
@@ -398,6 +398,28 @@ function toPaper(row: TrackPaperRow): ResearchTrackPaper {
   };
 }
 
+function heatEvidence(papers: ResearchTrackPaper[]) {
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const ages = papers.map((paper) => paper.publishedAt ? Math.max(0, (now - Date.parse(paper.publishedAt)) / day) : Number.POSITIVE_INFINITY);
+  const last14Days = ages.filter((age) => age <= 14).length;
+  const last6Months = ages.filter((age) => age > 14 && age <= 183).length;
+  const recentFrontier = papers.filter((paper, index) => paper.role === "frontier" && ages[index] <= 365).length;
+  const newestAge = Math.min(...ages);
+  const recencyBonus = newestAge <= 14 ? 18 : newestAge <= 60 ? 12 : newestAge <= 183 ? 7 : newestAge <= 365 ? 3 : 0;
+  const raw = last14Days * 30 + last6Months * 10 + recentFrontier * 5 + recencyBonus;
+  const absolute = Math.min(100, raw);
+  return { raw, absolute, recentPaperCount: last14Days + last6Months };
+}
+
+function heatLevel(score: number, recentPaperCount: number): ResearchHeatLevel {
+  if (!recentPaperCount) return "quiet";
+  if (score >= 75) return "hot";
+  if (score >= 50) return "rising";
+  if (score >= 25) return "steady";
+  return "quiet";
+}
+
 async function structureExistingTracks(database: D1Database, workspaceId: string, space: SpaceRow, memory: string) {
   const tracks = await database.prepare(
     "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
@@ -449,6 +471,8 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   ]);
   const papersByTrack = new Map<string, ResearchTrackPaper[]>();
   for (const row of papersResult.results) papersByTrack.set(row.track_id, [...(papersByTrack.get(row.track_id) || []), toPaper(row)]);
+  const heatByTrack = new Map(tracksResult.results.map((row) => [row.id, heatEvidence(papersByTrack.get(row.id) || [])]));
+  const maxHeatRaw = Math.max(0, ...Array.from(heatByTrack.values()).map((item) => item.raw));
   const tracks: ResearchTrack[] = tracksResult.results.map((row) => ({
     id: row.id,
     titleZh: row.title_zh,
@@ -460,6 +484,16 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     depthScore: Math.min(100, row.depth_score + row.interaction_score),
     supportScore: row.support_score,
     interactionScore: row.interaction_score,
+    heatScore: (() => {
+      const evidence = heatByTrack.get(row.id) || { raw: 0, absolute: 0, recentPaperCount: 0 };
+      return evidence.raw ? Math.min(100, Math.round(evidence.absolute * 0.65 + (maxHeatRaw ? evidence.raw / maxHeatRaw * 100 : 0) * 0.35)) : 0;
+    })(),
+    heatLevel: (() => {
+      const evidence = heatByTrack.get(row.id) || { raw: 0, absolute: 0, recentPaperCount: 0 };
+      const score = evidence.raw ? Math.min(100, Math.round(evidence.absolute * 0.65 + (maxHeatRaw ? evidence.raw / maxHeatRaw * 100 : 0) * 0.35)) : 0;
+      return heatLevel(score, evidence.recentPaperCount);
+    })(),
+    recentPaperCount: heatByTrack.get(row.id)?.recentPaperCount || 0,
     updatedAt: row.updated_at,
     papers: papersByTrack.get(row.id) || [],
   }));

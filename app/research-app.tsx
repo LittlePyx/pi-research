@@ -594,6 +594,22 @@ function directionRoleLabel(role: ResearchDirectionRole, locale: Locale) {
   return labels[role][locale];
 }
 
+function directionHeatLabel(level: ResearchTrack["heatLevel"], locale: Locale) {
+  const labels: Record<ResearchTrack["heatLevel"], Localized> = {
+    hot: { zh: "高热", en: "Hot" },
+    rising: { zh: "升温", en: "Rising" },
+    steady: { zh: "稳定", en: "Steady" },
+    quiet: { zh: "低频", en: "Quiet" },
+  };
+  return labels[level][locale];
+}
+
+function directionHeatTitle(track: ResearchTrack, locale: Locale) {
+  return locale === "zh"
+    ? `当前发现热度 ${track.heatScore}；近 6 个月发现 ${track.recentPaperCount} 篇代表论文。基于 Pi 当前扫描范围，不代表全领域绝对排名。`
+    : `Discovery heat ${track.heatScore}; ${track.recentPaperCount} representative papers found in the last six months. Based on Pi's current discovery scope, not an absolute field ranking.`;
+}
+
 function learningKindLabel(kind: LearningStepKind, locale: Locale) {
   const labels: Record<LearningStepKind, Localized> = {
     prerequisite: { zh: "必要先修", en: "Prerequisite" },
@@ -1741,7 +1757,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   <div className="v2-network-branches">
                     {[...researchMap.tracks].sort((left, right) => ({ core: 0, support: 1, explore: 2 })[left.userRole] - ({ core: 0, support: 1, explore: 2 })[right.userRole] || right.depthScore - left.depthScore).map((thread, index) => (
                       <article className={`v2-network-node ${thread.userRole}`} key={thread.id}>
-                        <header><span>{String(index + 1).padStart(2, "0")}</span><b>{directionRoleLabel(thread.userRole, locale)}</b><small>{thread.papers.length} {locale === "zh" ? "篇" : "papers"}</small></header>
+                        <header><span>{String(index + 1).padStart(2, "0")}</span><b>{directionRoleLabel(thread.userRole, locale)}</b><em className={`v2-direction-heat ${thread.heatLevel}`} title={directionHeatTitle(thread, locale)}><i />{directionHeatLabel(thread.heatLevel, locale)}</em><small>{thread.papers.length} {locale === "zh" ? "篇" : "papers"}</small></header>
                         <button className="v2-network-node-main" type="button" onClick={() => openThread(thread)}><h2>{locale === "zh" ? thread.titleZh : thread.titleEn}</h2><p>{locale === "zh" ? thread.summaryZh : thread.summaryEn}</p></button>
                         <div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${thread.depthScore}%` }} /></i><strong>{thread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${thread.supportScore}%` }} /></i><strong>{thread.supportScore}</strong></span></div>
                         <div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={thread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(thread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div>
@@ -1761,7 +1777,7 @@ export default function ResearchApp({ user }: { user: User }) {
             <button className="v2-back" type="button" onClick={() => navigate("threads")}>← {t.backThreads}</button>
             {selectedThread ? <>
               <section className="v2-map-detail-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {selectedThread.papers.length} {locale === "zh" ? "篇代表作" : "representative works"}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction)}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在继续挖掘…" : "Mining deeper…") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></section>
-              <section className={`v2-direction-profile ${selectedThread.userRole}`}><div><span>{directionRoleLabel(selectedThread.userRole, locale)}</span><strong>{locale === "zh" ? "这条方向在你的研究地图中的位置" : "This direction's place in your research map"}</strong></div><div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${selectedThread.depthScore}%` }} /></i><strong>{selectedThread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${selectedThread.supportScore}%` }} /></i><strong>{selectedThread.supportScore}</strong></span></div><div className="v2-direction-role-control">{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div></section>
+              <section className={`v2-direction-profile ${selectedThread.userRole}`}><div><span>{directionRoleLabel(selectedThread.userRole, locale)}</span><em className={`v2-direction-heat ${selectedThread.heatLevel}`} title={directionHeatTitle(selectedThread, locale)}><i />{directionHeatLabel(selectedThread.heatLevel, locale)}</em><strong>{locale === "zh" ? "这条方向在你的研究地图中的位置" : "This direction's place in your research map"}</strong></div><div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${selectedThread.depthScore}%` }} /></i><strong>{selectedThread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${selectedThread.supportScore}%` }} /></i><strong>{selectedThread.supportScore}</strong></span></div><div className="v2-direction-role-control">{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div></section>
               <nav className="v2-map-legend">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span key={role} className={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</nav>
               <div className="v2-research-timeline">
                 {(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => (

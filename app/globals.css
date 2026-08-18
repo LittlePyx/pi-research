@@ -2447,3 +2447,15 @@ main { min-width: 0; }
   .v2-learning-path .v2-learning-stages article > .v2-learning-stage-body { padding: 18px; }
   .v2-learning-path .v2-learning-stage-body > div.v2-learning-guidance { grid-template-columns: 1fr; gap: 13px; }
 }
+
+/* Pi Research V11 — subtle direction heat signals */
+.v2-direction-heat { display: inline-flex; align-items: center; gap: 4px; color: #7c857e; font-size: 9px; font-style: normal; font-weight: 700; letter-spacing: .02em; white-space: nowrap; cursor: help; }
+.v2-direction-heat > i { width: 6px; height: 6px; border-radius: 50%; background: #a6ada7; box-shadow: 0 0 0 2px rgba(166,173,167,.12); }
+.v2-direction-heat.hot { color: #9a573c; }
+.v2-direction-heat.hot > i { background: #c56a45; box-shadow: 0 0 0 2px rgba(197,106,69,.13); }
+.v2-direction-heat.rising { color: #8b6a35; }
+.v2-direction-heat.rising > i { background: #c49442; box-shadow: 0 0 0 2px rgba(196,148,66,.13); }
+.v2-direction-heat.steady { color: #567664; }
+.v2-direction-heat.steady > i { background: #6e927c; box-shadow: 0 0 0 2px rgba(110,146,124,.13); }
+.v2-network-node > header .v2-direction-heat { margin-left: 2px; }
+.v2-direction-profile > div:first-child .v2-direction-heat { margin-right: 10px; vertical-align: middle; }

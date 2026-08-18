@@ -1,5 +1,6 @@
 export type ResearchTrackRole = "foundation" | "milestone" | "frontier";
 export type ResearchDirectionRole = "core" | "support" | "explore";
+export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
 
 export type ResearchTrackPaper = {
   id: string;
@@ -30,6 +31,9 @@ export type ResearchTrack = {
   depthScore: number;
   supportScore: number;
   interactionScore: number;
+  heatScore: number;
+  heatLevel: ResearchHeatLevel;
+  recentPaperCount: number;
   updatedAt: string;
   papers: ResearchTrackPaper[];
 };

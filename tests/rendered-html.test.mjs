@@ -114,6 +114,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /structureExistingTracks/);
   assert.match(mapRoute, /research_track_edges/);
   assert.match(mapRoute, /userRole \(core\|support\|explore\)/);
+  assert.match(mapRoute, /function heatEvidence/);
+  assert.match(mapRoute, /last14Days \* 30 \+ last6Months \* 10/);
+  assert.match(mapRoute, /recentPaperCount/);
   assert.match(schema, /researchTracks/);
   assert.match(schema, /researchTrackPapers/);
   assert.match(schema, /researchTrackEdges/);
@@ -124,10 +127,14 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /setResearchDirectionRole/);
   assert.match(client, /研究深度/);
   assert.match(client, /辅助价值/);
+  assert.match(client, /directionHeatLabel/);
+  assert.match(client, /当前发现热度/);
   assert.doesNotMatch(client, /Gaussian Extremality for Rate-Distortion/);
   assert.match(css, /Focused Today brief \+ real research map/);
   assert.match(css, /\.v2-research-timeline/);
   assert.match(css, /continuous discovery and growing field graph/);
+  assert.match(css, /subtle direction heat signals/);
+  assert.match(css, /\.v2-direction-heat\.rising/);
 });
 
 test("builds persistent personalized learning paths from real research papers", async () => {
