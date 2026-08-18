@@ -24,7 +24,7 @@ type DeepSeekResponse = {
   error?: { message?: string };
 };
 
-type SpaceRow = { id: string; name: string; description: string };
+type SpaceRow = { id: string; name: string; description: string; memoryContext?: string };
 type PreferenceRow = { profile_key: string; priority_venues: string; user_modified: number };
 type RunRow = {
   status: string;
@@ -148,7 +148,7 @@ function normalizeVenue(value: string) {
 }
 
 function focusTerms(space: SpaceRow) {
-  return cleanText(space.description || space.name)
+  return cleanText(`${space.description || space.name} ${space.memoryContext || ""}`)
     .toLocaleLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((term) => term.length >= 3 && !GENERIC_TERMS.has(term));
@@ -243,7 +243,7 @@ async function fetchHorizon(space: SpaceRow, horizon: typeof HORIZONS[number], n
   const profile = getDomainProfile(profileKey);
   const endpoint = new URL("https://api.crossref.org/works");
   const profileQuery = profile.keywords.filter((keyword) => Array.from(keyword).every((character) => (character.codePointAt(0) || 0) <= 127)).slice(0, 5).join(" ");
-  endpoint.searchParams.set("query.title", cleanText(`${space.name} ${space.description} ${profileQuery}`).slice(0, 360));
+  endpoint.searchParams.set("query.title", cleanText(`${space.name} ${space.description} ${space.memoryContext || ""} ${profileQuery}`).slice(0, 520));
   endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
   endpoint.searchParams.set("rows", "40");
   endpoint.searchParams.set("sort", horizon.sort);
@@ -321,6 +321,34 @@ function boundedScore(value: unknown) {
   return Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : 0;
 }
 
+async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceRow): Promise<SpaceRow> {
+  const rows = await database.prepare(
+    "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 6",
+  ).bind(space.id).all<{ analysis_json: string }>();
+  const context: string[] = [];
+  for (const row of rows.results) {
+    try {
+      const analysis = JSON.parse(row.analysis_json) as {
+        summaryEn?: string;
+        searchTerms?: string[];
+        interests?: Array<{ labelEn?: string }>;
+        openQuestions?: Array<{ labelEn?: string }>;
+        researchOpportunities?: Array<{ titleEn?: string }>;
+      };
+      context.push(
+        cleanText(analysis.summaryEn || "").slice(0, 360),
+        ...(analysis.searchTerms || []).slice(0, 18),
+        ...(analysis.interests || []).slice(0, 8).map((item) => item.labelEn || ""),
+        ...(analysis.openQuestions || []).slice(0, 8).map((item) => item.labelEn || ""),
+        ...(analysis.researchOpportunities || []).slice(0, 6).map((item) => item.titleEn || ""),
+      );
+    } catch {
+      // Ignore a malformed historical profile without blocking monitoring.
+    }
+  }
+  return { ...space, memoryContext: Array.from(new Set(context.map((item) => cleanText(item)).filter(Boolean))).join("; ").slice(0, 1800) };
+}
+
 async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[]) {
   if (!candidates.length) return [] as PaperReview[];
   const runtime = getRuntimeEnv();
@@ -348,6 +376,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     "Do not write generic phrases such as 'it is recent', 'it has a high score', or 'it comes from a priority venue' as the main reason to read.",
     "For rejected records, set all four summary/whyRead fields to empty strings and give a short screeningReason. Never put rejection language inside whyRead.",
     `Research space: ${space.name} — ${space.description}`,
+    `User-confirmed imported research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
     `Priority venues: ${priorityVenues.join("; ")}`,
     "JSON records to review:",
     JSON.stringify(candidates.map((paper) => ({
@@ -605,6 +634,7 @@ export async function POST(request: Request) {
     if ("error" in context) return context.error;
     const { database, space, user } = context;
     const preference = await ensurePreference(database, space);
+    const enrichedSpace = await enrichSpaceWithImportedMemory(database, space);
     const previous = await database.prepare("SELECT last_run_at FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<{ last_run_at: string | null }>();
     const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
@@ -626,7 +656,7 @@ export async function POST(request: Request) {
       let discoveredCount = 0;
       for (const horizon of HORIZONS) {
         await updateRunPhase(database, space.id, `discovering_${horizon.key}`, discoveredCount);
-        const batch = await fetchHorizon(space, horizon, now, preference.priorityVenues, preference.profileKey);
+        const batch = await fetchHorizon(enrichedSpace, horizon, now, preference.priorityVenues, preference.profileKey);
         batches.push(batch);
         discoveredCount += batch.length;
         await updateRunPhase(database, space.id, `discovering_${horizon.key}`, discoveredCount);
@@ -641,7 +671,7 @@ export async function POST(request: Request) {
       const scannedCount = candidateList.length;
       const pendingCandidates = await candidatesNeedingReview(database, space.id, candidateList);
       await updateRunPhase(database, space.id, "reviewing", scannedCount);
-      const reviews = await reviewCandidates(database, space, user.userId, preference.priorityVenues, pendingCandidates);
+      const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates);
       const reviewsById = new Map(reviews.map((review) => [review.canonicalId, review]));
 
       const newCount = reviews.filter((review) => review.recommended).length;

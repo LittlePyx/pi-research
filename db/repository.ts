@@ -82,6 +82,9 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS share_snapshots (id TEXT PRIMARY KEY NOT NULL, token TEXT NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, kind TEXT NOT NULL, locale TEXT NOT NULL DEFAULT 'zh', title TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_share_snapshots_token ON share_snapshots(token)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_share_snapshots_space_created ON share_snapshots(space_id, created_at)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_imports (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, source_kind TEXT NOT NULL, file_names TEXT NOT NULL DEFAULT '[]', content_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', safety_attested INTEGER NOT NULL DEFAULT 0, analysis_json TEXT NOT NULL, analysis_model TEXT NOT NULL DEFAULT '', input_chars INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, confirmed_at TEXT)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_imports_space_hash ON research_imports(space_id, content_hash)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_research_imports_space_status_created ON research_imports(space_id, status, created_at)"),
   ]);
   await ensurePaperInsightReviewColumns(database);
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_recommended_quality ON paper_insights(space_id, llm_recommended, quality_score)").run();

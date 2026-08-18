@@ -118,3 +118,42 @@ test("creates immutable public snapshots with live paper links and independent m
   assert.match(css, /Pi Research V5 — immutable, link-rich recommendation snapshots/);
   assert.match(css, /\.share-paper/);
 });
+
+test("imports public research materials into reviewed, space-isolated profile memory", async () => {
+  const [route, schema, repository, monitor, ask, client, css] = await Promise.all([
+    readFile(new URL("../app/api/research-imports/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ask/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(schema, /researchImports/);
+  assert.match(schema, /idx_research_imports_space_hash/);
+  assert.match(repository, /CREATE TABLE IF NOT EXISTS research_imports/);
+  assert.match(route, /IMPORT_MODEL = "deepseek-v4-pro"/);
+  assert.match(route, /MAX_FILES = 12/);
+  assert.match(route, /MAX_TOTAL_CHARS = 180_000/);
+  assert.match(route, /safetyConfirmed !== true/);
+  assert.match(route, /unsafeNamePattern/);
+  assert.match(route, /response_format: \{ type: "json_object" \}/);
+  assert.match(route, /reasoning_effort: "high"/);
+  assert.match(route, /rawFilesStored: false/);
+  assert.doesNotMatch(route, /INSERT INTO research_imports[^\n]+file\.text/);
+  assert.match(route, /status = 'confirmed'/);
+  assert.match(route, /DELETE FROM research_imports/);
+  assert.match(monitor, /enrichSpaceWithImportedMemory/);
+  assert.match(monitor, /User-confirmed imported research memory/);
+  assert.match(ask, /User-confirmed imported research memory/);
+  assert.match(client, /webkitdirectory/);
+  assert.match(client, /extractPdfText/);
+  assert.match(client, /mammoth\.browser\.min\.js/);
+  assert.match(client, /不要上传未发表稿件/);
+  assert.match(client, /生成研究画像草稿/);
+  assert.match(client, /确认写入当前空间/);
+  assert.match(css, /Pi Research V6 — reviewed research-profile imports/);
+  assert.match(css, /\.v2-import-warning/);
+  assert.match(css, /\.v2-draft-opportunities/);
+});

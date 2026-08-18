@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 
 type Locale = "zh" | "en";
 type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
@@ -77,6 +78,7 @@ type MonitorState = {
   cached?: boolean;
   throttled?: boolean;
 };
+type ImportedMaterial = { name: string; text: string; chars: number; truncated: boolean };
 
 const copy = {
   zh: {
@@ -258,6 +260,35 @@ const copy = {
     snapshotShared: "公开快照已生成",
     snapshotOpened: "公开快照已在新窗口打开",
     shareFailed: "快照生成失败，请稍后重试",
+    importResearch: "导入 AI 项目 / 研究资料",
+    importIntro: "让 Pi 从聊天记录、已发表论文和公开项目材料中提取真实关注、知识基础、未解问题，并扩展可继续研究的方向。",
+    importSafetyTitle: "上传前请确认资料可以公开处理",
+    importSafetyBody: "不要上传未发表稿件、投稿或审稿材料、未公开项目书、内部资料、专利前材料、个人隐私或任何涉密内容。",
+    importSafetyProcess: "文件仅在本次分析中提取文本并发送给 DeepSeek Pro；Pi 不保存原文件或原始正文。生成的画像草稿会暂存，放弃即删除，确认后才用于推荐。",
+    singleFile: "选择单个或多个文件",
+    folderUpload: "选择文件夹",
+    pasteConversation: "也可以粘贴聊天记录",
+    analyzeMaterials: "生成研究画像草稿",
+    analyzingMaterials: "DeepSeek Pro 正在分析资料",
+    confirmPublic: "我确认所选资料已经公开、可合法处理，不含未发表或涉密内容。",
+    importDraftTitle: "研究画像草稿",
+    importDraftNote: "这是 AI 推断，尚未影响推荐。请检查、修改或删除不准确的内容，再确认写入。",
+    mainDirection: "提炼后的主方向",
+    profileSummary: "研究画像摘要",
+    subdirectionsLabel: "子方向与长期兴趣",
+    openQuestionsLabel: "关注与未解决问题",
+    futureDirections: "可继续研究的相关方向",
+    evidenceConfidence: "证据置信度",
+    confirmProfile: "确认写入当前空间",
+    discardDraft: "放弃这份草稿",
+    profileConfirmed: "研究画像已写入当前空间，之后的检索与推荐会使用它",
+    rawNotStored: "原文件和原始正文不会保存",
+    selectedMaterials: "已选择的资料",
+    noMaterials: "尚未选择文件",
+    supportedFiles: "支持 PDF、DOCX、JSON、Markdown、TXT、HTML 和 CSV；最多 12 个文件。",
+    suspiciousBlocked: "疑似未发表、送审或涉密文件已被阻止",
+    importFailed: "资料分析失败，请检查文件后重试",
+    profileSources: "画像来源",
   },
   en: {
     today: "Today",
@@ -438,6 +469,35 @@ const copy = {
     snapshotShared: "Public snapshot created",
     snapshotOpened: "Public snapshot opened in a new window",
     shareFailed: "Could not create the snapshot. Please try again.",
+    importResearch: "Import AI project / research materials",
+    importIntro: "Let Pi infer real interests, knowledge, unresolved questions, and promising adjacent directions from chats, published papers, and public project materials.",
+    importSafetyTitle: "Confirm these materials are safe for external processing",
+    importSafetyBody: "Do not upload unpublished manuscripts, submissions, reviewer material, non-public proposals, internal documents, pre-patent material, personal data, or anything confidential.",
+    importSafetyProcess: "Text is extracted for this analysis and sent to DeepSeek Pro. Pi stores neither original files nor raw text. The profile draft is held until you discard or confirm it, and affects recommendations only after confirmation.",
+    singleFile: "Choose files",
+    folderUpload: "Choose folder",
+    pasteConversation: "Or paste conversation text",
+    analyzeMaterials: "Generate profile draft",
+    analyzingMaterials: "DeepSeek Pro is analyzing the materials",
+    confirmPublic: "I confirm these materials are public, lawful to process, and contain nothing unpublished or confidential.",
+    importDraftTitle: "Research profile draft",
+    importDraftNote: "This is an AI inference and does not affect recommendations yet. Review, edit, or remove inaccurate items before confirming.",
+    mainDirection: "Refined primary direction",
+    profileSummary: "Research profile summary",
+    subdirectionsLabel: "Subdirections and sustained interests",
+    openQuestionsLabel: "Interests and unresolved questions",
+    futureDirections: "Related directions to continue exploring",
+    evidenceConfidence: "Evidence confidence",
+    confirmProfile: "Confirm for this space",
+    discardDraft: "Discard this draft",
+    profileConfirmed: "Research profile saved to this space; future discovery and recommendations will use it",
+    rawNotStored: "Original files and raw text are not stored",
+    selectedMaterials: "Selected materials",
+    noMaterials: "No files selected yet",
+    supportedFiles: "Supports PDF, DOCX, JSON, Markdown, TXT, HTML, and CSV; up to 12 files.",
+    suspiciousBlocked: "A possibly unpublished, review-only, or confidential file was blocked",
+    importFailed: "Material analysis failed. Check the files and try again.",
+    profileSources: "Profile sources",
   },
 } as const;
 
@@ -619,6 +679,100 @@ function modelDisplayName(model: string | null | undefined) {
   return model || "DeepSeek";
 }
 
+const materialNameWarning = /(?:confidential|do[\s_-]*not[\s_-]*distribute|under[\s_-]*review|reviewer[\s_-]*copy|unpublished|submission|draft|机密|绝密|保密|未公开|未发表|投稿稿|送审稿)/i;
+const MATERIAL_FILE_LIMIT = 12;
+const MATERIAL_CHAR_LIMIT = 50_000;
+
+function readablePart(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return "";
+}
+
+function flattenConversationJson(raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const conversations = Array.isArray(parsed) ? parsed : [parsed];
+    const output: string[] = [];
+    for (const conversation of conversations) {
+      if (!conversation || typeof conversation !== "object") continue;
+      const record = conversation as Record<string, unknown>;
+      const title = typeof record.title === "string" ? record.title : "Imported conversation";
+      const mapping = record.mapping && typeof record.mapping === "object" ? record.mapping as Record<string, unknown> : null;
+      if (!mapping) continue;
+      const messages = Object.values(mapping).map((node) => {
+        if (!node || typeof node !== "object") return null;
+        const message = (node as Record<string, unknown>).message;
+        if (!message || typeof message !== "object") return null;
+        const value = message as Record<string, unknown>;
+        const author = value.author && typeof value.author === "object" ? value.author as Record<string, unknown> : {};
+        const content = value.content && typeof value.content === "object" ? value.content as Record<string, unknown> : {};
+        const parts = Array.isArray(content.parts) ? content.parts.map(readablePart).filter(Boolean).join("\n") : "";
+        return { role: String(author.role || "unknown"), text: parts, time: Number(value.create_time || 0) };
+      }).filter((message): message is { role: string; text: string; time: number } => Boolean(message?.text)).sort((first, second) => first.time - second.time);
+      if (!messages.length) continue;
+      output.push(`# ${title}`, ...messages.map((message) => `${message.role.toUpperCase()}: ${message.text}`));
+      if (output.join("\n").length >= MATERIAL_CHAR_LIMIT) break;
+    }
+    return output.length ? output.join("\n\n") : JSON.stringify(parsed, null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+async function extractPdfText(file: File) {
+  const moduleUrl = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+  const pdfjs = await import(/* @vite-ignore */ moduleUrl) as {
+    GlobalWorkerOptions: { workerSrc: string };
+    getDocument(input: { data: ArrayBuffer }): { promise: Promise<{ numPages: number; getPage(page: number): Promise<{ getTextContent(): Promise<{ items: Array<{ str?: string; hasEOL?: boolean }> }> }> }> };
+  };
+  pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+  const document = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pages: string[] = [];
+  for (let pageNumber = 1; pageNumber <= Math.min(document.numPages, 120); pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => (item.str || "") + (item.hasEOL ? "\n" : " ")).join("").trim());
+    if (pages.join("\n").length >= MATERIAL_CHAR_LIMIT) break;
+  }
+  return pages.join("\n\n");
+}
+
+async function loadMammoth() {
+  const browser = window as typeof window & { mammoth?: { extractRawText(input: { arrayBuffer: ArrayBuffer }): Promise<{ value: string }> } };
+  if (browser.mammoth) return browser.mammoth;
+  await new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-pi-mammoth="true"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("DOCX parser unavailable")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/mammoth@1.11.0/mammoth.browser.min.js";
+    script.dataset.piMammoth = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("DOCX parser unavailable"));
+    document.head.appendChild(script);
+  });
+  if (!browser.mammoth) throw new Error("DOCX parser unavailable");
+  return browser.mammoth;
+}
+
+async function extractMaterialText(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  if (extension === "pdf") return extractPdfText(file);
+  if (extension === "docx") {
+    const mammoth = await loadMammoth();
+    return (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
+  }
+  const raw = await file.text();
+  if (extension === "json") return flattenConversationJson(raw);
+  if (extension === "html" || extension === "htm") return new DOMParser().parseFromString(raw, "text/html").body.textContent || "";
+  if (["txt", "md", "markdown", "csv"].includes(extension) || file.type.startsWith("text/")) return raw;
+  throw new Error("Unsupported file type");
+}
+
 export default function ResearchApp({ user }: { user: User }) {
   const [locale, setLocale] = useState<Locale>("zh");
   const [view, setView] = useState<View>("today");
@@ -647,6 +801,18 @@ export default function ResearchApp({ user }: { user: User }) {
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [libraryFilter, setLibraryFilter] = useState<"inbox" | "accepted" | "all" | "dismissed">("inbox");
   const [sharingSnapshot, setSharingSnapshot] = useState<string | null>(null);
+  const [researchImports, setResearchImports] = useState<ResearchImportRecord[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importSourceKind, setImportSourceKind] = useState<ImportSourceKind>("chat");
+  const [importFiles, setImportFiles] = useState<ImportedMaterial[]>([]);
+  const [pastedMaterial, setPastedMaterial] = useState("");
+  const [safetyConfirmed, setSafetyConfirmed] = useState(false);
+  const [parsingMaterials, setParsingMaterials] = useState(false);
+  const [analyzingImport, setAnalyzingImport] = useState(false);
+  const [savingImport, setSavingImport] = useState(false);
+  const [importDraft, setImportDraft] = useState<ResearchImportRecord | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const reportedImpressions = useRef(new Set<string>());
 
   const t = copy[locale];
@@ -668,6 +834,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
   const scanProgress = scanIsActive ? monitorProgressByStatus[effectiveScanStatus] : monitor?.status === "ready" ? 100 : 0;
   const scanPhase = monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
+  const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
+  const confirmedProfile = latestConfirmedImport?.analysis || null;
 
   useEffect(() => {
     ensureAnonymousWorkspace();
@@ -749,6 +917,24 @@ export default function ResearchApp({ user }: { user: User }) {
     const timer = window.setTimeout(() => setToast(""), 2500);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (view !== "memory" || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setResearchImports([]);
+      setImportDraft(null);
+      fetch("/api/research-imports?spaceId=" + encodeURIComponent(activeSpace.id))
+        .then(async (response) => {
+          const data = await response.json() as { imports?: ResearchImportRecord[] };
+          if (!response.ok) throw new Error("imports unavailable");
+          return data;
+        })
+        .then((data) => { if (!cancelled) setResearchImports(data.imports || []); })
+        .catch(() => undefined);
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [view, activeSpace.id]);
 
   useEffect(() => {
     if (view !== "today" || !monitor?.papers.length || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
@@ -1017,6 +1203,113 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
+  const openResearchImport = () => {
+    const savedDraft = researchImports.find((item) => item.status === "draft") || null;
+    setImportDraft(savedDraft);
+    if (savedDraft) setImportSourceKind(savedDraft.sourceKind);
+    setImportFiles([]);
+    setPastedMaterial("");
+    setSafetyConfirmed(false);
+    setImportOpen(true);
+  };
+
+  const addMaterialFiles = async (list: FileList | null) => {
+    if (!list?.length || parsingMaterials) return;
+    setParsingMaterials(true);
+    let blocked = false;
+    try {
+      const next = [...importFiles];
+      for (const file of Array.from(list).slice(0, Math.max(0, MATERIAL_FILE_LIMIT - next.length))) {
+        const relativeName = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+        if (materialNameWarning.test(relativeName)) {
+          blocked = true;
+          continue;
+        }
+        if (next.some((item) => item.name === relativeName && item.chars === file.size)) continue;
+        try {
+          const extracted = (await extractMaterialText(file)).replace(/\r\n?/g, "\n").trim();
+          if (!extracted) continue;
+          next.push({ name: relativeName.slice(0, 180), text: extracted.slice(0, MATERIAL_CHAR_LIMIT), chars: extracted.length, truncated: extracted.length > MATERIAL_CHAR_LIMIT });
+        } catch {
+          // Unsupported or unreadable files are skipped; the visible list remains authoritative.
+        }
+      }
+      setImportFiles(next.slice(0, MATERIAL_FILE_LIMIT));
+      if (blocked) setToast(t.suspiciousBlocked);
+    } finally {
+      setParsingMaterials(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (folderInputRef.current) folderInputRef.current.value = "";
+    }
+  };
+
+  const analyzeResearchImport = async () => {
+    if (analyzingImport || !safetyConfirmed) return;
+    const pasted = pastedMaterial.trim();
+    const files = [...importFiles.map(({ name, text }) => ({ name, text }))];
+    if (pasted) files.push({ name: locale === "zh" ? "粘贴的聊天记录.txt" : "pasted-conversation.txt", text: pasted.slice(0, MATERIAL_CHAR_LIMIT) });
+    if (!files.length) return;
+    setAnalyzingImport(true);
+    try {
+      const response = await fetch("/api/research-imports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, sourceKind: importSourceKind, files, safetyConfirmed: true, locale }),
+      });
+      const data = await response.json() as { import?: ResearchImportRecord | null; error?: string };
+      if (!response.ok || !data.import) throw new Error(data.error || "import failed");
+      setResearchImports((current) => [data.import!, ...current.filter((item) => item.id !== data.import!.id)]);
+      setImportFiles([]);
+      setPastedMaterial("");
+      setSafetyConfirmed(false);
+      if (data.import.status === "confirmed") {
+        setImportOpen(false);
+        setToast(t.profileConfirmed);
+      } else {
+        setImportDraft(data.import);
+      }
+    } catch (error) {
+      const message = error instanceof Error && error.message && error.message !== "import failed" ? error.message : t.importFailed;
+      setToast(message);
+    } finally {
+      setAnalyzingImport(false);
+    }
+  };
+
+  const editImportAnalysis = (update: (analysis: ResearchProfileAnalysis) => ResearchProfileAnalysis) => {
+    setImportDraft((current) => current ? { ...current, analysis: update(current.analysis) } : current);
+  };
+
+  const removeProfileItem = (key: "subdirections" | "interests" | "knowledge" | "openQuestions" | "exclusions", index: number) => {
+    editImportAnalysis((analysis) => ({ ...analysis, [key]: analysis[key].filter((_, itemIndex) => itemIndex !== index) }));
+  };
+
+  const removeOpportunity = (index: number) => {
+    editImportAnalysis((analysis) => ({ ...analysis, researchOpportunities: analysis.researchOpportunities.filter((_, itemIndex) => itemIndex !== index) }));
+  };
+
+  const saveImportDecision = async (action: "confirm" | "discard") => {
+    if (!importDraft || savingImport) return;
+    setSavingImport(true);
+    try {
+      const response = await fetch("/api/research-imports", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, importId: importDraft.id, action, analysis: importDraft.analysis }),
+      });
+      const data = await response.json() as { import?: ResearchImportRecord | null; error?: string };
+      if (!response.ok || !data.import) throw new Error(data.error || "save failed");
+      setResearchImports((current) => action === "discard" ? current.filter((item) => item.id !== data.import!.id) : [data.import!, ...current.filter((item) => item.id !== data.import!.id)]);
+      setImportDraft(null);
+      setImportOpen(false);
+      setToast(action === "confirm" ? t.profileConfirmed : locale === "zh" ? "画像草稿已放弃" : "Profile draft discarded");
+    } catch {
+      setToast(t.importFailed);
+    } finally {
+      setSavingImport(false);
+    }
+  };
+
   const askAboutMonitorPaper = (paper: MonitorPaper) => {
     setQuestion(locale === "zh" ? `请结合当前研究空间分析这篇论文：${paper.title}` : `Analyze this paper in the context of the current research space: ${paper.title}`);
     setAskOpen(true);
@@ -1278,13 +1571,20 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "memory" && (
           <main className="v2-page">
-            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</p><h1>{t.memoryTitle}</h1><p>{t.memoryIntro}</p></div><span className="v2-updated">{locale === "zh" ? "4 分钟前更新" : "Updated 4 min ago"}</span></section>
+            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</p><h1>{t.memoryTitle}</h1><p>{t.memoryIntro}</p></div><button type="button" onClick={openResearchImport}>＋ {t.importResearch}</button></section>
+            <section className="v2-import-memory-card">
+              <div><span>π</span><div><p className="v2-kicker">{t.importResearch}</p><h2>{confirmedProfile ? (locale === "zh" ? confirmedProfile.primaryDirectionZh : confirmedProfile.primaryDirectionEn) : t.importIntro}</h2></div></div>
+              <p>{confirmedProfile ? (locale === "zh" ? confirmedProfile.summaryZh : confirmedProfile.summaryEn) : t.importIntro}</p>
+              <div className="v2-import-safety-inline"><b>!</b><span><strong>{t.importSafetyTitle}</strong><small>{t.importSafetyBody}</small></span></div>
+              <button type="button" onClick={openResearchImport}>{confirmedProfile ? (locale === "zh" ? "继续导入资料" : "Import more materials") : t.importResearch} →</button>
+            </section>
             <div className="v2-memory-grid">
-              <section><span>01</span><h2>{t.interestMemory}</h2><p>{locale === "zh" ? "关心的问题、方法、作者与会议。" : "Questions, methods, authors, and venues you care about."}</p><div className="v2-tags"><i>Gaussian extremality</i><i>Rate-distortion</i><i>Optimal transport</i></div></section>
-              <section><span>02</span><h2>{t.knowledgeMemory}</h2><p>{locale === "zh" ? "Pi 在解释新工作时假设你已掌握的内容。" : "What Pi assumes you know when explaining new work."}</p><div className="v2-knowledge-lines"><div><b>Information Theory</b><i><em style={{ width: "92%" }} /></i></div><div><b>Optimal Transport</b><i><em style={{ width: "78%" }} /></i></div><div><b>Stochastic Analysis</b><i><em style={{ width: "38%" }} /></i></div></div></section>
-              <section><span>03</span><h2>{t.activityMemory}</h2><p>{locale === "zh" ? "最近打开、收藏和反馈过的研究内容。" : "Research content recently opened, saved, and rated."}</p><dl><div><dt>{locale === "zh" ? "本周反馈" : "Feedback this week"}</dt><dd>18</dd></div><div><dt>{locale === "zh" ? "完成阅读" : "Finished reads"}</dt><dd>4</dd></div></dl></section>
-              <section><span>04</span><h2>{t.preferenceMemory}</h2><p>{locale === "zh" ? "Pi 从反馈中学到的内容偏好。" : "Content preferences Pi learned from feedback."}</p><div className="v2-preferences"><i><b>Theory</b> &gt; application</i><i><b>New theorem</b> &gt; benchmark</i><i><b>Fundamental</b> &gt; optimization</i></div></section>
+              <section><span>01</span><h2>{t.interestMemory}</h2><p>{locale === "zh" ? "由用户确认的持续关注、子方向与检索主题。" : "User-confirmed sustained interests, subdirections, and discovery topics."}</p><div className="v2-tags">{confirmedProfile ? [...confirmedProfile.subdirections, ...confirmedProfile.interests].slice(0, 10).map((item, index) => <i key={index}>{locale === "zh" ? item.labelZh : item.labelEn}</i>) : <><i>Gaussian extremality</i><i>Rate-distortion</i><i>Optimal transport</i></>}</div></section>
+              <section><span>02</span><h2>{t.knowledgeMemory}</h2><p>{locale === "zh" ? "Pi 只把有材料证据的内容当作已有知识。" : "Pi treats a topic as known only when the imported material supports it."}</p><div className="v2-knowledge-lines">{confirmedProfile?.knowledge.length ? confirmedProfile.knowledge.slice(0, 5).map((item, index) => <div key={index}><b>{locale === "zh" ? item.labelZh : item.labelEn}</b><i><em style={{ width: `${item.confidence}%` }} /></i></div>) : <><div><b>Information Theory</b><i><em style={{ width: "92%" }} /></i></div><div><b>Optimal Transport</b><i><em style={{ width: "78%" }} /></i></div><div><b>Stochastic Analysis</b><i><em style={{ width: "38%" }} /></i></div></>}</div></section>
+              <section><span>03</span><h2>{t.activityMemory}</h2><p>{locale === "zh" ? "资料导入与论文反馈共同构成当前空间的记忆。" : "Material imports and paper feedback jointly shape this space's memory."}</p><dl><div><dt>{locale === "zh" ? "已确认导入" : "Confirmed imports"}</dt><dd>{researchImports.filter((item) => item.status === "confirmed").length}</dd></div><div><dt>{t.profileSources}</dt><dd>{latestConfirmedImport?.fileNames.length || 0}</dd></div></dl></section>
+              <section><span>04</span><h2>{t.preferenceMemory}</h2><p>{locale === "zh" ? "尚未解决的问题会影响论文筛选和适读理由。" : "Unresolved questions influence screening and reading rationales."}</p><div className="v2-preferences">{confirmedProfile?.openQuestions.length ? confirmedProfile.openQuestions.slice(0, 4).map((item, index) => <i key={index}><b>{item.confidence}%</b> {locale === "zh" ? item.labelZh : item.labelEn}</i>) : <><i><b>Theory</b> &gt; application</i><i><b>New theorem</b> &gt; benchmark</i><i><b>Fundamental</b> &gt; optimization</i></>}</div></section>
             </div>
+            {confirmedProfile?.researchOpportunities.length ? <section className="v2-memory-opportunities"><div className="v2-section-title"><div><p className="v2-kicker warm">{t.futureDirections}</p><h2>{locale === "zh" ? "从已有工作向外延伸" : "Extensions grounded in existing work"}</h2></div><span>{confirmedProfile.researchOpportunities.length}</span></div><div>{confirmedProfile.researchOpportunities.map((item, index) => <article key={index}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{locale === "zh" ? item.titleZh : item.titleEn}</h3><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p><ul>{(locale === "zh" ? item.startingPointsZh : item.startingPointsEn).slice(0, 3).map((point) => <li key={point}>{point}</li>)}</ul><small>{t.evidenceConfidence} {item.confidence}% · {item.evidenceFiles.join(" · ")}</small></div></article>)}</div></section> : null}
             <section className="v2-isolation-card"><div><span>◎</span><div><p className="v2-kicker">{t.isolationBoundary}</p><h2>{defaultSpaceName(activeSpace.name, locale)}</h2></div></div><p>{t.isolationBody}</p><small>{t.accountNote}</small><button type="button" onClick={() => setSpaceDialog(true)}>{t.switchSpace} →</button></section>
           </main>
         )}
@@ -1339,6 +1639,50 @@ export default function ResearchApp({ user }: { user: User }) {
               <label><span>{t.venuesLabel}</span><textarea value={venueDraft} onChange={(event) => setVenueDraft(event.target.value)} rows={10} /></label>
               <div className="v2-source-settings-actions"><button type="button" onClick={() => void saveSourceSettings(true)} disabled={savingPreferences}>{t.resetSources}</button><button type="submit" disabled={savingPreferences || !venueDraft.trim()}>{savingPreferences ? t.savingSources : t.saveSources} →</button></div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {importOpen && (
+        <div className="v2-modal" role="dialog" aria-modal="true" aria-label={t.importResearch}>
+          <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => { if (!analyzingImport && !savingImport) setImportOpen(false); }} />
+          <div className="v2-import-modal">
+            <div className="v2-modal-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {t.privateSpace}</p><h2>{importDraft ? t.importDraftTitle : t.importResearch}</h2><p>{importDraft ? t.importDraftNote : t.importIntro}</p></div><button type="button" disabled={analyzingImport || savingImport} onClick={() => setImportOpen(false)}>×</button></div>
+
+            {!importDraft ? <div className="v2-import-body">
+              <section className="v2-import-warning"><b>!</b><div><h3>{t.importSafetyTitle}</h3><p>{t.importSafetyBody}</p><small>{t.importSafetyProcess}</small></div></section>
+
+              <div className="v2-import-kind" role="group" aria-label={locale === "zh" ? "资料类型" : "Material type"}>
+                {(["chat", "published_paper", "public_project", "mixed"] as ImportSourceKind[]).map((kind) => <button type="button" key={kind} className={importSourceKind === kind ? "active" : ""} onClick={() => setImportSourceKind(kind)}>{kind === "chat" ? (locale === "zh" ? "AI 项目 / 聊天" : "AI project / chats") : kind === "published_paper" ? (locale === "zh" ? "已发表论文" : "Published papers") : kind === "public_project" ? (locale === "zh" ? "公开项目材料" : "Public project material") : (locale === "zh" ? "混合资料" : "Mixed materials")}</button>)}
+              </div>
+
+              <div className="v2-import-pickers">
+                <input ref={fileInputRef} hidden type="file" multiple accept=".pdf,.docx,.json,.md,.markdown,.txt,.html,.htm,.csv" onChange={(event) => void addMaterialFiles(event.target.files)} />
+                <input ref={(node) => { folderInputRef.current = node; if (node) { node.setAttribute("webkitdirectory", ""); node.setAttribute("directory", ""); } }} hidden type="file" multiple onChange={(event) => void addMaterialFiles(event.target.files)} />
+                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={parsingMaterials || importFiles.length >= MATERIAL_FILE_LIMIT}><span>□</span><strong>{t.singleFile}</strong><small>PDF · DOCX · JSON · MD · TXT</small></button>
+                <button type="button" onClick={() => folderInputRef.current?.click()} disabled={parsingMaterials || importFiles.length >= MATERIAL_FILE_LIMIT}><span>▦</span><strong>{t.folderUpload}</strong><small>{locale === "zh" ? "逐个提取可读文件" : "Extract readable files"}</small></button>
+              </div>
+              <p className="v2-import-support">{parsingMaterials ? (locale === "zh" ? "正在浏览器中提取文本…" : "Extracting text in your browser…") : t.supportedFiles}</p>
+
+              <section className="v2-import-file-list"><div><h3>{t.selectedMaterials}</h3><span>{importFiles.length}/{MATERIAL_FILE_LIMIT}</span></div>{importFiles.length ? importFiles.map((file, index) => <div key={`${file.name}-${index}`}><span>□</span><p><strong>{file.name}</strong><small>{file.chars.toLocaleString()} {locale === "zh" ? "字符" : "characters"}{file.truncated ? ` · ${locale === "zh" ? "已截取" : "trimmed"}` : ""}</small></p><button type="button" aria-label={locale === "zh" ? "移除文件" : "Remove file"} onClick={() => setImportFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>) : <p>{t.noMaterials}</p>}</section>
+
+              <label className="v2-import-paste"><span>{t.pasteConversation}</span><textarea value={pastedMaterial} maxLength={MATERIAL_CHAR_LIMIT} onChange={(event) => setPastedMaterial(event.target.value)} placeholder={locale === "zh" ? "粘贴与当前研究空间有关的部分；先删除个人信息和不应外发的内容。" : "Paste only the part relevant to this space; remove personal or non-shareable content first."} /></label>
+
+              <div className="v2-import-attestation"><input id="pi-import-safety" type="checkbox" aria-label={t.confirmPublic} checked={safetyConfirmed} onChange={(event) => setSafetyConfirmed(event.target.checked)} /><label htmlFor="pi-import-safety"><strong>{t.confirmPublic}</strong><small>{t.rawNotStored}</small></label></div>
+              <div className="v2-import-actions"><button type="button" onClick={() => setImportOpen(false)}>{t.cancel}</button><button type="button" onClick={() => void analyzeResearchImport()} disabled={analyzingImport || parsingMaterials || !safetyConfirmed || (!importFiles.length && !pastedMaterial.trim())}>{analyzingImport ? t.analyzingMaterials : t.analyzeMaterials} →</button></div>
+              {analyzingImport && <div className="v2-import-progress" role="status" aria-live="polite"><span>π</span><div><strong>{t.analyzingMaterials}</strong><small>{locale === "zh" ? "正在区分长期兴趣、已有知识、未解问题与临时提问，并寻找可继续研究的方向。" : "Separating sustained interests, demonstrated knowledge, unresolved questions, and transient prompts while finding grounded next directions."}</small><i><b /></i></div></div>}
+            </div> : <div className="v2-profile-draft">
+              <section className="v2-draft-status"><span>π</span><div><strong>{t.importDraftNote}</strong><small>{t.rawNotStored} · {importDraft.fileNames.length} {locale === "zh" ? "个来源" : "sources"} · {modelDisplayName(importDraft.analysisModel)}</small></div></section>
+              <div className="v2-draft-edit-grid">
+                <label><span>{t.mainDirection}</span><input value={locale === "zh" ? importDraft.analysis.primaryDirectionZh : importDraft.analysis.primaryDirectionEn} onChange={(event) => editImportAnalysis((analysis) => locale === "zh" ? { ...analysis, primaryDirectionZh: event.target.value } : { ...analysis, primaryDirectionEn: event.target.value })} /></label>
+                <label><span>{t.profileSummary}</span><textarea value={locale === "zh" ? importDraft.analysis.summaryZh : importDraft.analysis.summaryEn} onChange={(event) => editImportAnalysis((analysis) => locale === "zh" ? { ...analysis, summaryZh: event.target.value } : { ...analysis, summaryEn: event.target.value })} /></label>
+              </div>
+              <section className="v2-draft-signals"><h3>{t.subdirectionsLabel}</h3><div>{importDraft.analysis.subdirections.map((item, index) => <span key={`sub-${index}`}>{locale === "zh" ? item.labelZh : item.labelEn}<small>{item.confidence}%</small><button type="button" onClick={() => removeProfileItem("subdirections", index)}>×</button></span>)}{importDraft.analysis.interests.map((item, index) => <span key={`interest-${index}`}>{locale === "zh" ? item.labelZh : item.labelEn}<small>{item.confidence}%</small><button type="button" onClick={() => removeProfileItem("interests", index)}>×</button></span>)}</div></section>
+              <section className="v2-draft-signals questions"><h3>{t.openQuestionsLabel}</h3><div>{importDraft.analysis.openQuestions.map((item, index) => <span key={index}>{locale === "zh" ? item.labelZh : item.labelEn}<small>{item.confidence}%</small><button type="button" onClick={() => removeProfileItem("openQuestions", index)}>×</button></span>)}</div></section>
+              <section className="v2-draft-opportunities"><h3>{t.futureDirections}</h3>{importDraft.analysis.researchOpportunities.map((item, index) => <article key={index}><span>{String(index + 1).padStart(2, "0")}</span><div><h4>{locale === "zh" ? item.titleZh : item.titleEn}</h4><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p><ul>{(locale === "zh" ? item.startingPointsZh : item.startingPointsEn).map((point) => <li key={point}>{point}</li>)}</ul><small>{t.evidenceConfidence} {item.confidence}% · {item.evidenceFiles.join(" · ")}</small></div><button type="button" aria-label={locale === "zh" ? "删除方向" : "Remove direction"} onClick={() => removeOpportunity(index)}>×</button></article>)}</section>
+              <section className="v2-draft-sources"><h3>{t.profileSources}</h3>{importDraft.analysis.sourceAssessments.map((source) => <div key={source.fileName} className={source.used ? "used" : ""}><span>{source.used ? "✓" : "—"}</span><p><strong>{source.fileName}</strong><small>{locale === "zh" ? source.reasonZh : source.reasonEn}</small></p><b>{source.relevance}</b></div>)}</section>
+              <div className="v2-import-actions"><button type="button" onClick={() => void saveImportDecision("discard")} disabled={savingImport}>{t.discardDraft}</button><button type="button" onClick={() => void saveImportDecision("confirm")} disabled={savingImport || !importDraft.analysis.researchOpportunities.length}>{savingImport ? t.savingSources : t.confirmProfile} →</button></div>
+            </div>}
           </div>
         </div>
       )}

@@ -67,6 +67,17 @@ export async function POST(request: Request) {
     let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
     if (runtime.DEEPSEEK_API_KEY) {
+      const importedProfiles = await database.prepare(
+        "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5",
+      ).bind(space.id).all<{ analysis_json: string }>();
+      const importedMemory = importedProfiles.results.map((row) => {
+        try {
+          const profile = JSON.parse(row.analysis_json) as { summaryEn?: string; primaryDirectionEn?: string; openQuestions?: Array<{ labelEn?: string }> };
+          return [profile.primaryDirectionEn, profile.summaryEn, ...(profile.openQuestions || []).slice(0, 8).map((item) => item.labelEn)].filter(Boolean).join("; ");
+        } catch {
+          return "";
+        }
+      }).filter(Boolean).join("\n").slice(0, 5000);
       const usageDate = new Date().toISOString().slice(0, 10);
       const workspaceScope = "workspace:" + user.userId.slice("anonymous:".length);
       const [globalCount, workspaceCount] = await Promise.all([
@@ -88,6 +99,7 @@ export async function POST(request: Request) {
         "- Name: " + space.name,
         "- Researcher: " + space.member_name,
         "- Scope: " + space.description,
+        "- User-confirmed imported research memory: " + (importedMemory || "None yet"),
         "Only use the context from this research space. Never mix interests, memory, or assumptions from other spaces.",
         "Be concise, distinguish evidence from inference, and explain why the answer matters to this research direction.",
       ].join("\n");

@@ -198,3 +198,25 @@ export const shareSnapshots = sqliteTable(
     index("idx_share_snapshots_space_created").on(table.spaceId, table.createdAt),
   ],
 );
+
+export const researchImports = sqliteTable(
+  "research_imports",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    sourceKind: text("source_kind").notNull(),
+    fileNames: text("file_names").notNull().default("[]"),
+    contentHash: text("content_hash").notNull(),
+    status: text("status").notNull().default("draft"),
+    safetyAttested: integer("safety_attested", { mode: "boolean" }).notNull().default(false),
+    analysisJson: text("analysis_json").notNull(),
+    analysisModel: text("analysis_model").notNull().default(""),
+    inputChars: integer("input_chars").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    confirmedAt: text("confirmed_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_research_imports_space_hash").on(table.spaceId, table.contentHash),
+    index("idx_research_imports_space_status_created").on(table.spaceId, table.status, table.createdAt),
+  ],
+);
