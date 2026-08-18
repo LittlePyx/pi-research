@@ -65,11 +65,14 @@ export async function GET(request: Request) {
         .all<SpaceRow>();
     }
 
+    const runtime = getRuntimeEnv();
+    const modelConfigured = Boolean(runtime.DEEPSEEK_API_KEY);
     return Response.json({
       spaces: result.results.map(toSpace),
       user,
-      modelConfigured: Boolean(getRuntimeEnv().DEEPSEEK_API_KEY),
-      provider: getRuntimeEnv().DEEPSEEK_API_KEY ? "deepseek" : null,
+      modelConfigured,
+      provider: modelConfigured ? "deepseek" : null,
+      model: modelConfigured ? runtime.DEEPSEEK_MODEL || "deepseek-v4-pro" : null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load research spaces";

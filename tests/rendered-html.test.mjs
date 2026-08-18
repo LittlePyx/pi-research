@@ -60,6 +60,9 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(css, /Pi Research V3 — readable type and live discovery monitor/);
   assert.match(css, /\.v2-app \{ font-size: 16px; \}/);
   assert.doesNotMatch(client, /DEMO ANALYSIS CARDS|演示分析卡/);
+  assert.doesNotMatch(client, /DeepSeek V4 Flash/);
+  assert.match(client, /modelDisplayName/);
+  assert.match(client, /DeepSeek V4 Pro/);
   assert.match(client, /rankedMonitorPapers/);
   assert.match(client, /openMonitorPaper/);
   assert.match(client, /为什么适合读/);
