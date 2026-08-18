@@ -229,7 +229,8 @@ test("uses the official Pi Research and P&I Lab logos across product surfaces", 
   assert.ok(teamMark.length > 100_000);
   assert.match(client, /src="\/pi-research-mark\.png"/);
   assert.match(client, /src="\/pi-lab-logo\.png"/);
-  assert.match(client, /v2-team-credit/);
+  assert.match(client, /v2-lab-attribution/);
+  assert.doesNotMatch(client, /v2-sidebar-bottom[^]*v2-team-credit/);
   assert.match(sharePage, /share-product-mark/);
   assert.match(sharePage, /share-team-mark/);
   assert.match(layout, /icon: "\/pi-research-mark\.png"/);

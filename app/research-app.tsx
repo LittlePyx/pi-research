@@ -1527,7 +1527,6 @@ export default function ResearchApp({ user }: { user: User }) {
 
         <div className="v2-sidebar-bottom">
           <div className={"v2-openai-state " + (modelConfigured ? "live" : "pending")}><i /><span><strong>{modelConfigured ? t.connected : t.setupRequired}</strong><small>{modelConfigured ? modelDisplayName(connectedModel) : "Safe preview mode"}</small></span></div>
-          <div className="v2-team-credit"><small>RESEARCH TEAM</small><Image src="/pi-lab-logo.png" width={118} height={37} alt="P&amp;I Lab" /></div>
           <button className="v2-account" type="button" onClick={() => navigate("memory")}><span>◎</span><span><strong>Pi Workspace</strong><small>{t.workspaceLabel}</small></span><b>•••</b></button>
         </div>
       </aside>
@@ -1742,6 +1741,7 @@ export default function ResearchApp({ user }: { user: User }) {
             </div>
             {confirmedProfile?.researchOpportunities.length ? <section className="v2-memory-opportunities"><div className="v2-section-title"><div><p className="v2-kicker warm">{t.futureDirections}</p><h2>{locale === "zh" ? "从已有工作向外延伸" : "Extensions grounded in existing work"}</h2></div><span>{confirmedProfile.researchOpportunities.length}</span></div><div>{confirmedProfile.researchOpportunities.map((item, index) => <article key={index}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{locale === "zh" ? item.titleZh : item.titleEn}</h3><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p><ul>{(locale === "zh" ? item.startingPointsZh : item.startingPointsEn).slice(0, 3).map((point) => <li key={point}>{point}</li>)}</ul><small>{t.evidenceConfidence} {item.confidence}% · {item.evidenceFiles.join(" · ")}</small></div></article>)}</div></section> : null}
             <section className="v2-isolation-card"><div><span>◎</span><div><p className="v2-kicker">{t.isolationBoundary}</p><h2>{defaultSpaceName(activeSpace.name, locale)}</h2></div></div><p>{t.isolationBody}</p><small>{t.accountNote}</small><button type="button" onClick={() => setSpaceDialog(true)}>{t.switchSpace} →</button></section>
+            <footer className="v2-lab-attribution"><span>{locale === "zh" ? "研究团队" : "Research team"}</span><Image src="/pi-lab-logo.png" width={78} height={25} alt="P&amp;I Lab" /></footer>
           </main>
         )}
 
