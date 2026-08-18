@@ -8,8 +8,12 @@ Pi Research is a bilingual AI research companion for continuous paper discovery,
 - Discovers papers through priority journals, Crossref, arXiv, OpenAlex, Semantic Scholar, and citation frontiers.
 - Uses persistent coverage ledgers so recurring scans explore new queries, venues, pages, and graph branches.
 - Uses DeepSeek Pro to reject non-papers, judge user-specific relevance, and write bilingual paper briefs and reading rationales.
+- Uses one cached DeepSeek Pro query plan per research space and day, with focused, balanced, and open exploration modes.
+- Separates explicit user preferences from evidence-based Pi inferences, applies time decay, and lets users disable inferred signals.
+- Records concrete accept/reject reasons so later screening can learn methods, questions, scope boundaries, and known-work duplication.
 - Preserves unseen, snoozed, accepted, saved, and dismissed papers in an isolated anonymous research workspace.
-- Incrementally grows direction maps, paper networks, and personalized learning paths from real papers.
+- Incrementally grows direction maps, records daily route changes from newly accepted evidence, and builds paper networks and personalized learning paths from real papers.
+- Reports seven-day discovery yield, user acceptance, review volume, and AI token usage inside the scan details.
 - Imports only user-approved public research materials; raw uploaded text is not retained.
 
 ## Local development

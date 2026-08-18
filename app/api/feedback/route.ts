@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { FEEDBACK_REASONS, recordPaperFeedbackSignal, type FeedbackReasonCode } from "../../../lib/preference-memory";
 
 type FeedbackPayload = {
   spaceId?: string;
   paperId?: string;
   kind?: "save" | "relevant" | "not_relevant" | "shown" | "open" | "later";
   value?: boolean;
+  reasonCode?: string;
+  note?: string;
 };
 
 async function addResearchTrackSignal(database: D1Database, spaceId: string, paperId: string, weight: number) {
@@ -49,9 +52,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Research space not found" }, { status: 404 });
   }
 
-  const ownedPaper = await DB.prepare("SELECT id FROM monitored_papers WHERE id = ? AND space_id = ? LIMIT 1")
+  const ownedPaper = await DB.prepare("SELECT id, title FROM monitored_papers WHERE id = ? AND space_id = ? LIMIT 1")
     .bind(paperId, spaceId)
-    .first<{ id: string }>();
+    .first<{ id: string; title: string }>();
   if (!ownedPaper) return NextResponse.json({ error: "Paper not found" }, { status: 404 });
 
   if (kind === "shown") {
@@ -92,11 +95,19 @@ export async function POST(request: Request) {
 
   const saved = kind === "save" ? Number(body.value) : 0;
   const feedback = kind === "save" ? null : body.value ? kind : null;
+  const reasonCode = body.reasonCode && body.reasonCode in FEEDBACK_REASONS ? body.reasonCode as FeedbackReasonCode : null;
+  const note = (body.note || "").trim().slice(0, 500);
+  if (reasonCode) {
+    const polarity = FEEDBACK_REASONS[reasonCode].polarity;
+    if ((kind === "relevant" && polarity !== "positive") || (kind === "not_relevant" && polarity !== "negative")) {
+      return NextResponse.json({ error: "Feedback reason does not match the decision" }, { status: 400 });
+    }
+  }
 
   if (kind === "save") {
     await DB.prepare(
-      `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback)
-       VALUES (?, ?, ?, ?, NULL)
+      `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback, reason_code, note)
+       VALUES (?, ?, ?, ?, NULL, NULL, '')
        ON CONFLICT(space_id, paper_id) DO UPDATE SET
          saved = excluded.saved,
          feedback = CASE WHEN excluded.saved = 1 THEN NULL ELSE paper_feedback.feedback END,
@@ -106,29 +117,42 @@ export async function POST(request: Request) {
       .run();
   } else if (kind === "not_relevant") {
     await DB.prepare(
-      `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback)
-       VALUES (?, ?, ?, 0, ?)
+      `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback, reason_code, note)
+       VALUES (?, ?, ?, 0, ?, ?, ?)
        ON CONFLICT(space_id, paper_id) DO UPDATE SET
          saved = 0,
          feedback = excluded.feedback,
+         reason_code = excluded.reason_code,
+         note = excluded.note,
          updated_at = CURRENT_TIMESTAMP`,
     )
-      .bind(crypto.randomUUID(), spaceId, paperId, feedback)
+      .bind(crypto.randomUUID(), spaceId, paperId, feedback, reasonCode, note)
       .run();
   } else {
     await DB.prepare(
-      `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback)
-       VALUES (?, ?, ?, 0, ?)
+      `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback, reason_code, note)
+       VALUES (?, ?, ?, 0, ?, ?, ?)
        ON CONFLICT(space_id, paper_id) DO UPDATE SET
          feedback = excluded.feedback,
+         reason_code = excluded.reason_code,
+         note = excluded.note,
          updated_at = CURRENT_TIMESTAMP`,
-    ).bind(crypto.randomUUID(), spaceId, paperId, feedback).run();
+    ).bind(crypto.randomUUID(), spaceId, paperId, feedback, reasonCode, note).run();
   }
 
   if (body.value) {
     await DB.prepare("UPDATE paper_delivery_state SET snoozed_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
       .bind(spaceId, paperId).run();
     if (kind === "save" || kind === "relevant") await addResearchTrackSignal(DB, spaceId, paperId, kind === "relevant" ? 5 : 3);
+  }
+
+  if ((kind === "relevant" || kind === "not_relevant") && !body.value) {
+    await DB.prepare("UPDATE research_preference_signals SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND source_type = 'paper_feedback' AND source_id LIKE ?")
+      .bind(spaceId, `${paperId}:%`).run();
+  } else if (body.value && reasonCode) {
+    await DB.prepare("UPDATE research_preference_signals SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND source_type = 'paper_feedback' AND source_id LIKE ?")
+      .bind(spaceId, `${paperId}:%`).run();
+    await recordPaperFeedbackSignal(DB, spaceId, paperId, ownedPaper.title, reasonCode, note);
   }
 
   return NextResponse.json({ ok: true, state: body.value ? kind === "not_relevant" ? "dismissed" : "accepted" : "pending" });

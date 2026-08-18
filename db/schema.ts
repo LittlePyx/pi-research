@@ -42,6 +42,8 @@ export const paperFeedback = sqliteTable(
     spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
     paperId: text("paper_id").notNull(),
     feedback: text("feedback"),
+    reasonCode: text("reason_code"),
+    note: text("note").notNull().default(""),
     saved: integer("saved", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
@@ -210,10 +212,77 @@ export const monitorPreferences = sqliteTable(
     spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
     profileKey: text("profile_key").notNull(),
     priorityVenues: text("priority_venues").notNull().default("[]"),
+    explorationMode: text("exploration_mode").notNull().default("balanced"),
     userModified: integer("user_modified", { mode: "boolean" }).notNull().default(false),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
   (table) => [uniqueIndex("idx_monitor_preferences_space").on(table.spaceId)],
+);
+
+export const researchPreferenceSignals = sqliteTable(
+  "research_preference_signals",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    layer: text("layer").notNull(),
+    kind: text("kind").notNull(),
+    labelZh: text("label_zh").notNull(),
+    labelEn: text("label_en").notNull(),
+    evidence: text("evidence").notNull().default(""),
+    confidence: integer("confidence").notNull().default(50),
+    weight: integer("weight").notNull().default(50),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    observedAt: text("observed_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    expiresAt: text("expires_at"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_preference_signals_source").on(table.spaceId, table.sourceType, table.sourceId, table.kind, table.labelEn),
+    index("idx_preference_signals_space_layer").on(table.spaceId, table.layer, table.active),
+  ],
+);
+
+export const monitorQueryPlans = sqliteTable(
+  "monitor_query_plans",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    planDate: text("plan_date").notNull(),
+    explorationMode: text("exploration_mode").notNull(),
+    queriesJson: text("queries_json").notNull().default("{}"),
+    rationaleZh: text("rationale_zh").notNull().default(""),
+    rationaleEn: text("rationale_en").notNull().default(""),
+    model: text("model").notNull().default(""),
+    error: text("error"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_monitor_query_plans_space_date").on(table.spaceId, table.planDate),
+    index("idx_monitor_query_plans_space_created").on(table.spaceId, table.createdAt),
+  ],
+);
+
+export const researchMapChanges = sqliteTable(
+  "research_map_changes",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull().default("new_evidence"),
+    titleZh: text("title_zh").notNull(),
+    titleEn: text("title_en").notNull(),
+    summaryZh: text("summary_zh").notNull().default(""),
+    summaryEn: text("summary_en").notNull().default(""),
+    confidence: integer("confidence").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_map_changes_paper_track_kind").on(table.paperId, table.trackId, table.kind),
+    index("idx_research_map_changes_space_created").on(table.spaceId, table.createdAt),
+  ],
 );
 
 export const paperInsights = sqliteTable(

@@ -1,4 +1,5 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { upsertPreferenceSignal } from "../../../lib/preference-memory";
 import type {
   ImportSourceKind,
   ProfileSignal,
@@ -341,6 +342,27 @@ export async function PATCH(request: Request) {
         database.prepare("UPDATE monitor_runs SET last_run_at = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?").bind(space.id),
         database.prepare("UPDATE paper_insights SET analysis_model = '', updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND analysis_source = 'deepseek_rejected'").bind(space.id),
       ]);
+      const evidence = `Confirmed research import: ${row.file_names}`.slice(0, 650);
+      const inferred = [
+        ...analysis.subdirections.map((item, index) => ({ item, kind: "topic", source: `subdirection:${index}` })),
+        ...analysis.interests.map((item, index) => ({ item, kind: "interest", source: `interest:${index}` })),
+        ...analysis.openQuestions.map((item, index) => ({ item, kind: "question", source: `question:${index}` })),
+      ];
+      for (const signal of inferred) {
+        await upsertPreferenceSignal(database, {
+          spaceId: space.id,
+          layer: "inferred",
+          kind: signal.kind,
+          labelZh: signal.item.labelZh,
+          labelEn: signal.item.labelEn,
+          evidence,
+          confidence: signal.item.confidence,
+          weight: signal.kind === "question" ? 88 : 76,
+          sourceType: "research_import",
+          sourceId: `${importId}:${signal.source}`,
+          expiresAt: new Date(Date.now() + 540 * 86_400_000).toISOString(),
+        });
+      }
     }
     const updated = await database.prepare(
       "SELECT id, space_id, source_kind, file_names, status, safety_attested, analysis_json, analysis_model, input_chars, created_at, confirmed_at FROM research_imports WHERE id = ?",

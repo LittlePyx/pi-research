@@ -99,6 +99,13 @@
       "when": 1787066269195,
       "tag": "0013_material_human_torch",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1787070900680,
+      "tag": "0014_wealthy_master_chief",
+      "breakpoints": true
     }
   ]
 }

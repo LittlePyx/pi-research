@@ -2467,6 +2467,71 @@ main { min-width: 0; }
 .v2-network-node > header .v2-direction-heat { margin-left: 2px; }
 .v2-direction-profile > div:first-child .v2-direction-heat { margin-right: 10px; vertical-align: middle; }
 
+/* Pi Research V7 — adaptive memory, planning, and quality feedback */
+.v2-query-plan { margin-top: 14px; padding: 13px 15px; border: 1px solid #d4ddd6; border-radius: 8px; background: rgba(239,245,241,.76); display: flex; gap: 12px; align-items: flex-start; }
+.v2-query-plan > span { width: 28px; height: 28px; border-radius: 50%; background: #476f59; color: #fff; display: grid; place-items: center; font: 16px Georgia, serif; flex: 0 0 auto; }
+.v2-query-plan strong, .v2-query-plan small { display: block; }
+.v2-query-plan strong { color: #34483b; font-size: 13px; }
+.v2-query-plan p { margin: 4px 0 5px; color: #657169; font-size: 12px; line-height: 1.55; }
+.v2-query-plan small { color: #7c847e; font-size: 11px; }
+.v2-quality-metrics { margin: 12px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; }
+.v2-quality-metrics div { padding: 10px 11px; border-radius: 6px; background: rgba(255,255,255,.58); }
+.v2-quality-metrics dt { color: #7b847d; font-size: 10px; }
+.v2-quality-metrics dd { margin: 4px 0 0; color: #3c4940; font-size: 13px; font-weight: 750; }
+.v2-route-changes { margin: 18px 0 4px; padding: 19px 22px; border: 1px solid #d8d4ca; border-radius: 10px; background: #f7f4ed; }
+.v2-route-changes > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.v2-route-changes h2 { margin: 3px 0 0; font: 400 21px/1.3 Georgia, serif; }
+.v2-route-changes > header > button { border: 0; background: transparent; color: var(--v2-blue); font-weight: 750; }
+.v2-route-changes > div { margin-top: 15px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.v2-route-changes article { padding: 13px; border: 1px solid #dfdbd1; border-radius: 8px; background: rgba(255,255,255,.62); display: flex; gap: 10px; }
+.v2-route-changes article > span { color: #8c603d; font-size: 18px; }
+.v2-route-changes small { color: #81796f; font-size: 10px; }
+.v2-route-changes h3 { margin: 4px 0 5px; font-size: 13px; line-height: 1.35; }
+.v2-route-changes p { margin: 0; color: #64675f; font-size: 11px; line-height: 1.5; }
+.v2-exploration-mode { margin: 18px 0; padding: 0; border: 0; }
+.v2-exploration-mode legend { margin-bottom: 8px; color: #657068; font-size: 12px; font-weight: 750; }
+.v2-exploration-mode > div { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+.v2-exploration-mode button { padding: 11px; border: 1px solid #d4dbd6; border-radius: 7px; background: #f8faf8; color: #536058; text-align: left; }
+.v2-exploration-mode button.active { border-color: #51735e; background: #e7f0ea; box-shadow: 0 0 0 1px #51735e inset; }
+.v2-exploration-mode strong, .v2-exploration-mode small { display: block; }
+.v2-exploration-mode strong { font-size: 13px; }
+.v2-exploration-mode small { margin-top: 4px; color: #7a837d; font-size: 10px; line-height: 1.35; }
+.v2-feedback-reason { position: relative; width: min(620px, calc(100vw - 30px)); max-height: calc(100vh - 40px); overflow: auto; border-radius: 12px; background: #fbfcfa; box-shadow: 0 22px 80px rgba(25,39,30,.24); }
+.v2-feedback-options { padding: 4px 24px 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.v2-feedback-options button { padding: 12px; border: 1px solid #d8ded9; border-radius: 7px; background: #fff; color: #435047; display: flex; align-items: center; gap: 9px; text-align: left; }
+.v2-feedback-options button:hover { border-color: #66806e; background: #f0f5f1; }
+.v2-feedback-options button span { color: #66806e; font-size: 16px; }
+.v2-feedback-options button strong { flex: 1; font-size: 12px; }
+.v2-feedback-options button b { color: #879087; }
+.v2-feedback-reason > label { margin: 8px 24px 0; display: block; }
+.v2-feedback-reason > label span { display: block; margin-bottom: 7px; color: #69736c; font-size: 11px; font-weight: 700; }
+.v2-feedback-reason textarea { width: 100%; min-height: 76px; padding: 11px; border: 1px solid #d5dcd6; border-radius: 7px; resize: vertical; font: inherit; font-size: 12px; }
+.v2-feedback-reason > small { display: block; padding: 11px 24px 22px; color: #858b87; font-size: 10px; }
+.v2-layered-memory { margin: 18px 0; padding: 22px; border: 1px solid #d5ddd7; border-radius: 10px; background: #f4f7f4; }
+.v2-layered-memory > header { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; }
+.v2-layered-memory > header h2 { margin: 4px 0 0; font: 400 21px/1.35 Georgia, serif; }
+.v2-layered-memory > header > small { color: #758078; font-size: 11px; }
+.v2-layered-memory > div { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.v2-layered-memory section { padding: 15px; border: 1px solid #d9dfda; border-radius: 8px; background: rgba(255,255,255,.7); }
+.v2-layered-memory h3 { margin: 0 0 10px; font-size: 13px; }
+.v2-layered-memory h3 span { margin-left: 7px; padding: 2px 6px; border-radius: 999px; background: #e5ece7; color: #607066; font-size: 10px; }
+.v2-layered-memory article { position: relative; padding: 9px 36px 9px 0; border-top: 1px solid #e3e7e4; display: flex; justify-content: space-between; gap: 10px; }
+.v2-layered-memory article strong, .v2-layered-memory article small { display: block; }
+.v2-layered-memory article strong { font-size: 11px; line-height: 1.4; }
+.v2-layered-memory article small { margin-top: 3px; color: #7e8680; font-size: 9px; line-height: 1.35; }
+.v2-layered-memory article > b { color: #587064; font-size: 10px; white-space: nowrap; }
+.v2-layered-memory article > button { position: absolute; top: 7px; right: 0; width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; color: #8d9790; }
+.v2-layered-memory section > p { margin: 0; color: #778079; font-size: 11px; line-height: 1.55; }
+
+@media (max-width: 850px) {
+  .v2-quality-metrics, .v2-route-changes > div { grid-template-columns: 1fr 1fr; }
+  .v2-layered-memory > div { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .v2-quality-metrics, .v2-route-changes > div, .v2-exploration-mode > div, .v2-feedback-options { grid-template-columns: 1fr; }
+  .v2-route-changes > header, .v2-layered-memory > header { align-items: flex-start; flex-direction: column; }
+}
+
 /* Pi Research V12 — progressive research-map construction */
 .v2-outline-loading i b { animation: none; transform: none; transition: width .45s ease; }
 .v2-outline-loading small { margin-top: 11px; color: #7b857e; display: block; font-size: 11px; }
