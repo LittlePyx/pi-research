@@ -49,6 +49,20 @@ type MonitorPaper = {
   citationCount: number;
   relevanceScore: number;
   discoveredAt: string;
+  summaryZh: string;
+  summaryEn: string;
+  whyReadZh: string;
+  whyReadEn: string;
+  qualityScore: number;
+  priorityVenue: boolean;
+  analysisSource: string;
+};
+type MonitorPreferences = {
+  profileKey: string;
+  profileNameZh: string;
+  profileNameEn: string;
+  priorityVenues: string[];
+  userModified: boolean;
 };
 type MonitorState = {
   status: "idle" | "scanning" | "ready" | "error";
@@ -61,6 +75,7 @@ type MonitorState = {
   cadenceHours: number;
   source: string;
   horizons: string[];
+  preferences?: MonitorPreferences;
   papers: MonitorPaper[];
   cached?: boolean;
   throttled?: boolean;
@@ -90,7 +105,7 @@ const copy = {
     reviewed: "Pi 正在监控三个研究时间层级",
     matched: "每个空间超过 24 小时后，会在你首次打开时自动扫描。",
     attention: "篇为本轮新发现",
-    briefTime: "元数据扫描不消耗 DeepSeek Token",
+    briefTime: "发现不耗 Token；仅对精选去重论文批量解读一次",
     mustRead: "必须读",
     worthReading: "值得读",
     whyYou: "为什么与你有关",
@@ -179,10 +194,13 @@ const copy = {
     profile: "工作区与设置",
     signOut: "退出",
     liveMonitor: "真实论文发现",
-    monitorIntro: "覆盖近 14 天、近 6 个月和近 5 年；不只盯当天的新论文。",
+    monitorIntro: "三个时间层使用不同标准，并结合本领域重点期刊与会议推荐。",
     daysHorizon: "近 14 天",
     monthsHorizon: "近 6 个月",
     yearsHorizon: "近 5 年",
+    daysFocus: "主打最新：快速捕捉刚出现的问题、结果和方法。",
+    monthsFocus: "新且高质量：兼顾时效、相关性、来源质量与早期引用信号。",
+    yearsFocus: "高质量且有用：优先可复用、能指导方法或研究路线的工作。",
     autoVisit: "自动扫描：每个研究空间每 24 小时最多一次，在到期后的首次访问时触发。无人访问时不会在后台运行。",
     lastScan: "上次扫描",
     nextScan: "下次可扫描",
@@ -193,10 +211,31 @@ const copy = {
     scanNow: "立即扫描",
     scanningButton: "扫描中",
     knownPapers: "篇已去重记录",
-    scannedPapers: "条候选元数据",
-    dedupeNote: "按 DOI 去重；没有 DOI 时使用标准化标题指纹。已读论文不会重复送给模型分析。",
+    scannedPapers: "条入选候选",
+    dedupeNote: "按 DOI 或标题指纹去重；每次最多只对三段各 2 篇尚未解读的精选论文做一次批量分析，已有解读不会重复消耗 Token。",
     noLivePapers: "首轮扫描完成后，这里会显示真实匹配论文。",
     manualCooling: "手动扫描一小时内只执行一次，已返回缓存结果。",
+    prioritySources: "重点期刊与会议",
+    editSources: "设置重点来源",
+    systemProvided: "Pi 自动提供",
+    userCustomized: "用户已修改",
+    sourceSettingsTitle: "设置重点期刊与会议",
+    sourceSettingsIntro: "Pi 已根据当前研究空间识别领域并提供默认来源。每行填写一个期刊或会议；你的修改只影响当前空间。",
+    detectedDomain: "Pi 识别的领域",
+    venuesLabel: "重点来源（每行一个）",
+    saveSources: "保存并重新扫描",
+    resetSources: "恢复 Pi 默认",
+    savingSources: "正在保存",
+    sourcesSaved: "重点来源已保存，Pi 正在按新规则重新扫描",
+    introLabel: "论文介绍",
+    whySuitable: "为什么适合读",
+    priorityVenueLabel: "重点来源",
+    aiBrief: "Pi 批量解读",
+    metadataBrief: "元数据解读",
+    openOriginal: "打开原文",
+    citations: "引用",
+    qualityScore: "推荐分",
+    noHorizonPaper: "本轮没有足够强的推荐，Pi 不会为了填满列表而凑数。",
   },
   en: {
     today: "Today",
@@ -221,7 +260,7 @@ const copy = {
     reviewed: "Pi monitors three research horizons",
     matched: "Each space scans on its first visit after the 24-hour window expires.",
     attention: "new in this scan",
-    briefTime: "Metadata scans use no DeepSeek tokens",
+    briefTime: "Discovery uses no tokens; selected deduplicated papers are analyzed once in a batch",
     mustRead: "Must read",
     worthReading: "Worth reading",
     whyYou: "Why it matters to you",
@@ -310,10 +349,13 @@ const copy = {
     profile: "Workspace & settings",
     signOut: "Sign out",
     liveMonitor: "Live paper discovery",
-    monitorIntro: "Covers the past 14 days, 6 months, and 5 years—not only papers published today.",
+    monitorIntro: "Each time horizon uses a different standard, weighted by priority venues for this field.",
     daysHorizon: "Past 14 days",
     monthsHorizon: "Past 6 months",
     yearsHorizon: "Past 5 years",
+    daysFocus: "Newest first: catch problems, results, and methods that just appeared.",
+    monthsFocus: "New and high quality: balance recency, relevance, venue quality, and early citation signals.",
+    yearsFocus: "High quality and useful: prioritize reusable work that guides methods or research direction.",
     autoVisit: "Automatic scan: at most once per research space every 24 hours, triggered by the first visit after it is due. It does not run in the background without a visit.",
     lastScan: "Last scan",
     nextScan: "Next eligible scan",
@@ -324,10 +366,31 @@ const copy = {
     scanNow: "Scan now",
     scanningButton: "Scanning",
     knownPapers: "deduplicated papers",
-    scannedPapers: "candidate metadata records",
-    dedupeNote: "Deduplicated by DOI, or by a normalized-title fingerprint when no DOI exists. Known papers are not resent to the model.",
+    scannedPapers: "shortlisted candidates",
+    dedupeNote: "Deduplicated by DOI or title fingerprint. Each run batch-analyzes at most two previously unenriched papers per horizon; existing explanations are never regenerated with tokens.",
     noLivePapers: "Real matching papers will appear here after the first scan.",
     manualCooling: "Manual scans run at most once per hour; cached results were returned.",
+    prioritySources: "Priority journals & conferences",
+    editSources: "Set priority sources",
+    systemProvided: "Provided by Pi",
+    userCustomized: "Customized by user",
+    sourceSettingsTitle: "Set priority journals and conferences",
+    sourceSettingsIntro: "Pi inferred this space's field and supplied defaults. Enter one journal or conference per line; changes apply only to this space.",
+    detectedDomain: "Field inferred by Pi",
+    venuesLabel: "Priority sources (one per line)",
+    saveSources: "Save and rescan",
+    resetSources: "Restore Pi defaults",
+    savingSources: "Saving",
+    sourcesSaved: "Priority sources saved; Pi is rescanning with the new rules",
+    introLabel: "Paper introduction",
+    whySuitable: "Why it is worth reading",
+    priorityVenueLabel: "Priority venue",
+    aiBrief: "Pi batch analysis",
+    metadataBrief: "Metadata brief",
+    openOriginal: "Open original",
+    citations: "Citations",
+    qualityScore: "Score",
+    noHorizonPaper: "No recommendation was strong enough in this window; Pi will not fill the list for appearance's sake.",
   },
 } as const;
 
@@ -560,6 +623,9 @@ export default function ResearchApp({ user }: { user: User }) {
   const [mobileNav, setMobileNav] = useState(false);
   const [monitor, setMonitor] = useState<MonitorState | null>(null);
   const [monitoring, setMonitoring] = useState(false);
+  const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
+  const [venueDraft, setVenueDraft] = useState("");
+  const [savingPreferences, setSavingPreferences] = useState(false);
 
   const t = copy[locale];
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
@@ -653,6 +719,7 @@ export default function ResearchApp({ user }: { user: User }) {
       if (event.key === "Escape") {
         setAskOpen(false);
         setSpaceDialog(false);
+        setSourceSettingsOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -749,6 +816,42 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
+  const openSourceSettings = () => {
+    setVenueDraft((monitor?.preferences?.priorityVenues || []).join("\n"));
+    setSourceSettingsOpen(true);
+  };
+
+  const saveSourceSettings = async (reset = false) => {
+    if (savingPreferences || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    const priorityVenues = venueDraft.split(/\r?\n/).map((venue) => venue.trim()).filter(Boolean);
+    if (!reset && !priorityVenues.length) return;
+    setSavingPreferences(true);
+    try {
+      const response = await fetch("/api/monitor", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, priorityVenues, reset }),
+      });
+      const data = await response.json() as { monitor?: MonitorState };
+      if (!response.ok || !data.monitor) throw new Error("preference update failed");
+      setMonitor(data.monitor);
+      setVenueDraft((data.monitor.preferences?.priorityVenues || []).join("\n"));
+      setSourceSettingsOpen(false);
+      setToast(t.sourcesSaved);
+      setMonitoring(true);
+      const scanResponse = await fetch("/api/monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id }),
+      });
+      const scanData = await scanResponse.json() as { monitor?: MonitorState };
+      if (scanData.monitor) setMonitor(scanData.monitor);
+    } finally {
+      setMonitoring(false);
+      setSavingPreferences(false);
+    }
+  };
+
   const saveFeedback = (paper: Paper, kind: "save" | "relevant" | "not_relevant") => {
     const key = activeSpace.id + ":" + paper.id;
     if (kind === "save") setSaved((current) => ({ ...current, [key]: !current[key] }));
@@ -834,10 +937,19 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div><p className="v2-kicker">{t.liveMonitor}</p><h2>{t.monitorIntro}</h2></div>
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (monitor?.status || "idle")}><i />{monitoring || monitor?.status === "scanning" ? t.scanning : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
+                  <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences}>{t.editSources}</button>
                   <button type="button" onClick={runManualMonitor} disabled={monitoring}>{monitoring ? t.scanningButton : t.scanNow}</button>
                 </div>
               </div>
-              <div className="v2-horizons"><span>{t.daysHorizon}</span><span>{t.monthsHorizon}</span><span>{t.yearsHorizon}</span></div>
+              <div className="v2-source-profile">
+                <div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div>
+                <div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 5).map((venue) => <i key={venue}>{venue}</i>)}{(monitor?.preferences?.priorityVenues.length || 0) > 5 && <b>+{(monitor?.preferences?.priorityVenues.length || 0) - 5}</b>}</p></div>
+              </div>
+              <div className="v2-horizon-logic">
+                <article><span>01 · {t.daysHorizon}</span><p>{t.daysFocus}</p></article>
+                <article><span>02 · {t.monthsHorizon}</span><p>{t.monthsFocus}</p></article>
+                <article><span>03 · {t.yearsHorizon}</span><p>{t.yearsFocus}</p></article>
+              </div>
               <p className="v2-monitor-explainer">{t.autoVisit}</p>
               <dl className="v2-monitor-metrics">
                 <div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div>
@@ -845,14 +957,30 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div>
               </dl>
               {monitor?.papers?.length ? (
-                <div className="v2-live-papers">
-                  {monitor.papers.slice(0, 4).map((paper) => (
-                    <a key={paper.id} href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">
-                      <span>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span>
-                      <strong>{paper.title}</strong>
-                      <small>{[paper.authors, paper.venue, paper.publishedAt].filter(Boolean).join(" · ")}</small>
-                    </a>
-                  ))}
+                <div className="v2-paper-horizons">
+                  {(["days", "months", "years"] as const).map((horizon) => {
+                    const label = horizon === "days" ? t.daysHorizon : horizon === "months" ? t.monthsHorizon : t.yearsHorizon;
+                    const focus = horizon === "days" ? t.daysFocus : horizon === "months" ? t.monthsFocus : t.yearsFocus;
+                    const horizonPapers = monitor.papers.filter((paper) => paper.horizon === horizon);
+                    return (
+                      <section key={horizon} className={"v2-paper-horizon " + horizon}>
+                        <header><span>{label}</span><p>{focus}</p></header>
+                        {horizonPapers.length ? horizonPapers.map((paper) => (
+                          <article className="v2-research-card" key={paper.id}>
+                            <div className="v2-research-card-badges">
+                              {paper.priorityVenue && <span className="priority">◆ {t.priorityVenueLabel}</span>}
+                              <span>{paper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span>
+                            </div>
+                            <h3>{paper.title}</h3>
+                            <p className="v2-research-meta">{[paper.authors, paper.venue, paper.publishedAt].filter(Boolean).join(" · ")}</p>
+                            <div className="v2-paper-intro"><span>{t.introLabel}</span><p>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p></div>
+                            <div className="v2-paper-why"><span>{t.whySuitable}</span><p>{locale === "zh" ? paper.whyReadZh : paper.whyReadEn}</p></div>
+                            <footer><span>{t.qualityScore} {paper.qualityScore}</span><span>{t.citations} {paper.citationCount}</span><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></footer>
+                          </article>
+                        )) : <p className="v2-horizon-empty">{t.noHorizonPaper}</p>}
+                      </section>
+                    );
+                  })}
                 </div>
               ) : <p className="v2-monitor-empty">{monitoring ? t.scanning : t.noLivePapers}</p>}
               <p className="v2-dedupe-note">◎ {t.dedupeNote}</p>
@@ -1022,6 +1150,20 @@ export default function ResearchApp({ user }: { user: User }) {
               <div><label><span>{t.spaceName}</span><input required value={newSpace.name} onChange={(event) => setNewSpace((current) => ({ ...current, name: event.target.value }))} placeholder={locale === "zh" ? "例如：量子信息" : "e.g. Quantum Information"} /></label><label><span>{t.memberName}</span><input value={newSpace.memberName} onChange={(event) => setNewSpace((current) => ({ ...current, memberName: event.target.value }))} placeholder={user.displayName} /></label></div>
               <label><span>{t.spaceScope}</span><textarea value={newSpace.description} onChange={(event) => setNewSpace((current) => ({ ...current, description: event.target.value }))} placeholder={locale === "zh" ? "这个空间只关注哪些具体问题？" : "Which specific questions belong in this space?"} /></label>
               <div className="v2-form-actions"><button type="button" onClick={() => setSpaceDialog(false)}>{t.cancel}</button><button type="submit" disabled={creatingSpace || !newSpace.name.trim()}>{creatingSpace ? t.creating : t.create} →</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {sourceSettingsOpen && monitor?.preferences && (
+        <div className="v2-modal" role="dialog" aria-modal="true" aria-label={t.sourceSettingsTitle}>
+          <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setSourceSettingsOpen(false)} />
+          <div className="v2-source-settings">
+            <div className="v2-modal-head"><div><p className="v2-kicker">{t.prioritySources}</p><h2>{t.sourceSettingsTitle}</h2><p>{t.sourceSettingsIntro}</p></div><button type="button" onClick={() => setSourceSettingsOpen(false)}>×</button></div>
+            <form onSubmit={(event) => { event.preventDefault(); void saveSourceSettings(false); }}>
+              <div className="v2-detected-profile"><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor.preferences.profileNameZh : monitor.preferences.profileNameEn}</strong><em>{monitor.preferences.userModified ? t.userCustomized : t.systemProvided}</em></div>
+              <label><span>{t.venuesLabel}</span><textarea value={venueDraft} onChange={(event) => setVenueDraft(event.target.value)} rows={10} /></label>
+              <div className="v2-source-settings-actions"><button type="button" onClick={() => void saveSourceSettings(true)} disabled={savingPreferences}>{t.resetSources}</button><button type="submit" disabled={savingPreferences || !venueDraft.trim()}>{savingPreferences ? t.savingSources : t.saveSources} →</button></div>
             </form>
           </div>
         </div>

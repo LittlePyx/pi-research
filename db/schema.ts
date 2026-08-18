@@ -122,3 +122,34 @@ export const monitoredPapers = sqliteTable(
     index("idx_monitored_papers_space_discovered").on(table.spaceId, table.discoveredAt),
   ],
 );
+
+export const monitorPreferences = sqliteTable(
+  "monitor_preferences",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    profileKey: text("profile_key").notNull(),
+    priorityVenues: text("priority_venues").notNull().default("[]"),
+    userModified: integer("user_modified", { mode: "boolean" }).notNull().default(false),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [uniqueIndex("idx_monitor_preferences_space").on(table.spaceId)],
+);
+
+export const paperInsights = sqliteTable(
+  "paper_insights",
+  {
+    paperId: text("paper_id").primaryKey().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    abstractText: text("abstract_text").notNull().default(""),
+    summaryZh: text("summary_zh").notNull().default(""),
+    summaryEn: text("summary_en").notNull().default(""),
+    whyReadZh: text("why_read_zh").notNull().default(""),
+    whyReadEn: text("why_read_en").notNull().default(""),
+    qualityScore: integer("quality_score").notNull().default(0),
+    priorityVenue: integer("priority_venue", { mode: "boolean" }).notNull().default(false),
+    analysisSource: text("analysis_source").notNull().default("metadata"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [index("idx_paper_insights_space_quality").on(table.spaceId, table.qualityScore)],
+);

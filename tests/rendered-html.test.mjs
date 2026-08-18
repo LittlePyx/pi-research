@@ -24,13 +24,15 @@ test("server-renders the Pi Research application", async () => {
   assert.match(html, /Pi Research/);
   assert.match(html, /真实论文发现/);
   assert.match(html, /近 14 天/);
-  assert.match(html, /不消耗 DeepSeek Token/);
+  assert.match(html, /主打最新/);
+  assert.match(html, /设置重点来源/);
   assert.match(html, /匿名浏览器工作区/);
 });
 
 test("ships live monitoring, deduplication, and readable type", async () => {
-  const [route, repository, css, client] = await Promise.all([
+  const [route, profiles, repository, css, client] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/monitor/domain-profiles.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
@@ -40,8 +42,15 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /CADENCE_MS = 24 \* 60 \* 60 \* 1000/);
   assert.match(route, /INSERT OR IGNORE INTO monitored_papers/);
   assert.match(route, /titleFingerprint/);
+  assert.match(route, /analyzeCandidates/);
+  assert.match(route, /MAX_TOKENS|analysis_source != 'deepseek'|max_tokens: 2200/);
+  assert.match(profiles, /IEEE Transactions on Information Theory/);
+  assert.match(profiles, /International Conference on Machine Learning/);
   assert.match(repository, /idx_monitored_papers_space_canonical/);
+  assert.match(repository, /idx_monitor_preferences_space/);
+  assert.match(repository, /paper_insights/);
   assert.match(css, /Pi Research V3 — readable type and live discovery monitor/);
   assert.match(css, /\.v2-app \{ font-size: 16px; \}/);
   assert.match(client, /DEMO ANALYSIS CARDS · LIVE DISCOVERY ABOVE/);
+  assert.match(client, /为什么适合读/);
 });
