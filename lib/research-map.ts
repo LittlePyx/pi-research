@@ -1,6 +1,7 @@
 export type ResearchTrackRole = "foundation" | "milestone" | "frontier";
 export type ResearchDirectionRole = "core" | "support" | "explore";
 export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
+export type ResearchTrackBuildStatus = "queued" | "ready";
 
 export type ResearchTrackPaper = {
   id: string;
@@ -34,6 +35,7 @@ export type ResearchTrack = {
   heatScore: number;
   heatLevel: ResearchHeatLevel;
   recentPaperCount: number;
+  buildStatus: ResearchTrackBuildStatus;
   updatedAt: string;
   papers: ResearchTrackPaper[];
 };
@@ -54,4 +56,9 @@ export type ResearchMapState = {
   model: string;
   generated: boolean;
   needsStructure?: boolean;
+  buildProgress?: {
+    ready: number;
+    total: number;
+    pendingTrackIds: string[];
+  };
 };

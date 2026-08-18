@@ -109,8 +109,13 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(monitor, /INSERT OR IGNORE INTO research_track_papers/);
   assert.match(mapRoute, /MODEL = "deepseek-v4-pro"/);
   assert.match(mapRoute, /Foundation = field-defining concepts or methods/);
-  assert.match(mapRoute, /action\?: "initialize" \| "expand"/);
+  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand"/);
   assert.match(mapRoute, /INSERT OR IGNORE INTO research_track_papers/);
+  assert.match(mapRoute, /expansion_count, user_role/);
+  assert.match(mapRoute, /VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, -1/);
+  assert.match(mapRoute, /outlineReady: true/);
+  assert.match(mapRoute, /const hydrating = payload\.action === "hydrate"/);
+  assert.match(mapRoute, /buildProgress/);
   assert.match(mapRoute, /structureExistingTracks/);
   assert.match(mapRoute, /research_track_edges/);
   assert.match(mapRoute, /userRole \(core\|support\|explore\)/);
@@ -129,12 +134,18 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /辅助价值/);
   assert.match(client, /directionHeatLabel/);
   assert.match(client, /当前发现热度/);
+  assert.match(client, /action: "hydrate"/);
+  assert.match(client, /mapBuildTrackId/);
+  assert.match(client, /先建立可浏览的方向骨架/);
+  assert.match(client, /切换页面不会丢失已经完成的内容/);
   assert.doesNotMatch(client, /Gaussian Extremality for Rate-Distortion/);
   assert.match(css, /Focused Today brief \+ real research map/);
   assert.match(css, /\.v2-research-timeline/);
   assert.match(css, /continuous discovery and growing field graph/);
   assert.match(css, /subtle direction heat signals/);
   assert.match(css, /\.v2-direction-heat\.rising/);
+  assert.match(css, /progressive research-map construction/);
+  assert.match(css, /\.v2-map-build-progress/);
 });
 
 test("builds persistent personalized learning paths from real research papers", async () => {

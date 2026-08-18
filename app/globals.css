@@ -2459,3 +2459,32 @@ main { min-width: 0; }
 .v2-direction-heat.steady > i { background: #6e927c; box-shadow: 0 0 0 2px rgba(110,146,124,.13); }
 .v2-network-node > header .v2-direction-heat { margin-left: 2px; }
 .v2-direction-profile > div:first-child .v2-direction-heat { margin-right: 10px; vertical-align: middle; }
+
+/* Pi Research V12 — progressive research-map construction */
+.v2-outline-loading i b { animation: none; transform: none; transition: width .45s ease; }
+.v2-outline-loading small { margin-top: 11px; color: #7b857e; display: block; font-size: 11px; }
+.v2-map-build-progress { margin-top: 24px; padding: 15px 18px; border: 1px solid #cbd8d0; border-radius: 10px; background: #f1f5f2; }
+.v2-map-build-progress > div { display: flex; align-items: center; gap: 12px; }
+.v2-map-build-progress > div > span { width: 28px; height: 28px; flex: 0 0 auto; border: 1px solid #afc1b5; border-radius: 50%; display: grid; place-items: center; }
+.v2-map-build-progress > div > span > i { width: 7px; height: 7px; border-radius: 50%; background: #6f8d79; }
+.v2-map-build-progress > div > span.working > i { animation: v2-build-pulse 1s ease-in-out infinite alternate; }
+.v2-map-build-progress > div > span.paused > i { background: #a78760; }
+.v2-map-build-progress strong { color: #385545; font-size: 12px; }
+.v2-map-build-progress p { margin: 3px 0 0; color: #69766d; font: 13px/1.35 Georgia, serif; }
+.v2-map-build-progress > i { height: 4px; margin: 12px 0 7px 40px; overflow: hidden; border-radius: 999px; background: #dde6df; display: block; }
+.v2-map-build-progress > i > b { height: 100%; border-radius: inherit; background: #5f806b; display: block; transition: width .3s ease; }
+.v2-map-build-progress > small { margin-left: 40px; color: #7b857e; font-size: 10px; }
+@keyframes v2-build-pulse { from { opacity: .35; transform: scale(.75); } to { opacity: 1; transform: scale(1.18); } }
+.v2-track-build-chip { display: inline-flex; align-items: center; gap: 4px; color: #7b847d; font-size: 9px; font-style: normal; font-weight: 750; }
+.v2-track-build-chip > i { width: 6px; height: 6px; border-radius: 50%; background: #a5ada7; }
+.v2-track-build-chip.working { color: #4f745f; }
+.v2-track-build-chip.working > i { background: #6f967e; animation: v2-build-pulse .85s ease-in-out infinite alternate; }
+.v2-track-build-chip.error { color: #9a654d; }
+.v2-track-build-chip.error > i { background: #b87556; }
+.v2-network-node.queued { border-style: dashed; background: rgba(255,255,255,.52); }
+.v2-network-node.queued .v2-direction-signals, .v2-network-node.queued .v2-direction-role-control { opacity: .68; }
+
+@media (max-width: 620px) {
+  .v2-map-build-progress { padding: 14px; }
+  .v2-map-build-progress > i, .v2-map-build-progress > small { margin-left: 0; }
+}

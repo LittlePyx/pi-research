@@ -494,6 +494,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       return heatLevel(score, evidence.recentPaperCount);
     })(),
     recentPaperCount: heatByTrack.get(row.id)?.recentPaperCount || 0,
+    buildStatus: row.expansion_count < 0 ? "queued" : "ready",
     updatedAt: row.updated_at,
     papers: papersByTrack.get(row.id) || [],
   }));
@@ -507,7 +508,16 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     strength: row.strength,
   }));
   const needsStructure = tracks.length > 1 && !edges.length;
-  return { tracks, edges, model: MODEL, generated: tracks.length > 0, needsStructure, ...extra } satisfies ResearchMapState & Record<string, unknown>;
+  const pendingTrackIds = tracks.filter((track) => track.buildStatus === "queued").map((track) => track.id);
+  return {
+    tracks,
+    edges,
+    model: MODEL,
+    generated: tracks.length > 0,
+    needsStructure,
+    buildProgress: { ready: tracks.length - pendingTrackIds.length, total: tracks.length, pendingTrackIds },
+    ...extra,
+  } satisfies ResearchMapState & Record<string, unknown>;
 }
 
 export async function GET(request: Request) {
@@ -524,7 +534,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "expand" | "structure" | "activity"; trackId?: string; activityKind?: "paper_opened" | "track_opened" };
+    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "structure" | "activity"; trackId?: string; activityKind?: "paper_opened" | "track_opened" };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -551,54 +561,31 @@ export async function POST(request: Request) {
       const generated = await generateDirections(database, workspaceId, space, memory);
       const directions = generated.directions;
       if (directions.length < 3) throw new Error("DeepSeek Pro did not return enough distinct research directions");
-      const candidates = await discoverCandidates(directions, 0, 14);
-      const selections = await selectPapers(database, workspaceId, space, memory, directions, candidates, "initialize");
-      const candidateByKey = new Map(candidates.map((item) => [item.directionKey + ":" + item.canonicalId, item]));
       const trackIdByKey = new Map<string, string>();
-      for (const [position, direction] of directions.entries()) {
-        const trackId = crypto.randomUUID();
-        trackIdByKey.set(direction.key, trackId);
-        await database.prepare(
-          "INSERT INTO research_tracks (id, space_id, title_zh, title_en, summary_zh, summary_en, search_queries, position, user_role, depth_score, support_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ).bind(trackId, space.id, direction.titleZh, direction.titleEn, direction.summaryZh, direction.summaryEn, JSON.stringify(direction.searchQueries), position,
-          direction.userRole, direction.depthScore, direction.supportScore).run();
-      }
+      for (const direction of directions) trackIdByKey.set(direction.key, crypto.randomUUID());
+      const outlineStatements = directions.map((direction, position) => database.prepare(
+          "INSERT INTO research_tracks (id, space_id, title_zh, title_en, summary_zh, summary_en, search_queries, position, expansion_count, user_role, depth_score, support_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, -1, ?, ?, ?)",
+        ).bind(trackIdByKey.get(direction.key), space.id, direction.titleZh, direction.titleEn, direction.summaryZh, direction.summaryEn, JSON.stringify(direction.searchQueries), position,
+          direction.userRole, direction.depthScore, direction.supportScore));
       for (const relationship of generated.relationships) {
         const sourceId = trackIdByKey.get(directions[relationship.sourceIndex]?.key || "");
         const targetId = trackIdByKey.get(directions[relationship.targetIndex]?.key || "");
         if (!sourceId || !targetId) continue;
-        await database.prepare(
+        outlineStatements.push(database.prepare(
           "INSERT OR IGNORE INTO research_track_edges (id, space_id, source_track_id, target_track_id, kind, relationship_zh, relationship_en, strength) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ).bind(crypto.randomUUID(), space.id, sourceId, targetId, relationship.kind, relationship.relationshipZh, relationship.relationshipEn, relationship.strength).run();
+        ).bind(crypto.randomUUID(), space.id, sourceId, targetId, relationship.kind, relationship.relationshipZh, relationship.relationshipEn, relationship.strength));
       }
-      const positions = new Map<string, number>();
-      const inserted = new Set<string>();
-      let addedCount = 0;
-      for (const selection of selections) {
-        const trackId = trackIdByKey.get(selection.directionKey);
-        const candidate = candidateByKey.get(selection.directionKey + ":" + selection.canonicalId);
-        const insertionKey = `${trackId}:${selection.canonicalId}`;
-        if (!trackId || !candidate || inserted.has(insertionKey)) continue;
-        inserted.add(insertionKey);
-        const position = positions.get(trackId) || 0;
-        positions.set(trackId, position + 1);
-        await database.prepare(
-          `INSERT OR IGNORE INTO research_track_papers
-           (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(crypto.randomUUID(), trackId, space.id, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
-          candidate.url, candidate.publishedAt, candidate.citationCount, selection.role, selection.summaryZh, selection.summaryEn,
-          selection.rationaleZh, selection.rationaleEn, position).run();
-        addedCount += 1;
-      }
-      return Response.json(await readMap(database, space.id, { cached: false, addedCount }));
+      await database.batch(outlineStatements);
+      return Response.json(await readMap(database, space.id, { cached: false, addedCount: 0, outlineReady: true }));
     }
 
+    const hydrating = payload.action === "hydrate";
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
       "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
     ).bind(trackId, space.id).first<TrackRow>();
     if (!track) return Response.json({ error: "Research direction not found" }, { status: 404 });
+    if (hydrating && track.expansion_count >= 0) return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
     const queries = parseJsonArray(track.search_queries);
     if (!queries.length) throw new Error("This direction has no usable discovery queries");
     const direction: DirectionDraft = {
@@ -612,12 +599,12 @@ export async function POST(request: Request) {
       depthScore: track.depth_score,
       supportScore: track.support_score,
     };
-    const offset = ((track.expansion_count + 1) * 16) % 608;
-    let candidates = await discoverCandidates([direction], offset, 16);
+    const offset = hydrating ? 0 : ((track.expansion_count + 1) * 16) % 608;
+    let candidates = await discoverCandidates([direction], offset, hydrating ? 14 : 16);
     const existing = await database.prepare("SELECT canonical_id FROM research_track_papers WHERE track_id = ?").bind(track.id).all<{ canonical_id: string }>();
     const existingIds = new Set(existing.results.map((row) => row.canonical_id));
     candidates = candidates.filter((item) => !existingIds.has(item.canonicalId));
-    const selections = candidates.length ? await selectPapers(database, workspaceId, space, memory, [direction], candidates, "expand") : [];
+    const selections = candidates.length ? await selectPapers(database, workspaceId, space, memory, [direction], candidates, hydrating ? "initialize" : "expand") : [];
     const candidateById = new Map(candidates.map((item) => [item.canonicalId, item]));
     const inserted = new Set<string>();
     let position = existing.results.length;
@@ -635,9 +622,13 @@ export async function POST(request: Request) {
         selection.rationaleZh, selection.rationaleEn, position++).run();
       addedCount += 1;
     }
-    await database.prepare("UPDATE research_tracks SET expansion_count = expansion_count + 1, interaction_score = MIN(35, interaction_score + 5), updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .bind(track.id).run();
-    return Response.json(await readMap(database, space.id, { cached: false, addedCount }));
+    if (hydrating) {
+      await database.prepare("UPDATE research_tracks SET expansion_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?").bind(track.id, space.id).run();
+    } else {
+      await database.prepare("UPDATE research_tracks SET expansion_count = expansion_count + 1, interaction_score = MIN(35, interaction_score + 5), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+        .bind(track.id, space.id).run();
+    }
+    return Response.json(await readMap(database, space.id, { cached: false, addedCount, hydratedTrackId: hydrating ? track.id : null }));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to build the research map" }, { status: 502 });
   }

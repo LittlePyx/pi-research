@@ -837,6 +837,9 @@ export default function ResearchApp({ user }: { user: User }) {
   const [selectedThread, setSelectedThread] = useState<ResearchTrack | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
   const [mapAction, setMapAction] = useState<string | null>(null);
+  const [mapOutlinePhase, setMapOutlinePhase] = useState(0);
+  const [mapBuildTrackId, setMapBuildTrackId] = useState<string | null>(null);
+  const [mapBuildErrors, setMapBuildErrors] = useState<Record<string, boolean>>({});
   const [learningState, setLearningState] = useState<LearningPathState>({ path: null, suggestedTarget: "", availablePaperCount: 0, model: "deepseek-v4-pro" });
   const [learningTarget, setLearningTarget] = useState("");
   const [learningLoading, setLearningLoading] = useState(false);
@@ -879,6 +882,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const t = copy[locale];
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
+  const mapViewActive = view === "threads" || view === "thread-detail";
   const rankedMonitorPapers = useMemo(
     () => [...(monitor?.papers || [])].sort((first, second) => second.qualityScore - first.qualityScore),
     [monitor?.papers],
@@ -1021,10 +1025,12 @@ export default function ResearchApp({ user }: { user: User }) {
   }, [view, activeSpace.id]);
 
   useEffect(() => {
-    if (!new Set<View>(["threads", "thread-detail"]).has(view) || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    if (!mapViewActive || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     let cancelled = false;
     const load = async () => {
       setMapLoading(true);
+      setMapOutlinePhase(0);
+      setMapBuildErrors({});
       try {
         let response = await fetch("/api/research-map?spaceId=" + encodeURIComponent(activeSpace.id));
         let data = await response.json() as ResearchMapState & { error?: string };
@@ -1051,16 +1057,45 @@ export default function ResearchApp({ user }: { user: User }) {
         if (!cancelled) {
           setResearchMap(data);
           setSelectedThread((current) => data.tracks.find((track) => track.id === current?.id) || data.tracks[0] || null);
+          setMapLoading(false);
+          setMapAction(null);
+        }
+        for (const trackId of data.buildProgress?.pendingTrackIds || []) {
+          if (cancelled) break;
+          setMapBuildTrackId(trackId);
+          try {
+            const fillResponse = await fetch("/api/research-map", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ spaceId: activeSpace.id, action: "hydrate", trackId }),
+            });
+            const filled = await fillResponse.json() as ResearchMapState & { error?: string };
+            if (!fillResponse.ok) throw new Error(filled.error || "route fill failed");
+            if (!cancelled) {
+              data = filled;
+              setResearchMap(filled);
+              setSelectedThread((current) => filled.tracks.find((track) => track.id === current?.id) || filled.tracks[0] || null);
+              setMapBuildErrors((current) => { const next = { ...current }; delete next[trackId]; return next; });
+            }
+          } catch {
+            if (!cancelled) setMapBuildErrors((current) => ({ ...current, [trackId]: true }));
+          }
         }
       } catch {
         if (!cancelled) setToast(locale === "zh" ? "研究路线暂时无法生成，请稍后重试" : "The research map could not be built just now");
       } finally {
-        if (!cancelled) { setMapLoading(false); setMapAction(null); }
+        if (!cancelled) { setMapLoading(false); setMapAction(null); setMapBuildTrackId(null); }
       }
     };
     void load();
     return () => { cancelled = true; };
-  }, [activeSpace.id, locale, view]);
+  }, [activeSpace.id, locale, mapViewActive]);
+
+  useEffect(() => {
+    if (!mapLoading) return;
+    const timer = window.setInterval(() => setMapOutlinePhase((current) => Math.min(3, current + 1)), 2600);
+    return () => window.clearInterval(timer);
+  }, [mapLoading]);
 
   useEffect(() => {
     if (view !== "learn" || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
@@ -1552,20 +1587,22 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const expandResearchTrack = async (thread: ResearchTrack) => {
-    if (mapAction || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    if (mapAction || mapBuildTrackId || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     setMapAction(thread.id);
+    const isInitialFill = thread.buildStatus === "queued";
     try {
       const response = await fetch("/api/research-map", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, action: "expand", trackId: thread.id }),
+        body: JSON.stringify({ spaceId: activeSpace.id, action: isInitialFill ? "hydrate" : "expand", trackId: thread.id }),
       });
       const data = await response.json() as ResearchMapState & { addedCount?: number; error?: string };
       if (!response.ok) throw new Error(data.error || "expand failed");
       setResearchMap(data);
       const updated = data.tracks.find((item) => item.id === thread.id) || null;
       setSelectedThread(updated);
-      setToast(locale === "zh" ? (data.addedCount ? `新增 ${data.addedCount} 篇代表性论文` : "本轮没有发现足够有代表性的新论文") : (data.addedCount ? `Added ${data.addedCount} representative papers` : "No sufficiently representative additions in this pass"));
+      setMapBuildErrors((current) => { const next = { ...current }; delete next[thread.id]; return next; });
+      setToast(locale === "zh" ? (data.addedCount ? `${isInitialFill ? "路线已补充" : "新增"} ${data.addedCount} 篇代表性论文` : "本轮没有发现足够有代表性的新论文") : (data.addedCount ? `${isInitialFill ? "Route filled with" : "Added"} ${data.addedCount} representative papers` : "No sufficiently representative additions in this pass"));
     } catch {
       setToast(locale === "zh" ? "继续挖掘失败，请稍后重试" : "Could not continue mining this direction");
     } finally {
@@ -1623,6 +1660,10 @@ export default function ResearchApp({ user }: { user: User }) {
     { id: "memory", label: t.memory, mark: "05" },
   ];
   const activeNav = view === "paper-detail" ? paperReturnView : view === "thread-detail" ? "threads" : view;
+  const mapOutlineLabels = locale === "zh"
+    ? ["读取研究空间与已确认记忆", "划分主攻、辅助与探索方向", "建立方向之间的主干关系", "保存方向骨架，即将展示"]
+    : ["Reading the research space and confirmed memory", "Separating core, support, and exploratory directions", "Connecting the field backbone", "Saving the outline for immediate display"];
+  const currentBuildTrack = researchMap.tracks.find((track) => track.id === mapBuildTrackId) || null;
 
   return (
     <div className="v2-app">
@@ -1749,19 +1790,20 @@ export default function ResearchApp({ user }: { user: User }) {
           <main className="v2-page v2-map-page">
             <section className="v2-page-head v2-map-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {modelDisplayName(researchMap.model)}</p><h1>{locale === "zh" ? "领域发展地图" : "Field development map"}</h1><p>{locale === "zh" ? "沿着真实论文看清奠基工作、关键转折与近年前沿。" : "Follow real papers from foundations through decisive milestones to the recent frontier."}</p></div><span className="v2-map-total"><strong>{researchMap.tracks.reduce((sum, track) => sum + track.papers.length, 0)}</strong>{locale === "zh" ? "篇代表作" : "representative works"}</span></section>
             {mapLoading ? (
-              <section className="v2-map-loading" role="status"><span>π</span><div><strong>{locale === "zh" ? "正在建立真实研究路线" : "Building the real research map"}</strong><p>{locale === "zh" ? "先划分方向，再从不同年代检索真实论文，最后由 DeepSeek Pro 判断其代表性。" : "Defining directions, retrieving real papers across eras, then asking DeepSeek Pro to judge representativeness."}</p><i><b /></i></div></section>
+              <section className="v2-map-loading v2-outline-loading" role="status"><span>π</span><div><strong>{locale === "zh" ? "先建立可浏览的方向骨架" : "Building a browsable direction outline first"}</strong><p>{mapOutlineLabels[mapOutlinePhase]}</p><i><b style={{ width: `${22 + mapOutlinePhase * 21}%` }} /></i><small>{locale === "zh" ? "骨架出现后，你可以立即浏览；真实论文会逐条路线继续补充。" : "You can browse as soon as the outline appears while real papers continue filling each route."}</small></div></section>
             ) : researchMap.tracks.length ? (
               <>
+                {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `还有 ${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes are waiting to be filled`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成的部分已经保存，可以打开路线浏览或选择失败方向重试。" : "Completed work is saved; browse ready routes or retry a pending direction.")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i><small>{locale === "zh" ? "切换页面不会丢失已经完成的内容，下次进入会从未完成处继续。" : "Completed work will not be lost if you leave; the next visit resumes unfinished routes."}</small></section> : null}
                 <section className="v2-field-network">
                   <div className="v2-network-root"><span>π</span><div><small>{locale === "zh" ? "研究主干" : "Research backbone"}</small><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><p>{activeSpace.description}</p></div></div>
                   <div className="v2-network-branches">
                     {[...researchMap.tracks].sort((left, right) => ({ core: 0, support: 1, explore: 2 })[left.userRole] - ({ core: 0, support: 1, explore: 2 })[right.userRole] || right.depthScore - left.depthScore).map((thread, index) => (
-                      <article className={`v2-network-node ${thread.userRole}`} key={thread.id}>
-                        <header><span>{String(index + 1).padStart(2, "0")}</span><b>{directionRoleLabel(thread.userRole, locale)}</b><em className={`v2-direction-heat ${thread.heatLevel}`} title={directionHeatTitle(thread, locale)}><i />{directionHeatLabel(thread.heatLevel, locale)}</em><small>{thread.papers.length} {locale === "zh" ? "篇" : "papers"}</small></header>
+                      <article className={`v2-network-node ${thread.userRole} ${thread.buildStatus}`} key={thread.id}>
+                        <header><span>{String(index + 1).padStart(2, "0")}</span><b>{directionRoleLabel(thread.userRole, locale)}</b>{thread.buildStatus === "ready" ? <em className={`v2-direction-heat ${thread.heatLevel}`} title={directionHeatTitle(thread, locale)}><i />{directionHeatLabel(thread.heatLevel, locale)}</em> : <em className={`v2-track-build-chip ${mapBuildTrackId === thread.id ? "working" : mapBuildErrors[thread.id] ? "error" : "queued"}`}><i />{mapBuildTrackId === thread.id ? (locale === "zh" ? "补充中" : "Filling") : mapBuildErrors[thread.id] ? (locale === "zh" ? "可重试" : "Retry") : (locale === "zh" ? "排队中" : "Queued")}</em>}<small>{thread.papers.length} {locale === "zh" ? "篇" : "papers"}</small></header>
                         <button className="v2-network-node-main" type="button" onClick={() => openThread(thread)}><h2>{locale === "zh" ? thread.titleZh : thread.titleEn}</h2><p>{locale === "zh" ? thread.summaryZh : thread.summaryEn}</p></button>
                         <div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${thread.depthScore}%` }} /></i><strong>{thread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${thread.supportScore}%` }} /></i><strong>{thread.supportScore}</strong></span></div>
                         <div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={thread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(thread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div>
-                        <footer><button type="button" onClick={() => openThread(thread)}>{locale === "zh" ? "查看路径" : "Open path"} →</button><button type="button" onClick={() => void expandResearchTrack(thread)} disabled={Boolean(mapAction)}>{mapAction === thread.id ? (locale === "zh" ? "深挖中…" : "Mining…") : (locale === "zh" ? "继续深挖" : "Mine deeper")}</button></footer>
+                        <footer><button type="button" onClick={() => openThread(thread)}>{thread.buildStatus === "queued" ? (locale === "zh" ? "先看方向" : "Preview direction") : (locale === "zh" ? "查看路径" : "Open path")} →</button><button type="button" onClick={() => void expandResearchTrack(thread)} disabled={Boolean(mapAction || mapBuildTrackId)}>{mapAction === thread.id ? (thread.buildStatus === "queued" ? (locale === "zh" ? "补充中…" : "Filling…") : (locale === "zh" ? "深挖中…" : "Mining…")) : thread.buildStatus === "queued" ? (mapBuildErrors[thread.id] ? (locale === "zh" ? "重试补充" : "Retry fill") : (locale === "zh" ? "等待补充" : "Waiting")) : (locale === "zh" ? "继续深挖" : "Mine deeper")}</button></footer>
                       </article>
                     ))}
                   </div>
@@ -1776,7 +1818,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <main className="v2-page v2-detail-page v2-map-detail">
             <button className="v2-back" type="button" onClick={() => navigate("threads")}>← {t.backThreads}</button>
             {selectedThread ? <>
-              <section className="v2-map-detail-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {selectedThread.papers.length} {locale === "zh" ? "篇代表作" : "representative works"}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction)}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在继续挖掘…" : "Mining deeper…") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></section>
+              <section className="v2-map-detail-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {selectedThread.papers.length} {locale === "zh" ? "篇代表作" : "representative works"}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId)}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在补充…" : "Filling…") : selectedThread.buildStatus === "queued" ? (locale === "zh" ? "优先补充这条路线" : "Fill this route first") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></section>
               <section className={`v2-direction-profile ${selectedThread.userRole}`}><div><span>{directionRoleLabel(selectedThread.userRole, locale)}</span><em className={`v2-direction-heat ${selectedThread.heatLevel}`} title={directionHeatTitle(selectedThread, locale)}><i />{directionHeatLabel(selectedThread.heatLevel, locale)}</em><strong>{locale === "zh" ? "这条方向在你的研究地图中的位置" : "This direction's place in your research map"}</strong></div><div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${selectedThread.depthScore}%` }} /></i><strong>{selectedThread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${selectedThread.supportScore}%` }} /></i><strong>{selectedThread.supportScore}</strong></span></div><div className="v2-direction-role-control">{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div></section>
               <nav className="v2-map-legend">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span key={role} className={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</nav>
               <div className="v2-research-timeline">
