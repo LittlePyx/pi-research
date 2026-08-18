@@ -64,3 +64,20 @@ export const researchConversations = sqliteTable(
   },
   (table) => [index("idx_research_conversations_space").on(table.spaceId, table.createdAt)],
 );
+
+export const aiUsageDaily = sqliteTable(
+  "ai_usage_daily",
+  {
+    id: text("id").primaryKey(),
+    scope: text("scope").notNull(),
+    usageDate: text("usage_date").notNull(),
+    requestCount: integer("request_count").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_ai_usage_daily_scope_date").on(table.scope, table.usageDate),
+    index("idx_ai_usage_daily_date").on(table.usageDate),
+  ],
+);

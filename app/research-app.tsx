@@ -473,11 +473,11 @@ export default function ResearchApp({ user }: { user: User }) {
   const [newSpace, setNewSpace] = useState({ name: "", memberName: "", description: "" });
   const [selectedPaper, setSelectedPaper] = useState<Paper>(papers[0]);
   const [selectedThread, setSelectedThread] = useState<Thread>(threads[0]);
-  const [openaiConfigured, setOpenaiConfigured] = useState(false);
+  const [modelConfigured, setModelConfigured] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
-  const [answerMode, setAnswerMode] = useState<"openai" | "preview" | null>(null);
+  const [answerMode, setAnswerMode] = useState<"deepseek" | "preview" | null>(null);
   const [asking, setAsking] = useState(false);
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState("");
@@ -506,7 +506,7 @@ export default function ResearchApp({ user }: { user: User }) {
         if (!response.ok) throw new Error("spaces unavailable");
         return response.json() as Promise<{
           spaces?: Space[];
-          openaiConfigured?: boolean;
+          modelConfigured?: boolean;
         }>;
       })
       .then((data) => {
@@ -517,7 +517,7 @@ export default function ResearchApp({ user }: { user: User }) {
             setActiveSpaceId(data.spaces[0].id);
           }
         }
-        setOpenaiConfigured(Boolean(data.openaiConfigured));
+        setModelConfigured(Boolean(data.modelConfigured));
       })
       .catch(() => {
         setSpaces(fallbackSpaces);
@@ -610,11 +610,11 @@ export default function ResearchApp({ user }: { user: User }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ spaceId: activeSpace.id, question, locale }),
       });
-      const data = await response.json() as { answer?: string; mode?: "openai" | "preview"; error?: string };
+      const data = await response.json() as { answer?: string; mode?: "deepseek" | "preview"; error?: string };
       if (!response.ok || !data.answer) throw new Error(data.error || "ask failed");
       setAnswer(data.answer);
       setAnswerMode(data.mode || "preview");
-      if (data.mode === "openai") setOpenaiConfigured(true);
+      if (data.mode === "deepseek") setModelConfigured(true);
     } catch {
       setAnswer(locale === "zh" ? "暂时无法连接 Pi。你的问题仍停留在当前研究空间，没有写入其他方向。" : "Pi could not connect just now. Your question remains scoped to this research space and was not written into any other direction.");
       setAnswerMode("preview");
@@ -680,7 +680,7 @@ export default function ResearchApp({ user }: { user: User }) {
         </nav>
 
         <div className="v2-sidebar-bottom">
-          <div className={"v2-openai-state " + (openaiConfigured ? "live" : "pending")}><i /><span><strong>{openaiConfigured ? t.connected : t.setupRequired}</strong><small>{openaiConfigured ? "Server model API" : "Safe preview mode"}</small></span></div>
+          <div className={"v2-openai-state " + (modelConfigured ? "live" : "pending")}><i /><span><strong>{modelConfigured ? t.connected : t.setupRequired}</strong><small>{modelConfigured ? "DeepSeek V4 Flash" : "Safe preview mode"}</small></span></div>
           <button className="v2-account" type="button" onClick={() => navigate("memory")}><span>◎</span><span><strong>Pi Workspace</strong><small>{t.workspaceLabel}</small></span><b>•••</b></button>
         </div>
       </aside>
@@ -879,7 +879,7 @@ export default function ResearchApp({ user }: { user: User }) {
             <div className="v2-modal-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {t.privateSpace}</p><h2>{t.askTitle}</h2><p>{t.askScope}</p></div><button type="button" onClick={() => setAskOpen(false)}>×</button></div>
             <form onSubmit={submitQuestion}><textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={t.askExample} /><div><span className={"v2-space-avatar tiny " + activeSpace.accent}>{initials(activeSpace.name)}</span><small>{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</small><button type="submit" disabled={!question.trim() || asking}>{asking ? "···" : t.send + " ↑"}</button></div></form>
             {asking && <div className="v2-thinking"><span>π</span><p>{t.thinking}<i><b /><b /><b /></i></p></div>}
-            {answer && <div className="v2-answer"><div><span>π</span><p className="v2-kicker">{answerMode === "openai" ? t.modelAnswer : t.previewMode}</p><small>{answerMode === "openai" ? "GPT-5.6 Terra · Responses API" : t.setupRequired}</small></div><p>{answer}</p><div><i />{t.isolated}</div></div>}
+            {answer && <div className="v2-answer"><div><span>π</span><p className="v2-kicker">{answerMode === "deepseek" ? t.modelAnswer : t.previewMode}</p><small>{answerMode === "deepseek" ? "DeepSeek V4 Flash · Chat API" : t.setupRequired}</small></div><p>{answer}</p><div><i />{t.isolated}</div></div>}
             {!answer && !asking && <div className="v2-ask-suggestions">{[t.askExample, locale === "zh" ? "这篇论文与我收藏的结果有什么直接关系？" : "How does this paper relate to results I saved?", locale === "zh" ? "这个方向最近真正改变了什么？" : "What actually changed in this field recently?"].map((item) => <button type="button" key={item} onClick={() => setQuestion(item)}>↗ {item}</button>)}</div>}
           </div>
         </div>

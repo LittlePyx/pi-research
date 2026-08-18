@@ -1,18 +1,45 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 
-type OpenAIResponse = {
-  output_text?: string;
-  output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+type DeepSeekResponse = {
+  choices?: Array<{ message?: { content?: string | null } }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
   error?: { message?: string };
 };
 
-function extractText(response: OpenAIResponse) {
-  if (response.output_text) return response.output_text;
-  return response.output
-    ?.flatMap((item) => item.content ?? [])
-    .filter((item) => item.type === "output_text" && item.text)
-    .map((item) => item.text)
-    .join("\n") ?? "";
+const DAILY_GLOBAL_LIMIT = 200;
+const DAILY_WORKSPACE_LIMIT = 50;
+
+async function usageCount(database: D1Database, scope: string, usageDate: string) {
+  const row = await database
+    .prepare("SELECT request_count FROM ai_usage_daily WHERE scope = ? AND usage_date = ? LIMIT 1")
+    .bind(scope, usageDate)
+    .first<{ request_count: number }>();
+  return row?.request_count ?? 0;
+}
+
+async function recordUsage(
+  database: D1Database,
+  scope: string,
+  usageDate: string,
+  inputTokens: number,
+  outputTokens: number,
+) {
+  await database
+    .prepare(
+      `INSERT INTO ai_usage_daily (id, scope, usage_date, request_count, input_tokens, output_tokens)
+       VALUES (?, ?, ?, 1, ?, ?)
+       ON CONFLICT(scope, usage_date) DO UPDATE SET
+         request_count = request_count + 1,
+         input_tokens = input_tokens + excluded.input_tokens,
+         output_tokens = output_tokens + excluded.output_tokens,
+         updated_at = CURRENT_TIMESTAMP`,
+    )
+    .bind(crypto.randomUUID(), scope, usageDate, inputTokens, outputTokens)
+    .run();
 }
 
 export async function POST(request: Request) {
@@ -34,11 +61,26 @@ export async function POST(request: Request) {
     if (!space) return Response.json({ error: "Research space not found" }, { status: 404 });
 
     const runtime = getRuntimeEnv();
-    const model = runtime.OPENAI_MODEL || "gpt-5.6-terra";
+    const model = runtime.DEEPSEEK_MODEL || "deepseek-v4-flash";
     let answer: string;
-    let mode: "openai" | "preview" = "preview";
+    let mode: "deepseek" | "preview" = "preview";
+    let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
-    if (runtime.OPENAI_API_KEY) {
+    if (runtime.DEEPSEEK_API_KEY) {
+      const usageDate = new Date().toISOString().slice(0, 10);
+      const workspaceScope = "workspace:" + user.userId.slice("anonymous:".length);
+      const [globalCount, workspaceCount] = await Promise.all([
+        usageCount(database, "global", usageDate),
+        usageCount(database, workspaceScope, usageDate),
+      ]);
+
+      if (globalCount >= DAILY_GLOBAL_LIMIT) {
+        return Response.json({ error: "Pi Research has reached today's shared AI budget. Please try again tomorrow." }, { status: 429 });
+      }
+      if (workspaceCount >= DAILY_WORKSPACE_LIMIT) {
+        return Response.json({ error: "This browser workspace has reached its daily AI limit." }, { status: 429 });
+      }
+
       const systemText = [
         "You are Pi Research, a precise academic research agent.",
         "Answer in " + (locale === "zh" ? "Simplified Chinese." : "English."),
@@ -49,38 +91,52 @@ export async function POST(request: Request) {
         "Only use the context from this research space. Never mix interests, memory, or assumptions from other spaces.",
         "Be concise, distinguish evidence from inference, and explain why the answer matters to this research direction.",
       ].join("\n");
-      const response = await fetch("https://api.openai.com/v1/responses", {
+
+      const response = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
         headers: {
-          "Authorization": "Bearer " + runtime.OPENAI_API_KEY,
+          "Authorization": "Bearer " + runtime.DEEPSEEK_API_KEY,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           model,
-          store: false,
-          reasoning: { effort: "low" },
-          input: [
-            { role: "system", content: [{ type: "input_text", text: systemText }] },
-            { role: "user", content: [{ type: "input_text", text: question }] },
+          messages: [
+            { role: "system", content: systemText },
+            { role: "user", content: question },
           ],
+          thinking: { type: "disabled" },
+          max_tokens: 1200,
+          temperature: 0.2,
+          stream: false,
+          user_id: "space-" + space.id,
         }),
       });
-      const data = await response.json() as OpenAIResponse;
-      if (!response.ok) throw new Error(data.error?.message || "OpenAI request failed");
-      answer = extractText(data);
-      if (!answer) throw new Error("OpenAI returned an empty response");
-      mode = "openai";
+      const data = await response.json() as DeepSeekResponse;
+      if (!response.ok) throw new Error(data.error?.message || "DeepSeek request failed");
+
+      answer = data.choices?.[0]?.message?.content?.trim() ?? "";
+      if (!answer) throw new Error("DeepSeek returned an empty response");
+      usage = {
+        inputTokens: data.usage?.prompt_tokens ?? 0,
+        outputTokens: data.usage?.completion_tokens ?? 0,
+        totalTokens: data.usage?.total_tokens ?? 0,
+      };
+      await Promise.all([
+        recordUsage(database, "global", usageDate, usage.inputTokens, usage.outputTokens),
+        recordUsage(database, workspaceScope, usageDate, usage.inputTokens, usage.outputTokens),
+      ]);
+      mode = "deepseek";
     } else {
       answer = locale === "zh"
-        ? "这是“" + space.name + "”研究空间的安全预览回答。Pi 已把问题限定在「" + space.description + "」的上下文中；配置 OpenAI API Key 后，这里会通过 Responses API 返回实时分析，并继续保持与其他研究空间隔离。"
-        : "This is a safe preview answer for the “" + space.name + "” space. Pi has scoped the question to “" + space.description + "”. Once an OpenAI API key is configured, this will use the Responses API for live analysis while remaining isolated from every other research space.";
+        ? "这是“" + space.name + "”研究空间的安全预览回答。Pi 已把问题限定在「" + space.description + "」的上下文中；配置 DeepSeek API Key 后，这里会返回实时分析，并继续保持与其他研究空间隔离。"
+        : "This is a safe preview answer for the “" + space.name + "” space. Pi has scoped the question to “" + space.description + "”. Once a DeepSeek API key is configured, this will return live analysis while remaining isolated from every other research space.";
     }
 
     await database.prepare("INSERT INTO research_conversations (id, space_id, question, answer, locale, model) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(crypto.randomUUID(), space.id, question, answer, locale, mode === "openai" ? model : null)
+      .bind(crypto.randomUUID(), space.id, question, answer, locale, mode === "deepseek" ? model : null)
       .run();
 
-    return Response.json({ answer, mode, model: mode === "openai" ? model : null, spaceId: space.id });
+    return Response.json({ answer, mode, model: mode === "deepseek" ? model : null, provider: mode === "deepseek" ? "deepseek" : null, usage, spaceId: space.id });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to ask Pi";
     return Response.json({ error: message }, { status: 500 });

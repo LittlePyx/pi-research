@@ -68,7 +68,8 @@ export async function GET(request: Request) {
     return Response.json({
       spaces: result.results.map(toSpace),
       user,
-      openaiConfigured: Boolean(getRuntimeEnv().OPENAI_API_KEY),
+      modelConfigured: Boolean(getRuntimeEnv().DEEPSEEK_API_KEY),
+      provider: getRuntimeEnv().DEEPSEEK_API_KEY ? "deepseek" : null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load research spaces";

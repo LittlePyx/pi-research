@@ -8,8 +8,8 @@ export type ApiUser = {
 
 type RuntimeEnv = {
   DB?: D1Database;
-  OPENAI_API_KEY?: string;
-  OPENAI_MODEL?: string;
+  DEEPSEEK_API_KEY?: string;
+  DEEPSEEK_MODEL?: string;
 };
 
 export function getRuntimeEnv(): RuntimeEnv {
@@ -50,6 +50,9 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_feedback_space_paper ON paper_feedback(space_id, paper_id)"),
     database.prepare("CREATE TABLE IF NOT EXISTS research_conversations (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, question TEXT NOT NULL, answer TEXT NOT NULL, locale TEXT NOT NULL DEFAULT 'zh', model TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_conversations_space ON research_conversations(space_id, created_at)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS ai_usage_daily (id TEXT PRIMARY KEY NOT NULL, scope TEXT NOT NULL, usage_date TEXT NOT NULL, request_count INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_usage_daily_scope_date ON ai_usage_daily(scope, usage_date)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_ai_usage_daily_date ON ai_usage_daily(usage_date)"),
   ]);
   await database.prepare("PRAGMA optimize").run();
 }
