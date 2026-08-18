@@ -89,8 +89,11 @@ type ScanJobRow = {
   current_source: string;
   progress: number;
   discovered_count: number;
+  new_candidate_count: number;
+  duplicate_count: number;
   reviewed_count: number;
   recommended_count: number;
+  rejected_count: number;
   started_at: string;
   completed_at: string | null;
   error: string | null;
@@ -100,7 +103,14 @@ type CoverageRow = {
   channel: string;
   attempt_count: number;
   candidate_count: number;
+  total_candidate_count: number;
   new_candidate_count: number;
+  query_text: string;
+  next_cursor: number;
+  zero_yield_streak: number;
+  branch_status: string;
+  cooldown_until: string | null;
+  first_scanned_at: string | null;
   last_scanned_at: string | null;
   last_error: string | null;
 };
@@ -587,6 +597,15 @@ async function countNewCandidates(database: D1Database, spaceId: string, candida
   return Math.max(0, ids.length - known);
 }
 
+async function shouldRunDiscoveryQuery(database: D1Database, spaceId: string, horizon: Horizon, plan: DiscoveryQuery) {
+  if (!plan.rotating) return true;
+  const queryKey = await discoveryQueryKey(plan);
+  const row = await database.prepare(
+    "SELECT cooldown_until FROM monitor_discovery_coverage WHERE space_id = ? AND horizon = ? AND source_key = ? AND query_key = ? LIMIT 1",
+  ).bind(spaceId, horizon, plan.sourceKey, queryKey).first<{ cooldown_until: string | null }>();
+  return !row?.cooldown_until || Date.parse(row.cooldown_until) <= Date.now();
+}
+
 async function recordDiscoveryCoverage(
   database: D1Database,
   spaceId: string,
@@ -598,18 +617,33 @@ async function recordDiscoveryCoverage(
 ) {
   const queryKey = await discoveryQueryKey(plan);
   const newCount = error ? 0 : await countNewCandidates(database, spaceId, candidates);
+  const previous = await database.prepare(
+    "SELECT zero_yield_streak, cooldown_until FROM monitor_discovery_coverage WHERE space_id = ? AND horizon = ? AND source_key = ? AND query_key = ? LIMIT 1",
+  ).bind(spaceId, horizon, plan.sourceKey, queryKey).first<{ zero_yield_streak: number; cooldown_until: string | null }>();
+  const zeroYieldStreak = error ? previous?.zero_yield_streak || 0 : newCount > 0 ? 0 : (previous?.zero_yield_streak || 0) + 1;
+  const cooldownDays = zeroYieldStreak >= 3 ? Math.min(14, 2 ** (zeroYieldStreak - 2)) : 0;
+  const cooldownUntil = error ? previous?.cooldown_until || null : cooldownDays
+    ? new Date(Date.now() + cooldownDays * 86_400_000).toISOString() : null;
+  const branchStatus = error ? "error" : cooldownUntil ? "cooling" : nextCursor === 0 && plan.rotating ? "revisit" : "exploring";
+  const queryText = cleanText(plan.author ? `Author: ${plan.author}` : plan.venue ? `Journal: ${plan.venue}` : plan.query).slice(0, 500);
   await database.prepare(
     `INSERT INTO monitor_discovery_coverage
-     (id, space_id, horizon, source_key, channel, query_key, next_cursor, attempt_count, candidate_count,
-      new_candidate_count, last_scanned_at, last_error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, CURRENT_TIMESTAMP, ?)
+     (id, space_id, horizon, source_key, channel, query_key, query_text, next_cursor, attempt_count, candidate_count,
+      total_candidate_count, new_candidate_count, zero_yield_streak, branch_status, cooldown_until,
+      first_scanned_at, last_scanned_at, last_error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
      ON CONFLICT(space_id, horizon, source_key, query_key) DO UPDATE SET
-       next_cursor = excluded.next_cursor, attempt_count = monitor_discovery_coverage.attempt_count + 1,
+       query_text = excluded.query_text, next_cursor = excluded.next_cursor,
+       attempt_count = monitor_discovery_coverage.attempt_count + 1,
        candidate_count = excluded.candidate_count,
+       total_candidate_count = monitor_discovery_coverage.total_candidate_count + excluded.total_candidate_count,
        new_candidate_count = monitor_discovery_coverage.new_candidate_count + excluded.new_candidate_count,
+       zero_yield_streak = excluded.zero_yield_streak, branch_status = excluded.branch_status,
+       cooldown_until = excluded.cooldown_until,
+       first_scanned_at = COALESCE(monitor_discovery_coverage.first_scanned_at, CURRENT_TIMESTAMP),
        last_scanned_at = CURRENT_TIMESTAMP, last_error = excluded.last_error, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(crypto.randomUUID(), spaceId, horizon, plan.sourceKey, plan.channel, queryKey, nextCursor,
-    candidates.length, newCount, error).run();
+  ).bind(crypto.randomUUID(), spaceId, horizon, plan.sourceKey, plan.channel, queryKey, queryText, nextCursor,
+    candidates.length, candidates.length, newCount, zeroYieldStreak, branchStatus, cooldownUntil, error).run();
 }
 
 async function setScanSource(database: D1Database, jobId: string, horizon: Horizon, source: string, progress: number, discoveredCount: number) {
@@ -633,12 +667,14 @@ async function fetchHorizon(
 ) {
   const rows = horizon.key === "years" ? 36 : 30;
   const plans = discoveryQueries(space, horizon, profileKey, round, priorityVenues, trackedAuthors, queryPlan);
+  const eligiblePlans = (await Promise.all(plans.map(async (plan) => ({ plan, eligible: await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan) }))))
+    .filter((entry) => entry.eligible).map((entry) => entry.plan);
   const requestOptions: RequestInit = {
     headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
     signal: AbortSignal.timeout(20_000),
   };
   await setScanSource(database, jobId, horizon.key, "Crossref · priority journals", horizon.key === "days" ? 8 : horizon.key === "months" ? 24 : 40, discoveredBefore);
-  const normalizedCrossref = (await Promise.all(plans.map(async (plan) => {
+  const normalizedCrossref = (await Promise.all(eligiblePlans.map(async (plan) => {
     const offset = await discoveryOffset(database, space.id, horizon.key, plan);
     const endpoint = new URL(plan.channel === "journal" && plan.issn
       ? `https://api.crossref.org/journals/${encodeURIComponent(plan.issn)}/works`
@@ -712,7 +748,10 @@ async function fetchHorizon(
       provenance: Array.from(new Map([...previous.provenance, ...item.provenance].map((entry) => [`${entry.sourceKey}|${entry.queryKey}`, entry])).values()),
     });
   }
-  return Array.from(unique.values()).sort((left, right) => right.qualityScore - left.qualityScore).slice(0, HORIZON_POOL_LIMITS[horizon.key]);
+  return {
+    candidates: Array.from(unique.values()).sort((left, right) => right.qualityScore - left.qualityScore).slice(0, HORIZON_POOL_LIMITS[horizon.key]),
+    rawCount: normalized.length,
+  };
 }
 
 function sourceFocusQuery(space: SpaceRow, round: number, horizon: Horizon, queryPlan?: QueryPlan) {
@@ -730,6 +769,7 @@ async function fetchSemanticScholarHorizon(database: D1Database, space: SpaceRow
   const profileQuery = sourceFocusQuery(space, round, horizon.key, queryPlan);
   if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
   const plan: DiscoveryQuery = { key: "semantic-topic", sourceKey: "semantic_scholar:topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "semantic" };
+  if (!(await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan))) return [];
   const limit = 40;
   const offset = await discoveryOffset(database, space.id, horizon.key, plan);
   const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
@@ -769,6 +809,7 @@ async function fetchOpenAlexHorizon(database: D1Database, space: SpaceRow, horiz
   const profileQuery = sourceFocusQuery(space, round, horizon.key, queryPlan);
   if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
   const plan: DiscoveryQuery = { key: "openalex-topic", sourceKey: "openalex:topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "semantic" };
+  if (!(await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan))) return [];
   const limit = 40;
   const offset = await discoveryOffset(database, space.id, horizon.key, plan);
   const endpoint = new URL("https://api.openalex.org/works");
@@ -809,6 +850,7 @@ async function fetchArxivHorizon(database: D1Database, space: SpaceRow, horizon:
   const profileQuery = sourceFocusQuery(space, round, horizon.key, queryPlan);
   if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
   const plan: DiscoveryQuery = { key: "arxiv-topic", sourceKey: "arxiv:topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "preprint" };
+  if (!(await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan))) return [];
   const limit = horizon.key === "years" ? 32 : 40;
   const offset = await discoveryOffset(database, space.id, horizon.key, plan);
   const endpoint = new URL("https://export.arxiv.org/api/query");
@@ -874,6 +916,7 @@ async function fetchCitationFrontier(
       rotating: true,
       channel: "citation",
     };
+    if (!(await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan))) continue;
     const limit = 40;
     const offset = await discoveryOffset(database, space.id, horizon.key, plan);
     const endpoint = new URL(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(paperId)}/${relation}`);
@@ -1102,7 +1145,7 @@ function boundedScore(value: unknown) {
 }
 
 async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceRow): Promise<SpaceRow> {
-  const [rows, tracks, feedbackRows] = await Promise.all([
+  const [rows, tracks, feedbackRows, readingRows] = await Promise.all([
     database.prepare(
       "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 6",
     ).bind(space.id).all<{ analysis_json: string }>(),
@@ -1115,6 +1158,11 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
        WHERE f.space_id = ? AND (f.saved = 1 OR f.feedback IN ('relevant', 'not_relevant'))
        ORDER BY f.updated_at DESC LIMIT 30`,
     ).bind(space.id).all<{ title: string; venue: string; feedback: string | null; saved: number }>(),
+    database.prepare(
+      `SELECT takeaway_en, methods_en, questions_en, connections_en, topics_en
+       FROM paper_reading_memories WHERE space_id = ? AND analysis_status = 'ready'
+       ORDER BY updated_at DESC LIMIT 16`,
+    ).bind(space.id).all<{ takeaway_en: string; methods_en: string; questions_en: string; connections_en: string; topics_en: string }>(),
   ]);
   const context: string[] = [];
   for (const row of rows.results) {
@@ -1139,6 +1187,11 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
   }
   for (const track of tracks.results) {
     context.push(track.title_en, cleanText(track.summary_en).slice(0, 240), ...parseVenues(track.search_queries).slice(0, 4));
+  }
+  for (const memory of readingRows.results) {
+    context.push(cleanText(memory.takeaway_en).slice(0, 320), ...parseVenues(memory.methods_en).slice(0, 4),
+      ...parseVenues(memory.questions_en).slice(0, 4), ...parseVenues(memory.connections_en).slice(0, 4),
+      ...parseVenues(memory.topics_en).slice(0, 5));
   }
   const positive = feedbackRows.results
     .filter((row) => row.saved || row.feedback === "relevant")
@@ -1599,7 +1652,7 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts] = await Promise.all([
+  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -1630,12 +1683,13 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     ).bind(space.id).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
     database.prepare(
-      `SELECT id, status, current_horizon, current_source, progress, discovered_count, reviewed_count,
-       recommended_count, started_at, completed_at, error
+      `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
+       duplicate_count, reviewed_count, recommended_count, rejected_count, started_at, completed_at, error
        FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
     ).bind(space.id).first<ScanJobRow>(),
     database.prepare(
-      `SELECT source_key, channel, SUM(attempt_count) AS attempt_count, SUM(candidate_count) AS candidate_count,
+      `SELECT source_key, channel, SUM(attempt_count) AS attempt_count,
+       SUM(CASE WHEN total_candidate_count = 0 THEN candidate_count ELSE total_candidate_count END) AS candidate_count,
        SUM(new_candidate_count) AS new_candidate_count, MAX(last_scanned_at) AS last_scanned_at,
        MAX(last_error) AS last_error
        FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY source_key, channel
@@ -1699,6 +1753,50 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     database.prepare(
       "SELECT status, COUNT(*) AS count FROM paper_reading_progress WHERE space_id = ? GROUP BY status",
     ).bind(space.id).all<{ status: string; count: number }>(),
+    database.prepare(
+      `SELECT date(started_at) AS day, COUNT(*) AS scans, SUM(discovered_count) AS candidates,
+       SUM(new_candidate_count) AS new_candidates, SUM(duplicate_count) AS duplicates,
+       SUM(reviewed_count) AS reviewed, SUM(recommended_count) AS recommended, SUM(rejected_count) AS rejected
+       FROM monitor_scan_jobs WHERE space_id = ? AND status = 'ready' AND started_at >= datetime('now', '-13 days')
+       GROUP BY date(started_at) ORDER BY day`,
+    ).bind(space.id).all<{ day: string; scans: number; candidates: number; new_candidates: number; duplicates: number; reviewed: number; recommended: number; rejected: number }>(),
+    database.prepare(
+      `SELECT usage_date, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens
+       FROM ai_usage_daily WHERE scope = ? AND usage_date >= date('now', '-13 days') GROUP BY usage_date ORDER BY usage_date`,
+    ).bind("monitor-space:" + space.id).all<{ usage_date: string; input_tokens: number; output_tokens: number }>(),
+    database.prepare(
+      `SELECT horizon, COUNT(*) AS branches, SUM(attempt_count) AS attempts,
+       SUM(CASE WHEN total_candidate_count = 0 THEN candidate_count ELSE total_candidate_count END) AS candidates,
+       SUM(new_candidate_count) AS new_candidates,
+       SUM(CASE WHEN branch_status = 'cooling' THEN 1 ELSE 0 END) AS cooling
+       FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY horizon`,
+    ).bind(space.id).all<{ horizon: Horizon; branches: number; attempts: number; candidates: number; new_candidates: number; cooling: number }>(),
+    database.prepare(
+      `SELECT horizon, source_key, channel, query_key, query_text, next_cursor, attempt_count,
+       CASE WHEN total_candidate_count = 0 THEN candidate_count ELSE total_candidate_count END AS total_candidate_count,
+       new_candidate_count, zero_yield_streak, branch_status, cooldown_until, first_scanned_at, last_scanned_at, last_error
+       FROM monitor_discovery_coverage WHERE space_id = ?
+       ORDER BY CASE branch_status WHEN 'exploring' THEN 0 WHEN 'revisit' THEN 1 WHEN 'cooling' THEN 2 ELSE 3 END,
+       last_scanned_at DESC LIMIT 30`,
+    ).bind(space.id).all<{ horizon: Horizon; source_key: string; channel: string; query_key: string; query_text: string; next_cursor: number; attempt_count: number; total_candidate_count: number; new_candidate_count: number; zero_yield_streak: number; branch_status: string; cooldown_until: string | null; first_scanned_at: string | null; last_scanned_at: string | null; last_error: string | null }>(),
+    database.prepare(
+      `SELECT m.paper_id, m.analysis_status, m.takeaway_zh, m.takeaway_en, m.methods_zh, m.methods_en,
+       m.questions_zh, m.questions_en, m.connections_zh, m.connections_en, m.topics_zh, m.topics_en,
+       m.track_id, m.model, m.error, m.analyzed_at, m.updated_at, p.title, p.authors, p.venue,
+       COALESCE(r.status, 'unread') AS reading_status, COALESCE(r.note, '') AS note
+       FROM paper_reading_memories m JOIN monitored_papers p ON p.id = m.paper_id AND p.space_id = m.space_id
+       LEFT JOIN paper_reading_progress r ON r.paper_id = m.paper_id AND r.space_id = m.space_id
+       WHERE m.space_id = ? ORDER BY m.updated_at DESC LIMIT 24`,
+    ).bind(space.id).all<{ paper_id: string; analysis_status: string; takeaway_zh: string; takeaway_en: string; methods_zh: string; methods_en: string; questions_zh: string; questions_en: string; connections_zh: string; connections_en: string; topics_zh: string; topics_en: string; track_id: string | null; model: string; error: string | null; analyzed_at: string | null; updated_at: string; title: string; authors: string; venue: string; reading_status: string; note: string }>(),
+    database.prepare(
+      `SELECT COALESCE(reason_code, 'unspecified') AS reason_code, feedback, COUNT(*) AS count
+       FROM paper_feedback WHERE space_id = ? AND feedback IN ('relevant','not_relevant')
+       GROUP BY reason_code, feedback ORDER BY count DESC LIMIT 12`,
+    ).bind(space.id).all<{ reason_code: string; feedback: string; count: number }>(),
+    database.prepare(
+      `SELECT recommendation_tier, COUNT(*) AS count FROM paper_insights
+       WHERE space_id = ? AND llm_recommended = 1 AND analysis_model = ? GROUP BY recommendation_tier`,
+    ).bind(space.id, MONITOR_MODEL).all<{ recommendation_tier: string; count: number }>(),
   ]);
   const now = Date.now();
   const duePapers = papers.results
@@ -1720,6 +1818,52 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const accepted = feedbackMetrics?.accepted || 0;
   const suggestedAuthors = Array.from(new Set(acceptedAuthorRows.results.flatMap((row) => row.authors.split(",").map((author) => cleanText(author)).filter((author) => author.length >= 4))))
     .filter((author) => !preference.trackedAuthors.some((tracked) => tracked.toLocaleLowerCase() === author.toLocaleLowerCase())).slice(0, 8);
+  const dailyUsage = new Map(dailyUsageRows.results.map((row) => [row.usage_date, (row.input_tokens || 0) + (row.output_tokens || 0)]));
+  const operationsDays = dailyScanRows.results.map((row) => ({
+    date: row.day,
+    scans: row.scans || 0,
+    candidates: row.candidates || 0,
+    newCandidates: row.new_candidates || 0,
+    duplicatesAvoided: row.duplicates || 0,
+    reviewed: row.reviewed || 0,
+    recommended: row.recommended || 0,
+    rejected: row.rejected || 0,
+    tokens: dailyUsage.get(row.day) || 0,
+  }));
+  const operationsTotals = operationsDays.reduce((totals, day) => ({
+    scans: totals.scans + day.scans,
+    candidates: totals.candidates + day.candidates,
+    newCandidates: totals.newCandidates + day.newCandidates,
+    duplicatesAvoided: totals.duplicatesAvoided + day.duplicatesAvoided,
+    reviewed: totals.reviewed + day.reviewed,
+    recommended: totals.recommended + day.recommended,
+    rejected: totals.rejected + day.rejected,
+    tokens: totals.tokens + day.tokens,
+  }), { scans: 0, candidates: 0, newCandidates: 0, duplicatesAvoided: 0, reviewed: 0, recommended: 0, rejected: 0, tokens: 0 });
+  const readingMemories = readingMemoryRows.results.map((row) => ({
+    paperId: row.paper_id,
+    title: row.title,
+    authors: row.authors,
+    venue: row.venue,
+    readingStatus: row.reading_status,
+    noteExcerpt: cleanText(row.note).slice(0, 260),
+    analysisStatus: row.analysis_status,
+    takeawayZh: row.takeaway_zh,
+    takeawayEn: row.takeaway_en,
+    methodsZh: parseVenues(row.methods_zh),
+    methodsEn: parseVenues(row.methods_en),
+    questionsZh: parseVenues(row.questions_zh),
+    questionsEn: parseVenues(row.questions_en),
+    connectionsZh: parseVenues(row.connections_zh),
+    connectionsEn: parseVenues(row.connections_en),
+    topicsZh: parseVenues(row.topics_zh),
+    topicsEn: parseVenues(row.topics_en),
+    trackId: row.track_id,
+    model: row.model,
+    error: row.error,
+    analyzedAt: row.analyzed_at,
+    updatedAt: row.updated_at,
+  }));
   return {
     monitor: {
       status: run?.status || "idle",
@@ -1740,8 +1884,11 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         currentSource: job.current_source,
         progress: job.progress,
         discoveredCount: job.discovered_count,
+        newCandidateCount: job.new_candidate_count,
+        duplicateCount: job.duplicate_count,
         reviewedCount: job.reviewed_count,
         recommendedCount: job.recommended_count,
+        rejectedCount: job.rejected_count,
         startedAt: job.started_at,
         completedAt: job.completed_at,
         error: job.error,
@@ -1813,6 +1960,46 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
           acceptanceRate: row.papers ? Math.round((row.accepted || 0) / row.papers * 100) : 0,
         })),
       },
+      operationsDashboard: {
+        periodDays: 14,
+        totals: {
+          ...operationsTotals,
+          recommendationYield: operationsTotals.reviewed ? Math.round(operationsTotals.recommended / operationsTotals.reviewed * 100) : 0,
+          duplicateAvoidanceRate: operationsTotals.newCandidates + operationsTotals.duplicatesAvoided
+            ? Math.round(operationsTotals.duplicatesAvoided / (operationsTotals.newCandidates + operationsTotals.duplicatesAvoided) * 100) : 0,
+          tokensPerRecommendation: operationsTotals.recommended ? Math.round(operationsTotals.tokens / operationsTotals.recommended) : 0,
+          acceptanceRate: decisions ? Math.round(accepted / decisions * 100) : 0,
+        },
+        daily: operationsDays,
+        horizons: (["days", "months", "years"] as Horizon[]).map((horizon) => {
+          const row = horizonRows.results.find((item) => item.horizon === horizon);
+          const candidates = row?.candidates || 0;
+          const newCandidates = row?.new_candidates || 0;
+          return { horizon, branches: row?.branches || 0, attempts: row?.attempts || 0, candidates, newCandidates,
+            cooling: row?.cooling || 0, discoveryYield: candidates ? Math.round(newCandidates / candidates * 100) : 0 };
+        }),
+        tiers: Object.fromEntries(tierRows.results.map((row) => [row.recommendation_tier, row.count])),
+        feedbackReasons: feedbackReasonRows.results.map((row) => ({ reasonCode: row.reason_code, decision: row.feedback, count: row.count })),
+      },
+      explorationLedger: ledgerRows.results.map((row) => ({
+        id: row.query_key,
+        horizon: row.horizon,
+        sourceKey: row.source_key,
+        channel: row.channel,
+        queryText: row.query_text,
+        nextCursor: row.next_cursor,
+        attempts: row.attempt_count,
+        candidates: row.total_candidate_count,
+        newCandidates: row.new_candidate_count,
+        discoveryYield: row.total_candidate_count ? Math.round(row.new_candidate_count / row.total_candidate_count * 100) : 0,
+        zeroYieldStreak: row.zero_yield_streak,
+        status: row.branch_status,
+        cooldownUntil: row.cooldown_until,
+        firstScannedAt: row.first_scanned_at,
+        lastScannedAt: row.last_scanned_at,
+        error: row.last_error,
+      })),
+      readingMemories,
       suggestedAuthors,
       papers: selected.map((paper) => toPaper(paper, now)),
       historyPapers,
@@ -1926,23 +2113,26 @@ export async function POST(request: Request) {
     try {
       await setScanSource(database, jobId, "days", "DeepSeek Pro · daily query plan", 6, 0);
       const queryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference);
-      const batches: Candidate[][] = [];
+      const batches: Array<{ candidates: Candidate[]; rawCount: number }> = [];
       let discoveredCount = 0;
       for (const horizon of HORIZONS) {
         await updateRunPhase(database, space.id, jobId, `discovering_${horizon.key}`, discoveredCount);
         const batch = await fetchHorizon(database, enrichedSpace, horizon, now, preference.priorityVenues, preference.trackedAuthors, preference.profileKey, discoveryRound, jobId, discoveredCount, queryPlan);
         batches.push(batch);
-        discoveredCount += batch.length;
+        discoveredCount += batch.candidates.length;
         await updateRunPhase(database, space.id, jobId, `discovering_${horizon.key}`, discoveredCount);
       }
       await updateRunPhase(database, space.id, jobId, "deduplicating", discoveredCount);
       const candidates = new Map<string, Candidate>();
-      for (const candidate of batches.flat()) {
+      for (const candidate of batches.flatMap((batch) => batch.candidates)) {
         const existing = candidates.get(candidate.canonicalId);
         if (!existing || candidate.qualityScore > existing.qualityScore) candidates.set(candidate.canonicalId, candidate);
       }
       const candidateList = Array.from(candidates.values());
       const scannedCount = candidateList.length;
+      const rawCandidateCount = batches.reduce((sum, batch) => sum + batch.rawCount, 0);
+      const newCandidateCount = await countNewCandidates(database, space.id, candidateList);
+      const duplicateCount = Math.max(0, rawCandidateCount - newCandidateCount);
       await persistCandidatePool(database, space.id, candidateList);
       const pendingQueue = await pendingCandidateQueue(database, space.id);
       const pendingCandidates = selectUnseenReviewBatch(pendingQueue);
@@ -1950,6 +2140,7 @@ export async function POST(request: Request) {
       const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates, jobId);
 
       const newCount = reviews.filter((review) => review.recommended).length;
+      const rejectedCount = reviews.length - newCount;
       await updateRunPhase(database, space.id, jobId, "saving", scannedCount, newCount);
 
       const completedAt = new Date();
@@ -1958,8 +2149,8 @@ export async function POST(request: Request) {
           "UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?, discovery_round = discovery_round + 1, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
         ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), newCount, scannedCount, space.id),
         database.prepare(
-          "UPDATE monitor_scan_jobs SET status = 'ready', current_horizon = '', current_source = '', progress = 100, discovered_count = ?, reviewed_count = ?, recommended_count = ?, completed_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        ).bind(scannedCount, reviews.length, newCount, completedAt.toISOString(), jobId),
+          "UPDATE monitor_scan_jobs SET status = 'ready', current_horizon = '', current_source = '', progress = 100, discovered_count = ?, new_candidate_count = ?, duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(scannedCount, newCandidateCount, duplicateCount, reviews.length, newCount, rejectedCount, completedAt.toISOString(), jobId),
       ]);
       return Response.json(await readState(database, space, { cached: false }));
     } catch (error) {

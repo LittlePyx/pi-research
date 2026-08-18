@@ -67,9 +67,18 @@ export async function POST(request: Request) {
     let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
     if (runtime.DEEPSEEK_API_KEY) {
-      const importedProfiles = await database.prepare(
-        "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5",
-      ).bind(space.id).all<{ analysis_json: string }>();
+      const [importedProfiles, readingRows, trackRows] = await Promise.all([
+        database.prepare(
+          "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5",
+        ).bind(space.id).all<{ analysis_json: string }>(),
+        database.prepare(
+          `SELECT takeaway_en, methods_en, questions_en, connections_en FROM paper_reading_memories
+           WHERE space_id = ? AND analysis_status = 'ready' ORDER BY updated_at DESC LIMIT 12`,
+        ).bind(space.id).all<{ takeaway_en: string; methods_en: string; questions_en: string; connections_en: string }>(),
+        database.prepare(
+          "SELECT title_en, summary_en, user_role, depth_score, interaction_score FROM research_tracks WHERE space_id = ? ORDER BY interaction_score DESC, depth_score DESC LIMIT 10",
+        ).bind(space.id).all<{ title_en: string; summary_en: string; user_role: string; depth_score: number; interaction_score: number }>(),
+      ]);
       const importedMemory = importedProfiles.results.map((row) => {
         try {
           const profile = JSON.parse(row.analysis_json) as { summaryEn?: string; primaryDirectionEn?: string; openQuestions?: Array<{ labelEn?: string }> };
@@ -78,6 +87,10 @@ export async function POST(request: Request) {
           return "";
         }
       }).filter(Boolean).join("\n").slice(0, 5000);
+      const readingMemory = readingRows.results.map((row) => [row.takeaway_en, row.methods_en, row.questions_en, row.connections_en].filter(Boolean).join("; "))
+        .join("\n").slice(0, 5000);
+      const routeMemory = trackRows.results.map((row) => `${row.title_en} [${row.user_role}, depth ${row.depth_score + row.interaction_score}]: ${row.summary_en}`)
+        .join("\n").slice(0, 4000);
       const usageDate = new Date().toISOString().slice(0, 10);
       const workspaceScope = "workspace:" + user.userId.slice("anonymous:".length);
       const [globalCount, workspaceCount] = await Promise.all([
@@ -100,6 +113,8 @@ export async function POST(request: Request) {
         "- Researcher: " + space.member_name,
         "- Scope: " + space.description,
         "- User-confirmed imported research memory: " + (importedMemory || "None yet"),
+        "- Insights distilled from the researcher's own reading notes: " + (readingMemory || "None yet"),
+        "- Current research routes and depth: " + (routeMemory || "None yet"),
         "Only use the context from this research space. Never mix interests, memory, or assumptions from other spaces.",
         "Be concise, distinguish evidence from inference, and explain why the answer matters to this research direction.",
       ].join("\n");

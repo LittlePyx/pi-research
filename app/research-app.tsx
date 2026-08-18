@@ -91,6 +91,48 @@ type PreferenceSignal = {
   observedAt: string;
   expiresAt: string | null;
 };
+type ExplorationBranch = {
+  id: string;
+  horizon: "days" | "months" | "years";
+  sourceKey: string;
+  channel: string;
+  queryText: string;
+  nextCursor: number;
+  attempts: number;
+  candidates: number;
+  newCandidates: number;
+  discoveryYield: number;
+  zeroYieldStreak: number;
+  status: "exploring" | "revisit" | "cooling" | "error";
+  cooldownUntil: string | null;
+  firstScannedAt: string | null;
+  lastScannedAt: string | null;
+  error: string | null;
+};
+type ReadingMemory = {
+  paperId: string;
+  title: string;
+  authors: string;
+  venue: string;
+  readingStatus: string;
+  noteExcerpt: string;
+  analysisStatus: string;
+  takeawayZh: string;
+  takeawayEn: string;
+  methodsZh: string[];
+  methodsEn: string[];
+  questionsZh: string[];
+  questionsEn: string[];
+  connectionsZh: string[];
+  connectionsEn: string[];
+  topicsZh: string[];
+  topicsEn: string[];
+  trackId: string | null;
+  model: string;
+  error: string | null;
+  analyzedAt: string | null;
+  updatedAt: string;
+};
 type MonitorStatus = "idle" | "scanning" | "discovering_days" | "discovering_months" | "discovering_years" | "deduplicating" | "reviewing" | "saving" | "ready" | "error";
 type MonitorState = {
   status: MonitorStatus;
@@ -173,6 +215,16 @@ type MonitorState = {
     sources: Array<{ sourceKey: string; channel: string; papers: number; accepted: number; dismissed: number; acceptanceRate: number }>;
     tracks: Array<{ trackId: string; titleZh: string; titleEn: string; papers: number; accepted: number; acceptanceRate: number }>;
   };
+  operationsDashboard?: {
+    periodDays: number;
+    totals: { scans: number; candidates: number; newCandidates: number; duplicatesAvoided: number; reviewed: number; recommended: number; rejected: number; tokens: number; recommendationYield: number; duplicateAvoidanceRate: number; tokensPerRecommendation: number; acceptanceRate: number };
+    daily: Array<{ date: string; scans: number; candidates: number; newCandidates: number; duplicatesAvoided: number; reviewed: number; recommended: number; rejected: number; tokens: number }>;
+    horizons: Array<{ horizon: "days" | "months" | "years"; branches: number; attempts: number; candidates: number; newCandidates: number; cooling: number; discoveryYield: number }>;
+    tiers: Record<string, number>;
+    feedbackReasons: Array<{ reasonCode: string; decision: string; count: number }>;
+  };
+  explorationLedger?: ExplorationBranch[];
+  readingMemories?: ReadingMemory[];
   suggestedAuthors?: string[];
   cached?: boolean;
   throttled?: boolean;
@@ -778,6 +830,13 @@ function readingStatusLabel(status: MonitorPaper["readingStatus"], locale: Local
   return labels[status || "unread"][locale];
 }
 
+function explorationStatusLabel(status: ExplorationBranch["status"], locale: Locale) {
+  if (status === "cooling") return locale === "zh" ? "暂时降频" : "Cooling";
+  if (status === "revisit") return locale === "zh" ? "一轮完成" : "Round complete";
+  if (status === "error") return locale === "zh" ? "来源异常" : "Source error";
+  return locale === "zh" ? "继续深挖" : "Exploring";
+}
+
 function historyCountsFor(papers: MonitorPaper[]) {
   const unresolved = papers.filter((paper) => !["accepted", "dismissed"].includes(paper.userState));
   return {
@@ -1160,6 +1219,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [librarySort, setLibrarySort] = useState<LibrarySort>("priority");
   const [paperReturnView, setPaperReturnView] = useState<"today" | "library">("today");
   const [paperNoteDraft, setPaperNoteDraft] = useState("");
+  const [readingMemoryAnalyzing, setReadingMemoryAnalyzing] = useState(false);
   const [sharingSnapshot, setSharingSnapshot] = useState<string | null>(null);
   const [researchImports, setResearchImports] = useState<ResearchImportRecord[]>([]);
   const [importOpen, setImportOpen] = useState(false);
@@ -1217,6 +1277,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const healthyCoverageCount = monitor?.coverage?.filter((source) => source.healthy).length || 0;
   const mustReadCount = rankedMonitorPapers.filter((paper) => paper.recommendationTier === "must_read").length;
   const activeReadingCount = (monitor?.historyCounts?.reading?.queued || 0) + (monitor?.historyCounts?.reading?.reading || 0);
+  const operationsMaxCandidates = Math.max(1, ...(monitor?.operationsDashboard?.daily || []).map((day) => day.candidates));
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
   const confirmedProfile = latestConfirmedImport?.analysis || null;
   const explicitPreferenceSignals = useMemo(() => (monitor?.preferenceSignals || []).filter((signal) => signal.layer === "explicit"), [monitor?.preferenceSignals]);
@@ -1783,7 +1844,7 @@ export default function ResearchApp({ user }: { user: User }) {
     setToast(t.returnPending);
   };
 
-  const updateReadingProgress = async (paper: MonitorPaper, status: MonitorPaper["readingStatus"], note = paper.readingNote || "") => {
+  const updateReadingProgress = async (paper: MonitorPaper, status: MonitorPaper["readingStatus"], note = paper.readingNote || "", analyze = false) => {
     const updatePaper = (item: MonitorPaper): MonitorPaper => item.id === paper.id ? { ...item, readingStatus: status, readingNote: note } : item;
     setSelectedMonitorPaper((current) => current?.id === paper.id ? updatePaper(current) : current);
     setMonitor((current) => {
@@ -1792,19 +1853,34 @@ export default function ResearchApp({ user }: { user: User }) {
       const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
       return { ...current, papers, historyPapers, historyCounts: historyCountsFor(historyPapers) };
     });
+    if (analyze) setReadingMemoryAnalyzing(true);
     try {
       const response = await fetch("/api/library", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, status, note }),
+        body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, status, note, analyze }),
       });
       if (!response.ok) throw new Error("reading progress update failed");
-      setToast(locale === "zh" ? `阅读状态已更新为“${readingStatusLabel(status, locale)}”` : `Reading status updated to ${readingStatusLabel(status, locale)}`);
+      const result = await response.json() as { memoryAnalysis?: { status?: string } | null };
+      if (analyze) {
+        const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(activeSpace.id)}`);
+        const data = refreshed.ok ? await refreshed.json() as { monitor?: MonitorState } : null;
+        if (data?.monitor) setMonitor(data.monitor);
+        setToast(result.memoryAnalysis?.status === "ready"
+          ? (locale === "zh" ? "阅读笔记已由 Pi 沉淀到研究记忆" : "Pi added this note to research memory")
+          : result.memoryAnalysis?.status === "needs_more_context"
+            ? (locale === "zh" ? "笔记已保存；再写具体一些后即可让 Pi 沉淀" : "Note saved; add more detail for Pi to synthesize it")
+            : (locale === "zh" ? "笔记已保存，智能沉淀暂未完成" : "Note saved; memory synthesis is pending"));
+      } else {
+        setToast(locale === "zh" ? `阅读状态已更新为“${readingStatusLabel(status, locale)}”` : `Reading status updated to ${readingStatusLabel(status, locale)}`);
+      }
     } catch {
       const response = await fetch(`/api/monitor?spaceId=${encodeURIComponent(activeSpace.id)}`).catch(() => null);
       const data = response?.ok ? await response.json() as { monitor?: MonitorState } : null;
       if (data?.monitor) setMonitor(data.monitor);
       setToast(locale === "zh" ? "阅读状态保存失败，请重试" : "Could not save reading status");
+    } finally {
+      if (analyze) setReadingMemoryAnalyzing(false);
     }
   };
 
@@ -2249,6 +2325,8 @@ export default function ResearchApp({ user }: { user: User }) {
               </details>
             </section>
 
+            {monitor?.operationsDashboard && <section className="v2-operations-dashboard"><header><div><p className="v2-kicker">π {locale === "zh" ? "发现质量" : "DISCOVERY QUALITY"}</p><h2>{locale === "zh" ? "每次扫描是否真的带来新的、有用的论文" : "Whether each scan finds genuinely new, useful work"}</h2></div><small>{locale === "zh" ? `近 ${monitor.operationsDashboard.periodDays} 天真实运行数据` : `Last ${monitor.operationsDashboard.periodDays} days of real activity`}</small></header><div className="v2-operations-metrics"><article><span>{locale === "zh" ? "新候选" : "New candidates"}</span><strong>{monitor.operationsDashboard.totals.newCandidates}</strong><small>{monitor.operationsDashboard.totals.candidates} {locale === "zh" ? "篇独立候选" : "unique candidates"}</small></article><article><span>{locale === "zh" ? "去重节省" : "Duplicates avoided"}</span><strong>{monitor.operationsDashboard.totals.duplicatesAvoided}</strong><small>{monitor.operationsDashboard.totals.duplicateAvoidanceRate}% {locale === "zh" ? "无需重复交给 LLM" : "kept away from the LLM"}</small></article><article><span>{locale === "zh" ? "深审入选率" : "Review yield"}</span><strong>{monitor.operationsDashboard.totals.recommendationYield}%</strong><small>{monitor.operationsDashboard.totals.recommended} / {monitor.operationsDashboard.totals.reviewed} {locale === "zh" ? "篇入选" : "selected"}</small></article><article><span>{locale === "zh" ? "用户接受率" : "Acceptance"}</span><strong>{monitor.operationsDashboard.totals.acceptanceRate}%</strong><small>{monitor.operationsDashboard.totals.tokensPerRecommendation ? `${Math.round(monitor.operationsDashboard.totals.tokensPerRecommendation / 100) / 10}k token / ${locale === "zh" ? "推荐" : "recommendation"}` : (locale === "zh" ? "等待更多反馈" : "Awaiting feedback")}</small></article></div><div className="v2-operations-body"><div className="v2-scan-trend"><h3>{locale === "zh" ? "每日发现趋势" : "Daily discovery trend"}</h3>{monitor.operationsDashboard.daily.length ? monitor.operationsDashboard.daily.map((day) => <div key={day.date}><time>{day.date.slice(5)}</time><i><b style={{ width: `${Math.max(3, day.candidates / operationsMaxCandidates * 100)}%` }} /></i><span>+{day.newCandidates}</span><em>{day.recommended} {locale === "zh" ? "入选" : "selected"}</em></div>) : <p>{locale === "zh" ? "完成第一轮新版本扫描后，这里会开始记录趋势。" : "Trend data will appear after the first scan on this version."}</p>}</div><div className="v2-horizon-performance"><h3>{locale === "zh" ? "三层覆盖效率" : "Three-horizon efficiency"}</h3>{monitor.operationsDashboard.horizons.map((item) => <article key={item.horizon}><span>{item.horizon === "days" ? t.daysHorizon : item.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><strong>{item.discoveryYield}%</strong><small>{item.branches} {locale === "zh" ? "条分支" : "branches"} · {item.cooling} {locale === "zh" ? "条降频" : "cooling"}</small></article>)}</div></div>{Boolean(monitor.explorationLedger?.length) && <details className="v2-exploration-ledger"><summary><span><b>{locale === "zh" ? "持续探索账本" : "Continuous exploration ledger"}</b><small>{locale === "zh" ? "Pi 记录每条检索分支的位置；低收益分支自动降频，之后再回访。" : "Pi remembers each branch position, cools low-yield paths, and revisits them later."}</small></span><strong>{monitor.explorationLedger?.length} →</strong></summary><div>{monitor.explorationLedger?.slice(0, 16).map((branch) => <article className={branch.status} key={`${branch.horizon}:${branch.id}`}><header><span>{branch.horizon === "days" ? t.daysHorizon : branch.horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {branch.channel}</span><b>{explorationStatusLabel(branch.status, locale)}</b></header><p>{branch.queryText || branch.sourceKey.replace(/_/g, " ")}</p><footer><span>{locale === "zh" ? "游标" : "cursor"} {branch.nextCursor}</span><span>{branch.attempts} {locale === "zh" ? "轮" : "rounds"}</span><span>{branch.newCandidates}/{branch.candidates} {locale === "zh" ? "新发现" : "new"}</span><strong>{branch.discoveryYield}%</strong></footer></article>)}</div></details>}</section>}
+
             {!!monitor?.mapChanges?.length && <section className="v2-route-changes"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究路线变化" : "Research route changes"}</p><h2>{locale === "zh" ? "新论文如何改变你的地图" : "How new papers changed your map"}</h2></div><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "打开地图" : "Open map"} →</button></header><div>{monitor.mapChanges.slice(0, 3).map((change) => <article key={change.id}><span>＋</span><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {change.confidence}%</small><h3>{change.paperTitle}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>)}</div></section>}
 
             <div className="v2-dashboard-grid">
@@ -2450,6 +2528,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <button type="button" onClick={openResearchImport}>{confirmedProfile ? (locale === "zh" ? "继续导入资料" : "Import more materials") : t.importResearch} →</button>
             </section>
             <section className="v2-layered-memory"><header><div><p className="v2-kicker">π {locale === "zh" ? "分层研究记忆" : "Layered research memory"}</p><h2>{locale === "zh" ? "你说过的，与 Pi 推断的，分开保存" : "What you said and what Pi inferred stay separate"}</h2></div><small>{locale === "zh" ? "推断会随时间衰减，也可以随时停用" : "Inferences decay over time and can be disabled"}</small></header><div><section><h3>{locale === "zh" ? "明确偏好" : "Explicit evidence"}<span>{explicitPreferenceSignals.length}</span></h3>{explicitPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><small>{signal.evidence}</small></div><b>{signal.effectiveConfidence}%</b></article>)}{!explicitPreferenceSignals.length && <p>{locale === "zh" ? "对论文标记“适合”或“不相关”时选择原因，这里会形成长期偏好。" : "Choose a reason when accepting or dismissing a paper to build durable preferences."}</p>}</section><section><h3>{locale === "zh" ? "Pi 的推断" : "Pi inferences"}<span>{inferredPreferenceSignals.length}</span></h3>{inferredPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><small>{signal.evidence}</small></div><b>{signal.effectiveConfidence}%</b><button type="button" onClick={() => dismissInferredSignal(signal.id)} aria-label={locale === "zh" ? "停用这条推断" : "Disable this inference"}>×</button></article>)}{!inferredPreferenceSignals.length && <p>{locale === "zh" ? "确认导入研究资料后，Pi 会把有证据的兴趣与问题放在这里。" : "After a research import is confirmed, grounded interests and questions appear here."}</p>}</section></div></section>
+            <section className="v2-reading-memory"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "从阅读中沉淀" : "LEARNING FROM READING"}</p><h2>{locale === "zh" ? "读过的论文正在改变后续推荐" : "What you read is shaping future discovery"}</h2><p>{locale === "zh" ? "Pi 只在你主动保存阅读笔记时提取结论、方法、问题和研究连接；原笔记与 AI 推断分开保存。" : "Pi extracts conclusions, methods, questions, and research links only when you explicitly save a note. Your note remains separate from AI inference."}</p></div><strong>{monitor?.readingMemories?.filter((memory) => memory.analysisStatus === "ready").length || 0}</strong></header><div>{monitor?.readingMemories?.map((memory) => { const methods = locale === "zh" ? memory.methodsZh : memory.methodsEn; const questions = locale === "zh" ? memory.questionsZh : memory.questionsEn; const connections = locale === "zh" ? memory.connectionsZh : memory.connectionsEn; return <article className={memory.analysisStatus} key={memory.paperId}><header><span>{readingStatusLabel(memory.readingStatus as MonitorPaper["readingStatus"], locale)}</span><b>{memory.analysisStatus === "ready" ? "π " + modelDisplayName(memory.model) : memory.analysisStatus === "error" ? (locale === "zh" ? "待重试" : "Retry needed") : (locale === "zh" ? "等待分析" : "Pending")}</b></header><h3>{memory.title}</h3>{memory.analysisStatus === "ready" ? <><p>{locale === "zh" ? memory.takeawayZh : memory.takeawayEn}</p>{Boolean(methods.length) && <dl><dt>{locale === "zh" ? "可复用方法" : "Reusable methods"}</dt><dd>{methods.slice(0, 3).map((item) => <i key={item}>{item}</i>)}</dd></dl>}{Boolean(questions.length) && <dl><dt>{locale === "zh" ? "仍待解决" : "Open questions"}</dt><dd>{questions.slice(0, 2).map((item) => <i key={item}>{item}</i>)}</dd></dl>}{Boolean(connections.length) && <small>{locale === "zh" ? "与当前研究的连接：" : "Connection to your work: "}{connections[0]}</small>}</> : <p>{memory.noteExcerpt || (locale === "zh" ? "笔记已保存。配置可用模型后可重新沉淀。" : "The note is saved and can be synthesized when the model is available.")}</p>}<footer><span>{memory.venue}</span><button type="button" onClick={() => { const paper = historyPapers.find((item) => item.id === memory.paperId); if (paper) openMonitorPaper(paper); }}>{locale === "zh" ? "打开论文" : "Open paper"} →</button></footer></article>; })}{!monitor?.readingMemories?.length && <div className="v2-reading-memory-empty"><span>◎</span><p>{locale === "zh" ? "在论文详情中写下具体阅读笔记并点击“保存并沉淀”，这里就会形成可持续使用的研究记忆。" : "Write a concrete note in a paper detail and choose “Save to research memory” to build durable memory here."}</p></div>}</div></section>
             <div className="v2-memory-grid">
               <section><span>01</span><h2>{t.interestMemory}</h2><p>{locale === "zh" ? "由用户确认的持续关注、子方向与检索主题。" : "User-confirmed sustained interests, subdirections, and discovery topics."}</p><div className="v2-tags">{confirmedProfile ? [...confirmedProfile.subdirections, ...confirmedProfile.interests].slice(0, 10).map((item, index) => <i key={index}>{locale === "zh" ? item.labelZh : item.labelEn}</i>) : <small>{locale === "zh" ? "尚未导入已确认的研究资料" : "No confirmed research materials yet"}</small>}</div></section>
               <section><span>02</span><h2>{t.knowledgeMemory}</h2><p>{locale === "zh" ? "Pi 只把有材料证据的内容当作已有知识。" : "Pi treats a topic as known only when the imported material supports it."}</p><div className="v2-knowledge-lines">{confirmedProfile?.knowledge.length ? confirmedProfile.knowledge.slice(0, 5).map((item, index) => <div key={index}><b>{locale === "zh" ? item.labelZh : item.labelEn}</b><i><em style={{ width: `${item.confidence}%` }} /></i></div>) : <small>{locale === "zh" ? "等待有证据的知识画像" : "Waiting for evidence-backed knowledge"}</small>}</div></section>
@@ -2479,7 +2558,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 </div>{Boolean((locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn)?.length) && <footer><small>{locale === "zh" ? "可以继续追问" : "Questions to pursue"}</small><ol>{(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn).map((question) => <li key={question}>{question}</li>)}</ol></footer>}</section>
                 <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div><div><dt>{t.qualityScore}</dt><dd>{selectedMonitorPaper.qualityScore}</dd></div><div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
               </div>
-              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><button className="v2-save-note" type="button" onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft)}>{locale === "zh" ? "保存阅读笔记" : "Save reading note"}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</dd></div><div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
+              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{locale === "zh" ? "保存时 Pi 会提取可复用结论、方法、问题与研究连接；相同笔记不会重复消耗 Token。" : "When saved, Pi extracts reusable conclusions, methods, questions, and research links. Identical notes are not analyzed twice."}</small><button className="v2-save-note" type="button" disabled={readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "Pi 正在沉淀…" : "Pi is synthesizing…") : (locale === "zh" ? "保存并沉淀到研究记忆" : "Save to research memory")}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</dd></div><div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
             </div>
           </main>
         )}
