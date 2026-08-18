@@ -13,9 +13,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://pi-research-agent.qiudao-pika.chatgpt.site"),
   title: "Pi Research — Your AI Research Agent",
   description:
     "A quiet, context-aware research agent that tracks important work and builds personalized learning paths.",
+  openGraph: {
+    title: "Pi Research — Your AI Research Agent",
+    description:
+      "Private research spaces, focused reading paths, and an AI research partner that remembers the right context.",
+    images: [{ url: "/pi-research-social.png", width: 1536, height: 913 }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    images: ["/pi-research-social.png"],
+  },
 };
 
 export default function RootLayout({
