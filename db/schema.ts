@@ -92,6 +92,7 @@ export const monitorRuns = sqliteTable(
     nextRunAt: text("next_run_at"),
     newCount: integer("new_count").notNull().default(0),
     scannedCount: integer("scanned_count").notNull().default(0),
+    discoveryRound: integer("discovery_round").notNull().default(0),
     error: text("error"),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
@@ -248,10 +249,33 @@ export const researchTracks = sqliteTable(
     searchQueries: text("search_queries").notNull().default("[]"),
     position: integer("position").notNull().default(0),
     expansionCount: integer("expansion_count").notNull().default(0),
+    userRole: text("user_role").notNull().default("explore"),
+    depthScore: integer("depth_score").notNull().default(0),
+    supportScore: integer("support_score").notNull().default(0),
+    interactionScore: integer("interaction_score").notNull().default(0),
     createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
   (table) => [index("idx_research_tracks_space_position").on(table.spaceId, table.position)],
+);
+
+export const researchTrackEdges = sqliteTable(
+  "research_track_edges",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    sourceTrackId: text("source_track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    targetTrackId: text("target_track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull().default("builds_on"),
+    relationshipZh: text("relationship_zh").notNull().default(""),
+    relationshipEn: text("relationship_en").notNull().default(""),
+    strength: integer("strength").notNull().default(50),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_track_edges_pair_kind").on(table.sourceTrackId, table.targetTrackId, table.kind),
+    index("idx_research_track_edges_space").on(table.spaceId),
+  ],
 );
 
 export const researchTrackPapers = sqliteTable(

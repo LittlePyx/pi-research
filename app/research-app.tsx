@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
-import type { ResearchMapState, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../lib/research-map";
+import type { ResearchDirectionRole, ResearchMapState, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../lib/research-map";
 
 type Locale = "zh" | "en";
 type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
@@ -64,6 +64,7 @@ type MonitorState = {
   newCount: number;
   scannedCount: number;
   knownCount: number;
+  explorationRound?: number;
   error: string | null;
   cadenceHours: number;
   source: string;
@@ -614,6 +615,15 @@ function researchRoleLabel(role: ResearchTrackRole, locale: Locale) {
   return labels[role][locale];
 }
 
+function directionRoleLabel(role: ResearchDirectionRole, locale: Locale) {
+  const labels: Record<ResearchDirectionRole, Localized> = {
+    core: { zh: "主攻", en: "Core" },
+    support: { zh: "辅助", en: "Support" },
+    explore: { zh: "探索", en: "Explore" },
+  };
+  return labels[role][locale];
+}
+
 function researchPaperYear(paper: ResearchTrackPaper) {
   return paper.publishedAt?.slice(0, 4) || "—";
 }
@@ -820,7 +830,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [newSpace, setNewSpace] = useState({ name: "", memberName: "", description: "" });
   const [selectedMonitorPaper, setSelectedMonitorPaper] = useState<MonitorPaper | null>(null);
-  const [researchMap, setResearchMap] = useState<ResearchMapState>({ tracks: [], model: "deepseek-v4-pro", generated: false });
+  const [researchMap, setResearchMap] = useState<ResearchMapState>({ tracks: [], edges: [], model: "deepseek-v4-pro", generated: false });
   const [selectedThread, setSelectedThread] = useState<ResearchTrack | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
   const [mapAction, setMapAction] = useState<string | null>(null);
@@ -1021,6 +1031,15 @@ export default function ResearchApp({ user }: { user: User }) {
           });
           data = await response.json() as ResearchMapState & { error?: string };
           if (!response.ok) throw new Error(data.error || "map generation failed");
+        } else if (data.needsStructure) {
+          setMapAction("structure");
+          response = await fetch("/api/research-map", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ spaceId: activeSpace.id, action: "structure" }),
+          });
+          data = await response.json() as ResearchMapState & { error?: string };
+          if (!response.ok) throw new Error(data.error || "map structuring failed");
         }
         if (!cancelled) {
           setResearchMap(data);
@@ -1466,6 +1485,39 @@ export default function ResearchApp({ user }: { user: User }) {
   const openThread = (thread: ResearchTrack) => {
     setSelectedThread(thread);
     navigate("thread-detail");
+    void fetch("/api/research-map", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spaceId: activeSpace.id, action: "activity", trackId: thread.id, activityKind: "track_opened" }),
+    }).catch(() => undefined);
+  };
+
+  const recordMapPaperOpen = (threadId: string) => {
+    void fetch("/api/research-map", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spaceId: activeSpace.id, action: "activity", trackId: threadId, activityKind: "paper_opened" }),
+    }).catch(() => undefined);
+  };
+
+  const setResearchDirectionRole = async (thread: ResearchTrack, userRole: ResearchDirectionRole) => {
+    if (mapAction) return;
+    setMapAction(`role:${thread.id}`);
+    try {
+      const response = await fetch("/api/research-map", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId: thread.id, userRole }),
+      });
+      const data = await response.json() as ResearchMapState & { error?: string };
+      if (!response.ok) throw new Error(data.error || "role update failed");
+      setResearchMap(data);
+      setSelectedThread(data.tracks.find((item) => item.id === thread.id) || null);
+    } catch {
+      setToast(locale === "zh" ? "方向定位暂时无法保存" : "Could not save the direction role");
+    } finally {
+      setMapAction(null);
+    }
   };
 
   const expandResearchTrack = async (thread: ResearchTrack) => {
@@ -1574,7 +1626,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <details className="v2-scan-details">
                 <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
                 <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div></div>
-                <dl className="v2-monitor-metrics"><div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div><div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div><div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div></dl>
+                <dl className="v2-monitor-metrics"><div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div><div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div><div><dt>{locale === "zh" ? "持续探索轮次" : "Exploration round"}</dt><dd>#{monitor?.explorationRound || 0}</dd></div><div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div></dl>
                 <p>{t.autoVisit}</p>
               </details>
             </section>
@@ -1626,21 +1678,23 @@ export default function ResearchApp({ user }: { user: User }) {
             {mapLoading ? (
               <section className="v2-map-loading" role="status"><span>π</span><div><strong>{locale === "zh" ? "正在建立真实研究路线" : "Building the real research map"}</strong><p>{locale === "zh" ? "先划分方向，再从不同年代检索真实论文，最后由 DeepSeek Pro 判断其代表性。" : "Defining directions, retrieving real papers across eras, then asking DeepSeek Pro to judge representativeness."}</p><i><b /></i></div></section>
             ) : researchMap.tracks.length ? (
-              <div className="v2-map-grid">
-                {researchMap.tracks.map((thread, index) => (
-                  <article className="v2-map-card" key={thread.id}>
-                    <header><span>0{index + 1}</span><div><b>{thread.papers.length}</b>{locale === "zh" ? "篇" : "papers"}</div></header>
-                    <button className="v2-map-card-main" type="button" onClick={() => openThread(thread)}><h2>{locale === "zh" ? thread.titleZh : thread.titleEn}</h2><p>{locale === "zh" ? thread.summaryZh : thread.summaryEn}</p></button>
-                    <div className="v2-map-mini-route">
-                      {(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => {
-                        const paper = thread.papers.find((item) => item.role === role);
-                        return <span key={role} className={paper ? "filled" : ""}><i /> <small>{researchRoleLabel(role, locale)}</small><b>{paper ? researchPaperYear(paper) : "—"}</b></span>;
-                      })}
-                    </div>
-                    <footer><button type="button" onClick={() => openThread(thread)}>{locale === "zh" ? "查看路线" : "Open route"} →</button><button className="secondary" type="button" onClick={() => void expandResearchTrack(thread)} disabled={Boolean(mapAction)}>{mapAction === thread.id ? (locale === "zh" ? "挖掘中…" : "Mining…") : (locale === "zh" ? "继续填充" : "Continue mining")}</button></footer>
-                  </article>
-                ))}
-              </div>
+              <>
+                <section className="v2-field-network">
+                  <div className="v2-network-root"><span>π</span><div><small>{locale === "zh" ? "研究主干" : "Research backbone"}</small><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><p>{activeSpace.description}</p></div></div>
+                  <div className="v2-network-branches">
+                    {[...researchMap.tracks].sort((left, right) => ({ core: 0, support: 1, explore: 2 })[left.userRole] - ({ core: 0, support: 1, explore: 2 })[right.userRole] || right.depthScore - left.depthScore).map((thread, index) => (
+                      <article className={`v2-network-node ${thread.userRole}`} key={thread.id}>
+                        <header><span>{String(index + 1).padStart(2, "0")}</span><b>{directionRoleLabel(thread.userRole, locale)}</b><small>{thread.papers.length} {locale === "zh" ? "篇" : "papers"}</small></header>
+                        <button className="v2-network-node-main" type="button" onClick={() => openThread(thread)}><h2>{locale === "zh" ? thread.titleZh : thread.titleEn}</h2><p>{locale === "zh" ? thread.summaryZh : thread.summaryEn}</p></button>
+                        <div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${thread.depthScore}%` }} /></i><strong>{thread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${thread.supportScore}%` }} /></i><strong>{thread.supportScore}</strong></span></div>
+                        <div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={thread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(thread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div>
+                        <footer><button type="button" onClick={() => openThread(thread)}>{locale === "zh" ? "查看路径" : "Open path"} →</button><button type="button" onClick={() => void expandResearchTrack(thread)} disabled={Boolean(mapAction)}>{mapAction === thread.id ? (locale === "zh" ? "深挖中…" : "Mining…") : (locale === "zh" ? "继续深挖" : "Mine deeper")}</button></footer>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+                {researchMap.edges.length ? <section className="v2-network-links"><header><p className="v2-kicker">{locale === "zh" ? "方向关联" : "Cross-direction links"}</p><h2>{locale === "zh" ? "主干之外的桥接关系" : "Bridges beyond the backbone"}</h2></header><div>{researchMap.edges.map((edge) => { const source = researchMap.tracks.find((track) => track.id === edge.sourceTrackId); const target = researchMap.tracks.find((track) => track.id === edge.targetTrackId); if (!source || !target) return null; return <button type="button" key={edge.id} onClick={() => openThread(target)}><span>{locale === "zh" ? source.titleZh : source.titleEn}</span><i>{edge.kind === "bridges" ? "⇄" : "→"}</i><span>{locale === "zh" ? target.titleZh : target.titleEn}</span><small>{locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</small><b>{edge.strength}</b></button>; })}</div></section> : null}
+              </>
             ) : <section className="v2-map-empty"><span>◎</span><h2>{locale === "zh" ? "暂时没有可展示的真实路线" : "No real route is available yet"}</h2><p>{locale === "zh" ? "Pi 不会用演示论文填充这里。稍后重新进入即可再次尝试。" : "Pi will not fill this area with demo papers. Return later to retry."}</p></section>}
           </main>
         )}
@@ -1650,6 +1704,7 @@ export default function ResearchApp({ user }: { user: User }) {
             <button className="v2-back" type="button" onClick={() => navigate("threads")}>← {t.backThreads}</button>
             {selectedThread ? <>
               <section className="v2-map-detail-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {selectedThread.papers.length} {locale === "zh" ? "篇代表作" : "representative works"}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction)}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在继续挖掘…" : "Mining deeper…") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></section>
+              <section className={`v2-direction-profile ${selectedThread.userRole}`}><div><span>{directionRoleLabel(selectedThread.userRole, locale)}</span><strong>{locale === "zh" ? "这条方向在你的研究地图中的位置" : "This direction's place in your research map"}</strong></div><div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${selectedThread.depthScore}%` }} /></i><strong>{selectedThread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${selectedThread.supportScore}%` }} /></i><strong>{selectedThread.supportScore}</strong></span></div><div className="v2-direction-role-control">{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div></section>
               <nav className="v2-map-legend">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span key={role} className={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</nav>
               <div className="v2-research-timeline">
                 {(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => (
@@ -1659,7 +1714,7 @@ export default function ResearchApp({ user }: { user: User }) {
                       {selectedThread.papers.filter((paper) => paper.role === role).map((paper) => (
                         <article className="v2-map-paper" key={paper.id}>
                           <div className="v2-map-paper-year"><strong>{researchPaperYear(paper)}</strong><i /></div>
-                          <div className="v2-map-paper-body"><p className="v2-kicker">{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</p><h2>{paper.title}</h2><small>{paper.authors}</small><div className="v2-map-paper-copy"><p><b>{t.introLabel}</b>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p><p><b>{locale === "zh" ? "路线位置" : "Place in the route"}</b>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p></div><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div>
+                          <div className="v2-map-paper-body"><p className="v2-kicker">{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</p><h2>{paper.title}</h2><small>{paper.authors}</small><div className="v2-map-paper-copy"><p><b>{t.introLabel}</b>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p><p><b>{locale === "zh" ? "路线位置" : "Place in the route"}</b>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p></div><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)}>{t.openOriginal} ↗</a></div>
                         </article>
                       ))}
                       {!selectedThread.papers.some((paper) => paper.role === role) && <p className="v2-map-era-empty">{locale === "zh" ? "这一阶段尚未找到足够有代表性的真实论文。" : "No sufficiently representative real paper has been found for this stage yet."}</p>}

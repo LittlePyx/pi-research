@@ -1,5 +1,5 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
-import type { ResearchMapState, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
+import type { ResearchDirectionRole, ResearchMapState, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type TrackRow = {
@@ -10,7 +10,20 @@ type TrackRow = {
   summary_en: string;
   search_queries: string;
   expansion_count: number;
+  user_role: ResearchDirectionRole;
+  depth_score: number;
+  support_score: number;
+  interaction_score: number;
   updated_at: string;
+};
+type TrackEdgeRow = {
+  id: string;
+  source_track_id: string;
+  target_track_id: string;
+  kind: "builds_on" | "bridges" | "supports";
+  relationship_zh: string;
+  relationship_en: string;
+  strength: number;
 };
 type TrackPaperRow = {
   id: string;
@@ -52,7 +65,11 @@ type DirectionDraft = {
   summaryZh: string;
   summaryEn: string;
   searchQueries: string[];
+  userRole: ResearchDirectionRole;
+  depthScore: number;
+  supportScore: number;
 };
+type DirectionRelationship = { sourceIndex: number; targetIndex: number; kind: "builds_on" | "bridges" | "supports"; relationshipZh: string; relationshipEn: string; strength: number };
 type MapCandidate = {
   directionKey: string;
   canonicalId: string;
@@ -85,11 +102,18 @@ const MODEL = "deepseek-v4-pro";
 const PAPER_TYPES = new Set(["journal-article", "proceedings-article", "posted-content"]);
 const NON_PAPER_PHRASES = /(publication information|information for authors|instructions for authors|table of contents|editorial board|front matter|back matter|issue information|journal masthead|correction|erratum)/i;
 const ROLES = new Set<ResearchTrackRole>(["foundation", "milestone", "frontier"]);
+const DIRECTION_ROLES = new Set<ResearchDirectionRole>(["core", "support", "explore"]);
+const EDGE_KINDS = new Set(["builds_on", "bridges", "supports"]);
 const GLOBAL_DAILY_LIMIT = 80;
 const WORKSPACE_DAILY_LIMIT = 10;
 
 function cleanText(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+}
+
+function boundedScore(value: unknown, fallback = 0) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : fallback;
 }
 
 function parseJsonArray(value: string) {
@@ -213,13 +237,15 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
 }
 
 async function generateDirections(database: D1Database, workspaceId: string, space: SpaceRow, memory: string) {
-  const parsed = await callDeepSeek<{ directions?: Array<Partial<DirectionDraft>> }>(
+  const parsed = await callDeepSeek<{ directions?: Array<Partial<DirectionDraft>>; relationships?: Array<Partial<DirectionRelationship>> }>(
     database,
     workspaceId,
     "You are Pi Research's academic field cartographer. Return strict JSON grounded in the supplied research scope.",
     [
-      "Return {\"directions\":[...]} with 3-5 distinct research directions that together form a useful map of this exact field.",
-      "Every direction needs key, titleZh, titleEn, summaryZh, summaryEn, and 2-3 concise English scholarly searchQueries suitable for Crossref.",
+      "Return {\"directions\":[...],\"relationships\":[...]} with 3-5 distinct research directions that together form a useful map of this exact field.",
+      "Every direction needs key, titleZh, titleEn, summaryZh, summaryEn, 2-3 concise English scholarly searchQueries, userRole (core|support|explore), depthScore, and supportScore.",
+      "depthScore estimates how deeply the supplied user evidence demonstrates work in this direction. supportScore estimates how useful the direction is as theory, method, evidence, or a bridge for the user's core work. Do not equate popularity with user depth.",
+      "Every relationship needs zero-based sourceIndex, zero-based targetIndex, kind (builds_on|bridges|supports), relationshipZh, relationshipEn, and strength. Create a connected, acyclic main backbone first, then add only useful bridge edges.",
       "Directions must be intellectually meaningful branches, not generic labels such as background, methods, or applications.",
       "The summaries should state the central question and how this branch relates to the user's scope. Do not claim any specific paper or result yet.",
       `Research space: ${space.name} — ${space.description}`,
@@ -227,14 +253,28 @@ async function generateDirections(database: D1Database, workspaceId: string, spa
     ].join("\n"),
     8000,
   );
-  return (parsed.directions || []).map((item, index) => ({
+  const directions = (parsed.directions || []).map((item, index) => ({
     key: `${cleanText(item.key || "direction").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 52)}-${index + 1}`,
     titleZh: cleanText(item.titleZh || "").slice(0, 160),
     titleEn: cleanText(item.titleEn || "").slice(0, 200),
     summaryZh: cleanText(item.summaryZh || "").slice(0, 500),
     summaryEn: cleanText(item.summaryEn || "").slice(0, 700),
     searchQueries: Array.from(new Set((item.searchQueries || []).map((query) => cleanText(String(query))).filter((query) => query.length >= 4))).slice(0, 3),
+    userRole: DIRECTION_ROLES.has(item.userRole as ResearchDirectionRole) ? item.userRole as ResearchDirectionRole : "explore",
+    depthScore: boundedScore(item.depthScore),
+    supportScore: boundedScore(item.supportScore),
   })).filter((item) => item.titleZh && item.titleEn && item.summaryZh && item.summaryEn && item.searchQueries.length).slice(0, 5);
+  const relationships = (parsed.relationships || []).map((item) => ({
+    sourceIndex: Math.round(Number(item.sourceIndex)),
+    targetIndex: Math.round(Number(item.targetIndex)),
+    kind: EDGE_KINDS.has(String(item.kind)) ? item.kind as DirectionRelationship["kind"] : "builds_on",
+    relationshipZh: cleanText(item.relationshipZh || "").slice(0, 260),
+    relationshipEn: cleanText(item.relationshipEn || "").slice(0, 360),
+    strength: boundedScore(item.strength, 50),
+  })).filter((item) => Number.isInteger(item.sourceIndex) && Number.isInteger(item.targetIndex)
+    && item.sourceIndex >= 0 && item.targetIndex >= 0 && item.sourceIndex < directions.length && item.targetIndex < directions.length
+    && item.sourceIndex !== item.targetIndex && item.relationshipZh && item.relationshipEn);
+  return { directions, relationships };
 }
 
 function roleDates(role: ResearchTrackRole) {
@@ -358,12 +398,54 @@ function toPaper(row: TrackPaperRow): ResearchTrackPaper {
   };
 }
 
+async function structureExistingTracks(database: D1Database, workspaceId: string, space: SpaceRow, memory: string) {
+  const tracks = await database.prepare(
+    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
+  ).bind(space.id).all<TrackRow>();
+  if (tracks.results.length < 2) return;
+  const parsed = await callDeepSeek<{
+    profiles?: Array<{ trackId?: string; userRole?: ResearchDirectionRole; depthScore?: number; supportScore?: number }>;
+    edges?: Array<{ sourceTrackId?: string; targetTrackId?: string; kind?: string; relationshipZh?: string; relationshipEn?: string; strength?: number }>;
+  }>(database, workspaceId, "You are Pi Research's evidence-disciplined field-structure editor. Return strict JSON.", [
+    "Return {\"profiles\":[...],\"edges\":[...]} for the supplied existing research directions.",
+    "Each profile needs trackId, userRole (core|support|explore), depthScore, supportScore. User depth must come from supplied user evidence, not the direction's general prestige.",
+    "Each edge needs sourceTrackId, targetTrackId, kind (builds_on|bridges|supports), relationshipZh, relationshipEn, strength.",
+    "Build a connected main backbone that gives a clear learning/development path, then add only meaningful cross-direction bridge edges. Never create self-edges.",
+    `Research space: ${space.name} — ${space.description}`,
+    `User-confirmed memory: ${memory || "none"}`,
+    `Existing directions: ${JSON.stringify(tracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, paperCountHint: track.expansion_count, searchQueries: parseJsonArray(track.search_queries) })))}`,
+  ].join("\n"), 10000);
+  const validIds = new Set(tracks.results.map((track) => track.id));
+  for (const profile of parsed.profiles || []) {
+    const trackId = cleanText(profile.trackId || "");
+    if (!validIds.has(trackId)) continue;
+    const userRole = DIRECTION_ROLES.has(profile.userRole as ResearchDirectionRole) ? profile.userRole as ResearchDirectionRole : "explore";
+    await database.prepare("UPDATE research_tracks SET user_role = ?, depth_score = ?, support_score = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+      .bind(userRole, boundedScore(profile.depthScore), boundedScore(profile.supportScore), trackId, space.id).run();
+  }
+  await database.prepare("DELETE FROM research_track_edges WHERE space_id = ?").bind(space.id).run();
+  for (const edge of parsed.edges || []) {
+    const sourceId = cleanText(edge.sourceTrackId || "");
+    const targetId = cleanText(edge.targetTrackId || "");
+    if (!validIds.has(sourceId) || !validIds.has(targetId) || sourceId === targetId) continue;
+    const relationshipZh = cleanText(edge.relationshipZh || "").slice(0, 260);
+    const relationshipEn = cleanText(edge.relationshipEn || "").slice(0, 360);
+    if (!relationshipZh || !relationshipEn) continue;
+    const kind = EDGE_KINDS.has(String(edge.kind)) ? String(edge.kind) : "builds_on";
+    await database.prepare(
+      "INSERT OR IGNORE INTO research_track_edges (id, space_id, source_track_id, target_track_id, kind, relationship_zh, relationship_en, strength) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(crypto.randomUUID(), space.id, sourceId, targetId, kind, relationshipZh, relationshipEn, boundedScore(edge.strength, 50)).run();
+  }
+}
+
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  const [tracksResult, papersResult] = await Promise.all([
-    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
+  const [tracksResult, papersResult, edgesResult] = await Promise.all([
+    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare("SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackPaperRow>(),
+    database.prepare("SELECT id, source_track_id, target_track_id, kind, relationship_zh, relationship_en, strength FROM research_track_edges WHERE space_id = ? ORDER BY strength DESC, created_at")
+      .bind(spaceId).all<TrackEdgeRow>(),
   ]);
   const papersByTrack = new Map<string, ResearchTrackPaper[]>();
   for (const row of papersResult.results) papersByTrack.set(row.track_id, [...(papersByTrack.get(row.track_id) || []), toPaper(row)]);
@@ -374,10 +456,24 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     summaryZh: row.summary_zh,
     summaryEn: row.summary_en,
     expansionCount: row.expansion_count,
+    userRole: DIRECTION_ROLES.has(row.user_role) ? row.user_role : "explore",
+    depthScore: Math.min(100, row.depth_score + row.interaction_score),
+    supportScore: row.support_score,
+    interactionScore: row.interaction_score,
     updatedAt: row.updated_at,
     papers: papersByTrack.get(row.id) || [],
   }));
-  return { tracks, model: MODEL, generated: tracks.length > 0, ...extra } satisfies ResearchMapState & Record<string, unknown>;
+  const edges: ResearchTrackEdge[] = edgesResult.results.map((row) => ({
+    id: row.id,
+    sourceTrackId: row.source_track_id,
+    targetTrackId: row.target_track_id,
+    kind: row.kind,
+    relationshipZh: row.relationship_zh,
+    relationshipEn: row.relationship_en,
+    strength: row.strength,
+  }));
+  const needsStructure = tracks.length > 1 && !edges.length;
+  return { tracks, edges, model: MODEL, generated: tracks.length > 0, needsStructure, ...extra } satisfies ResearchMapState & Record<string, unknown>;
 }
 
 export async function GET(request: Request) {
@@ -394,7 +490,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "expand"; trackId?: string };
+    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "expand" | "structure" | "activity"; trackId?: string; activityKind?: "paper_opened" | "track_opened" };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -403,10 +499,23 @@ export async function POST(request: Request) {
     const workspaceId = user.userId.replace(/^anonymous:/, "");
     const memory = await importedMemory(database, space.id);
 
+    if (payload.action === "activity") {
+      const weight = payload.activityKind === "paper_opened" ? 2 : 1;
+      await database.prepare("UPDATE research_tracks SET interaction_score = MIN(35, interaction_score + ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+        .bind(weight, payload.trackId?.trim() || "", space.id).run();
+      return Response.json(await readMap(database, space.id));
+    }
+
+    if (payload.action === "structure") {
+      await structureExistingTracks(database, workspaceId, space, memory);
+      return Response.json(await readMap(database, space.id, { structured: true }));
+    }
+
     if ((payload.action || "initialize") === "initialize") {
       const existing = await database.prepare("SELECT COUNT(*) AS count FROM research_tracks WHERE space_id = ?").bind(space.id).first<{ count: number }>();
       if ((existing?.count || 0) > 0) return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
-      const directions = await generateDirections(database, workspaceId, space, memory);
+      const generated = await generateDirections(database, workspaceId, space, memory);
+      const directions = generated.directions;
       if (directions.length < 3) throw new Error("DeepSeek Pro did not return enough distinct research directions");
       const candidates = await discoverCandidates(directions, 0, 14);
       const selections = await selectPapers(database, workspaceId, space, memory, directions, candidates, "initialize");
@@ -416,8 +525,17 @@ export async function POST(request: Request) {
         const trackId = crypto.randomUUID();
         trackIdByKey.set(direction.key, trackId);
         await database.prepare(
-          "INSERT INTO research_tracks (id, space_id, title_zh, title_en, summary_zh, summary_en, search_queries, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ).bind(trackId, space.id, direction.titleZh, direction.titleEn, direction.summaryZh, direction.summaryEn, JSON.stringify(direction.searchQueries), position).run();
+          "INSERT INTO research_tracks (id, space_id, title_zh, title_en, summary_zh, summary_en, search_queries, position, user_role, depth_score, support_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ).bind(trackId, space.id, direction.titleZh, direction.titleEn, direction.summaryZh, direction.summaryEn, JSON.stringify(direction.searchQueries), position,
+          direction.userRole, direction.depthScore, direction.supportScore).run();
+      }
+      for (const relationship of generated.relationships) {
+        const sourceId = trackIdByKey.get(directions[relationship.sourceIndex]?.key || "");
+        const targetId = trackIdByKey.get(directions[relationship.targetIndex]?.key || "");
+        if (!sourceId || !targetId) continue;
+        await database.prepare(
+          "INSERT OR IGNORE INTO research_track_edges (id, space_id, source_track_id, target_track_id, kind, relationship_zh, relationship_en, strength) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ).bind(crypto.randomUUID(), space.id, sourceId, targetId, relationship.kind, relationship.relationshipZh, relationship.relationshipEn, relationship.strength).run();
       }
       const positions = new Map<string, number>();
       const inserted = new Set<string>();
@@ -444,7 +562,7 @@ export async function POST(request: Request) {
 
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
-      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
     ).bind(trackId, space.id).first<TrackRow>();
     if (!track) return Response.json({ error: "Research direction not found" }, { status: 404 });
     const queries = parseJsonArray(track.search_queries);
@@ -456,6 +574,9 @@ export async function POST(request: Request) {
       summaryZh: track.summary_zh,
       summaryEn: track.summary_en,
       searchQueries: queries,
+      userRole: track.user_role,
+      depthScore: track.depth_score,
+      supportScore: track.support_score,
     };
     const offset = ((track.expansion_count + 1) * 16) % 608;
     let candidates = await discoverCandidates([direction], offset, 16);
@@ -480,10 +601,28 @@ export async function POST(request: Request) {
         selection.rationaleZh, selection.rationaleEn, position++).run();
       addedCount += 1;
     }
-    await database.prepare("UPDATE research_tracks SET expansion_count = expansion_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    await database.prepare("UPDATE research_tracks SET expansion_count = expansion_count + 1, interaction_score = MIN(35, interaction_score + 5), updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .bind(track.id).run();
     return Response.json(await readMap(database, space.id, { cached: false, addedCount }));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to build the research map" }, { status: 502 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const payload = await request.json() as { spaceId?: string; trackId?: string; userRole?: ResearchDirectionRole };
+    const spaceId = payload.spaceId?.trim() || "";
+    const trackId = payload.trackId?.trim() || "";
+    if (!spaceId || !trackId || !DIRECTION_ROLES.has(payload.userRole as ResearchDirectionRole)) {
+      return Response.json({ error: "spaceId, trackId, and a valid userRole are required" }, { status: 400 });
+    }
+    const context = await ownedSpace(request, spaceId);
+    if ("error" in context) return context.error;
+    await context.database.prepare("UPDATE research_tracks SET user_role = ?, interaction_score = MIN(35, interaction_score + 3), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+      .bind(payload.userRole, trackId, context.space.id).run();
+    return Response.json(await readMap(context.database, context.space.id));
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Unable to update the research direction" }, { status: 500 });
   }
 }

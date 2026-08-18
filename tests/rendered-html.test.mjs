@@ -88,7 +88,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(client, /为什么适合读/);
 });
 
-test("mines deeper five-year pages and builds a real expandable research map", async () => {
+test("continuously explores new discovery branches and grows a connected research map", async () => {
   const [monitor, mapRoute, schema, repository, client, css] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
@@ -102,18 +102,32 @@ test("mines deeper five-year pages and builds a real expandable research map", a
   assert.match(monitor, /query\.bibliographic/);
   assert.match(monitor, /horizon\.key === "years" \? 28/);
   assert.match(monitor, /nextOffset = offset \+ rows >= 600 \? 0 : offset \+ rows/);
+  assert.match(monitor, /profile-cluster-\$\{cluster\}/);
+  assert.match(monitor, /sort: horizon\.key === "days" \? "published"/);
+  assert.match(monitor, /discovery_round = discovery_round \+ 1/);
+  assert.match(monitor, /Existing research-map directions/);
+  assert.match(monitor, /INSERT OR IGNORE INTO research_track_papers/);
   assert.match(mapRoute, /MODEL = "deepseek-v4-pro"/);
   assert.match(mapRoute, /Foundation = field-defining concepts or methods/);
   assert.match(mapRoute, /action\?: "initialize" \| "expand"/);
   assert.match(mapRoute, /INSERT OR IGNORE INTO research_track_papers/);
+  assert.match(mapRoute, /structureExistingTracks/);
+  assert.match(mapRoute, /research_track_edges/);
+  assert.match(mapRoute, /userRole \(core\|support\|explore\)/);
   assert.match(schema, /researchTracks/);
   assert.match(schema, /researchTrackPapers/);
+  assert.match(schema, /researchTrackEdges/);
   assert.match(repository, /CREATE TABLE IF NOT EXISTS research_tracks/);
   assert.match(client, /领域发展地图/);
   assert.match(client, /继续填充这条路线/);
+  assert.match(client, /v2-field-network/);
+  assert.match(client, /setResearchDirectionRole/);
+  assert.match(client, /研究深度/);
+  assert.match(client, /辅助价值/);
   assert.doesNotMatch(client, /Gaussian Extremality for Rate-Distortion/);
   assert.match(css, /Focused Today brief \+ real research map/);
   assert.match(css, /\.v2-research-timeline/);
+  assert.match(css, /continuous discovery and growing field graph/);
 });
 
 test("creates immutable public snapshots with live paper links and independent metadata", async () => {

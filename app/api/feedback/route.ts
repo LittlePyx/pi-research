@@ -9,6 +9,17 @@ type FeedbackPayload = {
   value?: boolean;
 };
 
+async function addResearchTrackSignal(database: D1Database, spaceId: string, paperId: string, weight: number) {
+  await database.prepare(
+    `UPDATE research_tracks SET interaction_score = MIN(35, interaction_score + ?), updated_at = CURRENT_TIMESTAMP
+     WHERE space_id = ? AND id IN (
+       SELECT tp.track_id FROM research_track_papers tp
+       JOIN monitored_papers mp ON mp.space_id = tp.space_id AND mp.canonical_id = tp.canonical_id
+       WHERE mp.id = ? AND mp.space_id = ?
+     )`,
+  ).bind(weight, spaceId, paperId, spaceId).run();
+}
+
 export async function POST(request: Request) {
   const user = getApiUser(request);
 
@@ -62,6 +73,7 @@ export async function POST(request: Request) {
        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(space_id, paper_id) DO UPDATE SET opened_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP`,
     ).bind(crypto.randomUUID(), spaceId, paperId).run();
+    await addResearchTrackSignal(DB, spaceId, paperId, 1);
     return NextResponse.json({ ok: true, state: "seen" });
   }
 
@@ -74,6 +86,7 @@ export async function POST(request: Request) {
     ).bind(crypto.randomUUID(), spaceId, paperId, snoozedUntil).run();
     await DB.prepare("UPDATE paper_feedback SET saved = 0, feedback = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
       .bind(spaceId, paperId).run();
+    await addResearchTrackSignal(DB, spaceId, paperId, 1);
     return NextResponse.json({ ok: true, state: "snoozed", snoozedUntil });
   }
 
@@ -115,6 +128,7 @@ export async function POST(request: Request) {
   if (body.value) {
     await DB.prepare("UPDATE paper_delivery_state SET snoozed_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
       .bind(spaceId, paperId).run();
+    if (kind === "save" || kind === "relevant") await addResearchTrackSignal(DB, spaceId, paperId, kind === "relevant" ? 5 : 3);
   }
 
   return NextResponse.json({ ok: true, state: body.value ? kind === "not_relevant" ? "dismissed" : "accepted" : "pending" });

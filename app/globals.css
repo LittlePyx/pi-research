@@ -2233,6 +2233,77 @@ main { min-width: 0; }
   .v2-library-paper-main footer b { width: 100%; margin-left: 0; }
 }
 
+/* Pi Research V9 — continuous discovery and growing field graph */
+.v2-field-network { margin-top: 31px; padding: 25px; border: 1px solid #d0d9d2; border-radius: 15px; background: rgba(255,255,255,.46); }
+.v2-network-root { width: min(520px, 82%); margin: 0 auto 34px; padding: 17px 20px; border: 1px solid #9fb6a8; border-radius: 12px; background: #edf3ef; display: flex; gap: 14px; align-items: center; text-align: left; }
+.v2-network-root > span { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 auto; border-radius: 50%; background: #244f3d; color: white; font: 21px Georgia, serif; }
+.v2-network-root small { color: #6b776f; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.v2-network-root strong { display: block; margin-top: 3px; color: #294638; font: 500 20px Georgia, serif; }
+.v2-network-root p { margin: 4px 0 0; color: #718078; font-size: 12px; line-height: 1.45; }
+.v2-network-branches { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 17px; padding-top: 27px; }
+.v2-network-branches::before { content: ""; position: absolute; top: 0; left: 12.5%; right: 12.5%; height: 1px; background: #bfcfc4; }
+.v2-network-branches::after { content: ""; position: absolute; top: -34px; left: 50%; width: 1px; height: 34px; background: #bfcfc4; }
+.v2-network-node { position: relative; min-height: 304px; padding: 19px; border: 1px solid #d2dbd4; border-radius: 12px; background: rgba(255,255,255,.75); display: flex; flex-direction: column; }
+.v2-network-node::before { content: ""; position: absolute; top: -28px; left: 50%; width: 1px; height: 27px; background: #bfcfc4; }
+.v2-network-node.core { border-color: #8eab99; box-shadow: inset 3px 0 #4f765f; }
+.v2-network-node.support { border-color: #c9b9a5; box-shadow: inset 3px 0 #a77451; }
+.v2-network-node.explore { box-shadow: inset 3px 0 #718ba0; }
+.v2-network-node > header { display: flex; align-items: center; gap: 8px; color: #8a938c; font-size: 10px; }
+.v2-network-node > header > b { padding: 4px 7px; border-radius: 999px; background: #e5eee8; color: #40614f; font-size: 10px; }
+.v2-network-node.support > header > b { background: #f2eae3; color: #85583c; }
+.v2-network-node.explore > header > b { background: #e8eef2; color: #4d6c81; }
+.v2-network-node > header > small { margin-left: auto; }
+.v2-network-node-main { padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.v2-network-node-main h2 { margin: 17px 0 8px; font: 500 23px/1.25 Georgia, serif; }
+.v2-network-node-main p { display: -webkit-box; margin: 0; overflow: hidden; color: #667169; font-size: 13px; line-height: 1.6; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.v2-direction-signals { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+.v2-direction-signals > span { display: grid; grid-template-columns: 1fr auto; gap: 5px 8px; align-items: center; }
+.v2-direction-signals small { color: #778179; font-size: 10px; }
+.v2-direction-signals i { grid-column: 1; height: 5px; overflow: hidden; border-radius: 4px; background: #e1e7e2; }
+.v2-direction-signals i b { display: block; height: 100%; border-radius: inherit; background: #547864; }
+.v2-direction-signals > span:last-child i b { background: #a77451; }
+.v2-direction-signals strong { grid-column: 2; grid-row: 1 / span 2; color: #59655e; font: 500 15px Georgia, serif; }
+.v2-direction-role-control { display: flex; gap: 4px; margin-top: 16px; }
+.v2-direction-role-control button { min-height: 29px; padding: 0 9px; border: 1px solid #d7ddd8; border-radius: 999px; background: transparent; color: #778179; font-size: 10px; cursor: pointer; }
+.v2-direction-role-control button.active { border-color: #789482; background: #e8f0eb; color: #365544; font-weight: 800; }
+.v2-direction-role-control button:disabled { opacity: .55; }
+.v2-network-node > footer { display: flex; gap: 7px; margin-top: auto; padding-top: 16px; }
+.v2-network-node > footer button { min-height: 35px; padding: 0 11px; border: 1px solid #cbd6ce; border-radius: 7px; background: transparent; color: #4e6557; font-size: 11px; cursor: pointer; }
+.v2-network-node > footer button:first-child { border-color: #315c48; background: #315c48; color: white; }
+.v2-network-node > footer button:disabled { opacity: .55; cursor: wait; }
+.v2-network-links { margin-top: 26px; display: grid; grid-template-columns: 210px minmax(0,1fr); gap: 24px; }
+.v2-network-links h2 { margin: 7px 0 0; font: 500 20px Georgia, serif; }
+.v2-network-links > div { display: grid; gap: 8px; }
+.v2-network-links button { display: grid; grid-template-columns: minmax(120px,.8fr) 24px minmax(120px,.8fr) minmax(180px,1.2fr) 28px; gap: 9px; align-items: center; padding: 12px 14px; border: 1px solid #d5dcd7; border-radius: 8px; background: rgba(255,255,255,.52); color: #4f5b53; text-align: left; cursor: pointer; }
+.v2-network-links button > span { font: 500 13px Georgia, serif; }
+.v2-network-links button > i { color: #537462; font-style: normal; text-align: center; }
+.v2-network-links button > small { color: #748078; font-size: 11px; line-height: 1.45; }
+.v2-network-links button > b { color: #8b938d; font: 500 13px Georgia, serif; }
+.v2-direction-profile { display: grid; grid-template-columns: 220px minmax(0,1fr) auto; gap: 25px; align-items: center; margin-top: 19px; padding: 15px 17px; border: 1px solid #cfd9d1; border-radius: 10px; background: #edf3ef; }
+.v2-direction-profile > div:first-child span { display: inline-block; margin-right: 9px; padding: 4px 8px; border-radius: 999px; background: #476f59; color: white; font-size: 10px; font-weight: 800; }
+.v2-direction-profile > div:first-child strong { color: #4d5d53; font-size: 12px; }
+.v2-direction-profile.support { background: #f3eee8; }
+.v2-direction-profile.support > div:first-child span { background: #9a6747; }
+.v2-direction-profile.explore { background: #edf2f5; }
+.v2-direction-profile.explore > div:first-child span { background: #58778c; }
+.v2-direction-profile .v2-direction-signals, .v2-direction-profile .v2-direction-role-control { margin-top: 0; }
+
+@media (max-width: 920px) {
+  .v2-network-branches { grid-template-columns: 1fr; }
+  .v2-network-branches::before { left: 50%; right: auto; width: 1px; height: 100%; }
+  .v2-network-node::before { left: -28px; top: 50%; width: 27px; height: 1px; }
+  .v2-network-links { grid-template-columns: 1fr; }
+  .v2-direction-profile { grid-template-columns: 1fr; gap: 13px; }
+}
+
+@media (max-width: 620px) {
+  .v2-field-network { padding: 17px 13px; }
+  .v2-network-root { width: 100%; }
+  .v2-network-branches { padding-left: 13px; }
+  .v2-network-links button { grid-template-columns: 1fr 20px 1fr 25px; }
+  .v2-network-links button > small { grid-column: 1 / -1; }
+}
+
 /* Pi Research V8 — official product and P&I Lab branding */
 .v2-logo > span.v2-product-mark {
   width: 41px;

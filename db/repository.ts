@@ -53,6 +53,24 @@ async function ensurePaperInsightReviewColumns(database: D1Database) {
   }
 }
 
+async function ensureGrowthMapColumns(database: D1Database) {
+  const monitorColumns = await database.prepare("PRAGMA table_info(monitor_runs)").all<{ name: string }>();
+  if (!new Set(monitorColumns.results.map((column) => column.name)).has("discovery_round")) {
+    await database.prepare("ALTER TABLE monitor_runs ADD COLUMN discovery_round INTEGER NOT NULL DEFAULT 0").run();
+  }
+  const trackColumns = await database.prepare("PRAGMA table_info(research_tracks)").all<{ name: string }>();
+  const existing = new Set(trackColumns.results.map((column) => column.name));
+  const additions = [
+    { name: "user_role", sql: "ALTER TABLE research_tracks ADD COLUMN user_role TEXT NOT NULL DEFAULT 'explore'" },
+    { name: "depth_score", sql: "ALTER TABLE research_tracks ADD COLUMN depth_score INTEGER NOT NULL DEFAULT 0" },
+    { name: "support_score", sql: "ALTER TABLE research_tracks ADD COLUMN support_score INTEGER NOT NULL DEFAULT 0" },
+    { name: "interaction_score", sql: "ALTER TABLE research_tracks ADD COLUMN interaction_score INTEGER NOT NULL DEFAULT 0" },
+  ];
+  for (const addition of additions) {
+    if (!existing.has(addition.name)) await database.prepare(addition.sql).run();
+  }
+}
+
 export async function ensureSchema(database = getDatabase()) {
   await database.batch([
     database.prepare("CREATE TABLE IF NOT EXISTS research_spaces (id TEXT PRIMARY KEY NOT NULL, owner_user_id TEXT NOT NULL, name TEXT NOT NULL, member_name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', accent TEXT NOT NULL DEFAULT 'blue', preferred_locale TEXT NOT NULL DEFAULT 'zh', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
@@ -67,7 +85,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS ai_usage_daily (id TEXT PRIMARY KEY NOT NULL, scope TEXT NOT NULL, usage_date TEXT NOT NULL, request_count INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_usage_daily_scope_date ON ai_usage_daily(scope, usage_date)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_ai_usage_daily_date ON ai_usage_daily(usage_date)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', last_run_at TEXT, next_run_at TEXT, new_count INTEGER NOT NULL DEFAULT 0, scanned_count INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', last_run_at TEXT, next_run_at TEXT, new_count INTEGER NOT NULL DEFAULT 0, scanned_count INTEGER NOT NULL DEFAULT 0, discovery_round INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_runs_space ON monitor_runs(space_id)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_discovery_pages (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, horizon TEXT NOT NULL, query_key TEXT NOT NULL, next_offset INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_discovery_space_horizon_query ON monitor_discovery_pages(space_id, horizon, query_key)"),
@@ -87,13 +105,17 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS research_imports (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, source_kind TEXT NOT NULL, file_names TEXT NOT NULL DEFAULT '[]', content_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', safety_attested INTEGER NOT NULL DEFAULT 0, analysis_json TEXT NOT NULL, analysis_model TEXT NOT NULL DEFAULT '', input_chars INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, confirmed_at TEXT)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_imports_space_hash ON research_imports(space_id, content_hash)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_imports_space_status_created ON research_imports(space_id, status, created_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS research_tracks (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', search_queries TEXT NOT NULL DEFAULT '[]', position INTEGER NOT NULL DEFAULT 0, expansion_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_tracks (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', search_queries TEXT NOT NULL DEFAULT '[]', position INTEGER NOT NULL DEFAULT 0, expansion_count INTEGER NOT NULL DEFAULT 0, user_role TEXT NOT NULL DEFAULT 'explore', depth_score INTEGER NOT NULL DEFAULT 0, support_score INTEGER NOT NULL DEFAULT 0, interaction_score INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_tracks_space_position ON research_tracks(space_id, position)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_track_edges (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, source_track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, target_track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, kind TEXT NOT NULL DEFAULT 'builds_on', relationship_zh TEXT NOT NULL DEFAULT '', relationship_en TEXT NOT NULL DEFAULT '', strength INTEGER NOT NULL DEFAULT 50, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_track_edges_pair_kind ON research_track_edges(source_track_id, target_track_id, kind)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_research_track_edges_space ON research_track_edges(space_id)"),
     database.prepare("CREATE TABLE IF NOT EXISTS research_track_papers (id TEXT PRIMARY KEY NOT NULL, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, canonical_id TEXT NOT NULL, doi TEXT, title TEXT NOT NULL, authors TEXT NOT NULL DEFAULT '', venue TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', published_at TEXT, citation_count INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_track_papers_track_canonical ON research_track_papers(track_id, canonical_id)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_track_papers_track_position ON research_track_papers(track_id, position)"),
   ]);
   await ensurePaperInsightReviewColumns(database);
+  await ensureGrowthMapColumns(database);
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_recommended_quality ON paper_insights(space_id, llm_recommended, quality_score)").run();
   await database.prepare("PRAGMA optimize").run();
 }
