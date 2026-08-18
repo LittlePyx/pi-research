@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import type { ResearchDirectionRole, ResearchMapState, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../lib/research-map";
+import type { LearningPathState, LearningPathStep, LearningStepKind } from "../lib/learning-path";
 
 type Locale = "zh" | "en";
 type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
@@ -531,37 +532,6 @@ const fallbackSpaces: Space[] = [
   { id: "space-ml-reading", name: "ML Reading", memberName: "Sarah", description: "Foundation models, efficient learning, and generative compression", accent: "sage" },
 ];
 
-const pathItems = [
-  {
-    stage: "01",
-    label: { zh: "先修知识", en: "Prerequisites" },
-    title: "Stochastic Differential Equations — selected notes",
-    why: { zh: "只补齐进入动态表述所缺的一块基础。", en: "Fills the one gap needed for the dynamic formulation." },
-    read: { zh: "弱解与 Girsanov 定理", en: "Weak solutions and Girsanov's theorem" },
-  },
-  {
-    stage: "02",
-    label: { zh: "第一篇", en: "First read" },
-    title: "Schrödinger’s Problem and Entropic Transport",
-    why: { zh: "与你已有的最优传输背景衔接最直接。", en: "The shortest bridge from your optimal transport background." },
-    read: { zh: "第 1–3 节", en: "Sections 1–3" },
-  },
-  {
-    stage: "03",
-    label: { zh: "现代框架", en: "Modern formulation" },
-    title: "Entropic Interpolations and Displacement Convexity",
-    why: { zh: "把概率表述与你熟悉的几何结构连接起来。", en: "Connects the probabilistic view to geometry you already know." },
-    read: { zh: "引言与第 3–4 节", en: "Introduction and Sections 3–4" },
-  },
-  {
-    stage: "04",
-    label: { zh: "研究前沿", en: "Current frontier" },
-    title: "Mean-Field Schrödinger Problems: A Survey",
-    why: { zh: "用一篇综述定位 2026 年的开放问题与活跃簇。", en: "Maps open questions and active clusters in 2026." },
-    read: { zh: "第 1、6、7 节", en: "Sections 1, 6, and 7" },
-  },
-];
-
 function initials(value: string) {
   return value.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 }
@@ -622,6 +592,23 @@ function directionRoleLabel(role: ResearchDirectionRole, locale: Locale) {
     explore: { zh: "探索", en: "Explore" },
   };
   return labels[role][locale];
+}
+
+function learningKindLabel(kind: LearningStepKind, locale: Locale) {
+  const labels: Record<LearningStepKind, Localized> = {
+    prerequisite: { zh: "必要先修", en: "Prerequisite" },
+    foundation: { zh: "奠基工作", en: "Foundation" },
+    method: { zh: "方法进阶", en: "Methods" },
+    frontier: { zh: "研究前沿", en: "Frontier" },
+    project: { zh: "独立研究", en: "Research exercise" },
+  };
+  return labels[kind][locale];
+}
+
+function learningTime(minutes: number, locale: Locale) {
+  if (minutes < 60) return locale === "zh" ? `${minutes} 分钟` : `${minutes} min`;
+  const hours = Math.round(minutes / 6) / 10;
+  return locale === "zh" ? `约 ${hours} 小时` : `≈ ${hours} h`;
 }
 
 function researchPaperYear(paper: ResearchTrackPaper) {
@@ -834,6 +821,10 @@ export default function ResearchApp({ user }: { user: User }) {
   const [selectedThread, setSelectedThread] = useState<ResearchTrack | null>(null);
   const [mapLoading, setMapLoading] = useState(false);
   const [mapAction, setMapAction] = useState<string | null>(null);
+  const [learningState, setLearningState] = useState<LearningPathState>({ path: null, suggestedTarget: "", availablePaperCount: 0, model: "deepseek-v4-pro" });
+  const [learningTarget, setLearningTarget] = useState("");
+  const [learningLoading, setLearningLoading] = useState(false);
+  const [learningAction, setLearningAction] = useState<string | null>(null);
   const [modelConfigured, setModelConfigured] = useState(false);
   const [connectedModel, setConnectedModel] = useState<string | null>(null);
   const [askOpen, setAskOpen] = useState(false);
@@ -1053,6 +1044,30 @@ export default function ResearchApp({ user }: { user: User }) {
     };
     void load();
     return () => { cancelled = true; };
+  }, [activeSpace.id, locale, view]);
+
+  useEffect(() => {
+    if (view !== "learn" || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLearningLoading(true);
+      fetch("/api/learning-path?spaceId=" + encodeURIComponent(activeSpace.id))
+        .then(async (response) => {
+          const data = await response.json() as LearningPathState & { error?: string };
+          if (!response.ok) throw new Error(data.error || "learning path unavailable");
+          return data;
+        })
+        .then((data) => {
+          if (cancelled) return;
+          setLearningState(data);
+          setLearningTarget(data.path?.target || data.suggestedTarget);
+        })
+        .catch(() => {
+          if (!cancelled) setToast(locale === "zh" ? "学习路径暂时无法载入" : "The learning path could not be loaded");
+        })
+        .finally(() => { if (!cancelled) setLearningLoading(false); });
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [activeSpace.id, locale, view]);
 
   useEffect(() => {
@@ -1542,6 +1557,48 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
+  const generateLearningPath = async () => {
+    if (learningAction || !learningTarget.trim() || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    setLearningAction("generate");
+    try {
+      const response = await fetch("/api/learning-path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, target: learningTarget.trim() }),
+      });
+      const data = await response.json() as LearningPathState & { error?: string };
+      if (!response.ok || !data.path) throw new Error(data.error || "path generation failed");
+      setLearningState(data);
+      setLearningTarget(data.path.target);
+      setToast(locale === "zh" ? `已用 ${data.availablePaperCount} 篇真实论文构建学习路径` : `Built from ${data.availablePaperCount} real papers`);
+    } catch (error) {
+      setToast(error instanceof Error && error.message ? error.message : locale === "zh" ? "学习路径生成失败，请稍后重试" : "Could not build the learning path");
+    } finally {
+      setLearningAction(null);
+    }
+  };
+
+  const updateLearningStep = async (step: LearningPathStep) => {
+    const path = learningState.path;
+    if (!path || learningAction) return;
+    setLearningAction(step.id);
+    try {
+      const response = await fetch("/api/learning-path", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, pathId: path.id, stepId: step.id, completed: step.status !== "completed" }),
+      });
+      const data = await response.json() as LearningPathState & { error?: string };
+      if (!response.ok || !data.path) throw new Error(data.error || "progress update failed");
+      setLearningState(data);
+      setToast(step.status === "completed" ? (locale === "zh" ? "已恢复为待学习" : "Returned to the learning queue") : (locale === "zh" ? "进度已保存到当前研究空间" : "Progress saved to this research space"));
+    } catch {
+      setToast(locale === "zh" ? "学习进度暂时无法保存" : "Could not save learning progress");
+    } finally {
+      setLearningAction(null);
+    }
+  };
+
   const navItems: Array<{ id: View; label: string; mark: string }> = [
     { id: "today", label: t.today, mark: "01" },
     { id: "threads", label: t.threads, mark: "02" },
@@ -1728,13 +1785,21 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "learn" && (
           <main className="v2-page v2-learn-page">
-            <section className="v2-learn-head"><p className="v2-kicker">RAMP UP · {defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.learnTitle}</h1><p>{t.learnIntro}</p><div><input defaultValue={locale === "zh" ? "薛定谔桥" : "Schrödinger Bridge"} aria-label={t.learnTitle} /><button type="button" onClick={() => setToast(locale === "zh" ? "学习路径已根据当前空间生成" : "Learning path generated from this space")}>{t.buildPath} →</button></div></section>
-            <section className="v2-learning-path"><div className="v2-section-title"><div><p className="v2-kicker">{t.suggested}</p><h2>{locale === "zh" ? "薛定谔桥：从最优传输到研究前沿" : "Schrödinger Bridge: from OT to the frontier"}</h2></div><span>≈ 9.5 h</span></div>
-              {pathItems.map((item, index) => (
-                <article key={item.stage}><div className="v2-path-marker"><span>{item.stage}</span>{index < pathItems.length - 1 && <i />}</div><div><p>{item.label[locale]}</p><h3>{item.title}</h3><div><span><b>{t.whyRead}</b>{item.why[locale]}</span><span><b>{t.readSections}</b>{item.read[locale]}</span></div></div><button type="button">○</button></article>
-              ))}
-              <button className="v2-start-path" type="button" onClick={() => setToast(locale === "zh" ? "学习进度将写入当前空间" : "Progress will be saved to this space")}>{t.startPath} →</button>
-            </section>
+            <section className="v2-learn-head"><p className="v2-kicker">PERSONAL RAMP-UP · {defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.learnTitle}</h1><p>{t.learnIntro}</p><div><input value={learningTarget} onChange={(event) => setLearningTarget(event.target.value)} placeholder={learningState.suggestedTarget || (locale === "zh" ? "输入想进入的方向" : "Enter a research direction")} aria-label={t.learnTitle} /><button type="button" onClick={() => void generateLearningPath()} disabled={Boolean(learningAction) || learningLoading || !learningTarget.trim()}>{learningAction === "generate" ? (locale === "zh" ? "Pi 正在规划…" : "Pi is planning…") : learningState.path ? (locale === "zh" ? "重新规划" : "Rebuild") : t.buildPath} →</button></div><small>{locale === "zh" ? `可使用 ${learningState.availablePaperCount} 篇当前空间的真实论文；Pi 会跳过你已经掌握的部分。` : `${learningState.availablePaperCount} real papers are available in this space; Pi will skip what you already know.`}</small></section>
+            {learningLoading ? <section className="v2-learning-loading" role="status"><span>π</span><div><strong>{locale === "zh" ? "正在读取你的研究基础" : "Reading your research foundation"}</strong><p>{locale === "zh" ? "核对研究画像、方向深度与已收录论文。" : "Checking your research profile, direction depth, and collected papers."}</p><i><b /></i></div></section> : learningState.path ? (
+              <section className="v2-learning-path">
+                <header className="v2-learning-summary"><div><p className="v2-kicker">{t.suggested} · {modelDisplayName(learningState.path.model)}</p><h2>{locale === "zh" ? learningState.path.titleZh : learningState.path.titleEn}</h2><p>{locale === "zh" ? learningState.path.rationaleZh : learningState.path.rationaleEn}</p></div><div><strong>{learningState.path.completedSteps}<small>/{learningState.path.steps.length}</small></strong><span>{locale === "zh" ? "阶段完成" : "stages complete"}</span><i><b style={{ width: `${learningState.path.steps.length ? Math.round(learningState.path.completedSteps / learningState.path.steps.length * 100) : 0}%` }} /></i><small>{learningTime(learningState.path.estimatedMinutes, locale)}</small></div></header>
+                <div className="v2-learning-stages">
+                  {learningState.path.steps.map((step, index) => (
+                    <article className={`${step.status} ${step.kind}`} key={step.id}>
+                      <div className="v2-path-marker"><button type="button" onClick={() => void updateLearningStep(step)} disabled={Boolean(learningAction)} aria-label={step.status === "completed" ? (locale === "zh" ? "恢复这一阶段" : "Restore this stage") : (locale === "zh" ? "标记这一阶段完成" : "Mark this stage complete")}>{step.status === "completed" ? "✓" : String(index + 1).padStart(2, "0")}</button>{index < learningState.path!.steps.length - 1 && <i />}</div>
+                      <div className="v2-learning-stage-body"><header><span>{learningKindLabel(step.kind, locale)}</span><small>{learningTime(step.estimatedMinutes, locale)}</small>{step.status === "active" && <b>{locale === "zh" ? "当前阶段" : "Now"}</b>}</header><h3>{locale === "zh" ? step.titleZh : step.titleEn}</h3><p className="v2-learning-goal">{locale === "zh" ? step.goalZh : step.goalEn}</p><div className="v2-learning-guidance"><p><b>{locale === "zh" ? "为什么现在学" : "Why now"}</b>{locale === "zh" ? step.whyZh : step.whyEn}</p><p><b>{locale === "zh" ? "阅读重点" : "Reading focus"}</b>{locale === "zh" ? step.readFocusZh : step.readFocusEn}</p><p><b>{locale === "zh" ? "完成检查" : "Checkpoint"}</b>{locale === "zh" ? step.checkpointZh : step.checkpointEn}</p></div><div className="v2-learning-resources"><small>{locale === "zh" ? "真实学习材料" : "Real reading materials"}</small>{step.resources.map((resource) => <a key={resource.id} href={resource.url || "#"} target="_blank" rel="noreferrer"><span><strong>{resource.title}</strong><small>{[resource.authors, resource.venue, resource.publishedAt?.slice(0, 4)].filter(Boolean).join(" · ")}</small></span><b>↗</b></a>)}</div></div>
+                    </article>
+                  ))}
+                </div>
+                <footer className="v2-learning-footer"><span>{locale === "zh" ? "完成阶段会保存进度，并加深对应研究方向的用户信号。" : "Completing a stage saves progress and strengthens the corresponding direction signal."}</span><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "查看领域地图" : "Open field map"} →</button></footer>
+              </section>
+            ) : <section className="v2-learning-empty"><span>◎</span><h2>{locale === "zh" ? "还没有真实学习路径" : "No real learning path yet"}</h2><p>{learningState.availablePaperCount >= 3 ? (locale === "zh" ? "输入一个研究方向，Pi 会结合研究画像、方向深度和真实论文生成路径，不会填充演示内容。" : "Enter a direction and Pi will build a path from your profile, direction depth, and real papers—without demo content.") : (locale === "zh" ? "当前空间的真实论文还不够。先完成扫描或在领域地图中继续深挖，再回来构建路径。" : "This space does not have enough real papers yet. Scan or deepen the field map first.")}</p>{learningState.availablePaperCount < 3 && <button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "去深挖研究路线" : "Mine the research map"} →</button>}</section>}
           </main>
         )}
 

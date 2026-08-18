@@ -305,3 +305,53 @@ export const researchTrackPapers = sqliteTable(
     index("idx_research_track_papers_track_position").on(table.trackId, table.position),
   ],
 );
+
+export const learningPaths = sqliteTable(
+  "learning_paths",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    target: text("target").notNull(),
+    titleZh: text("title_zh").notNull(),
+    titleEn: text("title_en").notNull(),
+    rationaleZh: text("rationale_zh").notNull().default(""),
+    rationaleEn: text("rationale_en").notNull().default(""),
+    status: text("status").notNull().default("draft"),
+    analysisModel: text("analysis_model").notNull().default(""),
+    estimatedMinutes: integer("estimated_minutes").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [index("idx_learning_paths_space_updated").on(table.spaceId, table.updatedAt)],
+);
+
+export const learningPathSteps = sqliteTable(
+  "learning_path_steps",
+  {
+    id: text("id").primaryKey(),
+    pathId: text("path_id").notNull().references(() => learningPaths.id, { onDelete: "cascade" }),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull().default("foundation"),
+    titleZh: text("title_zh").notNull(),
+    titleEn: text("title_en").notNull(),
+    goalZh: text("goal_zh").notNull().default(""),
+    goalEn: text("goal_en").notNull().default(""),
+    whyZh: text("why_zh").notNull().default(""),
+    whyEn: text("why_en").notNull().default(""),
+    readFocusZh: text("read_focus_zh").notNull().default(""),
+    readFocusEn: text("read_focus_en").notNull().default(""),
+    checkpointZh: text("checkpoint_zh").notNull().default(""),
+    checkpointEn: text("checkpoint_en").notNull().default(""),
+    estimatedMinutes: integer("estimated_minutes").notNull().default(0),
+    status: text("status").notNull().default("pending"),
+    position: integer("position").notNull().default(0),
+    resourcesJson: text("resources_json").notNull().default("[]"),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    index("idx_learning_path_steps_path_position").on(table.pathId, table.position),
+    index("idx_learning_path_steps_space_status").on(table.spaceId, table.status),
+  ],
+);

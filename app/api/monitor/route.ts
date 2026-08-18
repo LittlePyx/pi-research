@@ -107,7 +107,7 @@ const HORIZONS = [
   { key: "days" as const, daysFrom: 14, daysUntil: 0, sort: "relevance" },
   { key: "months" as const, daysFrom: 180, daysUntil: 15, sort: "relevance" },
   { key: "years" as const, daysFrom: 365 * 5, daysUntil: 181, sort: "is-referenced-by-count" },
-];
+] as const;
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse("2026-08-18T09:03:00.000Z");
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 200;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 20;

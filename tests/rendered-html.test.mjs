@@ -130,6 +130,39 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /continuous discovery and growing field graph/);
 });
 
+test("builds persistent personalized learning paths from real research papers", async () => {
+  const [route, schema, repository, client, css] = await Promise.all([
+    readFile(new URL("../app/api/learning-path/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(route, /MODEL = "deepseek-v4-pro"/);
+  assert.match(route, /Use only the supplied real paper IDs/);
+  assert.match(route, /research_track_papers/);
+  assert.match(route, /i\.llm_recommended = 1/);
+  assert.match(route, /confirmedResearchMemory/);
+  assert.match(route, /resourceIds: \["exact supplied id"\]/);
+  assert.match(route, /INSERT INTO learning_paths/);
+  assert.match(route, /INSERT INTO learning_path_steps/);
+  assert.match(route, /status = 'superseded'/);
+  assert.match(route, /interaction_score = MIN\(100, interaction_score \+ 2\)/);
+  assert.match(schema, /learningPaths/);
+  assert.match(schema, /learningPathSteps/);
+  assert.match(repository, /CREATE TABLE IF NOT EXISTS learning_paths/);
+  assert.match(repository, /idx_learning_path_steps_path_position/);
+  assert.match(client, /generateLearningPath/);
+  assert.match(client, /updateLearningStep/);
+  assert.match(client, /真实学习材料/);
+  assert.match(client, /完成检查/);
+  assert.doesNotMatch(client, /Schrödinger’s Problem and Entropic Transport/);
+  assert.doesNotMatch(client, /Mean-Field Schrödinger Problems: A Survey/);
+  assert.match(css, /grounded, persistent learning paths/);
+  assert.match(css, /\.v2-learning-resources/);
+});
+
 test("creates immutable public snapshots with live paper links and independent metadata", async () => {
   const [route, snapshotStore, sharePage, shareActions, client, css] = await Promise.all([
     readFile(new URL("../app/api/shares/route.ts", import.meta.url), "utf8"),
