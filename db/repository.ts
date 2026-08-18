@@ -23,27 +23,20 @@ export function getDatabase(): D1Database {
 }
 
 export function getApiUser(request: Request): ApiUser | null {
-  const userId = request.headers.get("oai-authenticated-user-id");
-  const email = request.headers.get("oai-authenticated-user-email");
-  if (userId && email) {
-    const encodedName = request.headers.get("oai-authenticated-user-full-name");
-    const encoding = request.headers.get("oai-authenticated-user-full-name-encoding");
-    let displayName = email;
-    if (encodedName && encoding === "percent-encoded-utf-8") {
-      try {
-        displayName = decodeURIComponent(encodedName);
-      } catch {
-        displayName = email;
-      }
-    }
-    return { userId, email, displayName };
-  }
+  const cookie = request.headers.get("cookie") ?? "";
+  const workspaceEntry = cookie
+    .split(";")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith("pi_anonymous_workspace="));
+  const workspaceId = workspaceEntry?.slice("pi_anonymous_workspace=".length);
 
-  const hostname = new URL(request.url).hostname;
-  if (hostname === "localhost" || hostname === "127.0.0.1") {
-    return { userId: "local-demo-user", email: "demo@pi.local", displayName: "Yilin" };
-  }
-  return null;
+  if (!workspaceId || !/^[a-zA-Z0-9-]{20,64}$/.test(workspaceId)) return null;
+
+  return {
+    userId: "anonymous:" + workspaceId,
+    email: "",
+    displayName: "Researcher",
+  };
 }
 
 export async function ensureSchema(database = getDatabase()) {

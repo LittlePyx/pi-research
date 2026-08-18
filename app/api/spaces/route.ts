@@ -45,7 +45,7 @@ function toSpace(row: SpaceRow) {
 
 export async function GET(request: Request) {
   const user = getApiUser(request);
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  if (!user) return Response.json({ error: "Anonymous workspace is not initialized" }, { status: 401 });
 
   try {
     const database = getDatabase();
@@ -78,7 +78,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const user = getApiUser(request);
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  if (!user) return Response.json({ error: "Anonymous workspace is not initialized" }, { status: 401 });
 
   try {
     const payload = await request.json() as {

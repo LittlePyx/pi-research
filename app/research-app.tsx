@@ -54,9 +54,9 @@ const copy = {
     isolated: "数据与其他方向隔离",
     askPlaceholder: "向 Pi 提问，或搜索当前研究空间",
     askPi: "询问 Pi",
-    connected: "OpenAI 已连接",
-    setupRequired: "OpenAI 待配置",
-    signedInWith: "OpenAI 账户",
+    connected: "AI 模型已连接",
+    setupRequired: "AI 模型待配置",
+    workspaceLabel: "匿名浏览器工作区",
     todayDate: "2026 年 8 月 18 日 · 星期二",
     goodMorning: "早上好",
     reviewed: "Pi 已审阅 1,248 篇新论文",
@@ -121,7 +121,7 @@ const copy = {
     preferenceMemory: "偏好记忆",
     isolationBoundary: "空间隔离边界",
     isolationBody: "当前空间的提问、反馈、论文和偏好只会用于当前方向。切换空间后，Pi 会加载另一套独立上下文。",
-    accountNote: "同一个 OpenAI 登录可以拥有多个研究空间。若需要人与人之间不可互见的权限隔离，仍建议使用不同 OpenAI 账户。",
+    accountNote: "无需登录。数据通过此浏览器的匿名工作区保存；清除浏览器数据后会生成一个新的工作区。",
     paperBack: "返回今日简报",
     recommendation: "推荐判断",
     coreContribution: "核心贡献",
@@ -129,7 +129,7 @@ const copy = {
     suggestedReading: "如果只有 20 分钟",
     askAboutPaper: "围绕这篇论文提问",
     spaceDialogTitle: "你的研究空间",
-    spaceDialogIntro: "每个空间都是一套独立的 Pi Research。成员名称用于区分共用账户下的不同使用者。",
+    spaceDialogIntro: "每个空间代表一个独立研究方向，记忆和回答不会与其他方向混用。",
     threadsCount: "条研究线索",
     papersCount: "篇论文",
     createSpaceTitle: "创建独立研究空间",
@@ -144,11 +144,11 @@ const copy = {
     send: "发送",
     thinking: "Pi 正在结合研究记忆分析",
     previewMode: "安全预览",
-    modelAnswer: "OpenAI 实时回答",
+    modelAnswer: "AI 实时回答",
     askExample: "最近哪些工作改变了高斯极值问题的核心假设？",
     close: "关闭",
     feedbackSaved: "已写入当前研究空间的记忆",
-    profile: "账户与设置",
+    profile: "工作区与设置",
     signOut: "退出",
   },
   en: {
@@ -166,9 +166,9 @@ const copy = {
     isolated: "Data is isolated from other directions",
     askPlaceholder: "Ask Pi or search this research space",
     askPi: "Ask Pi",
-    connected: "OpenAI connected",
-    setupRequired: "OpenAI setup required",
-    signedInWith: "OpenAI account",
+    connected: "AI model connected",
+    setupRequired: "AI model setup required",
+    workspaceLabel: "Anonymous browser workspace",
     todayDate: "Tuesday, August 18, 2026",
     goodMorning: "Good morning",
     reviewed: "Pi reviewed 1,248 new papers",
@@ -233,7 +233,7 @@ const copy = {
     preferenceMemory: "Preference memory",
     isolationBoundary: "Space isolation boundary",
     isolationBody: "Questions, feedback, papers, and preferences in this space are used only for this direction. Switching spaces loads a separate context.",
-    accountNote: "One OpenAI login can own several research spaces. For strict person-to-person privacy, separate OpenAI accounts are still recommended.",
+    accountNote: "No sign-in is required. Data is saved through this browser's anonymous workspace; clearing browser data creates a new workspace.",
     paperBack: "Back to today's brief",
     recommendation: "Recommendation",
     coreContribution: "Core contribution",
@@ -241,7 +241,7 @@ const copy = {
     suggestedReading: "If you only have 20 minutes",
     askAboutPaper: "Ask about this paper",
     spaceDialogTitle: "Your research spaces",
-    spaceDialogIntro: "Each space is an isolated Pi Research. Member names distinguish people sharing one account.",
+    spaceDialogIntro: "Each space represents one research direction, with memory and answers kept separate from every other direction.",
     threadsCount: "threads",
     papersCount: "papers",
     createSpaceTitle: "Create an isolated research space",
@@ -256,11 +256,11 @@ const copy = {
     send: "Send",
     thinking: "Pi is analyzing against your research memory",
     previewMode: "Safe preview",
-    modelAnswer: "Live OpenAI answer",
+    modelAnswer: "Live AI answer",
     askExample: "Which recent works changed the core assumptions in Gaussian extremality?",
     close: "Close",
     feedbackSaved: "Saved to this research space's memory",
-    profile: "Account & settings",
+    profile: "Workspace & settings",
     signOut: "Sign out",
   },
 } as const;
@@ -438,6 +438,17 @@ function initials(value: string) {
   return value.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 }
 
+function ensureAnonymousWorkspace() {
+  const storageKey = "pi-anonymous-workspace";
+  let workspaceId = window.localStorage.getItem(storageKey) ?? "";
+  if (!/^[a-zA-Z0-9-]{20,64}$/.test(workspaceId)) {
+    workspaceId = window.crypto.randomUUID();
+    window.localStorage.setItem(storageKey, workspaceId);
+  }
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `pi_anonymous_workspace=${workspaceId}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+}
+
 function defaultSpaceName(name: string, locale: Locale) {
   if (locale === "en") return name;
   const names: Record<string, string> = {
@@ -452,7 +463,7 @@ function PaperBadge({ level, locale }: { level: Paper["level"]; locale: Locale }
   return <span className={"v2-paper-badge " + level}><i />{level === "must" ? copy[locale].mustRead : copy[locale].worthReading}</span>;
 }
 
-export default function ResearchApp({ user, signedIn }: { user: User; signedIn: boolean }) {
+export default function ResearchApp({ user }: { user: User }) {
   const [locale, setLocale] = useState<Locale>("zh");
   const [view, setView] = useState<View>("today");
   const [spaces, setSpaces] = useState<Space[]>(fallbackSpaces);
@@ -482,6 +493,7 @@ export default function ResearchApp({ user, signedIn }: { user: User; signedIn: 
   }, [spaceIndex]);
 
   useEffect(() => {
+    ensureAnonymousWorkspace();
     const hydrationTimer = window.setTimeout(() => {
       const savedLocale = window.localStorage.getItem("pi-locale");
       if (savedLocale === "en" || savedLocale === "zh") setLocale(savedLocale);
@@ -668,8 +680,8 @@ export default function ResearchApp({ user, signedIn }: { user: User; signedIn: 
         </nav>
 
         <div className="v2-sidebar-bottom">
-          <div className={"v2-openai-state " + (openaiConfigured ? "live" : "pending")}><i /><span><strong>{openaiConfigured ? t.connected : t.setupRequired}</strong><small>Responses API · GPT-5.6 Terra</small></span></div>
-          <button className="v2-account" type="button" onClick={() => navigate("memory")}><span>{initials(user.displayName)}</span><span><strong>{user.displayName}</strong><small>{signedIn ? t.signedInWith : "Local preview"}</small></span><b>•••</b></button>
+          <div className={"v2-openai-state " + (openaiConfigured ? "live" : "pending")}><i /><span><strong>{openaiConfigured ? t.connected : t.setupRequired}</strong><small>{openaiConfigured ? "Server model API" : "Safe preview mode"}</small></span></div>
+          <button className="v2-account" type="button" onClick={() => navigate("memory")}><span>◎</span><span><strong>Pi Workspace</strong><small>{t.workspaceLabel}</small></span><b>•••</b></button>
         </div>
       </aside>
 
@@ -840,7 +852,7 @@ export default function ResearchApp({ user, signedIn }: { user: User; signedIn: 
         <div className="v2-modal" role="dialog" aria-modal="true" aria-label={t.spaceDialogTitle}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)} />
           <div className="v2-space-modal">
-            <div className="v2-modal-head"><div><p className="v2-kicker">{t.signedInWith} · {user.email}</p><h2>{t.spaceDialogTitle}</h2><p>{t.spaceDialogIntro}</p></div><button type="button" onClick={() => setSpaceDialog(false)}>×</button></div>
+            <div className="v2-modal-head"><div><p className="v2-kicker">{t.workspaceLabel}</p><h2>{t.spaceDialogTitle}</h2><p>{t.spaceDialogIntro}</p></div><button type="button" onClick={() => setSpaceDialog(false)}>×</button></div>
             <div className="v2-space-list">
               {spaces.map((space, index) => (
                 <button type="button" key={space.id} className={space.id === activeSpace.id ? "active" : ""} onClick={() => switchSpace(space)}>
