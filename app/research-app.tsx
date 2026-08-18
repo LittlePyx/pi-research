@@ -37,6 +37,34 @@ type Thread = {
   updates: Localized;
   priority: "high" | "medium" | "low";
 };
+type MonitorPaper = {
+  id: string;
+  doi: string | null;
+  title: string;
+  authors: string;
+  venue: string;
+  url: string;
+  publishedAt: string | null;
+  horizon: "days" | "months" | "years";
+  citationCount: number;
+  relevanceScore: number;
+  discoveredAt: string;
+};
+type MonitorState = {
+  status: "idle" | "scanning" | "ready" | "error";
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  newCount: number;
+  scannedCount: number;
+  knownCount: number;
+  error: string | null;
+  cadenceHours: number;
+  source: string;
+  horizons: string[];
+  papers: MonitorPaper[];
+  cached?: boolean;
+  throttled?: boolean;
+};
 
 const copy = {
   zh: {
@@ -59,10 +87,10 @@ const copy = {
     workspaceLabel: "匿名浏览器工作区",
     todayDate: "2026 年 8 月 18 日 · 星期二",
     goodMorning: "早上好",
-    reviewed: "Pi 已审阅 1,248 篇新论文",
-    matched: "其中 18 篇与你当前的研究空间相关。",
-    attention: "篇值得你今天关注",
-    briefTime: "预计 6 分钟读完",
+    reviewed: "Pi 正在监控三个研究时间层级",
+    matched: "每个空间超过 24 小时后，会在你首次打开时自动扫描。",
+    attention: "篇为本轮新发现",
+    briefTime: "元数据扫描不消耗 DeepSeek Token",
     mustRead: "必须读",
     worthReading: "值得读",
     whyYou: "为什么与你有关",
@@ -73,7 +101,7 @@ const copy = {
     saved: "已收藏",
     relevant: "相关",
     notRelevant: "不相关",
-    agentNote: "Pi 的判断",
+    agentNote: "Pi 的判断（演示）",
     agentNoteBody: "今天不是高更新日。真正值得注意的是：两个结果都在削弱你主线问题中的高斯假设，而不是单纯提高数值指标。",
     spacePulse: "空间概况",
     activeThreads: "活跃线索",
@@ -150,6 +178,25 @@ const copy = {
     feedbackSaved: "已写入当前研究空间的记忆",
     profile: "工作区与设置",
     signOut: "退出",
+    liveMonitor: "真实论文发现",
+    monitorIntro: "覆盖近 14 天、近 6 个月和近 5 年；不只盯当天的新论文。",
+    daysHorizon: "近 14 天",
+    monthsHorizon: "近 6 个月",
+    yearsHorizon: "近 5 年",
+    autoVisit: "自动扫描：每个研究空间每 24 小时最多一次，在到期后的首次访问时触发。无人访问时不会在后台运行。",
+    lastScan: "上次扫描",
+    nextScan: "下次可扫描",
+    neverScanned: "尚未扫描",
+    scanning: "正在扫描 Crossref",
+    scanReady: "扫描完成",
+    scanError: "扫描暂时失败",
+    scanNow: "立即扫描",
+    scanningButton: "扫描中",
+    knownPapers: "篇已去重记录",
+    scannedPapers: "条候选元数据",
+    dedupeNote: "按 DOI 去重；没有 DOI 时使用标准化标题指纹。已读论文不会重复送给模型分析。",
+    noLivePapers: "首轮扫描完成后，这里会显示真实匹配论文。",
+    manualCooling: "手动扫描一小时内只执行一次，已返回缓存结果。",
   },
   en: {
     today: "Today",
@@ -171,10 +218,10 @@ const copy = {
     workspaceLabel: "Anonymous browser workspace",
     todayDate: "Tuesday, August 18, 2026",
     goodMorning: "Good morning",
-    reviewed: "Pi reviewed 1,248 new papers",
-    matched: "Eighteen matched this research space.",
-    attention: "deserve your attention today",
-    briefTime: "About 6 minutes to review",
+    reviewed: "Pi monitors three research horizons",
+    matched: "Each space scans on its first visit after the 24-hour window expires.",
+    attention: "new in this scan",
+    briefTime: "Metadata scans use no DeepSeek tokens",
     mustRead: "Must read",
     worthReading: "Worth reading",
     whyYou: "Why it matters to you",
@@ -185,7 +232,7 @@ const copy = {
     saved: "Saved",
     relevant: "Relevant",
     notRelevant: "Not relevant",
-    agentNote: "Pi's judgment",
+    agentNote: "Pi's judgment (demo)",
     agentNoteBody: "This is not a high-volume update day. What matters is that two results weaken Gaussian assumptions in your main question, rather than merely improving benchmarks.",
     spacePulse: "Space pulse",
     activeThreads: "Active threads",
@@ -262,6 +309,25 @@ const copy = {
     feedbackSaved: "Saved to this research space's memory",
     profile: "Workspace & settings",
     signOut: "Sign out",
+    liveMonitor: "Live paper discovery",
+    monitorIntro: "Covers the past 14 days, 6 months, and 5 years—not only papers published today.",
+    daysHorizon: "Past 14 days",
+    monthsHorizon: "Past 6 months",
+    yearsHorizon: "Past 5 years",
+    autoVisit: "Automatic scan: at most once per research space every 24 hours, triggered by the first visit after it is due. It does not run in the background without a visit.",
+    lastScan: "Last scan",
+    nextScan: "Next eligible scan",
+    neverScanned: "Not scanned yet",
+    scanning: "Scanning Crossref",
+    scanReady: "Scan complete",
+    scanError: "Scan temporarily failed",
+    scanNow: "Scan now",
+    scanningButton: "Scanning",
+    knownPapers: "deduplicated papers",
+    scannedPapers: "candidate metadata records",
+    dedupeNote: "Deduplicated by DOI, or by a normalized-title fingerprint when no DOI exists. Known papers are not resent to the model.",
+    noLivePapers: "Real matching papers will appear here after the first scan.",
+    manualCooling: "Manual scans run at most once per hour; cached results were returned.",
   },
 } as const;
 
@@ -459,6 +525,16 @@ function defaultSpaceName(name: string, locale: Locale) {
   return names[name] || name;
 }
 
+function formatMonitorDate(value: string | null, locale: Locale) {
+  if (!value) return copy[locale].neverScanned;
+  return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
 function PaperBadge({ level, locale }: { level: Paper["level"]; locale: Locale }) {
   return <span className={"v2-paper-badge " + level}><i />{level === "must" ? copy[locale].mustRead : copy[locale].worthReading}</span>;
 }
@@ -482,6 +558,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
+  const [monitor, setMonitor] = useState<MonitorState | null>(null);
+  const [monitoring, setMonitoring] = useState(false);
 
   const t = copy[locale];
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
@@ -530,6 +608,35 @@ export default function ResearchApp({ user }: { user: User }) {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
     window.localStorage.setItem("pi-locale", locale);
   }, [locale]);
+
+  useEffect(() => {
+    if (activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setMonitor(null);
+      setMonitoring(true);
+      fetch("/api/monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id }),
+      })
+        .then((response) => response.json() as Promise<{ monitor?: MonitorState }>)
+        .then((data) => {
+          if (!cancelled && data.monitor) setMonitor(data.monitor);
+        })
+        .catch(() => {
+          if (!cancelled) setMonitor({
+            status: "error", lastRunAt: null, nextRunAt: null, newCount: 0, scannedCount: 0,
+            knownCount: 0, error: "unavailable", cadenceHours: 24, source: "Crossref",
+            horizons: ["days", "months", "years"], papers: [],
+          });
+        })
+        .finally(() => {
+          if (!cancelled) setMonitoring(false);
+        });
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeSpace.id]);
 
   useEffect(() => {
     if (!toast) return;
@@ -623,6 +730,25 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
+  const runManualMonitor = async () => {
+    if (monitoring || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    setMonitoring(true);
+    try {
+      const response = await fetch("/api/monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, force: true }),
+      });
+      const data = await response.json() as { monitor?: MonitorState };
+      if (data.monitor) {
+        setMonitor(data.monitor);
+        if (data.monitor.throttled) setToast(t.manualCooling);
+      }
+    } finally {
+      setMonitoring(false);
+    }
+  };
+
   const saveFeedback = (paper: Paper, kind: "save" | "relevant" | "not_relevant") => {
     const key = activeSpace.id + ":" + paper.id;
     if (kind === "save") setSaved((current) => ({ ...current, [key]: !current[key] }));
@@ -700,12 +826,41 @@ export default function ResearchApp({ user }: { user: User }) {
           <main className="v2-page v2-today">
             <section className="v2-today-hero">
               <div><p className="v2-kicker">{t.todayDate}</p><h1>{t.goodMorning}，{activeSpace.memberName}。</h1><p><strong>{t.reviewed}</strong> · {t.matched}</p></div>
-              <div className="v2-attention-number"><strong>3</strong><span>{t.attention}</span><small>{t.briefTime}</small></div>
+              <div className="v2-attention-number"><strong>{monitor ? monitor.newCount : "—"}</strong><span>{t.attention}</span><small>{t.briefTime}</small></div>
+            </section>
+
+            <section className="v2-monitor-panel">
+              <div className="v2-monitor-head">
+                <div><p className="v2-kicker">{t.liveMonitor}</p><h2>{t.monitorIntro}</h2></div>
+                <div className="v2-monitor-actions">
+                  <span className={"v2-monitor-status " + (monitor?.status || "idle")}><i />{monitoring || monitor?.status === "scanning" ? t.scanning : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
+                  <button type="button" onClick={runManualMonitor} disabled={monitoring}>{monitoring ? t.scanningButton : t.scanNow}</button>
+                </div>
+              </div>
+              <div className="v2-horizons"><span>{t.daysHorizon}</span><span>{t.monthsHorizon}</span><span>{t.yearsHorizon}</span></div>
+              <p className="v2-monitor-explainer">{t.autoVisit}</p>
+              <dl className="v2-monitor-metrics">
+                <div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div>
+                <div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div>
+                <div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div>
+              </dl>
+              {monitor?.papers?.length ? (
+                <div className="v2-live-papers">
+                  {monitor.papers.slice(0, 4).map((paper) => (
+                    <a key={paper.id} href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">
+                      <span>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span>
+                      <strong>{paper.title}</strong>
+                      <small>{[paper.authors, paper.venue, paper.publishedAt].filter(Boolean).join(" · ")}</small>
+                    </a>
+                  ))}
+                </div>
+              ) : <p className="v2-monitor-empty">{monitoring ? t.scanning : t.noLivePapers}</p>}
+              <p className="v2-dedupe-note">◎ {t.dedupeNote}</p>
             </section>
 
             <div className="v2-dashboard-grid">
               <div className="v2-feed">
-                <div className="v2-section-title"><div><p className="v2-kicker warm">HIGH SIGNAL</p><h2>{t.mustRead}</h2></div><span>2 / 18</span></div>
+                <div className="v2-section-title"><div><p className="v2-kicker warm">{locale === "zh" ? "演示分析卡 · 实时发现见上方" : "DEMO ANALYSIS CARDS · LIVE DISCOVERY ABOVE"}</p><h2>{t.mustRead}</h2></div><span>2</span></div>
                 <article className="v2-primary-paper">
                   <div className="v2-paper-top"><PaperBadge level={visiblePapers[0].level} locale={locale} /><span>{visiblePapers[0].date[locale]}</span><span>{visiblePapers[0].readTime}</span></div>
                   <button type="button" className="v2-title-link" onClick={() => openPaper(visiblePapers[0])}><h2>{visiblePapers[0].title}</h2></button>

@@ -53,6 +53,11 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS ai_usage_daily (id TEXT PRIMARY KEY NOT NULL, scope TEXT NOT NULL, usage_date TEXT NOT NULL, request_count INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_usage_daily_scope_date ON ai_usage_daily(scope, usage_date)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_ai_usage_daily_date ON ai_usage_daily(usage_date)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', last_run_at TEXT, next_run_at TEXT, new_count INTEGER NOT NULL DEFAULT 0, scanned_count INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_runs_space ON monitor_runs(space_id)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS monitored_papers (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, canonical_id TEXT NOT NULL, doi TEXT, title TEXT NOT NULL, authors TEXT NOT NULL DEFAULT '', venue TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', published_at TEXT, source TEXT NOT NULL DEFAULT 'crossref', horizon TEXT NOT NULL, citation_count INTEGER NOT NULL DEFAULT 0, relevance_score INTEGER NOT NULL DEFAULT 0, discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitored_papers_space_canonical ON monitored_papers(space_id, canonical_id)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_monitored_papers_space_discovered ON monitored_papers(space_id, discovered_at)"),
   ]);
   await database.prepare("PRAGMA optimize").run();
 }

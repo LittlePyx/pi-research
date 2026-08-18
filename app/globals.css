@@ -1519,3 +1519,111 @@ main { min-width: 0; }
   .v2-mobile-backdrop { position: fixed; inset: 0; z-index: 110; width: 100%; border: 0; background: rgba(29,33,29,.35); display: block; }
   .v2-toast { right: 13px; bottom: 13px; left: 13px; }
 }
+
+/* Pi Research V3 — readable type and live discovery monitor */
+.v2-app { font-size: 16px; }
+.v2-app p, .v2-app button, .v2-app input, .v2-app textarea, .v2-app dt, .v2-app dd { font-size: 15px !important; }
+.v2-app small { font-size: 13px !important; line-height: 1.45; }
+.v2-app .v2-kicker { font-size: 12px !important; }
+.v2-app .v2-logo > div small { font-size: 10px !important; }
+.v2-app .v2-space-switch small, .v2-app .v2-nav > p { font-size: 11px !important; }
+.v2-app .v2-space-switch strong { font-size: 15px !important; }
+.v2-app .v2-space-switch em, .v2-app .v2-isolation { font-size: 12px !important; }
+.v2-app .v2-nav > button { min-height: 44px; font-size: 15px !important; }
+.v2-app .v2-nav > button > span { font-size: 11px !important; }
+.v2-app .v2-nav > button > b { font-size: 11px !important; }
+.v2-app .v2-openai-state strong, .v2-app .v2-account strong { font-size: 13px !important; }
+.v2-app .v2-openai-state small, .v2-app .v2-account small { font-size: 11px !important; }
+.v2-app .v2-breadcrumb { font-size: 13px !important; }
+.v2-app .v2-ask-trigger, .v2-app .v2-ask-button { font-size: 14px !important; }
+.v2-app .v2-ask-trigger kbd, .v2-app .v2-language button { font-size: 11px !important; }
+.v2-app .v2-today-hero h1 { font-size: 42px; }
+.v2-app .v2-today-hero > div:first-child > p:last-child { font-size: 16px !important; line-height: 1.6; }
+.v2-app .v2-attention-number span { font-size: 17px !important; }
+.v2-app .v2-section-title > span { font-size: 13px !important; }
+.v2-app .v2-paper-top, .v2-app .v2-paper-badge { font-size: 12px !important; }
+.v2-app .v2-title-link h2 { font-size: 28px; }
+.v2-app .v2-paper-meta { font-size: 14px !important; line-height: 1.5; }
+.v2-app .v2-paper-intelligence p { font-size: 12px !important; }
+.v2-app .v2-paper-intelligence strong { font-size: 16px !important; }
+.v2-app .v2-paper-intelligence > div > span { font-size: 11px !important; }
+.v2-app .v2-paper-footer > span, .v2-app .v2-paper-footer > div button, .v2-app .v2-open-paper { font-size: 13px !important; }
+.v2-app .v2-secondary-paper h3 { font-size: 20px; }
+.v2-app .v2-secondary-paper > div:first-child > p, .v2-app .v2-secondary-paper > div:nth-child(2) p { font-size: 12px !important; }
+.v2-app .v2-secondary-paper > div:nth-child(2) span { font-size: 15px !important; }
+.v2-app .v2-paper-index, .v2-app .v2-thread-chip { font-size: 11px !important; }
+.v2-app .v2-compact-list strong { font-size: 17px !important; }
+.v2-app .v2-compact-list small, .v2-app .v2-quiet small { font-size: 13px !important; }
+.v2-app .v2-quiet h3 { font-size: 17px; }
+.v2-app .v2-quiet > div:last-child strong { font-size: 14px !important; }
+.v2-app .v2-agent-note > p { font-size: 16px !important; }
+.v2-app .v2-agent-note > button, .v2-app .v2-rail-heading > span, .v2-app .v2-pulse dt { font-size: 13px !important; }
+.v2-app .v2-pulse > p { font-size: 14px !important; }
+.v2-app .v2-change-log p span, .v2-app .v2-change-log div > small { font-size: 12px !important; }
+.v2-app .v2-thread-update, .v2-app .v2-back, .v2-app .v2-understanding h3, .v2-app .v2-development-row > span, .v2-app .v2-development-row > small, .v2-app .v2-detail-aside dt, .v2-app .v2-detail-aside dd, .v2-app .v2-boundary-mini { font-size: 13px !important; }
+.v2-app .v2-library-tabs button, .v2-app .v2-library-list strong, .v2-app .v2-library-list small, .v2-app .v2-tags i, .v2-app .v2-memory-grid dt, .v2-app .v2-isolation-card > button { font-size: 13px !important; }
+.v2-app .v2-form-actions button, .v2-app .v2-new-space-form label > span, .v2-app .v2-ask-panel form > div small, .v2-app .v2-ask-panel form > div button, .v2-app .v2-answer > div:first-child small, .v2-app .v2-answer > div:last-child { font-size: 13px !important; }
+
+.v2-monitor-panel {
+  margin-top: 28px;
+  padding: 25px;
+  border: 1px solid #cfd6d0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(237,243,239,.92), rgba(248,247,242,.95));
+  box-shadow: 0 7px 22px rgba(36,46,39,.045);
+}
+.v2-monitor-head { display: flex; justify-content: space-between; gap: 28px; align-items: flex-start; }
+.v2-monitor-head .v2-kicker { margin-bottom: 8px; color: #54715f; }
+.v2-monitor-head h2 { max-width: 720px; margin: 0; font: 400 21px/1.4 Georgia, serif; }
+.v2-monitor-actions { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+.v2-monitor-actions > button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #315f88;
+  border-radius: 6px;
+  background: #315f88;
+  color: white;
+  font-size: 13px !important;
+  font-weight: 750;
+}
+.v2-monitor-actions > button:disabled { opacity: .58; cursor: wait; }
+.v2-monitor-status { display: inline-flex; align-items: center; gap: 7px; color: #5f6a61; font-size: 13px; }
+.v2-monitor-status i { width: 8px; height: 8px; border-radius: 50%; background: #9a8a72; box-shadow: 0 0 0 3px rgba(154,138,114,.14); }
+.v2-monitor-status.ready i { background: #5a7a63; box-shadow: 0 0 0 3px rgba(90,122,99,.14); }
+.v2-monitor-status.scanning i { background: #3d6f94; animation: monitor-pulse 1.2s ease-in-out infinite; }
+.v2-monitor-status.error i { background: #9b5648; }
+.v2-horizons { margin-top: 19px; display: flex; flex-wrap: wrap; gap: 8px; }
+.v2-horizons span { padding: 6px 10px; border: 1px solid #c8d4cc; border-radius: 999px; background: rgba(255,255,255,.66); color: #476353; font-size: 13px; font-weight: 700; }
+.v2-monitor-explainer { margin: 15px 0 0; color: #616b63; line-height: 1.6; }
+.v2-monitor-metrics { margin: 19px 0 0; padding: 15px 0; border-top: 1px solid #d7ddd7; border-bottom: 1px solid #d7ddd7; display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 18px; }
+.v2-monitor-metrics div { min-width: 0; }
+.v2-monitor-metrics dt { margin-bottom: 5px; color: #788078; font-size: 12px !important; }
+.v2-monitor-metrics dd { margin: 0; color: #39443c; font-size: 14px !important; font-weight: 700; }
+.v2-live-papers { margin-top: 17px; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.v2-live-papers a { min-width: 0; padding: 14px; border: 1px solid #d7ddd7; border-radius: 7px; background: rgba(255,255,255,.62); color: inherit; text-decoration: none; }
+.v2-live-papers a:hover { border-color: #9eb0a4; background: white; }
+.v2-live-papers span, .v2-live-papers strong, .v2-live-papers small { display: block; }
+.v2-live-papers span { margin-bottom: 6px; color: #54715f; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.v2-live-papers strong { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font: 16px/1.38 Georgia, serif; }
+.v2-live-papers small { overflow: hidden; margin-top: 7px; color: #737b74; font-size: 12px !important; white-space: nowrap; text-overflow: ellipsis; }
+.v2-monitor-empty { margin: 17px 0 0; padding: 15px; border-radius: 7px; background: rgba(255,255,255,.55); color: #6e776f; }
+.v2-dedupe-note { margin: 14px 0 0; color: #69746b; font-size: 13px !important; line-height: 1.55; }
+@keyframes monitor-pulse { 50% { opacity: .42; transform: scale(.82); } }
+
+@media (max-width: 900px) {
+  .v2-monitor-head { display: block; }
+  .v2-monitor-actions { margin-top: 17px; justify-content: space-between; }
+  .v2-monitor-metrics { grid-template-columns: 1fr 1fr; }
+  .v2-monitor-metrics > div:last-child { grid-column: 1 / span 2; }
+  .v2-live-papers { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .v2-app .v2-mobile-menu { font-size: 20px !important; }
+  .v2-app .v2-today-hero h1 { font-size: 34px; }
+  .v2-monitor-panel { padding: 19px; }
+  .v2-monitor-actions { align-items: flex-start; flex-direction: column; }
+  .v2-monitor-actions > button { width: 100%; }
+  .v2-monitor-metrics { grid-template-columns: 1fr; }
+  .v2-monitor-metrics > div:last-child { grid-column: 1; }
+}

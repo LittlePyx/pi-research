@@ -81,3 +81,44 @@ export const aiUsageDaily = sqliteTable(
     index("idx_ai_usage_daily_date").on(table.usageDate),
   ],
 );
+
+export const monitorRuns = sqliteTable(
+  "monitor_runs",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("idle"),
+    lastRunAt: text("last_run_at"),
+    nextRunAt: text("next_run_at"),
+    newCount: integer("new_count").notNull().default(0),
+    scannedCount: integer("scanned_count").notNull().default(0),
+    error: text("error"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [uniqueIndex("idx_monitor_runs_space").on(table.spaceId)],
+);
+
+export const monitoredPapers = sqliteTable(
+  "monitored_papers",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    canonicalId: text("canonical_id").notNull(),
+    doi: text("doi"),
+    title: text("title").notNull(),
+    authors: text("authors").notNull().default(""),
+    venue: text("venue").notNull().default(""),
+    url: text("url").notNull().default(""),
+    publishedAt: text("published_at"),
+    source: text("source").notNull().default("crossref"),
+    horizon: text("horizon").notNull(),
+    citationCount: integer("citation_count").notNull().default(0),
+    relevanceScore: integer("relevance_score").notNull().default(0),
+    discoveredAt: text("discovered_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    lastSeenAt: text("last_seen_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_monitored_papers_space_canonical").on(table.spaceId, table.canonicalId),
+    index("idx_monitored_papers_space_discovered").on(table.spaceId, table.discoveredAt),
+  ],
+);
