@@ -66,6 +66,8 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(repository, /llm_recommended/);
   assert.match(repository, /idx_paper_insights_space_recommended_quality/);
   assert.match(repository, /idx_paper_delivery_space_paper/);
+  assert.match(repository, /share_snapshots/);
+  assert.match(repository, /idx_share_snapshots_token/);
   assert.match(feedback, /kind === "shown"/);
   assert.match(feedback, /kind === "later"/);
   assert.match(css, /Pi Research V3 — readable type and live discovery monitor/);
@@ -84,4 +86,35 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(client, /rankedMonitorPapers/);
   assert.match(client, /openMonitorPaper/);
   assert.match(client, /为什么适合读/);
+});
+
+test("creates immutable public snapshots with live paper links and independent metadata", async () => {
+  const [route, snapshotStore, sharePage, shareActions, client, css] = await Promise.all([
+    readFile(new URL("../app/api/shares/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/share-snapshots.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/share/[token]/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/share/[token]/share-actions.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(route, /kind === "daily"/);
+  assert.match(route, /kind === "paper"/);
+  assert.match(route, /paperIds\.length > 6/);
+  assert.match(route, /i\.llm_recommended = 1/);
+  assert.match(route, /i\.analysis_source = 'deepseek'/);
+  assert.match(route, /i\.analysis_model = 'deepseek-v4-pro'/);
+  assert.match(route, /INSERT INTO share_snapshots/);
+  assert.match(snapshotStore, /JSON\.parse\(row\.payload\)/);
+  assert.match(sharePage, /generateMetadata/);
+  assert.match(sharePage, /images: \[\]/);
+  assert.match(sharePage, /打开原文/);
+  assert.match(sharePage, /Content was frozen when shared/);
+  assert.match(shareActions, /navigator\.share/);
+  assert.match(shareActions, /navigator\.clipboard\.writeText/);
+  assert.match(client, /shareSnapshot/);
+  assert.match(client, /分享今日推荐/);
+  assert.match(client, /生成单篇快照/);
+  assert.match(css, /Pi Research V5 — immutable, link-rich recommendation snapshots/);
+  assert.match(css, /\.share-paper/);
 });

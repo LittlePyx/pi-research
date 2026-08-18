@@ -251,6 +251,13 @@ const copy = {
     recommendationSignals: "推荐信号",
     sourceRecord: "来源记录",
     currentSpaceFit: "当前空间匹配",
+    shareDaily: "分享今日推荐",
+    sharePaper: "生成单篇快照",
+    creatingShare: "正在生成快照",
+    snapshotCopied: "公开快照链接已复制，可以直接转发",
+    snapshotShared: "公开快照已生成",
+    snapshotOpened: "公开快照已在新窗口打开",
+    shareFailed: "快照生成失败，请稍后重试",
   },
   en: {
     today: "Today",
@@ -424,6 +431,13 @@ const copy = {
     recommendationSignals: "Recommendation signals",
     sourceRecord: "Source record",
     currentSpaceFit: "Current space match",
+    shareDaily: "Share today's picks",
+    sharePaper: "Create paper snapshot",
+    creatingShare: "Creating snapshot",
+    snapshotCopied: "Public snapshot link copied and ready to forward",
+    snapshotShared: "Public snapshot created",
+    snapshotOpened: "Public snapshot opened in a new window",
+    shareFailed: "Could not create the snapshot. Please try again.",
   },
 } as const;
 
@@ -632,6 +646,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [venueDraft, setVenueDraft] = useState("");
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [libraryFilter, setLibraryFilter] = useState<"inbox" | "accepted" | "all" | "dismissed">("inbox");
+  const [sharingSnapshot, setSharingSnapshot] = useState<string | null>(null);
   const reportedImpressions = useRef(new Set<string>());
 
   const t = copy[locale];
@@ -966,6 +981,42 @@ export default function ResearchApp({ user }: { user: User }) {
     navigate("paper-detail");
   };
 
+  const shareSnapshot = async (kind: "daily" | "paper", papers: MonitorPaper[]) => {
+    const shareKey = kind === "daily" ? "daily" : papers[0]?.id;
+    if (!shareKey || !papers.length || sharingSnapshot || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    setSharingSnapshot(shareKey);
+    try {
+      const response = await fetch("/api/shares", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, kind, paperIds: papers.slice(0, 6).map((paper) => paper.id), locale }),
+      });
+      const data = await response.json() as { url?: string; title?: string; error?: string };
+      if (!response.ok || !data.url) throw new Error(data.error || "share failed");
+
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: data.title || "Pi Research", url: data.url });
+          setToast(t.snapshotShared);
+          return;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+        }
+      }
+      try {
+        await navigator.clipboard.writeText(data.url);
+        setToast(t.snapshotCopied);
+      } catch {
+        window.open(data.url, "_blank", "noopener,noreferrer");
+        setToast(t.snapshotOpened);
+      }
+    } catch {
+      setToast(t.shareFailed);
+    } finally {
+      setSharingSnapshot(null);
+    }
+  };
+
   const askAboutMonitorPaper = (paper: MonitorPaper) => {
     setQuestion(locale === "zh" ? `请结合当前研究空间分析这篇论文：${paper.title}` : `Analyze this paper in the context of the current research space: ${paper.title}`);
     setAskOpen(true);
@@ -1032,7 +1083,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <main className="v2-page v2-today">
             <section className="v2-today-hero">
               <div><p className="v2-kicker">{t.todayDate}</p><h1>{t.goodMorning}，{activeSpace.memberName}。</h1><p><strong>{t.reviewed}</strong> · {t.matched}</p></div>
-              <div className="v2-attention-number"><strong>{monitor ? monitor.newCount : "—"}</strong><span>{t.attention}</span><small>{t.briefTime}</small></div>
+              <div className="v2-attention-number"><strong>{monitor ? monitor.newCount : "—"}</strong><span>{t.attention}</span><small>{t.briefTime}</small><button className="v2-share-action v2-today-share" type="button" onClick={() => shareSnapshot("daily", rankedMonitorPapers.slice(0, 6))} disabled={!rankedMonitorPapers.length || Boolean(sharingSnapshot)}>{sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily} ↗</button></div>
             </section>
 
             <section className="v2-monitor-panel">
@@ -1088,7 +1139,7 @@ export default function ResearchApp({ user }: { user: User }) {
                             <p className="v2-research-meta">{[paper.authors, paper.venue, paper.publishedAt].filter(Boolean).join(" · ")}</p>
                             <div className="v2-paper-intro"><span>{t.introLabel}</span><p>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p></div>
                             <div className="v2-paper-why"><span>{t.whySuitable}</span><p>{locale === "zh" ? paper.whyReadZh : paper.whyReadEn}</p></div>
-                            <footer><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><span>{t.qualityScore} {paper.qualityScore}</span><span>{t.citations} {paper.citationCount}</span><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></footer>
+                            <footer><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><span>{t.qualityScore} {paper.qualityScore}</span><span>{t.citations} {paper.citationCount}</span><button className="v2-share-action" type="button" onClick={() => shareSnapshot("paper", [paper])} disabled={Boolean(sharingSnapshot)}>{sharingSnapshot === paper.id ? t.creatingShare : t.sharePaper}</button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></footer>
                           </article>
                         )) : <p className="v2-horizon-empty">{t.noHorizonPaper}</p>}
                       </section>
@@ -1117,7 +1168,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     </div>
                     <div className="v2-paper-footer">
                       <span>{rankedMonitorPapers[0].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[0].horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {t.relevanceScoreLabel} <b>{rankedMonitorPapers[0].relevanceScore}</b> · {t.qualityScore} {rankedMonitorPapers[0].qualityScore} · {t.citations} {rankedMonitorPapers[0].citationCount}</span>
-                      <div><button className={(saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ?? rankedMonitorPapers[0].saved) ? "active" : ""} type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "save")}>{(saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ?? rankedMonitorPapers[0].saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "not_relevant")}>× {t.notRelevant}</button></div>
+                      <div><button className={(saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ?? rankedMonitorPapers[0].saved) ? "active" : ""} type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "save")}>{(saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ?? rankedMonitorPapers[0].saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => shareSnapshot("paper", [rankedMonitorPapers[0]])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === rankedMonitorPapers[0].id ? t.creatingShare : t.sharePaper}</button></div>
                       <button className="v2-open-paper" type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[0])}>{t.openAnalysis} →</button>
                     </div>
                   </article>
@@ -1241,7 +1292,7 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
             <button className="v2-back" type="button" onClick={() => navigate("today")}>← {t.paperBack}</button>
-            <section className="v2-paper-head"><div className="v2-paper-top">{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div></section>
+            <section className="v2-paper-head"><div className="v2-paper-top">{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div></section>
             <div className="v2-paper-detail-grid">
               <div>
                 <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><span>{t.qualityScore}</span><strong>{selectedMonitorPaper.qualityScore}</strong></div></section>

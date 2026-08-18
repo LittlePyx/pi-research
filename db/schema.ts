@@ -180,3 +180,21 @@ export const paperInsights = sqliteTable(
     index("idx_paper_insights_space_recommended_quality").on(table.spaceId, table.llmRecommended, table.qualityScore),
   ],
 );
+
+export const shareSnapshots = sqliteTable(
+  "share_snapshots",
+  {
+    id: text("id").primaryKey(),
+    token: text("token").notNull(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    locale: text("locale").notNull().default("zh"),
+    title: text("title").notNull(),
+    payload: text("payload").notNull(),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_share_snapshots_token").on(table.token),
+    index("idx_share_snapshots_space_created").on(table.spaceId, table.createdAt),
+  ],
+);

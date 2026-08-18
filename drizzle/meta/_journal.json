@@ -43,6 +43,13 @@
       "when": 1787047544708,
       "tag": "0005_warm_nebula",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787048358569,
+      "tag": "0006_colorful_risque",
+      "breakpoints": true
     }
   ]
 }
