@@ -1602,6 +1602,20 @@ main { min-width: 0; }
 .v2-monitor-status.ready i { background: #5a7a63; box-shadow: 0 0 0 3px rgba(90,122,99,.14); }
 .v2-monitor-status.scanning i { background: #3d6f94; animation: monitor-pulse 1.2s ease-in-out infinite; }
 .v2-monitor-status.error i { background: #9b5648; }
+.v2-scan-progress {
+  margin: 18px 0 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(74, 111, 137, .18);
+  border-radius: 9px;
+  background: rgba(235, 243, 247, .72);
+}
+.v2-scan-progress > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #405d70; font-size: 13px; }
+.v2-scan-progress > div strong { font-variant-numeric: tabular-nums; }
+.v2-scan-progress > i { position: relative; display: block; height: 7px; margin: 10px 0 8px; overflow: hidden; border-radius: 99px; background: rgba(61,111,148,.12); }
+.v2-scan-progress > i > b { position: relative; display: block; height: 100%; min-width: 4%; border-radius: inherit; background: linear-gradient(90deg, #517c98, #7fa6bb); transition: width .55s ease; }
+.v2-scan-progress > i > b::after { content: ""; position: absolute; inset: 0; width: 42%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent); animation: scan-shimmer 1.45s linear infinite; }
+.v2-scan-progress small { color: #70818b; font-size: 12px; }
+@keyframes scan-shimmer { from { transform: translateX(-120%); } to { transform: translateX(300%); } }
 .v2-horizons { margin-top: 19px; display: flex; flex-wrap: wrap; gap: 8px; }
 .v2-horizons span { padding: 6px 10px; border: 1px solid #c8d4cc; border-radius: 999px; background: rgba(255,255,255,.66); color: #476353; font-size: 13px; font-weight: 700; }
 .v2-monitor-explainer { margin: 15px 0 0; color: #616b63; line-height: 1.6; }

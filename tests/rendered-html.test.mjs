@@ -49,6 +49,9 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /thinking: \{ type: "enabled" \}/);
   assert.match(route, /max_tokens: 24000/);
   assert.match(route, /llm_recommended = 1/);
+  assert.match(route, /discovering_\$\{horizon\.key\}/);
+  assert.match(route, /updateRunPhase\(database, space\.id, "reviewing"/);
+  assert.match(route, /updateRunPhase\(database, space\.id, "saving"/);
   assert.doesNotMatch(route, /fallbackInsight/);
   assert.match(profiles, /IEEE Transactions on Information Theory/);
   assert.match(profiles, /International Conference on Machine Learning/);
@@ -59,10 +62,14 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(repository, /idx_paper_insights_space_recommended_quality/);
   assert.match(css, /Pi Research V3 — readable type and live discovery monitor/);
   assert.match(css, /\.v2-app \{ font-size: 16px; \}/);
+  assert.match(css, /\.v2-scan-progress/);
   assert.doesNotMatch(client, /DEMO ANALYSIS CARDS|演示分析卡/);
   assert.doesNotMatch(client, /DeepSeek V4 Flash/);
   assert.match(client, /modelDisplayName/);
   assert.match(client, /DeepSeek V4 Pro/);
+  assert.match(client, /startMonitorPolling/);
+  assert.match(client, /window\.setInterval\(\(\) => void poll\(\), 1500\)/);
+  assert.match(client, /DeepSeek Pro 正在逐篇筛选并撰写/);
   assert.match(client, /rankedMonitorPapers/);
   assert.match(client, /openMonitorPaper/);
   assert.match(client, /为什么适合读/);

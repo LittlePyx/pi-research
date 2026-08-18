@@ -50,8 +50,9 @@ type MonitorPreferences = {
   priorityVenues: string[];
   userModified: boolean;
 };
+type MonitorStatus = "idle" | "scanning" | "discovering_days" | "discovering_months" | "discovering_years" | "deduplicating" | "reviewing" | "saving" | "ready" | "error";
 type MonitorState = {
-  status: "idle" | "scanning" | "ready" | "error";
+  status: MonitorStatus;
   lastRunAt: string | null;
   nextRunAt: string | null;
   newCount: number;
@@ -520,6 +521,63 @@ function formatPaperDate(value: string | null, locale: Locale) {
   }).format(new Date(value));
 }
 
+const monitorProgressByStatus: Record<MonitorStatus, number> = {
+  idle: 0,
+  scanning: 4,
+  discovering_days: 12,
+  discovering_months: 24,
+  discovering_years: 38,
+  deduplicating: 48,
+  reviewing: 58,
+  saving: 88,
+  ready: 100,
+  error: 0,
+};
+
+function isMonitorScanning(status: MonitorStatus | undefined) {
+  return Boolean(status && !["idle", "ready", "error"].includes(status));
+}
+
+function monitorPhaseLabel(status: MonitorStatus | undefined, locale: Locale) {
+  const labels: Record<MonitorStatus, { zh: string; en: string }> = {
+    idle: { zh: "准备扫描", en: "Preparing the scan" },
+    scanning: { zh: "正在准备研究范围", en: "Preparing the research scope" },
+    discovering_days: { zh: "正在检索近 14 天的新论文", en: "Searching the latest 14 days" },
+    discovering_months: { zh: "正在检索近 6 个月的高质量论文", en: "Searching the latest 6 months" },
+    discovering_years: { zh: "正在回溯近 5 年的重要论文", en: "Reviewing the last 5 years" },
+    deduplicating: { zh: "正在去重并排除已评审记录", en: "Deduplicating previously reviewed records" },
+    reviewing: { zh: "DeepSeek Pro 正在逐篇筛选并撰写", en: "DeepSeek Pro is screening and writing each brief" },
+    saving: { zh: "正在保存推荐与淘汰记录", en: "Saving recommendations and rejected records" },
+    ready: { zh: "扫描完成", en: "Scan complete" },
+    error: { zh: "扫描暂时失败", en: "Scan temporarily failed" },
+  };
+  return labels[status || "idle"][locale];
+}
+
+function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) => void) {
+  let stopped = false;
+  let polling = false;
+  const poll = async () => {
+    if (stopped || polling) return;
+    polling = true;
+    try {
+      const response = await fetch("/api/monitor?spaceId=" + encodeURIComponent(spaceId));
+      const data = await response.json() as { monitor?: MonitorState };
+      if (!stopped && response.ok && data.monitor) onUpdate(data.monitor);
+    } catch {
+      // The long-running scan remains authoritative; the next poll can recover.
+    } finally {
+      polling = false;
+    }
+  };
+  void poll();
+  const timer = window.setInterval(() => void poll(), 1500);
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+  };
+}
+
 function modelDisplayName(model: string | null | undefined) {
   if (model === "deepseek-v4-pro") return "DeepSeek V4 Pro";
   return model || "DeepSeek";
@@ -560,6 +618,10 @@ export default function ResearchApp({ user }: { user: User }) {
   );
   const priorityPaperCount = rankedMonitorPapers.filter((paper) => paper.priorityVenue).length;
   const aiBriefCount = rankedMonitorPapers.filter((paper) => paper.analysisSource === "deepseek").length;
+  const scanIsActive = monitoring || isMonitorScanning(monitor?.status);
+  const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
+  const scanProgress = scanIsActive ? monitorProgressByStatus[effectiveScanStatus] : monitor?.status === "ready" ? 100 : 0;
+  const scanPhase = monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
 
   useEffect(() => {
     ensureAnonymousWorkspace();
@@ -605,9 +667,13 @@ export default function ResearchApp({ user }: { user: User }) {
   useEffect(() => {
     if (activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     let cancelled = false;
+    let stopPolling: () => void = () => undefined;
     const timer = window.setTimeout(() => {
       setMonitor(null);
       setMonitoring(true);
+      stopPolling = startMonitorPolling(activeSpace.id, (nextMonitor) => {
+        if (!cancelled) setMonitor(nextMonitor);
+      });
       fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -625,10 +691,11 @@ export default function ResearchApp({ user }: { user: User }) {
           });
         })
         .finally(() => {
+          stopPolling();
           if (!cancelled) setMonitoring(false);
         });
     }, 0);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    return () => { cancelled = true; stopPolling(); window.clearTimeout(timer); };
   }, [activeSpace.id]);
 
   useEffect(() => {
@@ -734,6 +801,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const runManualMonitor = async () => {
     if (monitoring || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     setMonitoring(true);
+    const stopPolling = startMonitorPolling(activeSpace.id, setMonitor);
     try {
       const response = await fetch("/api/monitor", {
         method: "POST",
@@ -746,6 +814,7 @@ export default function ResearchApp({ user }: { user: User }) {
         if (data.monitor.throttled) setToast(t.manualCooling);
       }
     } finally {
+      stopPolling();
       setMonitoring(false);
     }
   };
@@ -760,6 +829,7 @@ export default function ResearchApp({ user }: { user: User }) {
     const priorityVenues = venueDraft.split(/\r?\n/).map((venue) => venue.trim()).filter(Boolean);
     if (!reset && !priorityVenues.length) return;
     setSavingPreferences(true);
+    let stopPolling: (() => void) | null = null;
     try {
       const response = await fetch("/api/monitor", {
         method: "PATCH",
@@ -773,6 +843,7 @@ export default function ResearchApp({ user }: { user: User }) {
       setSourceSettingsOpen(false);
       setToast(t.sourcesSaved);
       setMonitoring(true);
+      stopPolling = startMonitorPolling(activeSpace.id, setMonitor);
       const scanResponse = await fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -781,6 +852,7 @@ export default function ResearchApp({ user }: { user: User }) {
       const scanData = await scanResponse.json() as { monitor?: MonitorState };
       if (scanData.monitor) setMonitor(scanData.monitor);
     } finally {
+      stopPolling?.();
       setMonitoring(false);
       setSavingPreferences(false);
     }
@@ -875,11 +947,18 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-monitor-head">
                 <div><p className="v2-kicker">{t.liveMonitor}</p><h2>{t.monitorIntro}</h2></div>
                 <div className="v2-monitor-actions">
-                  <span className={"v2-monitor-status " + (monitor?.status || "idle")}><i />{monitoring || monitor?.status === "scanning" ? t.scanning : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
-                  <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences}>{t.editSources}</button>
-                  <button type="button" onClick={runManualMonitor} disabled={monitoring}>{monitoring ? t.scanningButton : t.scanNow}</button>
+                  <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
+                  <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
+                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : t.scanNow}</button>
                 </div>
               </div>
+              {scanIsActive && (
+                <div className="v2-scan-progress" role="status" aria-live="polite" aria-label={`${scanPhase} ${scanProgress}%`}>
+                  <div><span>{scanPhase}</span><strong>{scanProgress}%</strong></div>
+                  <i><b style={{ width: `${scanProgress}%` }} /></i>
+                  <small>{monitor?.scannedCount || 0} {t.scannedPapers} · {locale === "zh" ? "页面其他功能仍可继续使用" : "The rest of the page remains available"}</small>
+                </div>
+              )}
               <div className="v2-source-profile">
                 <div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div>
                 <div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 5).map((venue) => <i key={venue}>{venue}</i>)}{(monitor?.preferences?.priorityVenues.length || 0) > 5 && <b>+{(monitor?.preferences?.priorityVenues.length || 0) - 5}</b>}</p></div>
@@ -921,7 +1000,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     );
                   })}
                 </div>
-              ) : <p className="v2-monitor-empty">{monitoring ? t.scanning : t.noLivePapers}</p>}
+              ) : <p className="v2-monitor-empty">{scanIsActive ? scanPhase : t.noLivePapers}</p>}
               <p className="v2-dedupe-note">◎ {t.dedupeNote}</p>
             </section>
 
@@ -947,7 +1026,7 @@ export default function ResearchApp({ user }: { user: User }) {
                       <button className="v2-open-paper" type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[0])}>{t.openAnalysis} →</button>
                     </div>
                   </article>
-                ) : <p className="v2-monitor-empty">{monitoring ? t.scanning : t.noLivePapers}</p>}
+                ) : <p className="v2-monitor-empty">{scanIsActive ? scanPhase : t.noLivePapers}</p>}
 
                 {rankedMonitorPapers[1] && <article className="v2-secondary-paper">
                   <div><span className="v2-real-badge">{rankedMonitorPapers[1].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[1].horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><button type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[1])}><h3>{rankedMonitorPapers[1].title}</h3></button><p>{rankedMonitorPapers[1].authors} · {rankedMonitorPapers[1].venue}</p></div>
@@ -1041,7 +1120,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   <span className="v2-doc-icon">□</span><span><strong>{paper.title}</strong><small>{paper.authors} · {paper.venue}</small></span><span><small>{t.currentSpaceFit}</small><strong>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</strong></span><span><small>{t.added}</small><strong>{formatPaperDate(paper.publishedAt, locale)}</strong></span><span className="v2-real-badge">{t.qualityScore} {paper.qualityScore}</span><b>→</b>
                 </button>
               ))}
-              {!rankedMonitorPapers.length && <p className="v2-monitor-empty">{monitoring ? t.scanning : t.noLivePapers}</p>}
+              {!rankedMonitorPapers.length && <p className="v2-monitor-empty">{scanIsActive ? scanPhase : t.noLivePapers}</p>}
             </div>
           </main>
         )}

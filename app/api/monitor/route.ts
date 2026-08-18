@@ -426,6 +426,12 @@ async function candidatesNeedingReview(database: D1Database, spaceId: string, ca
   return candidates.filter((candidate) => !reviewedIds.has(candidate.canonicalId));
 }
 
+async function updateRunPhase(database: D1Database, spaceId: string, status: string, scannedCount: number, newCount = 0) {
+  await database.prepare(
+    "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
+  ).bind(status, scannedCount, newCount, spaceId).run();
+}
+
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
   const [run, papers, known] = await Promise.all([
@@ -550,12 +556,21 @@ export async function POST(request: Request) {
     await database.prepare(
       `INSERT INTO monitor_runs (id, space_id, status, error, updated_at)
        VALUES (?, ?, 'scanning', NULL, CURRENT_TIMESTAMP)
-       ON CONFLICT(space_id) DO UPDATE SET status = 'scanning', error = NULL, updated_at = CURRENT_TIMESTAMP`,
+       ON CONFLICT(space_id) DO UPDATE SET status = 'scanning', error = NULL, new_count = 0,
+       scanned_count = 0, updated_at = CURRENT_TIMESTAMP`,
     ).bind(crypto.randomUUID(), space.id).run();
 
     try {
       const batches: Candidate[][] = [];
-      for (const horizon of HORIZONS) batches.push(await fetchHorizon(space, horizon, now, preference.priorityVenues, preference.profileKey));
+      let discoveredCount = 0;
+      for (const horizon of HORIZONS) {
+        await updateRunPhase(database, space.id, `discovering_${horizon.key}`, discoveredCount);
+        const batch = await fetchHorizon(space, horizon, now, preference.priorityVenues, preference.profileKey);
+        batches.push(batch);
+        discoveredCount += batch.length;
+        await updateRunPhase(database, space.id, `discovering_${horizon.key}`, discoveredCount);
+      }
+      await updateRunPhase(database, space.id, "deduplicating", discoveredCount);
       const candidates = new Map<string, Candidate>();
       for (const candidate of batches.flat()) {
         const existing = candidates.get(candidate.canonicalId);
@@ -564,13 +579,14 @@ export async function POST(request: Request) {
       const candidateList = Array.from(candidates.values());
       const scannedCount = candidateList.length;
       const pendingCandidates = await candidatesNeedingReview(database, space.id, candidateList);
+      await updateRunPhase(database, space.id, "reviewing", scannedCount);
       const reviews = await reviewCandidates(database, space, user.userId, preference.priorityVenues, pendingCandidates);
       const reviewsById = new Map(reviews.map((review) => [review.canonicalId, review]));
 
-      let newCount = 0;
+      const newCount = reviews.filter((review) => review.recommended).length;
+      await updateRunPhase(database, space.id, "saving", scannedCount, newCount);
       for (const candidate of candidateList) {
         const review = reviewsById.get(candidate.canonicalId);
-        if (review?.recommended) newCount += 1;
         const generatedId = crypto.randomUUID();
         await database.prepare(
           `INSERT OR IGNORE INTO monitored_papers
