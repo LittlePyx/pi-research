@@ -1058,14 +1058,16 @@ main { min-width: 0; }
 .v2-memory-bars span { height: 2px; background: #dfe1db; }
 .v2-memory-bars i { display: block; height: 100%; background: #7890a0; }
 .v2-pulse > p { margin: 14px 0 0; color: #858a82; font: 8px/1.45 Georgia, serif; }
-.v2-change-log > div:not(.v2-rail-heading) { padding: 10px 0; border-top: 1px solid #e2e4de; display: grid; grid-template-columns: 6px 1fr auto; gap: 9px; align-items: start; }
+.v2-change-log > div:not(.v2-rail-heading), .v2-change-log > button { width: 100%; padding: 10px 0; border: 0; border-top: 1px solid #e2e4de; background: transparent; display: grid; grid-template-columns: 6px minmax(0,1fr) auto; gap: 9px; align-items: start; text-align: left; }
+.v2-change-log > button:hover { color: var(--v2-blue); }
 .v2-change-log i { width: 5px; height: 5px; margin-top: 3px; border-radius: 50%; background: var(--v2-blue); }
 .v2-change-log i.umber { background: #936a47; }
 .v2-change-log p { margin: 0; }
 .v2-change-log p strong, .v2-change-log p span { display: block; }
 .v2-change-log p strong { font: 9px Georgia, serif; }
 .v2-change-log p span { margin-top: 4px; color: #858a82; font-size: 6px; }
-.v2-change-log div > small { color: #a0a39d; font-size: 6px; }
+.v2-change-log div > small, .v2-change-log button > small { color: #a0a39d; font-size: 6px; }
+.v2-real-badge { width: fit-content; padding: 4px 7px; border-radius: 4px; background: #edf1ed; color: #587061; font-size: 11px; font-weight: 800; letter-spacing: .03em; }
 .v2-page-head {
   padding: 9px 0 35px;
   border-bottom: 1px solid var(--v2-line);
@@ -1274,6 +1276,7 @@ main { min-width: 0; }
   font-size: 7px;
 }
 .v2-paper-head > div:last-child button:last-child { margin-left: 5px; border-color: #b8c9d4; background: var(--v2-blue-soft); color: var(--v2-blue); }
+.v2-original-link { min-height: 29px; padding: 0 10px; border: 1px solid #b8c9d4; border-radius: 4px; background: var(--v2-blue-soft); display: inline-flex; align-items: center; justify-content: center; color: var(--v2-blue); font-size: 12px; font-weight: 800; text-decoration: none; }
 .v2-paper-detail-grid { display: grid; grid-template-columns: minmax(0,1fr) 240px; gap: 56px; }
 .v2-recommendation > h2 { color: var(--v2-warm); font-size: 24px; }
 .v2-recommendation > div { margin-top: 19px; padding: 16px 18px; border-left: 2px solid var(--v2-warm); background: #f5efea; display: grid; grid-template-columns: 100px 1fr; gap: 10px 15px; }
@@ -1298,6 +1301,13 @@ main { min-width: 0; }
 .v2-reading-plan li strong { color: #42596a; font: 10px Georgia, serif; }
 .v2-reading-plan li small { grid-column: 2; margin-top: 4px; color: #748795; font-size: 6px; }
 .v2-reading-plan > button { width: 100%; min-height: 34px; margin-top: 14px; border: 1px solid #a9becb; border-radius: 4px; background: rgba(255,255,255,.45); color: var(--v2-blue); font-size: 7px; font-weight: 800; }
+.v2-real-signals { margin: 14px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.v2-real-signals > div { min-height: 74px; padding: 13px; border: 1px solid var(--v2-line); border-radius: 6px; background: rgba(255,255,255,.5); }
+.v2-real-signals dt { color: #858a82; font-size: 12px; }
+.v2-real-signals dd { margin: 8px 0 0; color: #4e554e; font: 16px/1.35 Georgia, serif; overflow-wrap: anywhere; }
+.v2-real-detail-aside { height: fit-content; margin-top: 33px; padding: 20px; border: 1px solid #cfdae0; border-radius: 7px; background: var(--v2-blue-soft); }
+.v2-real-detail-aside .v2-original-link.wide, .v2-real-detail-aside > button { width: 100%; margin-top: 12px; }
+.v2-real-detail-aside > button { min-height: 36px; border: 1px solid #a9becb; border-radius: 4px; background: rgba(255,255,255,.5); color: var(--v2-blue); font-size: 12px; font-weight: 800; }
 .v2-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; }
 .v2-modal-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(28,32,28,.45); backdrop-filter: blur(4px); cursor: default; }
 .v2-space-modal, .v2-ask-panel {
@@ -1559,7 +1569,7 @@ main { min-width: 0; }
 .v2-app .v2-agent-note > p { font-size: 16px !important; }
 .v2-app .v2-agent-note > button, .v2-app .v2-rail-heading > span, .v2-app .v2-pulse dt { font-size: 13px !important; }
 .v2-app .v2-pulse > p { font-size: 14px !important; }
-.v2-app .v2-change-log p span, .v2-app .v2-change-log div > small { font-size: 12px !important; }
+.v2-app .v2-change-log p span, .v2-app .v2-change-log div > small, .v2-app .v2-change-log button > small { font-size: 12px !important; }
 .v2-app .v2-thread-update, .v2-app .v2-back, .v2-app .v2-understanding h3, .v2-app .v2-development-row > span, .v2-app .v2-development-row > small, .v2-app .v2-detail-aside dt, .v2-app .v2-detail-aside dd, .v2-app .v2-boundary-mini { font-size: 13px !important; }
 .v2-app .v2-library-tabs button, .v2-app .v2-library-list strong, .v2-app .v2-library-list small, .v2-app .v2-tags i, .v2-app .v2-memory-grid dt, .v2-app .v2-isolation-card > button { font-size: 13px !important; }
 .v2-app .v2-form-actions button, .v2-app .v2-new-space-form label > span, .v2-app .v2-ask-panel form > div small, .v2-app .v2-ask-panel form > div button, .v2-app .v2-answer > div:first-child small, .v2-app .v2-answer > div:last-child { font-size: 13px !important; }

@@ -15,20 +15,6 @@ type Space = {
 };
 type User = { userId: string; displayName: string; email: string; fullName: string | null };
 type Localized = { zh: string; en: string };
-type Paper = {
-  id: string;
-  title: string;
-  authors: string;
-  venue: string;
-  date: Localized;
-  thread: Localized;
-  level: "must" | "worth";
-  readTime: string;
-  why: Localized;
-  novelty: Localized;
-  noveltyType: Localized;
-  core: Localized[];
-};
 type Thread = {
   id: string;
   title: Localized;
@@ -116,8 +102,7 @@ const copy = {
     saved: "已收藏",
     relevant: "相关",
     notRelevant: "不相关",
-    agentNote: "Pi 的判断（演示）",
-    agentNoteBody: "今天不是高更新日。真正值得注意的是：两个结果都在削弱你主线问题中的高斯假设，而不是单纯提高数值指标。",
+    agentNote: "Pi 的本轮判断",
     spacePulse: "空间概况",
     activeThreads: "活跃线索",
     savedPapers: "核心论文",
@@ -236,6 +221,18 @@ const copy = {
     citations: "引用",
     qualityScore: "推荐分",
     noHorizonPaper: "本轮没有足够强的推荐，Pi 不会为了填满列表而凑数。",
+    realBrief: "真实研究简报",
+    realBriefIntro: "以下内容全部来自当前研究空间最近一次真实扫描。",
+    topRecommendation: "本轮首要推荐",
+    moreRealPapers: "更多真实推荐",
+    realPapers: "篇真实论文",
+    scanCandidates: "入选候选",
+    aiAnalyzed: "已由 Pi 解读",
+    recentDiscoveries: "最近发现",
+    publicationInfo: "论文信息",
+    recommendationSignals: "推荐信号",
+    sourceRecord: "来源记录",
+    currentSpaceFit: "当前空间匹配",
   },
   en: {
     today: "Today",
@@ -271,8 +268,7 @@ const copy = {
     saved: "Saved",
     relevant: "Relevant",
     notRelevant: "Not relevant",
-    agentNote: "Pi's judgment (demo)",
-    agentNoteBody: "This is not a high-volume update day. What matters is that two results weaken Gaussian assumptions in your main question, rather than merely improving benchmarks.",
+    agentNote: "Pi's scan judgment",
     spacePulse: "Space pulse",
     activeThreads: "Active threads",
     savedPapers: "Core papers",
@@ -391,6 +387,18 @@ const copy = {
     citations: "Citations",
     qualityScore: "Score",
     noHorizonPaper: "No recommendation was strong enough in this window; Pi will not fill the list for appearance's sake.",
+    realBrief: "Real research brief",
+    realBriefIntro: "Everything below comes from the latest real scan of this research space.",
+    topRecommendation: "Top recommendation this scan",
+    moreRealPapers: "More real recommendations",
+    realPapers: "real papers",
+    scanCandidates: "shortlisted candidates",
+    aiAnalyzed: "analyzed by Pi",
+    recentDiscoveries: "Recent discoveries",
+    publicationInfo: "Publication information",
+    recommendationSignals: "Recommendation signals",
+    sourceRecord: "Source record",
+    currentSpaceFit: "Current space match",
   },
 } as const;
 
@@ -398,103 +406,6 @@ const fallbackSpaces: Space[] = [
   { id: "space-info-theory", name: "Information Theory", memberName: "Yilin", description: "Gaussian extremality, rate-distortion theory, and transport converses", accent: "blue" },
   { id: "space-applied-math", name: "Applied Mathematics", memberName: "Ming", description: "Functional inequalities, stochastic localization, and optimal transport", accent: "umber" },
   { id: "space-ml-reading", name: "ML Reading", memberName: "Sarah", description: "Foundation models, efficient learning, and generative compression", accent: "sage" },
-];
-
-const papers: Paper[] = [
-  {
-    id: "gaussian-distortion",
-    title: "Gaussian Extremality Beyond Quadratic Distortion",
-    authors: "M. Courtade, J. Liu & T. Weissman",
-    venue: "arXiv:2608.04192",
-    date: { zh: "今天", en: "Today" },
-    thread: { zh: "高斯极值与率失真", en: "Gaussian Extremality" },
-    level: "must",
-    readTime: "12 min",
-    why: {
-      zh: "它放松了你已收藏的两篇论文共同依赖的凸性假设，并直接触及当前线索中的非欧失真问题。",
-      en: "It relaxes a convexity assumption shared by two papers in your library and directly touches the non-Euclidean distortion question in this thread.",
-    },
-    novelty: {
-      zh: "给出一个新的极值定理，把高斯最优性扩展到更广的非二次可分失真函数。",
-      en: "A new extremality theorem extends Gaussian optimality to a wider class of separable, non-quadratic distortion measures.",
-    },
-    noveltyType: { zh: "新定理", en: "New theorem" },
-    core: [
-      { zh: "证明一类非二次可分失真下的高斯最优性。", en: "Proves Gaussian optimality for a class of non-quadratic separable distortions." },
-      { zh: "用更弱的位移条件替代标准凸性条件。", en: "Replaces standard convexity with a weaker displacement condition." },
-      { zh: "给出可迁移到非欧设置的逆向证明模板。", en: "Provides a converse template that may transfer to non-Euclidean settings." },
-    ],
-  },
-  {
-    id: "transport-sdpi",
-    title: "Transport Proofs for Strong Data Processing Inequalities",
-    authors: "A. Gozlan & Y. Polyanskiy",
-    venue: "IEEE Transactions on Information Theory",
-    date: { zh: "昨天", en: "Yesterday" },
-    thread: { zh: "最优传输 × 信息论", en: "OT × Information Theory" },
-    level: "must",
-    readTime: "18 min",
-    why: {
-      zh: "它补上了你一篇种子论文中猜想所缺失的传输论证，并且等号情形与高斯稳定性相连。",
-      en: "It supplies the missing transport argument behind a conjecture in one seed paper and connects equality to Gaussian stability.",
-    },
-    novelty: {
-      zh: "用耦合构造而非泛函不等式，推出了对数凹信道的尖锐 SDPI 常数。",
-      en: "It derives a sharp SDPI constant for log-concave channels using a coupling construction rather than functional inequalities.",
-    },
-    noveltyType: { zh: "新证明", en: "New proof" },
-    core: [
-      { zh: "建立基于耦合的尖锐 SDPI 证明。", en: "Builds a coupling-based proof of a sharp SDPI." },
-      { zh: "识别控制收缩的精确传输代价。", en: "Identifies the exact transport cost controlling contraction." },
-      { zh: "刻画与高斯稳定性相关的等号条件。", en: "Characterizes an equality case tied to Gaussian stability." },
-    ],
-  },
-  {
-    id: "rd-stability",
-    title: "Existence and Stability in Abstract Rate–Distortion Problems",
-    authors: "E. C. Posner & L. Tam",
-    venue: "Information and Inference",
-    date: { zh: "8 月 17 日", en: "Aug 17" },
-    thread: { zh: "率失真存在性", en: "Rate-Distortion Existence" },
-    level: "worth",
-    readTime: "9 min",
-    why: {
-      zh: "紧性论证可以直接复用到你当前草稿的存在性部分。",
-      en: "The compactness argument is directly reusable in the existence section of your current draft.",
-    },
-    novelty: {
-      zh: "证明源分布弱收敛下最优测试信道的稳定性。",
-      en: "A stability result for optimal test channels under weak convergence of sources.",
-    },
-    noveltyType: { zh: "稳定性界", en: "Stability bound" },
-    core: [
-      { zh: "把存在性从紧致字母表推广到更弱的紧性条件。", en: "Extends existence beyond compact alphabets using a weaker tightness condition." },
-      { zh: "量化源扰动下最优值的连续性。", en: "Quantifies continuity of the optimum under source perturbations." },
-    ],
-  },
-  {
-    id: "log-concave",
-    title: "Stability of Gaussian Inequalities Under Log-Concave Perturbations",
-    authors: "N. Eldan, R. Eldan & J. Lehec",
-    venue: "Annals of Probability",
-    date: { zh: "8 月 15 日", en: "Aug 15" },
-    thread: { zh: "高斯极值与率失真", en: "Gaussian Extremality" },
-    level: "worth",
-    readTime: "14 min",
-    why: {
-      zh: "这个稳定性估计可能量化你主线问题中的近似高斯区域。",
-      en: "The stability estimate may quantify the approximately Gaussian regime in your main thread.",
-    },
-    novelty: {
-      zh: "通过随机局部化得到显式依赖维数的余项。",
-      en: "A dimension-aware remainder term derived through stochastic localization.",
-    },
-    noveltyType: { zh: "新方法", en: "New method" },
-    core: [
-      { zh: "给出经典高斯不等式的定量稳定版本。", en: "Gives a quantitative stability form of a classical Gaussian inequality." },
-      { zh: "显式追踪维数依赖。", en: "Tracks dimensional dependence explicitly." },
-    ],
-  },
 ];
 
 const threads: Thread[] = [
@@ -598,8 +509,13 @@ function formatMonitorDate(value: string | null, locale: Locale) {
   }).format(new Date(value));
 }
 
-function PaperBadge({ level, locale }: { level: Paper["level"]; locale: Locale }) {
-  return <span className={"v2-paper-badge " + level}><i />{level === "must" ? copy[locale].mustRead : copy[locale].worthReading}</span>;
+function formatPaperDate(value: string | null, locale: Locale) {
+  if (!value) return locale === "zh" ? "日期未提供" : "Date unavailable";
+  return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 }
 
 export default function ResearchApp({ user }: { user: User }) {
@@ -610,7 +526,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [spaceDialog, setSpaceDialog] = useState(false);
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [newSpace, setNewSpace] = useState({ name: "", memberName: "", description: "" });
-  const [selectedPaper, setSelectedPaper] = useState<Paper>(papers[0]);
+  const [selectedMonitorPaper, setSelectedMonitorPaper] = useState<MonitorPaper | null>(null);
   const [selectedThread, setSelectedThread] = useState<Thread>(threads[0]);
   const [modelConfigured, setModelConfigured] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
@@ -629,12 +545,12 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const t = copy[locale];
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
-  const spaceIndex = Math.max(0, spaces.findIndex((space) => space.id === activeSpace.id));
-  const visiblePapers = useMemo(() => {
-    if (spaceIndex % 3 === 1) return [papers[3], papers[1], papers[2], papers[0]];
-    if (spaceIndex % 3 === 2) return [papers[2], papers[3], papers[1], papers[0]];
-    return papers;
-  }, [spaceIndex]);
+  const rankedMonitorPapers = useMemo(
+    () => [...(monitor?.papers || [])].sort((first, second) => second.qualityScore - first.qualityScore),
+    [monitor?.papers],
+  );
+  const priorityPaperCount = rankedMonitorPapers.filter((paper) => paper.priorityVenue).length;
+  const aiBriefCount = rankedMonitorPapers.filter((paper) => paper.analysisSource === "deepseek").length;
 
   useEffect(() => {
     ensureAnonymousWorkspace();
@@ -739,6 +655,7 @@ export default function ResearchApp({ user }: { user: User }) {
     setView("today");
     setAnswer("");
     setQuestion("");
+    setSelectedMonitorPaper(null);
   };
 
   const submitSpace = async (event: FormEvent) => {
@@ -852,7 +769,7 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
-  const saveFeedback = (paper: Paper, kind: "save" | "relevant" | "not_relevant") => {
+  const saveFeedback = (paper: { id: string }, kind: "save" | "relevant" | "not_relevant") => {
     const key = activeSpace.id + ":" + paper.id;
     if (kind === "save") setSaved((current) => ({ ...current, [key]: !current[key] }));
     fetch("/api/feedback", {
@@ -863,9 +780,14 @@ export default function ResearchApp({ user }: { user: User }) {
     setToast(t.feedbackSaved);
   };
 
-  const openPaper = (paper: Paper) => {
-    setSelectedPaper(paper);
+  const openMonitorPaper = (paper: MonitorPaper) => {
+    setSelectedMonitorPaper(paper);
     navigate("paper-detail");
+  };
+
+  const askAboutMonitorPaper = (paper: MonitorPaper) => {
+    setQuestion(locale === "zh" ? `请结合当前研究空间分析这篇论文：${paper.title}` : `Analyze this paper in the context of the current research space: ${paper.title}`);
+    setAskOpen(true);
   };
 
   const openThread = (thread: Thread) => {
@@ -897,7 +819,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <p>{t.researchRadar}</p>
           {navItems.slice(0, 2).map((item) => (
             <button type="button" key={item.id} className={activeNav === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
-              <span>{item.mark}</span>{item.label}{item.id === "today" && <b>3</b>}
+              <span>{item.mark}</span>{item.label}{item.id === "today" && Boolean(monitor?.newCount || rankedMonitorPapers.length) && <b>{Math.min(99, monitor?.newCount || rankedMonitorPapers.length)}</b>}
             </button>
           ))}
           <p>{t.knowledge}</p>
@@ -988,55 +910,60 @@ export default function ResearchApp({ user }: { user: User }) {
 
             <div className="v2-dashboard-grid">
               <div className="v2-feed">
-                <div className="v2-section-title"><div><p className="v2-kicker warm">{locale === "zh" ? "演示分析卡 · 实时发现见上方" : "DEMO ANALYSIS CARDS · LIVE DISCOVERY ABOVE"}</p><h2>{t.mustRead}</h2></div><span>2</span></div>
-                <article className="v2-primary-paper">
-                  <div className="v2-paper-top"><PaperBadge level={visiblePapers[0].level} locale={locale} /><span>{visiblePapers[0].date[locale]}</span><span>{visiblePapers[0].readTime}</span></div>
-                  <button type="button" className="v2-title-link" onClick={() => openPaper(visiblePapers[0])}><h2>{visiblePapers[0].title}</h2></button>
-                  <p className="v2-paper-meta">{visiblePapers[0].authors} <span>·</span> {visiblePapers[0].venue}</p>
-                  <div className="v2-paper-intelligence">
-                    <div><p>{t.whyYou}</p><strong>{visiblePapers[0].why[locale]}</strong></div>
-                    <div><p>{t.actuallyNew}</p><strong>{visiblePapers[0].novelty[locale]}</strong><span>{visiblePapers[0].noveltyType[locale]}</span></div>
-                  </div>
-                  <div className="v2-paper-footer">
-                    <span>{t.relevantTo} <b>{visiblePapers[0].thread[locale]}</b></span>
-                    <div><button className={saved[activeSpace.id + ":" + visiblePapers[0].id] ? "active" : ""} type="button" onClick={() => saveFeedback(visiblePapers[0], "save")}>{saved[activeSpace.id + ":" + visiblePapers[0].id] ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(visiblePapers[0], "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(visiblePapers[0], "not_relevant")}>× {t.notRelevant}</button></div>
-                    <button className="v2-open-paper" type="button" onClick={() => openPaper(visiblePapers[0])}>{t.openAnalysis} →</button>
-                  </div>
-                </article>
+                <div className="v2-section-title"><div><p className="v2-kicker warm">{t.realBrief}</p><h2>{t.topRecommendation}</h2><small>{t.realBriefIntro}</small></div><span>{rankedMonitorPapers.length} {t.realPapers}</span></div>
+                {rankedMonitorPapers[0] ? (
+                  <article className="v2-primary-paper">
+                    <div className="v2-paper-top">
+                      {rankedMonitorPapers[0].priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}
+                      <span>{rankedMonitorPapers[0].analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span>
+                      <span>{formatPaperDate(rankedMonitorPapers[0].publishedAt, locale)}</span>
+                    </div>
+                    <button type="button" className="v2-title-link" onClick={() => openMonitorPaper(rankedMonitorPapers[0])}><h2>{rankedMonitorPapers[0].title}</h2></button>
+                    <p className="v2-paper-meta">{rankedMonitorPapers[0].authors} <span>·</span> {rankedMonitorPapers[0].venue}</p>
+                    <div className="v2-paper-intelligence">
+                      <div><p>{t.whySuitable}</p><strong>{locale === "zh" ? rankedMonitorPapers[0].whyReadZh : rankedMonitorPapers[0].whyReadEn}</strong></div>
+                      <div><p>{t.introLabel}</p><strong>{locale === "zh" ? rankedMonitorPapers[0].summaryZh : rankedMonitorPapers[0].summaryEn}</strong></div>
+                    </div>
+                    <div className="v2-paper-footer">
+                      <span>{rankedMonitorPapers[0].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[0].horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {t.qualityScore} <b>{rankedMonitorPapers[0].qualityScore}</b> · {t.citations} {rankedMonitorPapers[0].citationCount}</span>
+                      <div><button className={saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ? "active" : ""} type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "save")}>{saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "not_relevant")}>× {t.notRelevant}</button></div>
+                      <button className="v2-open-paper" type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[0])}>{t.openAnalysis} →</button>
+                    </div>
+                  </article>
+                ) : <p className="v2-monitor-empty">{monitoring ? t.scanning : t.noLivePapers}</p>}
 
-                <article className="v2-secondary-paper">
-                  <div><PaperBadge level={visiblePapers[1].level} locale={locale} /><button type="button" onClick={() => openPaper(visiblePapers[1])}><h3>{visiblePapers[1].title}</h3></button><p>{visiblePapers[1].authors} · {visiblePapers[1].venue}</p></div>
-                  <div><p>{t.whyYou}</p><span>{visiblePapers[1].why[locale]}</span></div>
-                  <button type="button" onClick={() => openPaper(visiblePapers[1])}>→</button>
-                </article>
+                {rankedMonitorPapers[1] && <article className="v2-secondary-paper">
+                  <div><span className="v2-real-badge">{rankedMonitorPapers[1].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[1].horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><button type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[1])}><h3>{rankedMonitorPapers[1].title}</h3></button><p>{rankedMonitorPapers[1].authors} · {rankedMonitorPapers[1].venue}</p></div>
+                  <div><p>{t.whySuitable}</p><span>{locale === "zh" ? rankedMonitorPapers[1].whyReadZh : rankedMonitorPapers[1].whyReadEn}</span></div>
+                  <button type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[1])}>→</button>
+                </article>}
 
-                <div className="v2-section-title v2-worth-title"><div><h2>{t.worthReading}</h2></div><span>2</span></div>
+                <div className="v2-section-title v2-worth-title"><div><h2>{t.moreRealPapers}</h2></div><span>{Math.max(0, rankedMonitorPapers.length - 2)}</span></div>
                 <div className="v2-compact-list">
-                  {visiblePapers.slice(2).map((paper) => (
-                    <button type="button" key={paper.id} onClick={() => openPaper(paper)}>
-                      <span className="v2-paper-index">{paper.noveltyType[locale]}</span>
-                      <span><strong>{paper.title}</strong><small>{paper.authors} · {paper.date[locale]}</small></span>
-                      <span className="v2-thread-chip">{paper.thread[locale]}</span>
+                  {rankedMonitorPapers.slice(2).map((paper) => (
+                    <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}>
+                      <span className="v2-paper-index">{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span>
+                      <span><strong>{paper.title}</strong><small>{paper.authors} · {formatPaperDate(paper.publishedAt, locale)}</small></span>
+                      <span className="v2-thread-chip">{t.qualityScore} {paper.qualityScore}</span>
                       <b>→</b>
                     </button>
                   ))}
                 </div>
 
                 <section className="v2-quiet">
-                  <span>—</span><div><p className="v2-kicker">{t.quietThreads}</p><h3>{t.noUpdates}</h3><small>{t.quietPromise}</small></div>
-                  <div><strong>{threads[2].title[locale]}</strong><small>{threads[2].updates[locale]}</small></div>
+                  <span>◎</span><div><p className="v2-kicker">{t.sourceRecord}</p><h3>{monitor?.source || "Crossref"}</h3><small>{t.dedupeNote}</small></div>
+                  <div><strong>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</strong><small>{monitor?.knownCount || 0} {t.knownPapers}</small></div>
                 </section>
               </div>
 
               <aside className="v2-right-rail">
-                <section className="v2-agent-note"><div><span>π</span><p className="v2-kicker">{t.agentNote}</p></div><p>{t.agentNoteBody}</p><button type="button" onClick={() => setAskOpen(true)}>{t.askPi} →</button></section>
+                <section className="v2-agent-note"><div><span>π</span><p className="v2-kicker">{t.agentNote}</p></div><p>{locale === "zh" ? `本轮从 ${monitor?.scannedCount || 0} 条入选候选中保留 ${rankedMonitorPapers.length} 篇真实论文，其中 ${priorityPaperCount} 篇来自重点来源，${aiBriefCount} 篇已经完成 Pi 批量解读。` : `This scan kept ${rankedMonitorPapers.length} real papers from ${monitor?.scannedCount || 0} shortlisted candidates. ${priorityPaperCount} came from priority venues and ${aiBriefCount} received Pi batch analysis.`}</p><button type="button" onClick={() => setAskOpen(true)}>{t.askPi} →</button></section>
                 <section className="v2-pulse">
                   <div className="v2-rail-heading"><p className="v2-kicker">{t.spacePulse}</p><span className={"v2-space-avatar small " + activeSpace.accent}>{initials(activeSpace.name)}</span></div>
-                  <dl><div><dt>{t.activeThreads}</dt><dd>{4 + (spaceIndex % 2)}</dd></div><div><dt>{t.savedPapers}</dt><dd>{27 + spaceIndex * 6}</dd></div><div><dt>{t.memorySignals}</dt><dd>{146 + spaceIndex * 38}</dd></div></dl>
-                  <div className="v2-memory-bars"><span><i style={{ width: "86%" }} /></span><span><i style={{ width: "67%" }} /></span><span><i style={{ width: "42%" }} /></span></div>
+                  <dl><div><dt>{t.realPapers}</dt><dd>{rankedMonitorPapers.length}</dd></div><div><dt>{t.knownPapers}</dt><dd>{monitor?.knownCount || 0}</dd></div><div><dt>{t.scanCandidates}</dt><dd>{monitor?.scannedCount || 0}</dd></div></dl>
                   <p>{activeSpace.description}</p>
                 </section>
-                <section className="v2-change-log"><div className="v2-rail-heading"><p className="v2-kicker">{t.recentChanges}</p><span>{t.last24h}</span></div><div><i className="blue" /><p><strong>{threads[0].title[locale]}</strong><span>{locale === "zh" ? "一个关键假设被削弱" : "A key assumption was weakened"}</span></p><small>08:42</small></div><div><i className="umber" /><p><strong>{threads[1].title[locale]}</strong><span>{locale === "zh" ? "新增一个尖锐传输界" : "A new sharp transport bound"}</span></p><small>07:10</small></div></section>
+                <section className="v2-change-log"><div className="v2-rail-heading"><p className="v2-kicker">{t.recentDiscoveries}</p><span>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</span></div>{rankedMonitorPapers.slice(0, 2).map((paper, index) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><i className={index === 0 ? "blue" : "umber"} /><p><strong>{paper.title}</strong><span>{paper.venue}</span></p><small>{formatPaperDate(paper.publishedAt, locale)}</small></button>)}</section>
               </aside>
             </div>
           </main>
@@ -1068,7 +995,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div>
                 <section className="v2-content-section"><p className="v2-kicker">{t.researchQuestion}</p><h2>{selectedThread.question[locale]}</h2></section>
                 <section className="v2-content-section"><p className="v2-kicker">{t.understands}</p><div className="v2-understanding"><div><h3>{t.interested}</h3><ul><li>{locale === "zh" ? "理论极值结果" : "Theoretical extremality results"}</li><li>{locale === "zh" ? "逆向方法与信息不等式" : "Converse methods and information inequalities"}</li><li>{locale === "zh" ? "最优传输论证" : "Optimal transport arguments"}</li></ul></div><div><h3>{t.lessInterested}</h3><ul><li>{locale === "zh" ? "仅有基准测试的论文" : "Benchmark-only work"}</li><li>{locale === "zh" ? "工程实现与系统优化" : "Engineering implementations"}</li></ul></div></div></section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.developments}</p>{visiblePapers.slice(0, 2).map((paper) => <button className="v2-development-row" type="button" key={paper.id} onClick={() => openPaper(paper)}><span>{paper.noveltyType[locale]}</span><strong>{paper.title}</strong><small>{paper.date[locale]}</small><b>→</b></button>)}</section>
+                <section className="v2-content-section"><p className="v2-kicker">{t.developments}</p>{rankedMonitorPapers.slice(0, 2).map((paper) => <button className="v2-development-row" type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><strong>{paper.title}</strong><small>{formatPaperDate(paper.publishedAt, locale)}</small><b>→</b></button>)}</section>
               </div>
               <aside className="v2-detail-aside"><p className="v2-kicker">{t.monitoring}</p><dl><div><dt>{t.status}</dt><dd>{selectedThread.status}</dd></div><div><dt>Priority</dt><dd>{selectedThread.priority}</dd></div><div><dt>Cadence</dt><dd>{t.cadence}</dd></div><div><dt>Space</dt><dd>{defaultSpaceName(activeSpace.name, locale)}</dd></div></dl><div className="v2-boundary-mini"><i />{t.isolated}</div></aside>
             </div>
@@ -1090,13 +1017,14 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "library" && (
           <main className="v2-page">
             <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.libraryTitle}</h1><p>{t.libraryIntro}</p></div><button type="button">＋ {locale === "zh" ? "添加论文" : "Add paper"}</button></section>
-            <div className="v2-library-tabs"><button className="active" type="button">{t.all}<span>27</span></button><button type="button">{t.mustRead}<span>4</span></button><button type="button">{t.reading}<span>3</span></button><button type="button">{t.finished}<span>11</span></button></div>
+            <div className="v2-library-tabs"><button className="active" type="button">{t.all}<span>{monitor?.knownCount || rankedMonitorPapers.length}</span></button><button type="button">{t.priorityVenueLabel}<span>{priorityPaperCount}</span></button><button type="button">{t.aiBrief}<span>{aiBriefCount}</span></button><button type="button">{t.recentDiscoveries}<span>{rankedMonitorPapers.length}</span></button></div>
             <div className="v2-library-list">
-              {visiblePapers.map((paper, index) => (
-                <button type="button" key={paper.id} onClick={() => openPaper(paper)}>
-                  <span className="v2-doc-icon">□</span><span><strong>{paper.title}</strong><small>{paper.authors} · {paper.venue}</small></span><span><small>{t.relevantTo}</small><strong>{paper.thread[locale]}</strong></span><span><small>{t.added}</small><strong>{index === 0 ? paper.date[locale] : "Aug " + (17 - index)}</strong></span><PaperBadge level={paper.level} locale={locale} /><b>→</b>
+              {rankedMonitorPapers.map((paper) => (
+                <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}>
+                  <span className="v2-doc-icon">□</span><span><strong>{paper.title}</strong><small>{paper.authors} · {paper.venue}</small></span><span><small>{t.currentSpaceFit}</small><strong>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</strong></span><span><small>{t.added}</small><strong>{formatPaperDate(paper.publishedAt, locale)}</strong></span><span className="v2-real-badge">{t.qualityScore} {paper.qualityScore}</span><b>→</b>
                 </button>
               ))}
+              {!rankedMonitorPapers.length && <p className="v2-monitor-empty">{monitoring ? t.scanning : t.noLivePapers}</p>}
             </div>
           </main>
         )}
@@ -1114,18 +1042,17 @@ export default function ResearchApp({ user }: { user: User }) {
           </main>
         )}
 
-        {view === "paper-detail" && (
+        {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
             <button className="v2-back" type="button" onClick={() => navigate("today")}>← {t.paperBack}</button>
-            <section className="v2-paper-head"><div className="v2-paper-top"><PaperBadge level={selectedPaper.level} locale={locale} /><span>{selectedPaper.noveltyType[locale]}</span><span>{selectedPaper.readTime}</span></div><h1>{selectedPaper.title}</h1><p>{selectedPaper.authors}</p><small>{selectedPaper.venue} · {selectedPaper.date[locale]}</small><div><button type="button" onClick={() => saveFeedback(selectedPaper, "save")}>☆ {t.save}</button><button type="button" onClick={() => saveFeedback(selectedPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => setAskOpen(true)}>π {t.askAboutPaper}</button></div></section>
+            <section className="v2-paper-head"><div className="v2-paper-top">{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{saved[activeSpace.id + ":" + selectedMonitorPaper.id] ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div></section>
             <div className="v2-paper-detail-grid">
               <div>
-                <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.recommendation}</p><h2>{selectedPaper.level === "must" ? t.mustRead : t.worthReading}</h2><div><span>{t.relevantTo}</span><strong>{selectedPaper.thread[locale]}</strong><span>{t.whyYou}</span><strong>{selectedPaper.why[locale]}</strong></div></section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.coreContribution}</p><ol className="v2-core-list">{selectedPaper.core.map((item, index) => <li key={item.en}><span>0{index + 1}</span><p>{item[locale]}</p></li>)}</ol></section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.actuallyNew} · {selectedPaper.noveltyType[locale]}</p><h2>{selectedPaper.novelty[locale]}</h2></section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.relation}</p><div className="v2-relation"><div><small>{t.currentSpace}</small><strong>{defaultSpaceName(activeSpace.name, locale)}</strong></div><i>→</i><div><small>Smith et al. · 2025</small><strong>{locale === "zh" ? "仅高斯噪声" : "Gaussian-only result"}</strong></div><i>→</i><div className="current"><small>{locale === "zh" ? "本文" : "This paper"}</small><strong>{locale === "zh" ? "推广到对数凹噪声" : "Extends to log-concave noise"}</strong></div></div></section>
+                <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><span>{t.qualityScore}</span><strong>{selectedMonitorPaper.qualityScore}</strong></div></section>
+                <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><h2>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</h2></section>
+                <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.qualityScore}</dt><dd>{selectedMonitorPaper.qualityScore}</dd></div><div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
               </div>
-              <aside className="v2-reading-plan"><p className="v2-kicker">{t.suggestedReading}</p><ol><li><span>04 min</span><strong>Introduction</strong><small>{locale === "zh" ? "问题与范围" : "Problem and scope"}</small></li><li><span>07 min</span><strong>Theorem 2</strong><small>{locale === "zh" ? "主要结果" : "Main result"}</small></li><li><span>09 min</span><strong>Section 4</strong><small>{locale === "zh" ? "证明思路" : "Proof idea"}</small></li></ol><button type="button" onClick={() => setAskOpen(true)}>{t.askAboutPaper} →</button></aside>
+              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{t.publicationInfo}</p><dl><div><dt>{t.currentSpaceFit}</dt><dd>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
             </div>
           </main>
         )}

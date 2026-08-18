@@ -15,6 +15,7 @@ type CrossrefItem = {
   "published-print"?: CrossrefDate;
   "is-referenced-by-count"?: number;
   score?: number;
+  type?: string;
 };
 type CrossrefResponse = { message?: { items?: CrossrefItem[] } };
 type DeepSeekResponse = {
@@ -82,12 +83,20 @@ type InsightDraft = {
 const CADENCE_MS = 24 * 60 * 60 * 1000;
 const MANUAL_COOLDOWN_MS = 60 * 60 * 1000;
 const HORIZONS = [
-  { key: "days" as const, daysFrom: 14, daysUntil: 0, sort: "published" },
+  { key: "days" as const, daysFrom: 14, daysUntil: 0, sort: "relevance" },
   { key: "months" as const, daysFrom: 180, daysUntil: 15, sort: "relevance" },
   { key: "years" as const, daysFrom: 365 * 5, daysUntil: 181, sort: "is-referenced-by-count" },
 ];
+const MONITOR_RELEVANCE_FILTER_RELEASED_AT = Date.parse("2026-08-18T08:45:00.000Z");
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 40;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 3;
+const PAPER_TYPES = new Set(["journal-article", "proceedings-article", "posted-content"]);
+const GENERIC_TERMS = new Set([
+  "about", "after", "against", "analysis", "and", "applied", "are", "based", "between", "current", "for", "from", "into", "its", "modern",
+  "new", "paper", "research", "study", "theory", "through", "toward", "towards", "under", "using", "via", "with", "work", "方向", "研究", "理论", "问题",
+]);
+const NON_PAPER_TITLES = /^(introduction|editorial|preface|foreword|contents|index)$/i;
+const NON_PAPER_PHRASES = /(publication information|information for authors|instructions for authors|author information|table of contents|editorial board|front matter|back matter|issue information|journal masthead)/i;
 
 function isoDate(date: Date) {
   return date.toISOString().slice(0, 10);
@@ -120,6 +129,49 @@ function parseVenues(value: string) {
 
 function normalizeVenue(value: string) {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+function focusTerms(space: SpaceRow) {
+  return cleanText(space.description || space.name)
+    .toLocaleLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((term) => term.length >= 3 && !GENERIC_TERMS.has(term));
+}
+
+function normalizedResearchText(value: string) {
+  return ` ${cleanText(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ")} `;
+}
+
+function termMatchCount(haystack: string, terms: string[]) {
+  return new Set(terms.filter((term) => haystack.includes(` ${term} `))).size;
+}
+
+function relevanceSignals(title: string, space: SpaceRow, profileKey: string) {
+  const haystack = normalizedResearchText(title);
+  const focusedMatches = termMatchCount(haystack, focusTerms(space));
+  const matchedKeywords = getDomainProfile(profileKey).keywords.filter((keyword) => {
+    const normalized = normalizedResearchText(keyword).trim();
+    return normalized.length >= 3 && haystack.includes(` ${normalized} `);
+  });
+  const strongProfileMatches = matchedKeywords.filter((keyword) => /[\s-]/.test(keyword.trim())).length;
+  const singleProfileMatches = matchedKeywords.length - strongProfileMatches;
+  return {
+    focusedMatches,
+    strongProfileMatches,
+    singleProfileMatches,
+    score: focusedMatches + strongProfileMatches * 3 + singleProfileMatches,
+  };
+}
+
+function isResearchPaper(title: string) {
+  const normalized = cleanText(title);
+  return normalized.length >= 12 && !NON_PAPER_TITLES.test(normalized) && !NON_PAPER_PHRASES.test(normalized);
+}
+
+function isRelevantPaper(title: string, venue: string, space: SpaceRow, profileKey: string, priorityVenues: string[]) {
+  if (!isResearchPaper(title)) return false;
+  const signals = relevanceSignals(title, space, profileKey);
+  return isPriorityVenue(venue, priorityVenues) || signals.strongProfileMatches > 0 || signals.singleProfileMatches >= 2 || signals.focusedMatches >= 2;
 }
 
 function isPriorityVenue(venue: string, priorityVenues: string[]) {
@@ -156,7 +208,7 @@ async function titleFingerprint(title: string) {
 
 async function normalizeItem(item: CrossrefItem, horizon: Horizon): Promise<Omit<Candidate, "qualityScore" | "priorityVenue"> | null> {
   const title = cleanText(item.title?.[0] || "");
-  if (!title) return null;
+  if (!title || !PAPER_TYPES.has(item.type || "") || !isResearchPaper(title)) return null;
   const doi = item.DOI?.trim().toLowerCase() || null;
   const authors = (item.author || []).slice(0, 8).map((author) => {
     return cleanText(author.name || [author.given, author.family].filter(Boolean).join(" "));
@@ -177,11 +229,13 @@ async function normalizeItem(item: CrossrefItem, horizon: Horizon): Promise<Omit
   };
 }
 
-async function fetchHorizon(space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, priorityVenues: string[]) {
+async function fetchHorizon(space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, priorityVenues: string[], profileKey: string) {
+  const profile = getDomainProfile(profileKey);
   const endpoint = new URL("https://api.crossref.org/works");
-  endpoint.searchParams.set("query.bibliographic", cleanText(`${space.name} ${space.description}`).slice(0, 260));
+  const profileQuery = profile.keywords.filter((keyword) => Array.from(keyword).every((character) => (character.codePointAt(0) || 0) <= 127)).slice(0, 5).join(" ");
+  endpoint.searchParams.set("query.title", cleanText(`${space.name} ${space.description} ${profileQuery}`).slice(0, 360));
   endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
-  endpoint.searchParams.set("rows", "20");
+  endpoint.searchParams.set("rows", "40");
   endpoint.searchParams.set("sort", horizon.sort);
   endpoint.searchParams.set("order", "desc");
   endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
@@ -199,7 +253,9 @@ async function fetchHorizon(space: SpaceRow, horizon: typeof HORIZONS[number], n
   const normalized = await Promise.all((data.message?.items || []).map((item) => normalizeItem(item, horizon.key)));
   return normalized
     .filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item))
-    .map((item) => scoreCandidate(item, priorityVenues, now))
+    .map((item) => ({ item, signals: relevanceSignals(item.title, space, profileKey) }))
+    .filter(({ item, signals }) => isPriorityVenue(item.venue, priorityVenues) || signals.strongProfileMatches > 0 || signals.singleProfileMatches >= 2 || signals.focusedMatches >= 2)
+    .map(({ item, signals }) => scoreCandidate({ ...item, relevanceScore: item.relevanceScore + signals.score * 20 }, priorityVenues, now))
     .sort((left, right) => right.qualityScore - left.qualityScore)
     .slice(0, 8);
 }
@@ -366,9 +422,10 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     ).bind(space.id).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
   ]);
+  const relevantPapers = papers.results.filter((paper) => isRelevantPaper(paper.title, paper.venue, space, preference.profileKey, preference.priorityVenues));
   const selected: PaperRow[] = [];
   for (const horizon of ["days", "months", "years"] as Horizon[]) {
-    selected.push(...papers.results.filter((paper) => paper.horizon === horizon).slice(0, 2));
+    selected.push(...relevantPapers.filter((paper) => paper.horizon === horizon).slice(0, 2));
   }
   return {
     monitor: {
@@ -467,7 +524,7 @@ export async function POST(request: Request) {
     const missingInsights = await database.prepare(
       "SELECT COUNT(*) AS count FROM monitored_papers p LEFT JOIN paper_insights i ON i.paper_id = p.id WHERE p.space_id = ? AND i.paper_id IS NULL",
     ).bind(space.id).first<{ count: number }>();
-    if (previousTime && now.getTime() - previousTime < minimumAge && !(missingInsights?.count || 0)) {
+    if (previousTime >= MONITOR_RELEVANCE_FILTER_RELEASED_AT && now.getTime() - previousTime < minimumAge && !(missingInsights?.count || 0)) {
       return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
     }
 
@@ -479,7 +536,7 @@ export async function POST(request: Request) {
 
     try {
       const batches: Candidate[][] = [];
-      for (const horizon of HORIZONS) batches.push(await fetchHorizon(space, horizon, now, preference.priorityVenues));
+      for (const horizon of HORIZONS) batches.push(await fetchHorizon(space, horizon, now, preference.priorityVenues, preference.profileKey));
       const scannedCount = batches.reduce((total, batch) => total + batch.length, 0);
       const candidates = new Map<string, Candidate>();
       for (const candidate of batches.flat()) {
@@ -526,13 +583,13 @@ export async function POST(request: Request) {
            p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
            FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
            WHERE p.space_id = ? AND p.horizon = ? AND i.analysis_source != 'deepseek'
-           ORDER BY i.quality_score DESC LIMIT 2`,
+           ORDER BY i.quality_score DESC LIMIT 20`,
         ).bind(space.id, horizon).all<{
           canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
           published_at: string | null; horizon: Horizon; citation_count: number; relevance_score: number;
           abstract_text: string; quality_score: number; priority_venue: number;
         }>();
-        analysisTargets.push(...rows.results.map((row) => ({
+        analysisTargets.push(...rows.results.filter((row) => isRelevantPaper(row.title, row.venue, space, preference.profileKey, preference.priorityVenues)).slice(0, 2).map((row) => ({
           canonicalId: row.canonical_id, doi: row.doi, title: row.title, authors: row.authors, venue: row.venue,
           url: row.url, publishedAt: row.published_at, horizon: row.horizon, citationCount: row.citation_count,
           relevanceScore: row.relevance_score, abstractText: row.abstract_text, qualityScore: row.quality_score,

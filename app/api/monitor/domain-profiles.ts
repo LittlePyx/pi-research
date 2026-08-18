@@ -11,7 +11,7 @@ export const DOMAIN_PROFILES: DomainProfile[] = [
     key: "information_theory",
     nameZh: "信息论与通信",
     nameEn: "Information theory & communications",
-    keywords: ["information theory", "rate-distortion", "entropy", "channel coding", "source coding", "mutual information", "信息论", "率失真", "信道编码"],
+    keywords: ["information theory", "rate-distortion", "entropy", "channel coding", "source coding", "mutual information", "finite blocklength", "information bottleneck", "joint source channel", "rate splitting", "error exponent", "wiretap channel", "multiple access channel", "broadcast channel", "semantic communication", "coding theorem", "data processing inequality", "信息论", "率失真", "信道编码"],
     venues: [
       "IEEE Transactions on Information Theory",
       "IEEE International Symposium on Information Theory",
