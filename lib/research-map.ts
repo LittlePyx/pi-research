@@ -12,6 +12,9 @@ export type ResearchDirectionIntelligence = {
   opportunityEn: string;
   watchSignalZh: string;
   watchSignalEn: string;
+  evidenceGapZh: string;
+  evidenceGapEn: string;
+  nextSearchQuery: string;
   confidence: number;
   evidenceCanonicalIds: string[];
   model: string;

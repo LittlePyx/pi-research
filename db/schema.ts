@@ -205,6 +205,24 @@ export const paperDeliveryState = sqliteTable(
   ],
 );
 
+export const paperReadingProgress = sqliteTable(
+  "paper_reading_progress",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("unread"),
+    note: text("note").notNull().default(""),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_reading_space_paper").on(table.spaceId, table.paperId),
+    index("idx_paper_reading_space_status").on(table.spaceId, table.status, table.updatedAt),
+  ],
+);
+
 export const monitorPreferences = sqliteTable(
   "monitor_preferences",
   {
@@ -212,6 +230,7 @@ export const monitorPreferences = sqliteTable(
     spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
     profileKey: text("profile_key").notNull(),
     priorityVenues: text("priority_venues").notNull().default("[]"),
+    trackedAuthors: text("tracked_authors").notNull().default("[]"),
     explorationMode: text("exploration_mode").notNull().default("balanced"),
     userModified: integer("user_modified", { mode: "boolean" }).notNull().default(false),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
@@ -302,6 +321,21 @@ export const paperInsights = sqliteTable(
     llmRecommended: integer("llm_recommended", { mode: "boolean" }).notNull().default(false),
     llmRelevanceScore: integer("llm_relevance_score").notNull().default(0),
     screeningReason: text("screening_reason").notNull().default(""),
+    recommendationTier: text("recommendation_tier").notNull().default("browse"),
+    readMinutes: integer("read_minutes").notNull().default(12),
+    readDepth: text("read_depth").notNull().default("focused"),
+    problemZh: text("problem_zh").notNull().default(""),
+    problemEn: text("problem_en").notNull().default(""),
+    methodZh: text("method_zh").notNull().default(""),
+    methodEn: text("method_en").notNull().default(""),
+    contributionZh: text("contribution_zh").notNull().default(""),
+    contributionEn: text("contribution_en").notNull().default(""),
+    limitationsZh: text("limitations_zh").notNull().default(""),
+    limitationsEn: text("limitations_en").notNull().default(""),
+    readingFocusZh: text("reading_focus_zh").notNull().default(""),
+    readingFocusEn: text("reading_focus_en").notNull().default(""),
+    researchQuestionsZh: text("research_questions_zh").notNull().default("[]"),
+    researchQuestionsEn: text("research_questions_en").notNull().default("[]"),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
   (table) => [

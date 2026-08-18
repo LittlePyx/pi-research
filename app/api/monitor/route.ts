@@ -63,7 +63,7 @@ type SpaceRow = {
   negativeExamples?: string;
 };
 type ExplorationMode = "focused" | "balanced" | "open";
-type PreferenceRow = { profile_key: string; priority_venues: string; exploration_mode: string; user_modified: number };
+type PreferenceRow = { profile_key: string; priority_venues: string; tracked_authors: string; exploration_mode: string; user_modified: number };
 type QueryPlan = {
   planDate: string;
   explorationMode: ExplorationMode;
@@ -135,6 +135,23 @@ type PaperRow = {
   snoozed_until: string | null;
   saved: number;
   feedback: string | null;
+  reading_status: string;
+  reading_note: string;
+  recommendation_tier: string;
+  read_minutes: number;
+  read_depth: string;
+  problem_zh: string;
+  problem_en: string;
+  method_zh: string;
+  method_en: string;
+  contribution_zh: string;
+  contribution_en: string;
+  limitations_zh: string;
+  limitations_en: string;
+  reading_focus_zh: string;
+  reading_focus_en: string;
+  research_questions_zh: string;
+  research_questions_en: string;
 };
 type Candidate = {
   canonicalId: string;
@@ -151,7 +168,7 @@ type Candidate = {
   qualityScore: number;
   priorityVenue: boolean;
   source: "crossref" | "semantic_scholar" | "openalex" | "arxiv";
-  discoveryChannel: "topic" | "journal" | "semantic" | "preprint" | "citation";
+  discoveryChannel: "topic" | "journal" | "author" | "semantic" | "preprint" | "citation";
   provenance: CandidateProvenance[];
 };
 type CandidateProvenance = {
@@ -168,6 +185,7 @@ type DiscoveryQuery = {
   sourceKey: string;
   venue?: string;
   issn?: string;
+  author?: string;
 };
 type PaperReview = {
   canonicalId: string;
@@ -184,6 +202,21 @@ type PaperReview = {
   mapRole: "milestone" | "frontier";
   mapRationaleZh: string;
   mapRationaleEn: string;
+  recommendationTier: "must_read" | "browse" | "reserve";
+  readMinutes: number;
+  readDepth: "overview" | "focused" | "deep";
+  problemZh: string;
+  problemEn: string;
+  methodZh: string;
+  methodEn: string;
+  contributionZh: string;
+  contributionEn: string;
+  limitationsZh: string;
+  limitationsEn: string;
+  readingFocusZh: string;
+  readingFocusEn: string;
+  researchQuestionsZh: string[];
+  researchQuestionsEn: string[];
 };
 type MapTrackContext = { id: string; title_zh: string; title_en: string; summary_en: string; search_queries: string };
 
@@ -450,7 +483,7 @@ function rotatedSlice(items: string[], round: number, size: number) {
   return Array.from({ length: Math.min(size, items.length) }, (_, index) => items[(start + index) % items.length]);
 }
 
-function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], profileKey: string, round: number, priorityVenues: string[], queryPlan?: QueryPlan): DiscoveryQuery[] {
+function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], profileKey: string, round: number, priorityVenues: string[], trackedAuthors: string[], queryPlan?: QueryPlan): DiscoveryQuery[] {
   const profile = getDomainProfile(profileKey);
   const description = cleanText(`${space.name} ${space.description}`).slice(0, 320);
   const profileTerms = profile.keywords.filter(asciiOnly);
@@ -458,6 +491,7 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
   const profileWindow = rotatedSlice(profileTerms, round, 3);
   const memoryWindow = rotatedSlice(memoryTerms, round, 3);
   const venueWindow = rotatedSlice(priorityVenues.filter(asciiOnly), round, horizon.key === "days" ? 4 : horizon.key === "months" ? 3 : 2);
+  const authorWindow = rotatedSlice(trackedAuthors.filter(asciiOnly), round, horizon.key === "years" ? 2 : 3);
   const queries: DiscoveryQuery[] = [
     { key: "topic-anchor", sourceKey: "crossref:topic", query: description, sort: horizon.key === "days" ? "published" : horizon.sort, rotating: false, channel: "topic" },
     { key: "profile-cluster", sourceKey: "crossref:profile", query: `${space.description} ${profileWindow.join(" ")}`, sort: "relevance", rotating: true, channel: "topic" },
@@ -485,6 +519,17 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
       rotating: horizon.key !== "days",
       channel: "journal",
       issn: PRIORITY_JOURNAL_ISSNS.get(normalizeVenue(venue)),
+    });
+  }
+  for (const author of authorWindow) {
+    queries.push({
+      key: "tracked-author",
+      sourceKey: `crossref:author:${normalizeVenue(author)}`,
+      query: `${space.description} ${profileWindow.slice(0, 2).join(" ")}`,
+      author,
+      sort: horizon.key === "days" ? "published" : horizon.sort,
+      rotating: horizon.key !== "days",
+      channel: "author",
     });
   }
   if (horizon.key === "years") {
@@ -579,6 +624,7 @@ async function fetchHorizon(
   horizon: typeof HORIZONS[number],
   now: Date,
   priorityVenues: string[],
+  trackedAuthors: string[],
   profileKey: string,
   round: number,
   jobId: string,
@@ -586,7 +632,7 @@ async function fetchHorizon(
   queryPlan?: QueryPlan,
 ) {
   const rows = horizon.key === "years" ? 36 : 30;
-  const plans = discoveryQueries(space, horizon, profileKey, round, priorityVenues, queryPlan);
+  const plans = discoveryQueries(space, horizon, profileKey, round, priorityVenues, trackedAuthors, queryPlan);
   const requestOptions: RequestInit = {
     headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
     signal: AbortSignal.timeout(20_000),
@@ -598,7 +644,8 @@ async function fetchHorizon(
       ? `https://api.crossref.org/journals/${encodeURIComponent(plan.issn)}/works`
       : "https://api.crossref.org/works");
     if (plan.channel === "journal" && plan.venue && !plan.issn) endpoint.searchParams.set("query.container-title", plan.venue);
-    if (!(plan.channel === "journal" && horizon.key === "days")) endpoint.searchParams.set("query.bibliographic", plan.query);
+    if (plan.channel === "author" && plan.author) endpoint.searchParams.set("query.author", plan.author);
+    if (!(plan.channel === "journal" && horizon.key === "days") && plan.channel !== "author") endpoint.searchParams.set("query.bibliographic", plan.query);
     endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
     endpoint.searchParams.set("rows", String(rows));
     endpoint.searchParams.set("offset", String(offset));
@@ -871,13 +918,13 @@ async function ownedSpace(request: Request, spaceId: string) {
 }
 
 async function ensurePreference(database: D1Database, space: SpaceRow) {
-  let row = await database.prepare("SELECT profile_key, priority_venues, exploration_mode, user_modified FROM monitor_preferences WHERE space_id = ? LIMIT 1")
+  let row = await database.prepare("SELECT profile_key, priority_venues, tracked_authors, exploration_mode, user_modified FROM monitor_preferences WHERE space_id = ? LIMIT 1")
     .bind(space.id).first<PreferenceRow>();
   if (!row) {
     const profile = inferDomainProfile(space.name, space.description);
     await database.prepare("INSERT OR IGNORE INTO monitor_preferences (id, space_id, profile_key, priority_venues) VALUES (?, ?, ?, ?)")
       .bind(crypto.randomUUID(), space.id, profile.key, JSON.stringify(profile.venues)).run();
-    row = await database.prepare("SELECT profile_key, priority_venues, exploration_mode, user_modified FROM monitor_preferences WHERE space_id = ? LIMIT 1")
+    row = await database.prepare("SELECT profile_key, priority_venues, tracked_authors, exploration_mode, user_modified FROM monitor_preferences WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<PreferenceRow>();
   }
   const profile = getDomainProfile(row?.profile_key || "general_research");
@@ -900,6 +947,7 @@ async function ensurePreference(database: D1Database, space: SpaceRow) {
     profileNameZh: profile.nameZh,
     profileNameEn: profile.nameEn,
     priorityVenues: parseVenues(row?.priority_venues || "[]"),
+    trackedAuthors: parseVenues(row?.tracked_authors || "[]"),
     explorationMode,
     userModified: Boolean(row?.user_modified),
   };
@@ -1007,6 +1055,7 @@ async function ensureDailyQueryPlan(
               `Explicit and inferred preference evidence: ${JSON.stringify(signals.map((item) => ({ layer: item.layer, kind: item.kind, label: item.labelEn, evidence: item.evidence, confidence: item.effectiveConfidence })))}`,
               `Existing directions and user depth: ${JSON.stringify(tracks.results.map((track) => ({ title: track.title_en, role: track.user_role, depth: track.depth_score, interaction: track.interaction_score, summary: track.summary_en, queries: parseVenues(track.search_queries).slice(0, 4) })))}`,
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
+              `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,
               `Low-yield or repeatedly covered channels: ${JSON.stringify(recentCoverage.results)}`,
             ].join("\n") },
           ],
@@ -1132,17 +1181,31 @@ async function persistReviewBatch(database: D1Database, spaceId: string, candida
     return [database.prepare(
       `INSERT INTO paper_insights
        (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en, quality_score,
-        priority_venue, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        priority_venue, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason,
+        recommendation_tier, read_minutes, read_depth, problem_zh, problem_en, method_zh, method_en,
+        contribution_zh, contribution_en, limitations_zh, limitations_en, reading_focus_zh, reading_focus_en,
+        research_questions_zh, research_questions_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text, summary_zh = excluded.summary_zh,
        summary_en = excluded.summary_en, why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
        quality_score = excluded.quality_score, priority_venue = excluded.priority_venue,
        analysis_source = excluded.analysis_source, analysis_model = excluded.analysis_model,
        llm_recommended = excluded.llm_recommended, llm_relevance_score = excluded.llm_relevance_score,
-       screening_reason = excluded.screening_reason, updated_at = CURRENT_TIMESTAMP`,
+       screening_reason = excluded.screening_reason, recommendation_tier = excluded.recommendation_tier,
+       read_minutes = excluded.read_minutes, read_depth = excluded.read_depth,
+       problem_zh = excluded.problem_zh, problem_en = excluded.problem_en, method_zh = excluded.method_zh,
+       method_en = excluded.method_en, contribution_zh = excluded.contribution_zh, contribution_en = excluded.contribution_en,
+       limitations_zh = excluded.limitations_zh, limitations_en = excluded.limitations_en,
+       reading_focus_zh = excluded.reading_focus_zh, reading_focus_en = excluded.reading_focus_en,
+       research_questions_zh = excluded.research_questions_zh, research_questions_en = excluded.research_questions_en,
+       updated_at = CURRENT_TIMESTAMP`,
     ).bind(paperId, spaceId, candidate.abstractText, review.summaryZh, review.summaryEn, review.whyReadZh, review.whyReadEn,
       review.qualityScore, candidate.priorityVenue ? 1 : 0, review.recommended ? "deepseek" : "deepseek_rejected",
-      MONITOR_MODEL, review.recommended ? 1 : 0, review.relevanceScore, review.screeningReason)];
+      MONITOR_MODEL, review.recommended ? 1 : 0, review.relevanceScore, review.screeningReason,
+      review.recommendationTier, review.readMinutes, review.readDepth, review.problemZh, review.problemEn,
+      review.methodZh, review.methodEn, review.contributionZh, review.contributionEn, review.limitationsZh,
+      review.limitationsEn, review.readingFocusZh, review.readingFocusEn, JSON.stringify(review.researchQuestionsZh),
+      JSON.stringify(review.researchQuestionsEn))];
   });
   if (insightStatements.length) await database.batch(insightStatements);
 
@@ -1215,7 +1278,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     const completedBefore = completed.length;
     const prompt = [
       "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
-      "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, summaryZh, summaryEn, whyReadZh, whyReadEn, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
+      "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, recommendationTier, readMinutes, readDepth, summaryZh, summaryEn, whyReadZh, whyReadEn, problemZh/En, methodZh/En, contributionZh/En, limitationsZh/En, readingFocusZh/En, researchQuestionsZh/En, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
       "Act as a strict academic editor, not a search-result summarizer. A real paper can still be irrelevant and must then be rejected.",
       "Set isPaper=false for mastheads, publication information, author instructions, contents, editorials without research content, corrections, calls for papers, or other non-paper records.",
       `Set recommended=true only when relevanceScore >= ${RECOMMENDATION_THRESHOLD}, the work directly advances the research-space scope, and it satisfies its horizon standard. Recency, citations, or a priority venue alone never justify recommendation.`,
@@ -1223,8 +1286,11 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "Use only supplied title, abstract, authors, venue, date, citation, and priority-venue evidence. Never invent a theorem, method, experiment, result, section, or conclusion.",
       "For recommended papers, summaryZh must be a concrete 100-180 Chinese-character introduction explaining the research question, approach, and evidence-backed contribution; summaryEn must convey the same substance in 55-95 words.",
       "For recommended papers, whyReadZh must be a specific 80-150 Chinese-character explanation of how the paper helps this exact research space and which idea, method, comparison, or decision the reader should extract; whyReadEn must convey the same substance in 45-80 words.",
+      "For recommended papers, write evidence-disciplined bilingual fields for the research problem, method, main contribution, limitations or uncertainty, and concrete reading focus. If the metadata cannot support a claim, state that the abstract/metadata is insufficient instead of inventing it.",
+      "researchQuestionsZh and researchQuestionsEn must each contain 2-4 concise follow-up questions that a researcher could investigate after reading; align the two lists semantically.",
+      "Choose recommendationTier=must_read only for a direct, high-consequence match; browse for a useful paper worth focused reading; reserve for a credible paper that should be kept as supporting material. Choose readDepth=deep|focused|overview and estimate readMinutes from 5 to 90.",
       "Do not write generic phrases such as 'it is recent', 'it has a high score', or 'it comes from a priority venue' as the main reason to read.",
-      "For rejected records, set all four summary/whyRead fields to empty strings and give a short screeningReason. Never put rejection language inside whyRead.",
+      "For rejected records, set all summary, whyRead, problem, method, contribution, limitations, and readingFocus fields to empty strings, set both researchQuestions arrays to [], and give a short screeningReason. Never spend narrative tokens explaining a rejected record.",
       "When research-map directions are supplied, assign a recommended paper to the single best-fitting trackId only when the fit is direct. Otherwise use an empty trackId.",
       "For a track assignment, use mapRole=frontier for current active work or mapRole=milestone for a durable development, and write a concrete bilingual map rationale explaining how it extends that direction. For no assignment, keep both map rationales empty.",
       `Research space: ${space.name} — ${space.description}`,
@@ -1297,6 +1363,12 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       const summaryEn = cleanText(item.summaryEn || "").slice(0, 1200);
       const whyReadZh = cleanText(item.whyReadZh || "").slice(0, 800);
       const whyReadEn = cleanText(item.whyReadEn || "").slice(0, 1000);
+      const requestedTier = item.recommendationTier === "must_read" || item.recommendationTier === "reserve" ? item.recommendationTier : "browse";
+      const recommendationTier: PaperReview["recommendationTier"] = requestedTier === "must_read" && (relevanceScore < 86 || qualityScore < 80) ? "browse" : requestedTier;
+      const readDepth: PaperReview["readDepth"] = item.readDepth === "deep" || item.readDepth === "overview" ? item.readDepth : "focused";
+      const readMinutes = Math.max(5, Math.min(90, Math.round(Number(item.readMinutes) || (readDepth === "deep" ? 40 : readDepth === "overview" ? 8 : 18))));
+      const researchQuestionsZh = Array.isArray(item.researchQuestionsZh) ? item.researchQuestionsZh.map((question) => cleanText(String(question)).slice(0, 280)).filter(Boolean).slice(0, 4) : [];
+      const researchQuestionsEn = Array.isArray(item.researchQuestionsEn) ? item.researchQuestionsEn.map((question) => cleanText(String(question)).slice(0, 360)).filter(Boolean).slice(0, 4) : [];
       const recommended = passesRecommendationGate({
         isPaper: item.isPaper === true,
         requestedRecommendation: item.recommended === true,
@@ -1325,6 +1397,21 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         mapRole: item.mapRole === "milestone" ? "milestone" : "frontier",
         mapRationaleZh,
         mapRationaleEn,
+        recommendationTier,
+        readMinutes,
+        readDepth,
+        problemZh: cleanText(item.problemZh || "").slice(0, 800),
+        problemEn: cleanText(item.problemEn || "").slice(0, 1050),
+        methodZh: cleanText(item.methodZh || "").slice(0, 800),
+        methodEn: cleanText(item.methodEn || "").slice(0, 1050),
+        contributionZh: cleanText(item.contributionZh || "").slice(0, 850),
+        contributionEn: cleanText(item.contributionEn || "").slice(0, 1100),
+        limitationsZh: cleanText(item.limitationsZh || "").slice(0, 750),
+        limitationsEn: cleanText(item.limitationsEn || "").slice(0, 1000),
+        readingFocusZh: cleanText(item.readingFocusZh || "").slice(0, 750),
+        readingFocusEn: cleanText(item.readingFocusEn || "").slice(0, 1000),
+        researchQuestionsZh,
+        researchQuestionsEn,
       });
     }
     await persistReviewBatch(database, space.id, batch, completed.slice(completedBefore));
@@ -1490,12 +1577,29 @@ function toPaper(paper: PaperRow, now: number) {
     lastShownAt: paper.last_shown_at,
     openedAt: paper.opened_at,
     snoozedUntil: paper.snoozed_until,
+    readingStatus: paper.reading_status,
+    readingNote: paper.reading_note,
+    recommendationTier: paper.recommendation_tier,
+    readMinutes: paper.read_minutes,
+    readDepth: paper.read_depth,
+    problemZh: paper.problem_zh,
+    problemEn: paper.problem_en,
+    methodZh: paper.method_zh,
+    methodEn: paper.method_en,
+    contributionZh: paper.contribution_zh,
+    contributionEn: paper.contribution_en,
+    limitationsZh: paper.limitations_zh,
+    limitationsEn: paper.limitations_en,
+    readingFocusZh: paper.reading_focus_zh,
+    readingFocusEn: paper.reading_focus_en,
+    researchQuestionsZh: parseVenues(paper.research_questions_zh),
+    researchQuestionsEn: parseVenues(paper.research_questions_en),
   };
 }
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics] = await Promise.all([
+  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -1506,14 +1610,24 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.quality_score, 0) AS quality_score, COALESCE(i.priority_venue, 0) AS priority_venue,
        COALESCE(i.analysis_source, 'metadata') AS analysis_source, COALESCE(i.analysis_model, '') AS analysis_model,
        COALESCE(i.llm_recommended, 0) AS llm_recommended, COALESCE(i.llm_relevance_score, 0) AS llm_relevance_score,
+       COALESCE(i.recommendation_tier, 'browse') AS recommendation_tier, COALESCE(i.read_minutes, 12) AS read_minutes,
+       COALESCE(i.read_depth, 'focused') AS read_depth, COALESCE(i.problem_zh, '') AS problem_zh,
+       COALESCE(i.problem_en, '') AS problem_en, COALESCE(i.method_zh, '') AS method_zh,
+       COALESCE(i.method_en, '') AS method_en, COALESCE(i.contribution_zh, '') AS contribution_zh,
+       COALESCE(i.contribution_en, '') AS contribution_en, COALESCE(i.limitations_zh, '') AS limitations_zh,
+       COALESCE(i.limitations_en, '') AS limitations_en, COALESCE(i.reading_focus_zh, '') AS reading_focus_zh,
+       COALESCE(i.reading_focus_en, '') AS reading_focus_en, COALESCE(i.research_questions_zh, '[]') AS research_questions_zh,
+       COALESCE(i.research_questions_en, '[]') AS research_questions_en,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
-       COALESCE(f.saved, 0) AS saved, f.feedback
+       COALESCE(f.saved, 0) AS saved, f.feedback, COALESCE(r.status, 'unread') AS reading_status,
+       COALESCE(r.note, '') AS reading_note
        FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
        LEFT JOIN paper_delivery_state d ON d.paper_id = p.id AND d.space_id = p.space_id
        LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
-       WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek' AND i.analysis_model = ?
-       ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 300`,
-    ).bind(space.id, MONITOR_MODEL).all<PaperRow>(),
+       LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
+        WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek'
+        ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 300`,
+    ).bind(space.id).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
     database.prepare(
       `SELECT id, status, current_horizon, current_source, progress, discovered_count, reviewed_count,
@@ -1559,16 +1673,44 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        SUM(CASE WHEN feedback = 'not_relevant' THEN 1 ELSE 0 END) AS dismissed
        FROM paper_feedback WHERE space_id = ? AND (saved = 1 OR feedback IS NOT NULL)`,
     ).bind(space.id).first<{ decisions: number; accepted: number; dismissed: number }>(),
+    database.prepare(
+      `SELECT cs.source_key, cs.channel, COUNT(DISTINCT cs.paper_id) AS papers,
+       SUM(CASE WHEN f.saved = 1 OR f.feedback = 'relevant' THEN 1 ELSE 0 END) AS accepted,
+       SUM(CASE WHEN f.feedback = 'not_relevant' THEN 1 ELSE 0 END) AS dismissed
+       FROM monitor_candidate_sources cs
+       LEFT JOIN paper_feedback f ON f.paper_id = cs.paper_id AND f.space_id = cs.space_id
+       WHERE cs.space_id = ? GROUP BY cs.source_key, cs.channel
+       ORDER BY accepted DESC, papers DESC LIMIT 12`,
+    ).bind(space.id).all<{ source_key: string; channel: string; papers: number; accepted: number; dismissed: number }>(),
+    database.prepare(
+      `SELECT t.id, t.title_zh, t.title_en, COUNT(DISTINCT mp.id) AS papers,
+       SUM(CASE WHEN f.saved = 1 OR f.feedback = 'relevant' THEN 1 ELSE 0 END) AS accepted
+       FROM research_tracks t
+       LEFT JOIN research_track_papers tp ON tp.track_id = t.id AND tp.space_id = t.space_id
+       LEFT JOIN monitored_papers mp ON mp.space_id = t.space_id AND mp.canonical_id = tp.canonical_id
+       LEFT JOIN paper_feedback f ON f.paper_id = mp.id AND f.space_id = mp.space_id
+       WHERE t.space_id = ? GROUP BY t.id, t.title_zh, t.title_en
+       ORDER BY accepted DESC, papers DESC LIMIT 10`,
+    ).bind(space.id).all<{ id: string; title_zh: string; title_en: string; papers: number; accepted: number }>(),
+    database.prepare(
+      `SELECT p.authors FROM monitored_papers p JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
+       WHERE p.space_id = ? AND (f.saved = 1 OR f.feedback = 'relevant') ORDER BY f.updated_at DESC LIMIT 30`,
+    ).bind(space.id).all<{ authors: string }>(),
+    database.prepare(
+      "SELECT status, COUNT(*) AS count FROM paper_reading_progress WHERE space_id = ? GROUP BY status",
+    ).bind(space.id).all<{ status: string; count: number }>(),
   ]);
   const now = Date.now();
   const duePapers = papers.results
-    .filter((paper) => isPaperDue(paper, now))
+    .filter((paper) => paper.analysis_model === MONITOR_MODEL && isPaperDue(paper, now))
     .sort((left, right) => left.show_count - right.show_count || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at));
   const selected: PaperRow[] = [];
   for (const horizon of ["days", "months", "years"] as Horizon[]) {
     selected.push(...duePapers.filter((paper) => paper.horizon === horizon).slice(0, 2));
   }
-  const historyPapers = papers.results.map((paper) => toPaper(paper, now));
+  const historyPapers = papers.results
+    .filter((paper) => paper.analysis_model === MONITOR_MODEL || Boolean(paper.saved || paper.feedback) || paper.reading_status !== "unread")
+    .map((paper) => toPaper(paper, now));
   const pendingPapers = historyPapers.filter((paper) => paper.userState !== "accepted" && paper.userState !== "dismissed");
   let latestQueries: Partial<Record<Horizon, string[]>> = {};
   try { latestQueries = queryPlanRow ? JSON.parse(queryPlanRow.queries_json) as Partial<Record<Horizon, string[]>> : {}; } catch { latestQueries = {}; }
@@ -1576,6 +1718,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const recommended = scanMetrics?.recommended || 0;
   const decisions = feedbackMetrics?.decisions || 0;
   const accepted = feedbackMetrics?.accepted || 0;
+  const suggestedAuthors = Array.from(new Set(acceptedAuthorRows.results.flatMap((row) => row.authors.split(",").map((author) => cleanText(author)).filter((author) => author.length >= 4))))
+    .filter((author) => !preference.trackedAuthors.some((tracked) => tracked.toLocaleLowerCase() === author.toLocaleLowerCase())).slice(0, 8);
   return {
     monitor: {
       status: run?.status || "idle",
@@ -1651,6 +1795,25 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         inputTokens: usageMetrics?.input_tokens || 0,
         outputTokens: usageMetrics?.output_tokens || 0,
       },
+      discoveryPerformance: {
+        sources: sourcePerformance.results.map((row) => ({
+          sourceKey: row.source_key,
+          channel: row.channel,
+          papers: row.papers,
+          accepted: row.accepted || 0,
+          dismissed: row.dismissed || 0,
+          acceptanceRate: row.papers ? Math.round((row.accepted || 0) / row.papers * 100) : 0,
+        })),
+        tracks: trackPerformance.results.map((row) => ({
+          trackId: row.id,
+          titleZh: row.title_zh,
+          titleEn: row.title_en,
+          papers: row.papers,
+          accepted: row.accepted || 0,
+          acceptanceRate: row.papers ? Math.round((row.accepted || 0) / row.papers * 100) : 0,
+        })),
+      },
+      suggestedAuthors,
       papers: selected.map((paper) => toPaper(paper, now)),
       historyPapers,
       historyCounts: {
@@ -1662,6 +1825,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         accepted: historyPapers.filter((paper) => paper.userState === "accepted").length,
         saved: historyPapers.filter((paper) => paper.saved).length,
         dismissed: historyPapers.filter((paper) => paper.userState === "dismissed").length,
+        reading: Object.fromEntries(readingCounts.results.map((row) => [row.status, row.count])),
       },
       ...extra,
     },
@@ -1682,7 +1846,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; priorityVenues?: string[]; explorationMode?: ExplorationMode; reset?: boolean };
+    const payload = await request.json() as { spaceId?: string; priorityVenues?: string[]; trackedAuthors?: string[]; explorationMode?: ExplorationMode; reset?: boolean };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -1693,16 +1857,18 @@ export async function PATCH(request: Request) {
       await ensurePreference(database, space);
     } else {
       const venues = Array.from(new Set((payload.priorityVenues || []).map((venue) => cleanText(venue).slice(0, 120)).filter(Boolean))).slice(0, 30);
+      const trackedAuthors = Array.from(new Set((payload.trackedAuthors || []).map((author) => cleanText(author).slice(0, 120)).filter(Boolean))).slice(0, 20);
       if (!venues.length) return Response.json({ error: "At least one priority venue is required" }, { status: 400 });
       const current = await ensurePreference(database, space);
       const explorationMode: ExplorationMode = ["focused", "balanced", "open"].includes(payload.explorationMode || "")
         ? payload.explorationMode as ExplorationMode : current.explorationMode;
       await database.prepare(
-        `INSERT INTO monitor_preferences (id, space_id, profile_key, priority_venues, exploration_mode, user_modified)
-         VALUES (?, ?, ?, ?, ?, 1)
+        `INSERT INTO monitor_preferences (id, space_id, profile_key, priority_venues, tracked_authors, exploration_mode, user_modified)
+         VALUES (?, ?, ?, ?, ?, ?, 1)
          ON CONFLICT(space_id) DO UPDATE SET priority_venues = excluded.priority_venues,
-         exploration_mode = excluded.exploration_mode, user_modified = 1, updated_at = CURRENT_TIMESTAMP`,
-      ).bind(crypto.randomUUID(), space.id, current.profileKey, JSON.stringify(venues), explorationMode).run();
+         tracked_authors = excluded.tracked_authors, exploration_mode = excluded.exploration_mode,
+         user_modified = 1, updated_at = CURRENT_TIMESTAMP`,
+      ).bind(crypto.randomUUID(), space.id, current.profileKey, JSON.stringify(venues), JSON.stringify(trackedAuthors), explorationMode).run();
     }
     await database.batch([
       database.prepare("UPDATE monitor_runs SET last_run_at = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?").bind(space.id),
@@ -1764,7 +1930,7 @@ export async function POST(request: Request) {
       let discoveredCount = 0;
       for (const horizon of HORIZONS) {
         await updateRunPhase(database, space.id, jobId, `discovering_${horizon.key}`, discoveredCount);
-        const batch = await fetchHorizon(database, enrichedSpace, horizon, now, preference.priorityVenues, preference.profileKey, discoveryRound, jobId, discoveredCount, queryPlan);
+        const batch = await fetchHorizon(database, enrichedSpace, horizon, now, preference.priorityVenues, preference.trackedAuthors, preference.profileKey, discoveryRound, jobId, discoveredCount, queryPlan);
         batches.push(batch);
         discoveredCount += batch.length;
         await updateRunPhase(database, space.id, jobId, `discovering_${horizon.key}`, discoveredCount);

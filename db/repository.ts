@@ -103,7 +103,10 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS paper_delivery_state (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, paper_id TEXT NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, show_count INTEGER NOT NULL DEFAULT 0, first_shown_at TEXT, last_shown_at TEXT, opened_at TEXT, snoozed_until TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_delivery_space_paper ON paper_delivery_state(space_id, paper_id)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_delivery_space_last_shown ON paper_delivery_state(space_id, last_shown_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS monitor_preferences (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, profile_key TEXT NOT NULL, priority_venues TEXT NOT NULL DEFAULT '[]', exploration_mode TEXT NOT NULL DEFAULT 'balanced', user_modified INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS paper_reading_progress (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, paper_id TEXT NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'unread', note TEXT NOT NULL DEFAULT '', started_at TEXT, completed_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_reading_space_paper ON paper_reading_progress(space_id, paper_id)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_reading_space_status ON paper_reading_progress(space_id, status, updated_at)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS monitor_preferences (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, profile_key TEXT NOT NULL, priority_venues TEXT NOT NULL DEFAULT '[]', tracked_authors TEXT NOT NULL DEFAULT '[]', exploration_mode TEXT NOT NULL DEFAULT 'balanced', user_modified INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_preferences_space ON monitor_preferences(space_id)"),
     database.prepare("CREATE TABLE IF NOT EXISTS research_preference_signals (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, layer TEXT NOT NULL, kind TEXT NOT NULL, label_zh TEXT NOT NULL, label_en TEXT NOT NULL, evidence TEXT NOT NULL DEFAULT '', confidence INTEGER NOT NULL DEFAULT 50, weight INTEGER NOT NULL DEFAULT 50, source_type TEXT NOT NULL, source_id TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_preference_signals_source ON research_preference_signals(space_id, source_type, source_id, kind, label_en)"),
@@ -111,7 +114,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_query_plans (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, plan_date TEXT NOT NULL, exploration_mode TEXT NOT NULL, queries_json TEXT NOT NULL DEFAULT '{}', rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', error TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_query_plans_space_date ON monitor_query_plans(space_id, plan_date)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_query_plans_space_created ON monitor_query_plans(space_id, created_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS paper_insights (paper_id TEXT PRIMARY KEY NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, abstract_text TEXT NOT NULL DEFAULT '', summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', why_read_zh TEXT NOT NULL DEFAULT '', why_read_en TEXT NOT NULL DEFAULT '', quality_score INTEGER NOT NULL DEFAULT 0, priority_venue INTEGER NOT NULL DEFAULT 0, analysis_source TEXT NOT NULL DEFAULT 'metadata', analysis_model TEXT NOT NULL DEFAULT '', llm_recommended INTEGER NOT NULL DEFAULT 0, llm_relevance_score INTEGER NOT NULL DEFAULT 0, screening_reason TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS paper_insights (paper_id TEXT PRIMARY KEY NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, abstract_text TEXT NOT NULL DEFAULT '', summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', why_read_zh TEXT NOT NULL DEFAULT '', why_read_en TEXT NOT NULL DEFAULT '', quality_score INTEGER NOT NULL DEFAULT 0, priority_venue INTEGER NOT NULL DEFAULT 0, analysis_source TEXT NOT NULL DEFAULT 'metadata', analysis_model TEXT NOT NULL DEFAULT '', llm_recommended INTEGER NOT NULL DEFAULT 0, llm_relevance_score INTEGER NOT NULL DEFAULT 0, screening_reason TEXT NOT NULL DEFAULT '', recommendation_tier TEXT NOT NULL DEFAULT 'browse', read_minutes INTEGER NOT NULL DEFAULT 12, read_depth TEXT NOT NULL DEFAULT 'focused', problem_zh TEXT NOT NULL DEFAULT '', problem_en TEXT NOT NULL DEFAULT '', method_zh TEXT NOT NULL DEFAULT '', method_en TEXT NOT NULL DEFAULT '', contribution_zh TEXT NOT NULL DEFAULT '', contribution_en TEXT NOT NULL DEFAULT '', limitations_zh TEXT NOT NULL DEFAULT '', limitations_en TEXT NOT NULL DEFAULT '', reading_focus_zh TEXT NOT NULL DEFAULT '', reading_focus_en TEXT NOT NULL DEFAULT '', research_questions_zh TEXT NOT NULL DEFAULT '[]', research_questions_en TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_quality ON paper_insights(space_id, quality_score)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_candidate_sources (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, paper_id TEXT NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, source_key TEXT NOT NULL, channel TEXT NOT NULL, query_key TEXT NOT NULL, appearances INTEGER NOT NULL DEFAULT 1, first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_candidate_source_identity ON monitor_candidate_sources(paper_id, source_key, query_key)"),
@@ -154,6 +157,29 @@ export async function ensureSchema(database = getDatabase()) {
   if (!preferenceColumns.results.some((column) => column.name === "exploration_mode")) {
     await database.prepare("ALTER TABLE monitor_preferences ADD COLUMN exploration_mode TEXT NOT NULL DEFAULT 'balanced'").run();
   }
+  if (!preferenceColumns.results.some((column) => column.name === "tracked_authors")) {
+    await database.prepare("ALTER TABLE monitor_preferences ADD COLUMN tracked_authors TEXT NOT NULL DEFAULT '[]'").run();
+  }
+  const insightColumns = await database.prepare("PRAGMA table_info(paper_insights)").all<{ name: string }>();
+  const insightColumnNames = new Set(insightColumns.results.map((column) => column.name));
+  const insightAdditions = [
+    ["recommendation_tier", "ALTER TABLE paper_insights ADD COLUMN recommendation_tier TEXT NOT NULL DEFAULT 'browse'"],
+    ["read_minutes", "ALTER TABLE paper_insights ADD COLUMN read_minutes INTEGER NOT NULL DEFAULT 12"],
+    ["read_depth", "ALTER TABLE paper_insights ADD COLUMN read_depth TEXT NOT NULL DEFAULT 'focused'"],
+    ["problem_zh", "ALTER TABLE paper_insights ADD COLUMN problem_zh TEXT NOT NULL DEFAULT ''"],
+    ["problem_en", "ALTER TABLE paper_insights ADD COLUMN problem_en TEXT NOT NULL DEFAULT ''"],
+    ["method_zh", "ALTER TABLE paper_insights ADD COLUMN method_zh TEXT NOT NULL DEFAULT ''"],
+    ["method_en", "ALTER TABLE paper_insights ADD COLUMN method_en TEXT NOT NULL DEFAULT ''"],
+    ["contribution_zh", "ALTER TABLE paper_insights ADD COLUMN contribution_zh TEXT NOT NULL DEFAULT ''"],
+    ["contribution_en", "ALTER TABLE paper_insights ADD COLUMN contribution_en TEXT NOT NULL DEFAULT ''"],
+    ["limitations_zh", "ALTER TABLE paper_insights ADD COLUMN limitations_zh TEXT NOT NULL DEFAULT ''"],
+    ["limitations_en", "ALTER TABLE paper_insights ADD COLUMN limitations_en TEXT NOT NULL DEFAULT ''"],
+    ["reading_focus_zh", "ALTER TABLE paper_insights ADD COLUMN reading_focus_zh TEXT NOT NULL DEFAULT ''"],
+    ["reading_focus_en", "ALTER TABLE paper_insights ADD COLUMN reading_focus_en TEXT NOT NULL DEFAULT ''"],
+    ["research_questions_zh", "ALTER TABLE paper_insights ADD COLUMN research_questions_zh TEXT NOT NULL DEFAULT '[]'"],
+    ["research_questions_en", "ALTER TABLE paper_insights ADD COLUMN research_questions_en TEXT NOT NULL DEFAULT '[]'"],
+  ] as const;
+  for (const [name, sql] of insightAdditions) if (!insightColumnNames.has(name)) await database.prepare(sql).run();
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_recommended_quality ON paper_insights(space_id, llm_recommended, quality_score)").run();
   await database.prepare("PRAGMA optimize").run();
 }

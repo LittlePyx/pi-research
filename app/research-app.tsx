@@ -51,6 +51,23 @@ type MonitorPaper = {
   lastShownAt: string | null;
   openedAt: string | null;
   snoozedUntil: string | null;
+  readingStatus: "unread" | "queued" | "reading" | "read" | "mastered" | "cited";
+  readingNote: string;
+  recommendationTier: "must_read" | "browse" | "reserve";
+  readMinutes: number;
+  readDepth: "overview" | "focused" | "deep";
+  problemZh: string;
+  problemEn: string;
+  methodZh: string;
+  methodEn: string;
+  contributionZh: string;
+  contributionEn: string;
+  limitationsZh: string;
+  limitationsEn: string;
+  readingFocusZh: string;
+  readingFocusEn: string;
+  researchQuestionsZh: string[];
+  researchQuestionsEn: string[];
 };
 type MonitorPreferences = {
   profileKey: string;
@@ -58,6 +75,7 @@ type MonitorPreferences = {
   profileNameEn: string;
   priorityVenues: string[];
   explorationMode: "focused" | "balanced" | "open";
+  trackedAuthors: string[];
   userModified: boolean;
 };
 type PreferenceSignal = {
@@ -89,7 +107,7 @@ type MonitorState = {
   preferences?: MonitorPreferences;
   papers: MonitorPaper[];
   historyPapers?: MonitorPaper[];
-  historyCounts?: { all: number; inbox: number; unseen: number; seen: number; snoozed: number; accepted: number; saved: number; dismissed: number };
+  historyCounts?: { all: number; inbox: number; unseen: number; seen: number; snoozed: number; accepted: number; saved: number; dismissed: number; reading?: Record<string, number> };
   scanJob?: {
     id: string;
     status: string;
@@ -151,6 +169,11 @@ type MonitorState = {
     inputTokens: number;
     outputTokens: number;
   };
+  discoveryPerformance?: {
+    sources: Array<{ sourceKey: string; channel: string; papers: number; accepted: number; dismissed: number; acceptanceRate: number }>;
+    tracks: Array<{ trackId: string; titleZh: string; titleEn: string; papers: number; accepted: number; acceptanceRate: number }>;
+  };
+  suggestedAuthors?: string[];
   cached?: boolean;
   throttled?: boolean;
 };
@@ -731,6 +754,30 @@ function reminderLabel(paper: MonitorPaper, locale: Locale) {
     : `${copy.en.nextReminder} ${formatPaperDate(new Date(dueAt).toISOString(), locale)}`;
 }
 
+function recommendationTierLabel(tier: MonitorPaper["recommendationTier"], locale: Locale) {
+  if (tier === "must_read") return locale === "zh" ? "今日必读" : "Must read";
+  if (tier === "browse") return locale === "zh" ? "重点浏览" : "Browse";
+  return locale === "zh" ? "储备线索" : "Reserve";
+}
+
+function readDepthLabel(depth: MonitorPaper["readDepth"], locale: Locale) {
+  if (depth === "deep") return locale === "zh" ? "精读" : "Deep read";
+  if (depth === "focused") return locale === "zh" ? "定向阅读" : "Focused read";
+  return locale === "zh" ? "概览" : "Overview";
+}
+
+function readingStatusLabel(status: MonitorPaper["readingStatus"], locale: Locale) {
+  const labels: Record<MonitorPaper["readingStatus"], Localized> = {
+    unread: { zh: "未加入阅读", en: "Not queued" },
+    queued: { zh: "待读", en: "Queued" },
+    reading: { zh: "阅读中", en: "Reading" },
+    read: { zh: "已读", en: "Read" },
+    mastered: { zh: "已掌握", en: "Mastered" },
+    cited: { zh: "已引用", en: "Cited" },
+  };
+  return labels[status || "unread"][locale];
+}
+
 function historyCountsFor(papers: MonitorPaper[]) {
   const unresolved = papers.filter((paper) => !["accepted", "dismissed"].includes(paper.userState));
   return {
@@ -742,6 +789,11 @@ function historyCountsFor(papers: MonitorPaper[]) {
     accepted: papers.filter((paper) => paper.userState === "accepted").length,
     saved: papers.filter((paper) => paper.saved).length,
     dismissed: papers.filter((paper) => paper.userState === "dismissed").length,
+    reading: papers.reduce<Record<string, number>>((counts, paper) => {
+      const status = paper.readingStatus || "unread";
+      counts[status] = (counts[status] || 0) + 1;
+      return counts;
+    }, {}),
   };
 }
 
@@ -1097,6 +1149,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [monitoring, setMonitoring] = useState(false);
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
   const [venueDraft, setVenueDraft] = useState("");
+  const [authorDraft, setAuthorDraft] = useState("");
   const [explorationDraft, setExplorationDraft] = useState<"focused" | "balanced" | "open">("balanced");
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [feedbackPrompt, setFeedbackPrompt] = useState<{ paper: MonitorPaper; kind: "relevant" | "not_relevant" } | null>(null);
@@ -1106,6 +1159,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [librarySearch, setLibrarySearch] = useState("");
   const [librarySort, setLibrarySort] = useState<LibrarySort>("priority");
   const [paperReturnView, setPaperReturnView] = useState<"today" | "library">("today");
+  const [paperNoteDraft, setPaperNoteDraft] = useState("");
   const [sharingSnapshot, setSharingSnapshot] = useState<string | null>(null);
   const [researchImports, setResearchImports] = useState<ResearchImportRecord[]>([]);
   const [importOpen, setImportOpen] = useState(false);
@@ -1125,7 +1179,11 @@ export default function ResearchApp({ user }: { user: User }) {
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
   const mapViewActive = view === "threads" || view === "thread-detail";
   const rankedMonitorPapers = useMemo(
-    () => [...(monitor?.papers || [])].sort((first, second) => second.qualityScore - first.qualityScore),
+    () => {
+      const tierRank: Record<MonitorPaper["recommendationTier"], number> = { must_read: 0, browse: 1, reserve: 2 };
+      return [...(monitor?.papers || [])].sort((first, second) => (tierRank[first.recommendationTier || "browse"] - tierRank[second.recommendationTier || "browse"])
+        || second.qualityScore - first.qualityScore || second.relevanceScore - first.relevanceScore);
+    },
     [monitor?.papers],
   );
   const historyPapers = useMemo(() => monitor?.historyPapers || monitor?.papers || [], [monitor?.historyPapers, monitor?.papers]);
@@ -1157,6 +1215,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const baseScanPhase = monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
   const healthyCoverageCount = monitor?.coverage?.filter((source) => source.healthy).length || 0;
+  const mustReadCount = rankedMonitorPapers.filter((paper) => paper.recommendationTier === "must_read").length;
+  const activeReadingCount = (monitor?.historyCounts?.reading?.queued || 0) + (monitor?.historyCounts?.reading?.reading || 0);
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
   const confirmedProfile = latestConfirmedImport?.analysis || null;
   const explicitPreferenceSignals = useMemo(() => (monitor?.preferenceSignals || []).filter((signal) => signal.layer === "explicit"), [monitor?.preferenceSignals]);
@@ -1599,6 +1659,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const openSourceSettings = () => {
     setVenueDraft((monitor?.preferences?.priorityVenues || []).join("\n"));
+    setAuthorDraft((monitor?.preferences?.trackedAuthors || []).join("\n"));
     setExplorationDraft(monitor?.preferences?.explorationMode || "balanced");
     setSourceSettingsOpen(true);
   };
@@ -1606,6 +1667,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const saveSourceSettings = async (reset = false) => {
     if (savingPreferences || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     const priorityVenues = venueDraft.split(/\r?\n/).map((venue) => venue.trim()).filter(Boolean);
+    const trackedAuthors = authorDraft.split(/\r?\n/).map((author) => author.trim()).filter(Boolean);
     if (!reset && !priorityVenues.length) return;
     setSavingPreferences(true);
     let stopPolling: (() => void) | null = null;
@@ -1613,12 +1675,13 @@ export default function ResearchApp({ user }: { user: User }) {
       const response = await fetch("/api/monitor", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, priorityVenues, explorationMode: explorationDraft, reset }),
+        body: JSON.stringify({ spaceId: activeSpace.id, priorityVenues, trackedAuthors, explorationMode: explorationDraft, reset }),
       });
       const data = await response.json() as { monitor?: MonitorState };
       if (!response.ok || !data.monitor) throw new Error("preference update failed");
       setMonitor(data.monitor);
       setVenueDraft((data.monitor.preferences?.priorityVenues || []).join("\n"));
+      setAuthorDraft((data.monitor.preferences?.trackedAuthors || []).join("\n"));
       setSourceSettingsOpen(false);
       setToast(t.sourcesSaved);
       setMonitoring(true);
@@ -1720,10 +1783,36 @@ export default function ResearchApp({ user }: { user: User }) {
     setToast(t.returnPending);
   };
 
+  const updateReadingProgress = async (paper: MonitorPaper, status: MonitorPaper["readingStatus"], note = paper.readingNote || "") => {
+    const updatePaper = (item: MonitorPaper): MonitorPaper => item.id === paper.id ? { ...item, readingStatus: status, readingNote: note } : item;
+    setSelectedMonitorPaper((current) => current?.id === paper.id ? updatePaper(current) : current);
+    setMonitor((current) => {
+      if (!current) return current;
+      const papers = current.papers.map(updatePaper);
+      const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
+      return { ...current, papers, historyPapers, historyCounts: historyCountsFor(historyPapers) };
+    });
+    try {
+      const response = await fetch("/api/library", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, status, note }),
+      });
+      if (!response.ok) throw new Error("reading progress update failed");
+      setToast(locale === "zh" ? `阅读状态已更新为“${readingStatusLabel(status, locale)}”` : `Reading status updated to ${readingStatusLabel(status, locale)}`);
+    } catch {
+      const response = await fetch(`/api/monitor?spaceId=${encodeURIComponent(activeSpace.id)}`).catch(() => null);
+      const data = response?.ok ? await response.json() as { monitor?: MonitorState } : null;
+      if (data?.monitor) setMonitor(data.monitor);
+      setToast(locale === "zh" ? "阅读状态保存失败，请重试" : "Could not save reading status");
+    }
+  };
+
   const openMonitorPaper = (paper: MonitorPaper) => {
     const openedPaper = { ...paper, openedAt: new Date().toISOString(), userState: paper.userState === "unseen" ? "seen" as const : paper.userState };
     setPaperReturnView(view === "library" ? "library" : "today");
     setSelectedMonitorPaper(openedPaper);
+    setPaperNoteDraft(paper.readingNote || "");
     setMonitor((current) => {
       if (!current) return current;
       const updatePaper = (item: MonitorPaper): MonitorPaper => item.id === paper.id ? openedPaper : item;
@@ -2114,6 +2203,12 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-attention-number"><strong>{rankedMonitorPapers.length || "—"}</strong><span>{locale === "zh" ? "篇待看" : "to review"}</span><button className="v2-share-action v2-today-share" type="button" onClick={() => shareSnapshot("daily", rankedMonitorPapers.slice(0, 6))} disabled={!rankedMonitorPapers.length || Boolean(sharingSnapshot)}>{sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily} ↗</button></div>
             </section>
 
+            <section className="v2-today-briefing" aria-label={locale === "zh" ? "今日科研简报" : "Today's research briefing"}>
+              <button type="button" onClick={() => rankedMonitorPapers[0] && openMonitorPaper(rankedMonitorPapers[0])} disabled={!rankedMonitorPapers.length}><span>01</span><strong>{mustReadCount}</strong><div><b>{locale === "zh" ? "今日必读" : "Must read"}</b><small>{locale === "zh" ? "高相关且高质量，优先投入时间" : "High-fit, high-quality work worth your time"}</small></div><i>→</i></button>
+              <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor?.mapChanges?.length || 0}</strong><div><b>{locale === "zh" ? "路线变化" : "Route changes"}</b><small>{locale === "zh" ? "新证据如何补充或改变研究地图" : "How new evidence changes your map"}</small></div><i>→</i></button>
+              <button type="button" onClick={() => { setLibraryFilter("accepted"); navigate("library"); }}><span>03</span><strong>{activeReadingCount}</strong><div><b>{locale === "zh" ? "待读与在读" : "Reading queue"}</b><small>{locale === "zh" ? "继续昨天没有读完的论文" : "Continue where you left off"}</small></div><i>→</i></button>
+            </section>
+
             <section className="v2-monitor-panel">
               <div className="v2-monitor-head">
                 <div><p className="v2-kicker">{t.liveMonitor}</p><h2>{locale === "zh" ? "三层扫描，严格筛选" : "Three horizons, strictly screened"}</h2></div>
@@ -2143,10 +2238,12 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
               <details className="v2-scan-details">
                 <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
-                <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div></div>
+                <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div>{Boolean(monitor?.preferences?.trackedAuthors?.length) && <div><span>{locale === "zh" ? "追踪作者" : "Tracked authors"}</span><p>{monitor?.preferences?.trackedAuthors.slice(0, 6).map((author) => <i key={author}>{author}</i>)}</p></div>}</div>
                 {monitor?.queryPlan && <div className="v2-query-plan"><span>π</span><div><strong>{locale === "zh" ? "今日检索计划" : "Today's query plan"} · {monitor.queryPlan.queryCount} {locale === "zh" ? "组查询" : "queries"}</strong><p>{locale === "zh" ? monitor.queryPlan.rationaleZh : monitor.queryPlan.rationaleEn}</p><small>{monitor.queryPlan.degraded ? (locale === "zh" ? "智能规划暂不可用，已使用稳定检索策略" : "Stable fallback discovery is active") : modelDisplayName(monitor.queryPlan.model)}</small></div></div>}
                 <dl className="v2-monitor-metrics"><div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div><div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div><div><dt>{locale === "zh" ? "持续探索轮次" : "Exploration round"}</dt><dd>#{monitor?.explorationRound || 0}</dd></div><div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div></dl>
                 {monitor?.qualityMetrics && <dl className="v2-quality-metrics"><div><dt>{locale === "zh" ? "7日入选率" : "7-day selection yield"}</dt><dd>{monitor.qualityMetrics.recommendationYield}%</dd></div><div><dt>{locale === "zh" ? "用户接受率" : "User acceptance"}</dt><dd>{monitor.qualityMetrics.acceptanceRate}%</dd></div><div><dt>{locale === "zh" ? "候选 / 深度评审" : "Candidates / reviewed"}</dt><dd>{monitor.qualityMetrics.candidates} / {monitor.qualityMetrics.reviewed}</dd></div><div><dt>{locale === "zh" ? "7日智能用量" : "7-day AI usage"}</dt><dd>{Math.round((monitor.qualityMetrics.inputTokens + monitor.qualityMetrics.outputTokens) / 1000)}k tokens</dd></div></dl>}
+                {Boolean(monitor?.discoveryPerformance?.sources.length) && <div className="v2-discovery-performance"><header><strong>{locale === "zh" ? "发现来源表现" : "Discovery performance"}</strong><small>{locale === "zh" ? "依据真实入选与反馈持续调整" : "Updated from real selections and feedback"}</small></header>{monitor?.discoveryPerformance?.sources.slice(0, 6).map((source) => <div key={`${source.channel}:${source.sourceKey}`}><span>{source.sourceKey.replace(/_/g, " ")}</span><i>{source.channel}</i><b>{source.papers}</b><em>{source.acceptanceRate}%</em></div>)}</div>}
+                {Boolean(monitor?.discoveryPerformance?.tracks.length) && <div className="v2-track-performance"><span>{locale === "zh" ? "研究方向命中" : "Research-track fit"}</span><div>{monitor?.discoveryPerformance?.tracks.slice(0, 6).map((track) => <i key={track.trackId}><b>{locale === "zh" ? track.titleZh : track.titleEn}</b><small>{track.papers} {locale === "zh" ? "篇" : "papers"} · {track.acceptanceRate}%</small></i>)}</div></div>}
                 {!!monitor?.coverage?.length && <div className="v2-coverage-ledger"><span>{locale === "zh" ? "探索覆盖" : "Discovery coverage"}</span><div>{monitor.coverage.slice(0, 8).map((source) => <i className={source.healthy ? "healthy" : "degraded"} key={source.sourceKey}><b />{source.sourceKey.replace(/_/g, " ")}<small>+{source.newCandidates}</small></i>)}</div></div>}
                 <p>{t.autoVisit}</p>
               </details>
@@ -2160,6 +2257,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 {rankedMonitorPapers[0] ? (
                   <article className="v2-primary-paper" data-paper-impression={rankedMonitorPapers[0].id}>
                     <div className="v2-paper-top">
+                      <span className={`v2-tier-badge ${rankedMonitorPapers[0].recommendationTier || "browse"}`}>{recommendationTierLabel(rankedMonitorPapers[0].recommendationTier || "browse", locale)}</span>
                       {rankedMonitorPapers[0].priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}
                       <span>{rankedMonitorPapers[0].analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span>
                       <span>{formatPaperDate(rankedMonitorPapers[0].publishedAt, locale)}</span>
@@ -2171,7 +2269,7 @@ export default function ResearchApp({ user }: { user: User }) {
                       <div><p>{t.introLabel}</p><strong>{locale === "zh" ? rankedMonitorPapers[0].summaryZh : rankedMonitorPapers[0].summaryEn}</strong></div>
                     </div>
                     <div className="v2-paper-footer">
-                      <span>{rankedMonitorPapers[0].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[0].horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {t.relevanceScoreLabel} <b>{rankedMonitorPapers[0].relevanceScore}</b> · {t.qualityScore} {rankedMonitorPapers[0].qualityScore} · {t.citations} {rankedMonitorPapers[0].citationCount}</span>
+                      <span>{readDepthLabel(rankedMonitorPapers[0].readDepth || "focused", locale)} · {rankedMonitorPapers[0].readMinutes || 15} min · {rankedMonitorPapers[0].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[0].horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {t.relevanceScoreLabel} <b>{rankedMonitorPapers[0].relevanceScore}</b> · {t.qualityScore} {rankedMonitorPapers[0].qualityScore}</span>
                       <div><button className={(saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ?? rankedMonitorPapers[0].saved) ? "active" : ""} type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "save")}>{(saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ?? rankedMonitorPapers[0].saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(rankedMonitorPapers[0], "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(rankedMonitorPapers[0], "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => shareSnapshot("paper", [rankedMonitorPapers[0]])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === rankedMonitorPapers[0].id ? t.creatingShare : t.sharePaper}</button></div>
                       <button className="v2-open-paper" type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[0])}>{t.openAnalysis} →</button>
                     </div>
@@ -2182,9 +2280,9 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-compact-list">
                   {rankedMonitorPapers.slice(1).map((paper) => (
                     <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}>
-                      <span className="v2-paper-index">{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span>
+                      <span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span>
                       <span><strong>{paper.title}</strong><small>{paper.authors} · {formatPaperDate(paper.publishedAt, locale)}</small></span>
-                      <span className="v2-thread-chip">{t.qualityScore} {paper.qualityScore}</span>
+                      <span className="v2-thread-chip">{paper.readMinutes || 15} min · {t.qualityScore} {paper.qualityScore}</span>
                       <b>→</b>
                     </button>
                   ))}
@@ -2258,7 +2356,7 @@ export default function ResearchApp({ user }: { user: User }) {
             {selectedThread ? <>
               <section className="v2-map-detail-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {selectedThread.papers.length} {locale === "zh" ? "篇代表作" : "representative works"}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId)}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在补充…" : "Filling…") : selectedThread.buildStatus === "queued" ? (locale === "zh" ? "优先补充这条路线" : "Fill this route first") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></section>
               <section className={`v2-direction-profile ${selectedThread.userRole}`}><div><span>{directionRoleLabel(selectedThread.userRole, locale)}</span><em className={`v2-direction-heat ${selectedThread.heatLevel}`} title={directionHeatTitle(selectedThread, locale)}><i />{directionHeatLabel(selectedThread.heatLevel, locale)}</em><strong>{locale === "zh" ? "这条方向在你的研究地图中的位置" : "This direction's place in your research map"}</strong></div><div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${selectedThread.depthScore}%` }} /></i><strong>{selectedThread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${selectedThread.supportScore}%` }} /></i><strong>{selectedThread.supportScore}</strong></span></div><div className="v2-direction-role-control">{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div></section>
-              {selectedThread.intelligence ? <section className="v2-direction-intelligence"><header><div><span>π</span><div><p className="v2-kicker">{locale === "zh" ? "PI 方向研判" : "PI DIRECTION INTELLIGENCE"}</p><h2>{locale === "zh" ? "基于当前真实论文的研究判断" : "Research judgment grounded in current papers"}</h2></div></div><div><b>{selectedThread.intelligence.confidence}%</b><small>{locale === "zh" ? "证据置信度" : "evidence confidence"}</small><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || mapIntelligenceTrackId)}>{mapAction === `interpret:${selectedThread.id}` ? (locale === "zh" ? "更新中…" : "Refreshing…") : (locale === "zh" ? "重新研判" : "Refresh")}</button></div></header><div><article><small>{locale === "zh" ? "当前判断" : "Current assessment"}</small><p>{locale === "zh" ? selectedThread.intelligence.assessmentZh : selectedThread.intelligence.assessmentEn}</p></article><article><small>{locale === "zh" ? "关键机会" : "Key opportunity"}</small><p>{locale === "zh" ? selectedThread.intelligence.opportunityZh : selectedThread.intelligence.opportunityEn}</p></article><article><small>{locale === "zh" ? "观察信号" : "Watch signal"}</small><p>{locale === "zh" ? selectedThread.intelligence.watchSignalZh : selectedThread.intelligence.watchSignalEn}</p></article></div><footer><span>{modelDisplayName(selectedThread.intelligence.model)}</span><span>{locale === "zh" ? `${selectedThread.intelligence.evidenceCanonicalIds.length} 篇路线论文作为证据` : `${selectedThread.intelligence.evidenceCanonicalIds.length} route papers used as evidence`}</span></footer></section> : null}
+              {selectedThread.intelligence ? <section className="v2-direction-intelligence"><header><div><span>π</span><div><p className="v2-kicker">{locale === "zh" ? "PI 方向研判" : "PI DIRECTION INTELLIGENCE"}</p><h2>{locale === "zh" ? "基于当前真实论文的研究判断" : "Research judgment grounded in current papers"}</h2></div></div><div><b>{selectedThread.intelligence.confidence}%</b><small>{locale === "zh" ? "证据置信度" : "evidence confidence"}</small><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || mapIntelligenceTrackId)}>{mapAction === `interpret:${selectedThread.id}` ? (locale === "zh" ? "更新中…" : "Refreshing…") : (locale === "zh" ? "重新研判" : "Refresh")}</button></div></header><div><article><small>{locale === "zh" ? "当前判断" : "Current assessment"}</small><p>{locale === "zh" ? selectedThread.intelligence.assessmentZh : selectedThread.intelligence.assessmentEn}</p></article><article><small>{locale === "zh" ? "关键机会" : "Key opportunity"}</small><p>{locale === "zh" ? selectedThread.intelligence.opportunityZh : selectedThread.intelligence.opportunityEn}</p></article><article><small>{locale === "zh" ? "观察信号" : "Watch signal"}</small><p>{locale === "zh" ? selectedThread.intelligence.watchSignalZh : selectedThread.intelligence.watchSignalEn}</p></article>{Boolean(selectedThread.intelligence.evidenceGapZh || selectedThread.intelligence.evidenceGapEn) && <article className="gap"><small>{locale === "zh" ? "证据缺口" : "Evidence gap"}</small><p>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</p>{selectedThread.intelligence.nextSearchQuery && <code>{selectedThread.intelligence.nextSearchQuery}</code>}</article>}</div><footer><span>{modelDisplayName(selectedThread.intelligence.model)}</span><span>{locale === "zh" ? `${selectedThread.intelligence.evidenceCanonicalIds.length} 篇路线论文作为证据` : `${selectedThread.intelligence.evidenceCanonicalIds.length} route papers used as evidence`}</span></footer></section> : null}
               <nav className="v2-map-legend">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span key={role} className={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</nav>
               <div className="v2-research-timeline">
                 {(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => (
@@ -2302,7 +2400,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "library" && (
           <main className="v2-page v2-library-page">
-            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.libraryTitle}</h1><p>{t.historyPromise}</p></div><button type="button" onClick={() => navigate("today")}>← {locale === "zh" ? "今日推荐" : "Today"}</button></section>
+            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.libraryTitle}</h1><p>{t.historyPromise}</p></div><div className="v2-library-head-actions"><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=bibtex&scope=accepted`}>BibTeX ↓</a><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=ris&scope=accepted`}>RIS / Zotero ↓</a><button type="button" onClick={() => navigate("today")}>← {locale === "zh" ? "今日推荐" : "Today"}</button></div></section>
             <section className="v2-library-overview" aria-label={t.historyOverview}>
               <div><p className="v2-kicker">{t.historyOverview}</p><h2>{locale === "zh" ? "每篇论文都有明确去处" : "Every paper has a clear place"}</h2><p>{t.libraryIntro}</p></div>
               <button className={libraryFilter === "inbox" && inboxFilter === "unseen" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("unseen"); }}><span>01</span><strong>{monitor?.historyCounts?.unseen || 0}</strong><b>{t.unseen}</b><small>{t.neverViewed}</small></button>
@@ -2325,12 +2423,13 @@ export default function ResearchApp({ user }: { user: User }) {
               {libraryPapers.map((paper) => (
                 <article className={"v2-library-paper " + paper.userState} key={paper.id}>
                   <button className="v2-library-paper-main" type="button" onClick={() => openMonitorPaper(paper)}>
-                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span>{paper.horizon === "days" ? t.daysHorizon : paper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><span>{t.qualityScore} {paper.qualityScore}</span></div>
+                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span><span>{t.qualityScore} {paper.qualityScore}</span></div>
                     <h2>{paper.title}</h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p>
                     <p className="v2-library-paper-why"><b>{t.whySuitable}</b>{locale === "zh" ? paper.whyReadZh : paper.whyReadEn}</p>
                     <footer><span>◎ {reminderLabel(paper, locale)}</span><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><b>{t.viewAnalysis} →</b></footer>
                   </button>
                   <div className="v2-library-paper-actions">
+                    <select value={paper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(paper, event.target.value as MonitorPaper["readingStatus"])} aria-label={locale === "zh" ? "阅读状态" : "Reading status"}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select>
                     {!["accepted", "dismissed"].includes(paper.userState) ? <><button type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {t.notRelevant}</button></> : <button type="button" onClick={() => returnPaperToInbox(paper)}>↶ {t.returnPending}</button>}
                     <button type="button" onClick={() => shareSnapshot("paper", [paper])} disabled={Boolean(sharingSnapshot)}>↗ {t.sharePaper}</button>
                   </div>
@@ -2366,14 +2465,21 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
             <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "library" ? t.library : t.paperBack}</button>
-            <section className="v2-paper-head"><div className="v2-paper-top">{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div></section>
+            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.recommendationTier || "browse"}`}>{recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale)}</span><span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div></section>
             <div className="v2-paper-detail-grid">
               <div>
                 <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><span>{t.qualityScore}</span><strong>{selectedMonitorPaper.qualityScore}</strong></div></section>
                 <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><h2>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</h2></section>
+                <section className="v2-paper-analysis"><header><p className="v2-kicker">π {locale === "zh" ? "深度阅读导航" : "DEEP READING GUIDE"}</p><h2>{locale === "zh" ? "先理解它解决了什么，再决定读到多深" : "Understand what it resolves before choosing how deeply to read"}</h2></header><div>
+                  <article><small>{locale === "zh" ? "研究问题" : "Research problem"}</small><p>{(locale === "zh" ? selectedMonitorPaper.problemZh : selectedMonitorPaper.problemEn) || (locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn)}</p></article>
+                  <article><small>{locale === "zh" ? "方法与证据" : "Method & evidence"}</small><p>{(locale === "zh" ? selectedMonitorPaper.methodZh : selectedMonitorPaper.methodEn) || (locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn)}</p></article>
+                  <article><small>{locale === "zh" ? "主要贡献" : "Main contribution"}</small><p>{(locale === "zh" ? selectedMonitorPaper.contributionZh : selectedMonitorPaper.contributionEn) || (locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn)}</p></article>
+                  <article className="caution"><small>{locale === "zh" ? "限制与不确定性" : "Limits & uncertainty"}</small><p>{(locale === "zh" ? selectedMonitorPaper.limitationsZh : selectedMonitorPaper.limitationsEn) || (locale === "zh" ? "当前元数据不足以支持更具体的限制判断，建议核对原文。" : "Available metadata is insufficient for a more specific limitation assessment; verify against the paper.")}</p></article>
+                  <article className="focus"><small>{locale === "zh" ? "阅读时重点看" : "What to focus on"}</small><p>{(locale === "zh" ? selectedMonitorPaper.readingFocusZh : selectedMonitorPaper.readingFocusEn) || (locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn)}</p></article>
+                </div>{Boolean((locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn)?.length) && <footer><small>{locale === "zh" ? "可以继续追问" : "Questions to pursue"}</small><ol>{(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn).map((question) => <li key={question}>{question}</li>)}</ol></footer>}</section>
                 <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div><div><dt>{t.qualityScore}</dt><dd>{selectedMonitorPaper.qualityScore}</dd></div><div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
               </div>
-              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{t.publicationInfo}</p><dl><div><dt>{t.currentSpaceFit}</dt><dd>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
+              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><button className="v2-save-note" type="button" onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft)}>{locale === "zh" ? "保存阅读笔记" : "Save reading note"}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{selectedMonitorPaper.horizon === "days" ? t.daysHorizon : selectedMonitorPaper.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</dd></div><div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
             </div>
           </main>
         )}
@@ -2412,6 +2518,8 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-detected-profile"><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor.preferences.profileNameZh : monitor.preferences.profileNameEn}</strong><em>{monitor.preferences.userModified ? t.userCustomized : t.systemProvided}</em></div>
               <fieldset className="v2-exploration-mode"><legend>{locale === "zh" ? "每日探索强度" : "Daily exploration range"}</legend><div>{(["focused", "balanced", "open"] as const).map((mode) => <button type="button" key={mode} className={explorationDraft === mode ? "active" : ""} onClick={() => setExplorationDraft(mode)}><strong>{mode === "focused" ? (locale === "zh" ? "聚焦" : "Focused") : mode === "balanced" ? (locale === "zh" ? "平衡" : "Balanced") : (locale === "zh" ? "开放" : "Open")}</strong><small>{mode === "focused" ? (locale === "zh" ? "紧贴核心方向" : "Core directions only") : mode === "balanced" ? (locale === "zh" ? "核心＋相邻线索" : "Core + adjacent leads") : (locale === "zh" ? "主动跨方向探索" : "Broader cross-field search")}</small></button>)}</div></fieldset>
               <label><span>{t.venuesLabel}</span><textarea value={venueDraft} onChange={(event) => setVenueDraft(event.target.value)} rows={10} /></label>
+              <label><span>{locale === "zh" ? "持续追踪的作者（每行一位）" : "Tracked authors (one per line)"}</span><textarea value={authorDraft} onChange={(event) => setAuthorDraft(event.target.value)} rows={5} placeholder={locale === "zh" ? "例如：Terence Tao" : "e.g. Terence Tao"} /></label>
+              {Boolean(monitor.suggestedAuthors?.length) && <div className="v2-author-suggestions"><span>π {locale === "zh" ? "根据已接受论文建议" : "Suggested from accepted papers"}</span><div>{monitor.suggestedAuthors?.slice(0, 10).map((author) => <button type="button" key={author} onClick={() => setAuthorDraft((current) => Array.from(new Set([...current.split(/\r?\n/).filter(Boolean), author])).join("\n"))}>＋ {author}</button>)}</div></div>}
               <div className="v2-source-settings-actions"><button type="button" onClick={() => void saveSourceSettings(true)} disabled={savingPreferences}>{t.resetSources}</button><button type="submit" disabled={savingPreferences || !venueDraft.trim()}>{savingPreferences ? t.savingSources : t.saveSources} →</button></div>
             </form>
           </div>

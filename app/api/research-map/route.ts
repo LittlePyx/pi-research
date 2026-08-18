@@ -135,6 +135,9 @@ type DirectionIntelligenceDraft = {
   opportunityEn: string;
   watchSignalZh: string;
   watchSignalEn: string;
+  evidenceGapZh: string;
+  evidenceGapEn: string;
+  nextSearchQuery: string;
   confidence: number;
   evidenceCanonicalIds: string[];
 };
@@ -196,6 +199,9 @@ function sanitizeIntelligence(item: Partial<DirectionIntelligenceDraft> | undefi
     opportunityEn: cleanText(item.opportunityEn || "").slice(0, 1100),
     watchSignalZh: cleanText(item.watchSignalZh || "").slice(0, 650),
     watchSignalEn: cleanText(item.watchSignalEn || "").slice(0, 900),
+    evidenceGapZh: cleanText(item.evidenceGapZh || "").slice(0, 650),
+    evidenceGapEn: cleanText(item.evidenceGapEn || "").slice(0, 900),
+    nextSearchQuery: cleanText(item.nextSearchQuery || "").slice(0, 300),
     confidence: boundedScore(item.confidence, 50),
     evidenceCanonicalIds,
   };
@@ -212,6 +218,8 @@ function parseStoredIntelligence(row: TrackRow): ResearchDirectionIntelligence |
       assessmentZh: cleanText(parsed.assessmentZh).slice(0, 900), assessmentEn: cleanText(parsed.assessmentEn).slice(0, 1200),
       opportunityZh: cleanText(parsed.opportunityZh).slice(0, 800), opportunityEn: cleanText(parsed.opportunityEn).slice(0, 1100),
       watchSignalZh: cleanText(parsed.watchSignalZh).slice(0, 650), watchSignalEn: cleanText(parsed.watchSignalEn).slice(0, 900),
+      evidenceGapZh: cleanText(parsed.evidenceGapZh || "").slice(0, 650), evidenceGapEn: cleanText(parsed.evidenceGapEn || "").slice(0, 900),
+      nextSearchQuery: cleanText(parsed.nextSearchQuery || "").slice(0, 300),
       confidence: boundedScore(parsed.confidence, 50), evidenceCanonicalIds, model: row.intelligence_model || MODEL, updatedAt: row.intelligence_updated_at,
     };
   } catch {
@@ -457,8 +465,9 @@ async function selectPapers(
     [
       "Return {\"selections\":[...],\"directionIntelligence\":[...]} using only supplied canonicalId and directionKey values.",
       "Each selection needs directionKey, canonicalId, role (foundation|milestone|frontier), summaryZh, summaryEn, rationaleZh, rationaleEn.",
-      "Each directionIntelligence item needs directionKey, assessmentZh/En, opportunityZh/En, watchSignalZh/En, confidence (0-100), and evidenceCanonicalIds (1-6 exact IDs from supplied candidates or existing accepted papers).",
+      "Each directionIntelligence item needs directionKey, assessmentZh/En, opportunityZh/En, watchSignalZh/En, evidenceGapZh/En, nextSearchQuery, confidence (0-100), and evidenceCanonicalIds (1-6 exact IDs from supplied candidates or existing accepted papers).",
       "Assessment must synthesize the direction's current intellectual state or unresolved tension. Opportunity must propose one concrete high-value research move for this user. Watch signal must name an observable result, method, benchmark, theorem, or shift that would change the assessment.",
+      "Evidence gap must identify what the current route cannot yet establish, and nextSearchQuery must be one concise English scholarly query designed to close that exact gap.",
       "Ground every intelligence statement in the supplied evidence. If metadata is incomplete, say what is uncertain and lower confidence. Do not present inference as a paper's stated result.",
       mode === "initialize" ? "Choose 5-8 papers per direction with coverage across all three roles." : "Choose 3-6 genuinely additive papers for this direction; do not fill a quota with weak records.",
       "Foundation = field-defining concepts or methods; milestone = a decisive development or branch point; frontier = a recent representative work that shows the current direction.",
@@ -506,10 +515,11 @@ async function interpretDirection(
     workspaceId,
     "You are Pi Research's senior research-strategy analyst. Produce a rigorous, evidence-grounded bilingual direction assessment and return strict JSON.",
     [
-      "Return {\"directionIntelligence\":{directionKey, assessmentZh, assessmentEn, opportunityZh, opportunityEn, watchSignalZh, watchSignalEn, confidence, evidenceCanonicalIds}}.",
+      "Return {\"directionIntelligence\":{directionKey, assessmentZh, assessmentEn, opportunityZh, opportunityEn, watchSignalZh, watchSignalEn, evidenceGapZh, evidenceGapEn, nextSearchQuery, confidence, evidenceCanonicalIds}}.",
       "Assessment: synthesize the direction's current intellectual state and the most important unresolved tension; do not merely summarize titles.",
       "Opportunity: give one concrete, high-value next research move tailored to the user's confirmed memory, depth, and open questions.",
       "Watch signal: name a specific observable theorem, method, empirical result, benchmark shift, or new connection that would materially change the assessment.",
+      "Evidence gap: identify the most consequential claim or branch that the accepted papers still cannot support. nextSearchQuery: provide one concise English scholarly query that targets the missing evidence.",
       "Use 2-6 exact evidenceCanonicalIds from supplied accepted papers. Distinguish metadata-supported statements from your synthesis, state uncertainty, and lower confidence when abstracts or evidence are sparse.",
       `Research space: ${space.name} — ${space.description}`,
       `User-confirmed research memory: ${memory || "none"}`,
