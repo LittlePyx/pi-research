@@ -824,7 +824,7 @@ export async function POST(request: Request) {
           ).bind(crypto.randomUUID(), review.trackId, space.id, candidate.canonicalId, candidate.doi, candidate.title,
             candidate.authors, candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, review.mapRole,
             review.summaryZh, review.summaryEn, review.mapRationaleZh, review.mapRationaleEn, review.trackId).run();
-          await database.prepare("UPDATE research_tracks SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+          await database.prepare("UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
             .bind(review.trackId, space.id).run();
         }
       }

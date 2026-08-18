@@ -2488,3 +2488,35 @@ main { min-width: 0; }
   .v2-map-build-progress { padding: 14px; }
   .v2-map-build-progress > i, .v2-map-build-progress > small { margin-left: 0; }
 }
+
+/* Pi Research V13 — evidence-grounded LLM direction intelligence */
+.v2-intelligence-progress { border-color: #c9d5df; background: #f0f4f7; }
+.v2-intelligence-progress > div > span { border-color: #aebfce; }
+.v2-intelligence-progress > div > span > i { width: 18px; height: 18px; background: #496d86; color: white; display: grid; place-items: center; font: 11px Georgia, serif; }
+.v2-intelligence-progress > i > b { background: #52748c; }
+.v2-direction-intelligence-line { min-height: 52px; margin-top: 15px; padding: 10px 11px; border: 1px solid #d9e1e6; border-radius: 7px; background: #f1f5f7; display: grid; grid-template-columns: 20px minmax(0,1fr) auto; gap: 8px; align-items: start; }
+.v2-direction-intelligence-line > span { width: 20px; height: 20px; border-radius: 50%; background: #486b83; color: white; display: grid; place-items: center; font: 11px Georgia, serif; }
+.v2-direction-intelligence-line > p { display: -webkit-box; margin: 1px 0 0; overflow: hidden; color: #52636f; font: 11px/1.45 Georgia, serif; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.v2-direction-intelligence-line > b { color: #6f8290; font-size: 9px; }
+.v2-direction-intelligence-line.pending { opacity: .66; }
+.v2-direction-intelligence-line.pending > span { animation: v2-build-pulse 1s ease-in-out infinite alternate; }
+.v2-direction-intelligence { margin: 22px 0; padding: 22px; border: 1px solid #cbd8e1; border-radius: 12px; background: #f3f6f8; }
+.v2-direction-intelligence > header { padding-bottom: 16px; border-bottom: 1px solid #d8e1e6; display: flex; justify-content: space-between; gap: 20px; }
+.v2-direction-intelligence > header > div:first-child { display: flex; align-items: center; gap: 12px; }
+.v2-direction-intelligence > header > div:first-child > span { width: 34px; height: 34px; border-radius: 50%; background: #365f79; color: white; display: grid; place-items: center; font: 18px Georgia, serif; }
+.v2-direction-intelligence h2 { margin: 4px 0 0; font: 19px/1.25 Georgia, serif; font-weight: 400; }
+.v2-direction-intelligence > header > div:last-child { display: grid; grid-template-columns: auto auto; align-items: center; gap: 2px 9px; text-align: right; }
+.v2-direction-intelligence > header > div:last-child > b { color: #365f79; font: 22px Georgia, serif; }
+.v2-direction-intelligence > header > div:last-child > small { color: #748590; font-size: 9px; }
+.v2-direction-intelligence > header button { grid-column: 1 / -1; min-height: 27px; padding: 0 8px; border: 1px solid #b9c8d2; border-radius: 5px; background: transparent; color: #527086; font-size: 9px; }
+.v2-direction-intelligence > div { padding-top: 17px; display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
+.v2-direction-intelligence article { padding: 14px; border-radius: 8px; background: rgba(255,255,255,.62); }
+.v2-direction-intelligence article > small { color: #527086; font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.v2-direction-intelligence article > p { margin: 7px 0 0; color: #53616a; font: 12px/1.58 Georgia, serif; }
+.v2-direction-intelligence > footer { margin-top: 15px; color: #7a8891; display: flex; gap: 15px; font-size: 9px; }
+
+@media (max-width: 760px) {
+  .v2-direction-intelligence > header { flex-direction: column; }
+  .v2-direction-intelligence > header > div:last-child { width: fit-content; text-align: left; }
+  .v2-direction-intelligence > div { grid-template-columns: 1fr; }
+}

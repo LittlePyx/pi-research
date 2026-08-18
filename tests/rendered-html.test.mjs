@@ -107,7 +107,10 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(monitor, /discovery_round = discovery_round \+ 1/);
   assert.match(monitor, /Existing research-map directions/);
   assert.match(monitor, /INSERT OR IGNORE INTO research_track_papers/);
+  assert.match(monitor, /SET intelligence_json = '\{\}', intelligence_model = '', intelligence_updated_at = NULL/);
   assert.match(mapRoute, /MODEL = "deepseek-v4-pro"/);
+  assert.match(mapRoute, /reasoning_effort: "high"/);
+  assert.match(mapRoute, /WORKSPACE_DAILY_LIMIT = 16/);
   assert.match(mapRoute, /Foundation = field-defining concepts or methods/);
   assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand"/);
   assert.match(mapRoute, /INSERT OR IGNORE INTO research_track_papers/);
@@ -116,6 +119,11 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /outlineReady: true/);
   assert.match(mapRoute, /const hydrating = payload\.action === "hydrate"/);
   assert.match(mapRoute, /buildProgress/);
+  assert.match(mapRoute, /directionIntelligence/);
+  assert.match(mapRoute, /interpretDirection/);
+  assert.match(mapRoute, /evidenceCanonicalIds/);
+  assert.match(mapRoute, /Distinguish metadata-supported statements from your synthesis/);
+  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "interpret"/);
   assert.match(mapRoute, /structureExistingTracks/);
   assert.match(mapRoute, /research_track_edges/);
   assert.match(mapRoute, /userRole \(core\|support\|explore\)/);
@@ -125,7 +133,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(schema, /researchTracks/);
   assert.match(schema, /researchTrackPapers/);
   assert.match(schema, /researchTrackEdges/);
+  assert.match(schema, /intelligenceJson/);
   assert.match(repository, /CREATE TABLE IF NOT EXISTS research_tracks/);
+  assert.match(repository, /intelligence_json TEXT NOT NULL DEFAULT/);
   assert.match(client, /领域发展地图/);
   assert.match(client, /继续填充这条路线/);
   assert.match(client, /v2-field-network/);
@@ -138,6 +148,10 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /mapBuildTrackId/);
   assert.match(client, /先建立可浏览的方向骨架/);
   assert.match(client, /切换页面不会丢失已经完成的内容/);
+  assert.match(client, /refreshDirectionIntelligence/);
+  assert.match(client, /PI 方向研判/);
+  assert.match(client, /关键机会/);
+  assert.match(client, /观察信号/);
   assert.doesNotMatch(client, /Gaussian Extremality for Rate-Distortion/);
   assert.match(css, /Focused Today brief \+ real research map/);
   assert.match(css, /\.v2-research-timeline/);
@@ -146,6 +160,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-direction-heat\.rising/);
   assert.match(css, /progressive research-map construction/);
   assert.match(css, /\.v2-map-build-progress/);
+  assert.match(css, /evidence-grounded LLM direction intelligence/);
+  assert.match(css, /\.v2-direction-intelligence-line/);
 });
 
 test("builds persistent personalized learning paths from real research papers", async () => {

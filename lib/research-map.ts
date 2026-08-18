@@ -3,6 +3,19 @@ export type ResearchDirectionRole = "core" | "support" | "explore";
 export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
 export type ResearchTrackBuildStatus = "queued" | "ready";
 
+export type ResearchDirectionIntelligence = {
+  assessmentZh: string;
+  assessmentEn: string;
+  opportunityZh: string;
+  opportunityEn: string;
+  watchSignalZh: string;
+  watchSignalEn: string;
+  confidence: number;
+  evidenceCanonicalIds: string[];
+  model: string;
+  updatedAt: string | null;
+};
+
 export type ResearchTrackPaper = {
   id: string;
   canonicalId: string;
@@ -36,6 +49,7 @@ export type ResearchTrack = {
   heatLevel: ResearchHeatLevel;
   recentPaperCount: number;
   buildStatus: ResearchTrackBuildStatus;
+  intelligence: ResearchDirectionIntelligence | null;
   updatedAt: string;
   papers: ResearchTrackPaper[];
 };
@@ -57,6 +71,11 @@ export type ResearchMapState = {
   generated: boolean;
   needsStructure?: boolean;
   buildProgress?: {
+    ready: number;
+    total: number;
+    pendingTrackIds: string[];
+  };
+  intelligenceProgress?: {
     ready: number;
     total: number;
     pendingTrackIds: string[];

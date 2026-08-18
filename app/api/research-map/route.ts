@@ -1,5 +1,5 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
-import type { ResearchDirectionRole, ResearchHeatLevel, ResearchMapState, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
+import type { ResearchDirectionIntelligence, ResearchDirectionRole, ResearchHeatLevel, ResearchMapState, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type TrackRow = {
@@ -14,6 +14,9 @@ type TrackRow = {
   depth_score: number;
   support_score: number;
   interaction_score: number;
+  intelligence_json: string;
+  intelligence_model: string;
+  intelligence_updated_at: string | null;
   updated_at: string;
 };
 type TrackEdgeRow = {
@@ -42,6 +45,19 @@ type TrackPaperRow = {
   rationale_zh: string;
   rationale_en: string;
   position: number;
+};
+type ExistingPaperEvidence = {
+  canonical_id: string;
+  title: string;
+  authors: string;
+  venue: string;
+  published_at: string | null;
+  citation_count: number;
+  role: ResearchTrackRole;
+  summary_zh: string;
+  summary_en: string;
+  rationale_zh: string;
+  rationale_en: string;
 };
 type CrossrefDate = { "date-parts"?: number[][] };
 type CrossrefItem = {
@@ -92,6 +108,17 @@ type Selection = {
   rationaleZh: string;
   rationaleEn: string;
 };
+type DirectionIntelligenceDraft = {
+  directionKey: string;
+  assessmentZh: string;
+  assessmentEn: string;
+  opportunityZh: string;
+  opportunityEn: string;
+  watchSignalZh: string;
+  watchSignalEn: string;
+  confidence: number;
+  evidenceCanonicalIds: string[];
+};
 type DeepSeekResponse = {
   choices?: Array<{ message?: { content?: string | null } }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -104,8 +131,8 @@ const NON_PAPER_PHRASES = /(publication information|information for authors|inst
 const ROLES = new Set<ResearchTrackRole>(["foundation", "milestone", "frontier"]);
 const DIRECTION_ROLES = new Set<ResearchDirectionRole>(["core", "support", "explore"]);
 const EDGE_KINDS = new Set(["builds_on", "bridges", "supports"]);
-const GLOBAL_DAILY_LIMIT = 80;
-const WORKSPACE_DAILY_LIMIT = 10;
+const GLOBAL_DAILY_LIMIT = 120;
+const WORKSPACE_DAILY_LIMIT = 16;
 
 function cleanText(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -122,6 +149,39 @@ function parseJsonArray(value: string) {
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
   } catch {
     return [];
+  }
+}
+
+function sanitizeIntelligence(item: Partial<DirectionIntelligenceDraft> | undefined, directionKey: string, allowedCanonicalIds: Set<string>) {
+  if (!item || cleanText(item.directionKey || "") !== directionKey) return null;
+  const evidenceCanonicalIds = Array.from(new Set((item.evidenceCanonicalIds || []).map((id) => cleanText(String(id))).filter((id) => allowedCanonicalIds.has(id)))).slice(0, 6);
+  const intelligence = {
+    assessmentZh: cleanText(item.assessmentZh || "").slice(0, 900),
+    assessmentEn: cleanText(item.assessmentEn || "").slice(0, 1200),
+    opportunityZh: cleanText(item.opportunityZh || "").slice(0, 800),
+    opportunityEn: cleanText(item.opportunityEn || "").slice(0, 1100),
+    watchSignalZh: cleanText(item.watchSignalZh || "").slice(0, 650),
+    watchSignalEn: cleanText(item.watchSignalEn || "").slice(0, 900),
+    confidence: boundedScore(item.confidence, 50),
+    evidenceCanonicalIds,
+  };
+  return intelligence.assessmentZh && intelligence.assessmentEn && intelligence.opportunityZh && intelligence.opportunityEn
+    && intelligence.watchSignalZh && intelligence.watchSignalEn && intelligence.evidenceCanonicalIds.length ? intelligence : null;
+}
+
+function parseStoredIntelligence(row: TrackRow): ResearchDirectionIntelligence | null {
+  try {
+    const parsed = JSON.parse(row.intelligence_json || "{}") as Partial<DirectionIntelligenceDraft>;
+    const evidenceCanonicalIds = Array.isArray(parsed.evidenceCanonicalIds) ? parsed.evidenceCanonicalIds.filter((id): id is string => typeof id === "string").slice(0, 6) : [];
+    if (!parsed.assessmentZh || !parsed.assessmentEn || !parsed.opportunityZh || !parsed.opportunityEn || !parsed.watchSignalZh || !parsed.watchSignalEn || !evidenceCanonicalIds.length) return null;
+    return {
+      assessmentZh: cleanText(parsed.assessmentZh).slice(0, 900), assessmentEn: cleanText(parsed.assessmentEn).slice(0, 1200),
+      opportunityZh: cleanText(parsed.opportunityZh).slice(0, 800), opportunityEn: cleanText(parsed.opportunityEn).slice(0, 1100),
+      watchSignalZh: cleanText(parsed.watchSignalZh).slice(0, 650), watchSignalEn: cleanText(parsed.watchSignalEn).slice(0, 900),
+      confidence: boundedScore(parsed.confidence, 50), evidenceCanonicalIds, model: row.intelligence_model || MODEL, updatedAt: row.intelligence_updated_at,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -335,7 +395,16 @@ async function discoverCandidates(directions: DirectionDraft[], offset: number, 
   return capped;
 }
 
-async function selectPapers(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, directions: DirectionDraft[], candidates: MapCandidate[], mode: "initialize" | "expand") {
+async function selectPapers(
+  database: D1Database,
+  workspaceId: string,
+  space: SpaceRow,
+  memory: string,
+  directions: DirectionDraft[],
+  candidates: MapCandidate[],
+  mode: "initialize" | "expand",
+  existingEvidence: Array<{ canonicalId: string; title: string; publishedAt: string | null; role: ResearchTrackRole; summaryEn: string; rationaleEn: string }> = [],
+) {
   const compact = candidates.map((item) => ({
     directionKey: item.directionKey,
     canonicalId: item.canonicalId,
@@ -347,13 +416,16 @@ async function selectPapers(database: D1Database, workspaceId: string, space: Sp
     citations: item.citationCount,
     abstract: item.abstractText,
   }));
-  const parsed = await callDeepSeek<{ selections?: Array<Partial<Selection>> }>(
+  const parsed = await callDeepSeek<{ selections?: Array<Partial<Selection>>; directionIntelligence?: Array<Partial<DirectionIntelligenceDraft>> }>(
     database,
     workspaceId,
     "You are Pi Research's evidence-disciplined academic map editor. Select only real, representative papers and return strict JSON.",
     [
-      "Return {\"selections\":[...]} using only supplied canonicalId and directionKey values.",
+      "Return {\"selections\":[...],\"directionIntelligence\":[...]} using only supplied canonicalId and directionKey values.",
       "Each selection needs directionKey, canonicalId, role (foundation|milestone|frontier), summaryZh, summaryEn, rationaleZh, rationaleEn.",
+      "Each directionIntelligence item needs directionKey, assessmentZh/En, opportunityZh/En, watchSignalZh/En, confidence (0-100), and evidenceCanonicalIds (1-6 exact IDs from supplied candidates or existing accepted papers).",
+      "Assessment must synthesize the direction's current intellectual state or unresolved tension. Opportunity must propose one concrete high-value research move for this user. Watch signal must name an observable result, method, benchmark, theorem, or shift that would change the assessment.",
+      "Ground every intelligence statement in the supplied evidence. If metadata is incomplete, say what is uncertain and lower confidence. Do not present inference as a paper's stated result.",
       mode === "initialize" ? "Choose 5-8 papers per direction with coverage across all three roles." : "Choose 3-6 genuinely additive papers for this direction; do not fill a quota with weak records.",
       "Foundation = field-defining concepts or methods; milestone = a decisive development or branch point; frontier = a recent representative work that shows the current direction.",
       "Reject publication information, mastheads, editorials, corrections, calls for papers, vague matches, and records whose title/abstract do not establish a substantive research paper.",
@@ -362,12 +434,13 @@ async function selectPapers(database: D1Database, workspaceId: string, space: Sp
       `Research space: ${space.name} — ${space.description}`,
       `User-confirmed research memory: ${memory || "none"}`,
       `Directions: ${JSON.stringify(directions)}`,
+      `Existing accepted route papers: ${JSON.stringify(existingEvidence)}`,
       `Candidate records: ${JSON.stringify(compact)}`,
     ].join("\n"),
     20000,
   );
   const allowed = new Set(candidates.map((item) => item.directionKey + ":" + item.canonicalId));
-  return (parsed.selections || []).map((item) => ({
+  const selections = (parsed.selections || []).map((item) => ({
     directionKey: cleanText(item.directionKey || ""),
     canonicalId: cleanText(item.canonicalId || ""),
     role: ROLES.has(item.role as ResearchTrackRole) ? item.role as ResearchTrackRole : "milestone",
@@ -376,6 +449,48 @@ async function selectPapers(database: D1Database, workspaceId: string, space: Sp
     rationaleZh: cleanText(item.rationaleZh || "").slice(0, 700),
     rationaleEn: cleanText(item.rationaleEn || "").slice(0, 950),
   })).filter((item) => allowed.has(item.directionKey + ":" + item.canonicalId) && item.summaryZh && item.summaryEn && item.rationaleZh && item.rationaleEn);
+  const allowedEvidence = new Set([...selections.map((item) => item.canonicalId), ...existingEvidence.map((item) => item.canonicalId)]);
+  const intelligence = directions.map((direction) => sanitizeIntelligence(
+    (parsed.directionIntelligence || []).find((item) => cleanText(item.directionKey || "") === direction.key),
+    direction.key,
+    allowedEvidence,
+  )).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  return { selections, intelligence };
+}
+
+async function interpretDirection(
+  database: D1Database,
+  workspaceId: string,
+  space: SpaceRow,
+  memory: string,
+  track: TrackRow,
+  evidence: Array<{ canonicalId: string; title: string; authors: string; venue: string; publishedAt: string | null; citations: number; role: ResearchTrackRole; summaryZh: string; summaryEn: string; rationaleZh: string; rationaleEn: string }>,
+) {
+  if (!evidence.length) return null;
+  const parsed = await callDeepSeek<{ directionIntelligence?: Partial<DirectionIntelligenceDraft> }>(
+    database,
+    workspaceId,
+    "You are Pi Research's senior research-strategy analyst. Produce a rigorous, evidence-grounded bilingual direction assessment and return strict JSON.",
+    [
+      "Return {\"directionIntelligence\":{directionKey, assessmentZh, assessmentEn, opportunityZh, opportunityEn, watchSignalZh, watchSignalEn, confidence, evidenceCanonicalIds}}.",
+      "Assessment: synthesize the direction's current intellectual state and the most important unresolved tension; do not merely summarize titles.",
+      "Opportunity: give one concrete, high-value next research move tailored to the user's confirmed memory, depth, and open questions.",
+      "Watch signal: name a specific observable theorem, method, empirical result, benchmark shift, or new connection that would materially change the assessment.",
+      "Use 2-6 exact evidenceCanonicalIds from supplied accepted papers. Distinguish metadata-supported statements from your synthesis, state uncertainty, and lower confidence when abstracts or evidence are sparse.",
+      `Research space: ${space.name} — ${space.description}`,
+      `User-confirmed research memory: ${memory || "none"}`,
+      `Direction: ${JSON.stringify({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, userRole: track.user_role, depthScore: track.depth_score + track.interaction_score, supportScore: track.support_score })}`,
+      `Accepted evidence papers: ${JSON.stringify(evidence)}`,
+    ].join("\n"),
+    7000,
+  );
+  return sanitizeIntelligence(parsed.directionIntelligence, track.id, new Set(evidence.map((item) => item.canonicalId)));
+}
+
+async function saveDirectionIntelligence(database: D1Database, spaceId: string, trackId: string, intelligence: ReturnType<typeof sanitizeIntelligence>) {
+  if (!intelligence) return;
+  await database.prepare("UPDATE research_tracks SET intelligence_json = ?, intelligence_model = ?, intelligence_updated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+    .bind(JSON.stringify(intelligence), MODEL, trackId, spaceId).run();
 }
 
 function toPaper(row: TrackPaperRow): ResearchTrackPaper {
@@ -422,7 +537,7 @@ function heatLevel(score: number, recentPaperCount: number): ResearchHeatLevel {
 
 async function structureExistingTracks(database: D1Database, workspaceId: string, space: SpaceRow, memory: string) {
   const tracks = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
+    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
   ).bind(space.id).all<TrackRow>();
   if (tracks.results.length < 2) return;
   const parsed = await callDeepSeek<{
@@ -462,7 +577,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
   const [tracksResult, papersResult, edgesResult] = await Promise.all([
-    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
+    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare("SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackPaperRow>(),
@@ -495,6 +610,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     })(),
     recentPaperCount: heatByTrack.get(row.id)?.recentPaperCount || 0,
     buildStatus: row.expansion_count < 0 ? "queued" : "ready",
+    intelligence: parseStoredIntelligence(row),
     updatedAt: row.updated_at,
     papers: papersByTrack.get(row.id) || [],
   }));
@@ -509,6 +625,8 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   }));
   const needsStructure = tracks.length > 1 && !edges.length;
   const pendingTrackIds = tracks.filter((track) => track.buildStatus === "queued").map((track) => track.id);
+  const intelligenceEligibleTracks = tracks.filter((track) => track.buildStatus === "ready" && track.papers.length > 0);
+  const pendingIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => !track.intelligence).map((track) => track.id);
   return {
     tracks,
     edges,
@@ -516,6 +634,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     generated: tracks.length > 0,
     needsStructure,
     buildProgress: { ready: tracks.length - pendingTrackIds.length, total: tracks.length, pendingTrackIds },
+    intelligenceProgress: { ready: intelligenceEligibleTracks.length - pendingIntelligenceTrackIds.length, total: intelligenceEligibleTracks.length, pendingTrackIds: pendingIntelligenceTrackIds },
     ...extra,
   } satisfies ResearchMapState & Record<string, unknown>;
 }
@@ -534,7 +653,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "structure" | "activity"; trackId?: string; activityKind?: "paper_opened" | "track_opened" };
+    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "interpret" | "structure" | "activity"; trackId?: string; activityKind?: "paper_opened" | "track_opened" };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -582,7 +701,7 @@ export async function POST(request: Request) {
     const hydrating = payload.action === "hydrate";
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
-      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
     ).bind(trackId, space.id).first<TrackRow>();
     if (!track) return Response.json({ error: "Research direction not found" }, { status: 404 });
     if (hydrating && track.expansion_count >= 0) return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
@@ -599,12 +718,33 @@ export async function POST(request: Request) {
       depthScore: track.depth_score,
       supportScore: track.support_score,
     };
+    const existing = await database.prepare("SELECT canonical_id, title, authors, venue, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en FROM research_track_papers WHERE track_id = ? ORDER BY position")
+      .bind(track.id).all<ExistingPaperEvidence>();
+    const existingEvidence = existing.results.map((item) => ({
+      canonicalId: item.canonical_id, title: item.title, authors: item.authors, venue: item.venue, publishedAt: item.published_at,
+      citations: item.citation_count, role: item.role, summaryZh: item.summary_zh, summaryEn: item.summary_en, rationaleZh: item.rationale_zh, rationaleEn: item.rationale_en,
+    }));
+    if (payload.action === "interpret") {
+      const intelligence = await interpretDirection(database, workspaceId, space, memory, track, existingEvidence);
+      if (!intelligence) return Response.json({ error: "This direction does not yet have enough accepted evidence for a grounded assessment" }, { status: 422 });
+      await saveDirectionIntelligence(database, space.id, track.id, intelligence);
+      return Response.json(await readMap(database, space.id, { interpretedTrackId: track.id }));
+    }
     const offset = hydrating ? 0 : ((track.expansion_count + 1) * 16) % 608;
     let candidates = await discoverCandidates([direction], offset, hydrating ? 14 : 16);
-    const existing = await database.prepare("SELECT canonical_id FROM research_track_papers WHERE track_id = ?").bind(track.id).all<{ canonical_id: string }>();
     const existingIds = new Set(existing.results.map((row) => row.canonical_id));
     candidates = candidates.filter((item) => !existingIds.has(item.canonicalId));
-    const selections = candidates.length ? await selectPapers(database, workspaceId, space, memory, [direction], candidates, hydrating ? "initialize" : "expand") : [];
+    const reviewed = candidates.length ? await selectPapers(
+      database,
+      workspaceId,
+      space,
+      memory,
+      [direction],
+      candidates,
+      hydrating ? "initialize" : "expand",
+      existingEvidence.map((item) => ({ canonicalId: item.canonicalId, title: item.title, publishedAt: item.publishedAt, role: item.role, summaryEn: item.summaryEn, rationaleEn: item.rationaleEn })),
+    ) : { selections: [], intelligence: [] };
+    const selections = reviewed.selections;
     const candidateById = new Map(candidates.map((item) => [item.canonicalId, item]));
     const inserted = new Set<string>();
     let position = existing.results.length;
@@ -628,6 +768,7 @@ export async function POST(request: Request) {
       await database.prepare("UPDATE research_tracks SET expansion_count = expansion_count + 1, interaction_score = MIN(35, interaction_score + 5), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
         .bind(track.id, space.id).run();
     }
+    await saveDirectionIntelligence(database, space.id, track.id, reviewed.intelligence[0] || null);
     return Response.json(await readMap(database, space.id, { cached: false, addedCount, hydratedTrackId: hydrating ? track.id : null }));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to build the research map" }, { status: 502 });

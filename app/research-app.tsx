@@ -840,6 +840,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [mapOutlinePhase, setMapOutlinePhase] = useState(0);
   const [mapBuildTrackId, setMapBuildTrackId] = useState<string | null>(null);
   const [mapBuildErrors, setMapBuildErrors] = useState<Record<string, boolean>>({});
+  const [mapIntelligenceTrackId, setMapIntelligenceTrackId] = useState<string | null>(null);
   const [learningState, setLearningState] = useState<LearningPathState>({ path: null, suggestedTarget: "", availablePaperCount: 0, model: "deepseek-v4-pro" });
   const [learningTarget, setLearningTarget] = useState("");
   const [learningLoading, setLearningLoading] = useState(false);
@@ -1081,10 +1082,30 @@ export default function ResearchApp({ user }: { user: User }) {
             if (!cancelled) setMapBuildErrors((current) => ({ ...current, [trackId]: true }));
           }
         }
+        for (const trackId of data.intelligenceProgress?.pendingTrackIds || []) {
+          if (cancelled) break;
+          setMapIntelligenceTrackId(trackId);
+          try {
+            const interpretationResponse = await fetch("/api/research-map", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ spaceId: activeSpace.id, action: "interpret", trackId }),
+            });
+            const interpreted = await interpretationResponse.json() as ResearchMapState & { error?: string };
+            if (!interpretationResponse.ok) throw new Error(interpreted.error || "direction interpretation failed");
+            if (!cancelled) {
+              data = interpreted;
+              setResearchMap(interpreted);
+              setSelectedThread((current) => interpreted.tracks.find((track) => track.id === current?.id) || interpreted.tracks[0] || null);
+            }
+          } catch {
+            // The direction remains usable and will be interpreted again on the next visit.
+          }
+        }
       } catch {
         if (!cancelled) setToast(locale === "zh" ? "研究路线暂时无法生成，请稍后重试" : "The research map could not be built just now");
       } finally {
-        if (!cancelled) { setMapLoading(false); setMapAction(null); setMapBuildTrackId(null); }
+        if (!cancelled) { setMapLoading(false); setMapAction(null); setMapBuildTrackId(null); setMapIntelligenceTrackId(null); }
       }
     };
     void load();
@@ -1587,7 +1608,7 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const expandResearchTrack = async (thread: ResearchTrack) => {
-    if (mapAction || mapBuildTrackId || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    if (mapAction || mapBuildTrackId || mapIntelligenceTrackId || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     setMapAction(thread.id);
     const isInitialFill = thread.buildStatus === "queued";
     try {
@@ -1605,6 +1626,27 @@ export default function ResearchApp({ user }: { user: User }) {
       setToast(locale === "zh" ? (data.addedCount ? `${isInitialFill ? "路线已补充" : "新增"} ${data.addedCount} 篇代表性论文` : "本轮没有发现足够有代表性的新论文") : (data.addedCount ? `${isInitialFill ? "Route filled with" : "Added"} ${data.addedCount} representative papers` : "No sufficiently representative additions in this pass"));
     } catch {
       setToast(locale === "zh" ? "继续挖掘失败，请稍后重试" : "Could not continue mining this direction");
+    } finally {
+      setMapAction(null);
+    }
+  };
+
+  const refreshDirectionIntelligence = async (thread: ResearchTrack) => {
+    if (mapAction || mapBuildTrackId || mapIntelligenceTrackId || !thread.papers.length) return;
+    setMapAction(`interpret:${thread.id}`);
+    try {
+      const response = await fetch("/api/research-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, action: "interpret", trackId: thread.id }),
+      });
+      const data = await response.json() as ResearchMapState & { error?: string };
+      if (!response.ok) throw new Error(data.error || "direction interpretation failed");
+      setResearchMap(data);
+      setSelectedThread(data.tracks.find((item) => item.id === thread.id) || null);
+      setToast(locale === "zh" ? "Pi 已基于当前证据更新方向研判" : "Pi refreshed the direction assessment from current evidence");
+    } catch {
+      setToast(locale === "zh" ? "方向研判暂时无法更新" : "The direction assessment could not be refreshed");
     } finally {
       setMapAction(null);
     }
@@ -1664,6 +1706,7 @@ export default function ResearchApp({ user }: { user: User }) {
     ? ["读取研究空间与已确认记忆", "划分主攻、辅助与探索方向", "建立方向之间的主干关系", "保存方向骨架，即将展示"]
     : ["Reading the research space and confirmed memory", "Separating core, support, and exploratory directions", "Connecting the field backbone", "Saving the outline for immediate display"];
   const currentBuildTrack = researchMap.tracks.find((track) => track.id === mapBuildTrackId) || null;
+  const currentIntelligenceTrack = researchMap.tracks.find((track) => track.id === mapIntelligenceTrackId) || null;
 
   return (
     <div className="v2-app">
@@ -1794,6 +1837,7 @@ export default function ResearchApp({ user }: { user: User }) {
             ) : researchMap.tracks.length ? (
               <>
                 {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `还有 ${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes are waiting to be filled`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成的部分已经保存，可以打开路线浏览或选择失败方向重试。" : "Completed work is saved; browse ready routes or retry a pending direction.")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i><small>{locale === "zh" ? "切换页面不会丢失已经完成的内容，下次进入会从未完成处继续。" : "Completed work will not be lost if you leave; the next visit resumes unfinished routes."}</small></section> : null}
+                {(researchMap.intelligenceProgress?.pendingTrackIds.length || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress" role="status"><div><span className={mapIntelligenceTrackId ? "working" : "paused"}><i>π</i></span><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "DeepSeek Pro 正在形成方向研判" : "DeepSeek Pro is forming a direction assessment") : (locale === "zh" ? "部分方向等待 Pi 研判" : "Some directions await Pi's assessment")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "路线和论文已经可以正常浏览，研判将在下次进入时继续。" : "Routes and papers remain available; interpretation resumes on the next visit.")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i><small>{locale === "zh" ? "Pi 会给出当前判断、关键机会和应关注的变化信号，并绑定真实论文证据。" : "Pi adds a current assessment, key opportunity, and watch signal grounded in real paper evidence."}</small></section> : null}
                 <section className="v2-field-network">
                   <div className="v2-network-root"><span>π</span><div><small>{locale === "zh" ? "研究主干" : "Research backbone"}</small><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><p>{activeSpace.description}</p></div></div>
                   <div className="v2-network-branches">
@@ -1801,6 +1845,7 @@ export default function ResearchApp({ user }: { user: User }) {
                       <article className={`v2-network-node ${thread.userRole} ${thread.buildStatus}`} key={thread.id}>
                         <header><span>{String(index + 1).padStart(2, "0")}</span><b>{directionRoleLabel(thread.userRole, locale)}</b>{thread.buildStatus === "ready" ? <em className={`v2-direction-heat ${thread.heatLevel}`} title={directionHeatTitle(thread, locale)}><i />{directionHeatLabel(thread.heatLevel, locale)}</em> : <em className={`v2-track-build-chip ${mapBuildTrackId === thread.id ? "working" : mapBuildErrors[thread.id] ? "error" : "queued"}`}><i />{mapBuildTrackId === thread.id ? (locale === "zh" ? "补充中" : "Filling") : mapBuildErrors[thread.id] ? (locale === "zh" ? "可重试" : "Retry") : (locale === "zh" ? "排队中" : "Queued")}</em>}<small>{thread.papers.length} {locale === "zh" ? "篇" : "papers"}</small></header>
                         <button className="v2-network-node-main" type="button" onClick={() => openThread(thread)}><h2>{locale === "zh" ? thread.titleZh : thread.titleEn}</h2><p>{locale === "zh" ? thread.summaryZh : thread.summaryEn}</p></button>
+                        {thread.intelligence ? <div className="v2-direction-intelligence-line"><span>π</span><p>{locale === "zh" ? thread.intelligence.assessmentZh : thread.intelligence.assessmentEn}</p><b>{thread.intelligence.confidence}%</b></div> : thread.buildStatus === "ready" && thread.papers.length ? <div className="v2-direction-intelligence-line pending"><span>π</span><p>{locale === "zh" ? "Pi 正在基于路线证据形成研判" : "Pi is interpreting the route evidence"}</p></div> : null}
                         <div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${thread.depthScore}%` }} /></i><strong>{thread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${thread.supportScore}%` }} /></i><strong>{thread.supportScore}</strong></span></div>
                         <div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={thread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(thread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div>
                         <footer><button type="button" onClick={() => openThread(thread)}>{thread.buildStatus === "queued" ? (locale === "zh" ? "先看方向" : "Preview direction") : (locale === "zh" ? "查看路径" : "Open path")} →</button><button type="button" onClick={() => void expandResearchTrack(thread)} disabled={Boolean(mapAction || mapBuildTrackId)}>{mapAction === thread.id ? (thread.buildStatus === "queued" ? (locale === "zh" ? "补充中…" : "Filling…") : (locale === "zh" ? "深挖中…" : "Mining…")) : thread.buildStatus === "queued" ? (mapBuildErrors[thread.id] ? (locale === "zh" ? "重试补充" : "Retry fill") : (locale === "zh" ? "等待补充" : "Waiting")) : (locale === "zh" ? "继续深挖" : "Mine deeper")}</button></footer>
@@ -1820,6 +1865,7 @@ export default function ResearchApp({ user }: { user: User }) {
             {selectedThread ? <>
               <section className="v2-map-detail-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {selectedThread.papers.length} {locale === "zh" ? "篇代表作" : "representative works"}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId)}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在补充…" : "Filling…") : selectedThread.buildStatus === "queued" ? (locale === "zh" ? "优先补充这条路线" : "Fill this route first") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></section>
               <section className={`v2-direction-profile ${selectedThread.userRole}`}><div><span>{directionRoleLabel(selectedThread.userRole, locale)}</span><em className={`v2-direction-heat ${selectedThread.heatLevel}`} title={directionHeatTitle(selectedThread, locale)}><i />{directionHeatLabel(selectedThread.heatLevel, locale)}</em><strong>{locale === "zh" ? "这条方向在你的研究地图中的位置" : "This direction's place in your research map"}</strong></div><div className="v2-direction-signals"><span><small>{locale === "zh" ? "研究深度" : "User depth"}</small><i><b style={{ width: `${selectedThread.depthScore}%` }} /></i><strong>{selectedThread.depthScore}</strong></span><span><small>{locale === "zh" ? "辅助价值" : "Support value"}</small><i><b style={{ width: `${selectedThread.supportScore}%` }} /></i><strong>{selectedThread.supportScore}</strong></span></div><div className="v2-direction-role-control">{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div></section>
+              {selectedThread.intelligence ? <section className="v2-direction-intelligence"><header><div><span>π</span><div><p className="v2-kicker">{locale === "zh" ? "PI 方向研判" : "PI DIRECTION INTELLIGENCE"}</p><h2>{locale === "zh" ? "基于当前真实论文的研究判断" : "Research judgment grounded in current papers"}</h2></div></div><div><b>{selectedThread.intelligence.confidence}%</b><small>{locale === "zh" ? "证据置信度" : "evidence confidence"}</small><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || mapIntelligenceTrackId)}>{mapAction === `interpret:${selectedThread.id}` ? (locale === "zh" ? "更新中…" : "Refreshing…") : (locale === "zh" ? "重新研判" : "Refresh")}</button></div></header><div><article><small>{locale === "zh" ? "当前判断" : "Current assessment"}</small><p>{locale === "zh" ? selectedThread.intelligence.assessmentZh : selectedThread.intelligence.assessmentEn}</p></article><article><small>{locale === "zh" ? "关键机会" : "Key opportunity"}</small><p>{locale === "zh" ? selectedThread.intelligence.opportunityZh : selectedThread.intelligence.opportunityEn}</p></article><article><small>{locale === "zh" ? "观察信号" : "Watch signal"}</small><p>{locale === "zh" ? selectedThread.intelligence.watchSignalZh : selectedThread.intelligence.watchSignalEn}</p></article></div><footer><span>{modelDisplayName(selectedThread.intelligence.model)}</span><span>{locale === "zh" ? `${selectedThread.intelligence.evidenceCanonicalIds.length} 篇路线论文作为证据` : `${selectedThread.intelligence.evidenceCanonicalIds.length} route papers used as evidence`}</span></footer></section> : null}
               <nav className="v2-map-legend">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span key={role} className={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</nav>
               <div className="v2-research-timeline">
                 {(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => (
