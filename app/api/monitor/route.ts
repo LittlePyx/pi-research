@@ -368,7 +368,10 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       thinking: { type: "enabled" },
       reasoning_effort: "high",
       response_format: { type: "json_object" },
-      max_tokens: 8000,
+      // The review includes bilingual briefs for every accepted paper. DeepSeek's
+      // JSON-mode guidance recommends leaving enough output room so the object is
+      // not truncated after a long thinking trace.
+      max_tokens: 24000,
       stream: false,
     }),
   });

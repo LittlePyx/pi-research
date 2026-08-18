@@ -47,6 +47,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /MONITOR_MODEL = "deepseek-v4-pro"/);
   assert.match(route, /response_format: \{ type: "json_object" \}/);
   assert.match(route, /thinking: \{ type: "enabled" \}/);
+  assert.match(route, /max_tokens: 24000/);
   assert.match(route, /llm_recommended = 1/);
   assert.doesNotMatch(route, /fallbackInsight/);
   assert.match(profiles, /IEEE Transactions on Information Theory/);
