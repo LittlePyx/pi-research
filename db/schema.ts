@@ -114,6 +114,50 @@ export const monitorDiscoveryPages = sqliteTable(
   ],
 );
 
+export const monitorScanJobs = sqliteTable(
+  "monitor_scan_jobs",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("queued"),
+    currentHorizon: text("current_horizon").notNull().default(""),
+    currentSource: text("current_source").notNull().default(""),
+    progress: integer("progress").notNull().default(0),
+    discoveredCount: integer("discovered_count").notNull().default(0),
+    reviewedCount: integer("reviewed_count").notNull().default(0),
+    recommendedCount: integer("recommended_count").notNull().default(0),
+    attempt: integer("attempt").notNull().default(1),
+    error: text("error"),
+    startedAt: text("started_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    completedAt: text("completed_at"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [index("idx_monitor_scan_jobs_space_updated").on(table.spaceId, table.updatedAt)],
+);
+
+export const monitorDiscoveryCoverage = sqliteTable(
+  "monitor_discovery_coverage",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    horizon: text("horizon").notNull(),
+    sourceKey: text("source_key").notNull(),
+    channel: text("channel").notNull(),
+    queryKey: text("query_key").notNull(),
+    nextCursor: integer("next_cursor").notNull().default(0),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    newCandidateCount: integer("new_candidate_count").notNull().default(0),
+    lastScannedAt: text("last_scanned_at"),
+    lastError: text("last_error"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_monitor_coverage_scope").on(table.spaceId, table.horizon, table.sourceKey, table.queryKey),
+    index("idx_monitor_coverage_space_scanned").on(table.spaceId, table.lastScannedAt),
+  ],
+);
+
 export const monitoredPapers = sqliteTable(
   "monitored_papers",
   {
@@ -194,6 +238,25 @@ export const paperInsights = sqliteTable(
   (table) => [
     index("idx_paper_insights_space_quality").on(table.spaceId, table.qualityScore),
     index("idx_paper_insights_space_recommended_quality").on(table.spaceId, table.llmRecommended, table.qualityScore),
+  ],
+);
+
+export const monitorCandidateSources = sqliteTable(
+  "monitor_candidate_sources",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    sourceKey: text("source_key").notNull(),
+    channel: text("channel").notNull(),
+    queryKey: text("query_key").notNull(),
+    appearances: integer("appearances").notNull().default(1),
+    firstSeenAt: text("first_seen_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    lastSeenAt: text("last_seen_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_monitor_candidate_source_identity").on(table.paperId, table.sourceKey, table.queryKey),
+    index("idx_monitor_candidate_sources_space").on(table.spaceId, table.lastSeenAt),
   ],
 );
 

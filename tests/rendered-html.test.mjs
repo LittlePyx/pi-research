@@ -42,7 +42,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
 
   assert.match(route, /api\.crossref\.org\/works/);
   assert.match(route, /CADENCE_MS = 24 \* 60 \* 60 \* 1000/);
-  assert.match(route, /INSERT OR IGNORE INTO monitored_papers/);
+  assert.match(route, /INSERT INTO monitored_papers/);
   assert.match(route, /titleFingerprint/);
   assert.match(route, /reviewCandidates/);
   assert.match(route, /MONITOR_MODEL = "deepseek-v4-pro"/);
@@ -51,8 +51,8 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /max_tokens: 24000/);
   assert.match(route, /llm_recommended = 1/);
   assert.match(route, /discovering_\$\{horizon\.key\}/);
-  assert.match(route, /updateRunPhase\(database, space\.id, "reviewing"/);
-  assert.match(route, /updateRunPhase\(database, space\.id, "saving"/);
+  assert.match(route, /updateRunPhase\(database, space\.id, jobId, "reviewing"/);
+  assert.match(route, /updateRunPhase\(database, space\.id, jobId, "saving"/);
   assert.match(route, /paper_delivery_state/);
   assert.match(route, /historyPapers/);
   assert.match(route, /paper\.show_count === 1 \? 1 : paper\.show_count === 2 \? 3 : 14/);
@@ -80,6 +80,8 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(client, /startMonitorPolling/);
   assert.match(client, /window\.setInterval\(\(\) => void poll\(\), 1500\)/);
   assert.match(client, /DeepSeek Pro 正在逐篇筛选并撰写/);
+  assert.match(client, /activeScanJob/);
+  assert.match(client, /探索覆盖/);
   assert.match(client, /libraryFilter/);
   assert.match(client, /reportedImpressions/);
   assert.match(client, /没有处理的论文不会消失/);
@@ -101,6 +103,9 @@ test("continuously explores new discovery branches and grows a connected researc
   ]);
 
   assert.match(monitor, /monitor_discovery_pages/);
+  assert.match(monitor, /monitor_discovery_coverage/);
+  assert.match(monitor, /monitor_candidate_sources/);
+  assert.match(monitor, /monitor_scan_jobs/);
   assert.match(monitor, /query\.bibliographic/);
   assert.match(monitor, /HORIZON_REVIEW_LIMITS[^\n]+years: 28/);
   assert.match(monitor, /HORIZON_POOL_LIMITS[^\n]+years: 140/);
@@ -112,6 +117,10 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(monitor, /priority-journal/);
   assert.match(monitor, /api\.semanticscholar\.org\/graph\/v1\/paper\/search/);
   assert.match(monitor, /api\.openalex\.org\/works/);
+  assert.match(monitor, /export\.arxiv\.org\/api\/query/);
+  assert.match(monitor, /fetchCitationFrontier/);
+  assert.match(monitor, /semantic_scholar:\$\{relation\}/);
+  assert.match(monitor, /persistReviewBatch/);
   assert.match(monitor, /persistCandidatePool/);
   assert.match(monitor, /pendingCandidateQueue/);
   assert.match(monitor, /selectUnseenReviewBatch/);
@@ -202,7 +211,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-paper-network-drawer/);
   assert.match(worker, /runScheduledMonitorSweep/);
   assert.match(worker, /async scheduled/);
-  assert.match(viteConfig, /crons: \["\*\/30 \* \* \* \*"\]/);
+  assert.match(worker, /LIMIT 2/);
+  assert.match(worker, /Promise\.allSettled/);
+  assert.match(viteConfig, /crons: \["\*\/10 \* \* \* \*"\]/);
 });
 
 test("builds persistent personalized learning paths from real research papers", async () => {

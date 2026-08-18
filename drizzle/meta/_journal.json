@@ -92,6 +92,13 @@
       "when": 1787061081090,
       "tag": "0012_handy_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1787066269195,
+      "tag": "0013_material_human_torch",
+      "breakpoints": true
     }
   ]
 }

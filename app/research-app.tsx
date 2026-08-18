@@ -76,6 +76,28 @@ type MonitorState = {
   papers: MonitorPaper[];
   historyPapers?: MonitorPaper[];
   historyCounts?: { all: number; inbox: number; unseen: number; seen: number; snoozed: number; accepted: number; saved: number; dismissed: number };
+  scanJob?: {
+    id: string;
+    status: string;
+    currentHorizon: string;
+    currentSource: string;
+    progress: number;
+    discoveredCount: number;
+    reviewedCount: number;
+    recommendedCount: number;
+    startedAt: string;
+    completedAt: string | null;
+    error: string | null;
+  } | null;
+  coverage?: Array<{
+    sourceKey: string;
+    channel: string;
+    attempts: number;
+    candidates: number;
+    newCandidates: number;
+    lastScannedAt: string | null;
+    healthy: boolean;
+  }>;
   cached?: boolean;
   throttled?: boolean;
 };
@@ -212,14 +234,14 @@ const copy = {
     profile: "工作区与设置",
     signOut: "退出",
     liveMonitor: "DeepSeek Pro 审核后的真实论文",
-    monitorIntro: "主题检索、重点期刊、OpenAlex 与 Semantic Scholar 共同补充候选，DeepSeek Pro 按研究空间逐篇判断并撰写论文介绍和适读理由。",
+    monitorIntro: "主题、重点期刊、arXiv、OpenAlex、Semantic Scholar 与引用网络共同补充候选，DeepSeek Pro 按研究空间逐篇判断并撰写论文介绍和适读理由。",
     daysHorizon: "近 14 天",
     monthsHorizon: "近 6 个月",
     yearsHorizon: "近 5 年",
     daysFocus: "主打最新：快速捕捉刚出现的问题、结果和方法。",
     monthsFocus: "新且高质量：兼顾时效、相关性、来源质量与早期引用信号。",
     yearsFocus: "高质量且有用：优先可复用、能指导方法或研究路线的工作。",
-    autoVisit: "自动扫描：每个研究空间每 24 小时最多一次，在到期后的首次访问时触发。无人访问时不会在后台运行。",
+    autoVisit: "后台每 10 分钟检查到期空间；每个研究空间每 24 小时最多完成一次常规扫描。打开页面时会立即显示上次结果，并继续展示本轮真实进度。",
     lastScan: "上次扫描",
     nextScan: "下次可扫描",
     neverScanned: "尚未扫描",
@@ -434,14 +456,14 @@ const copy = {
     profile: "Workspace & settings",
     signOut: "Sign out",
     liveMonitor: "Real papers approved by DeepSeek Pro",
-    monitorIntro: "Topic search, priority journals, OpenAlex, and Semantic Scholar supply candidates; DeepSeek Pro judges each one against this research space and writes the briefing.",
+    monitorIntro: "Topics, priority journals, arXiv, OpenAlex, Semantic Scholar, and citation frontiers supply candidates; DeepSeek Pro judges each one against this research space and writes the briefing.",
     daysHorizon: "Past 14 days",
     monthsHorizon: "Past 6 months",
     yearsHorizon: "Past 5 years",
     daysFocus: "Newest first: catch problems, results, and methods that just appeared.",
     monthsFocus: "New and high quality: balance recency, relevance, venue quality, and early citation signals.",
     yearsFocus: "High quality and useful: prioritize reusable work that guides methods or research direction.",
-    autoVisit: "Automatic scan: at most once per research space every 24 hours, triggered by the first visit after it is due. It does not run in the background without a visit.",
+    autoVisit: "The background checks due spaces every 10 minutes; each research space completes at most one routine scan every 24 hours. Opening the page shows the last results immediately while real progress continues.",
     lastScan: "Last scan",
     nextScan: "Next eligible scan",
     neverScanned: "Not scanned yet",
@@ -1072,8 +1094,13 @@ export default function ResearchApp({ user }: { user: User }) {
   }, [historyPapers, inboxFilter, libraryFilter, librarySearch, librarySort]);
   const scanIsActive = monitoring || isMonitorScanning(monitor?.status);
   const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
-  const scanProgress = scanIsActive ? monitorProgressByStatus[effectiveScanStatus] : monitor?.status === "ready" ? 100 : 0;
-  const scanPhase = monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
+  const activeScanJob = monitor?.scanJob && !["ready", "error"].includes(monitor.scanJob.status) ? monitor.scanJob : null;
+  const scanProgress = scanIsActive
+    ? Math.max(monitorProgressByStatus[effectiveScanStatus], activeScanJob?.progress || 0)
+    : monitor?.status === "ready" ? 100 : 0;
+  const baseScanPhase = monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
+  const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
+  const healthyCoverageCount = monitor?.coverage?.filter((source) => source.healthy).length || 0;
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
   const confirmedProfile = latestConfirmedImport?.analysis || null;
   const paperStateByCanonicalId = useMemo(() => {
@@ -1165,7 +1192,7 @@ export default function ResearchApp({ user }: { user: User }) {
         .catch(() => {
           if (!cancelled) setMonitor({
             status: "error", lastRunAt: null, nextRunAt: null, newCount: 0, scannedCount: 0,
-            knownCount: 0, error: "unavailable", cadenceHours: 24, source: "Crossref · OpenAlex · Semantic Scholar · priority journals",
+            knownCount: 0, error: "unavailable", cadenceHours: 24, source: "Crossref · priority journals · arXiv · OpenAlex · Semantic Scholar · citation frontier",
             horizons: ["days", "months", "years"], papers: [],
           });
         })
@@ -2008,7 +2035,12 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-scan-progress" role="status" aria-live="polite" aria-label={`${scanPhase} ${scanProgress}%`}>
                   <div><span>{scanPhase}</span><strong>{scanProgress}%</strong></div>
                   <i><b style={{ width: `${scanProgress}%` }} /></i>
-                  <small>{monitor?.scannedCount || 0} {t.scannedPapers} · {locale === "zh" ? "页面其他功能仍可继续使用" : "The rest of the page remains available"}</small>
+                  <small>
+                    {activeScanJob?.discoveredCount || monitor?.scannedCount || 0} {locale === "zh" ? "条候选" : "candidates"}
+                    {effectiveScanStatus === "reviewing" && <> · {activeScanJob?.reviewedCount || 0} {locale === "zh" ? "篇已审核" : "reviewed"}</>}
+                    {healthyCoverageCount > 0 && <> · {healthyCoverageCount} {locale === "zh" ? "类来源正常" : "source groups healthy"}</>}
+                    {locale === "zh" ? " · 上次推荐仍可继续阅读" : " · Previous recommendations remain readable"}
+                  </small>
                 </div>
               )}
               <button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); navigate("library"); }}>
@@ -2021,6 +2053,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
                 <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div></div>
                 <dl className="v2-monitor-metrics"><div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div><div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div><div><dt>{locale === "zh" ? "持续探索轮次" : "Exploration round"}</dt><dd>#{monitor?.explorationRound || 0}</dd></div><div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div></dl>
+                {!!monitor?.coverage?.length && <div className="v2-coverage-ledger"><span>{locale === "zh" ? "探索覆盖" : "Discovery coverage"}</span><div>{monitor.coverage.slice(0, 8).map((source) => <i className={source.healthy ? "healthy" : "degraded"} key={source.sourceKey}><b />{source.sourceKey.replace(/_/g, " ")}<small>+{source.newCandidates}</small></i>)}</div></div>}
                 <p>{t.autoVisit}</p>
               </details>
             </section>

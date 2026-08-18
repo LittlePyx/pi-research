@@ -1,4 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
+import { passesRecommendationGate } from "../../../lib/discovery/review-gate";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
 type Horizon = "days" | "months" | "years";
@@ -31,6 +33,7 @@ type SemanticScholarPaper = {
   citationCount?: number;
 };
 type SemanticScholarResponse = { data?: SemanticScholarPaper[] };
+type SemanticScholarGraphResponse = { data?: Array<{ citingPaper?: SemanticScholarPaper | null; citedPaper?: SemanticScholarPaper | null }> };
 type OpenAlexWork = {
   id?: string;
   doi?: string | null;
@@ -67,6 +70,28 @@ type RunRow = {
   scanned_count: number;
   discovery_round: number;
   error: string | null;
+};
+type ScanJobRow = {
+  id: string;
+  status: string;
+  current_horizon: string;
+  current_source: string;
+  progress: number;
+  discovered_count: number;
+  reviewed_count: number;
+  recommended_count: number;
+  started_at: string;
+  completed_at: string | null;
+  error: string | null;
+};
+type CoverageRow = {
+  source_key: string;
+  channel: string;
+  attempt_count: number;
+  candidate_count: number;
+  new_candidate_count: number;
+  last_scanned_at: string | null;
+  last_error: string | null;
 };
 type PaperRow = {
   id: string;
@@ -114,15 +139,22 @@ type Candidate = {
   relevanceScore: number;
   qualityScore: number;
   priorityVenue: boolean;
-  source: "crossref" | "semantic_scholar" | "openalex";
-  discoveryChannel: "topic" | "journal" | "semantic";
+  source: "crossref" | "semantic_scholar" | "openalex" | "arxiv";
+  discoveryChannel: "topic" | "journal" | "semantic" | "preprint" | "citation";
+  provenance: CandidateProvenance[];
+};
+type CandidateProvenance = {
+  sourceKey: string;
+  channel: Candidate["discoveryChannel"];
+  queryKey: string;
 };
 type DiscoveryQuery = {
   key: string;
   query: string;
   sort: "relevance" | "is-referenced-by-count" | "published";
   rotating: boolean;
-  channel: "topic" | "journal";
+  channel: Candidate["discoveryChannel"];
+  sourceKey: string;
   venue?: string;
   issn?: string;
 };
@@ -319,6 +351,7 @@ async function normalizeItem(item: CrossrefItem, horizon: Horizon): Promise<Omit
     relevanceScore: Math.max(0, Math.round(item.score || 0)),
     source: "crossref",
     discoveryChannel: "topic",
+    provenance: [],
   };
 }
 
@@ -341,6 +374,7 @@ async function normalizeSemanticScholarItem(item: SemanticScholarPaper, horizon:
     relevanceScore: 0,
     source: "semantic_scholar",
     discoveryChannel: "semantic",
+    provenance: [],
   };
 }
 
@@ -369,6 +403,29 @@ async function normalizeOpenAlexItem(item: OpenAlexWork, horizon: Horizon): Prom
     relevanceScore: Math.max(0, Math.round(item.relevance_score || 0)),
     source: "openalex",
     discoveryChannel: "semantic",
+    provenance: [],
+  };
+}
+
+async function normalizeArxivItem(item: ReturnType<typeof parseArxivAtom>[number], horizon: Horizon): Promise<Omit<Candidate, "qualityScore" | "priorityVenue"> | null> {
+  const title = cleanText(item.title);
+  if (!title || !isResearchPaper(title)) return null;
+  const doi = item.doi?.trim().toLocaleLowerCase() || null;
+  return {
+    canonicalId: doi ? "doi:" + doi : "arxiv:" + item.arxivId.toLocaleLowerCase(),
+    doi,
+    title,
+    authors: item.authors.slice(0, 8).map(cleanText).filter(Boolean).join(", "),
+    venue: item.primaryCategory ? `arXiv · ${item.primaryCategory}` : "arXiv",
+    url: item.url || `https://arxiv.org/abs/${item.arxivId}`,
+    publishedAt: item.publishedAt,
+    abstractText: cleanText(item.abstract).slice(0, 2200),
+    horizon,
+    citationCount: 0,
+    relevanceScore: 0,
+    source: "arxiv",
+    discoveryChannel: "preprint",
+    provenance: [],
   };
 }
 
@@ -389,17 +446,18 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
   const memoryTerms = `${space.memoryContext || ""}; ${space.positiveExamples || ""}`.split(";").map(cleanText).filter((term) => term.length >= 4 && asciiOnly(term));
   const profileWindow = rotatedSlice(profileTerms, round, 3);
   const memoryWindow = rotatedSlice(memoryTerms, round, 3);
-  const venueWindow = rotatedSlice(priorityVenues.filter(asciiOnly), round, 2);
+  const venueWindow = rotatedSlice(priorityVenues.filter(asciiOnly), round, horizon.key === "days" ? 4 : horizon.key === "months" ? 3 : 2);
   const queries: DiscoveryQuery[] = [
-    { key: "topic-anchor", query: description, sort: horizon.key === "days" ? "published" : horizon.sort, rotating: false, channel: "topic" },
-    { key: "profile-cluster", query: `${space.description} ${profileWindow.join(" ")}`, sort: "relevance", rotating: true, channel: "topic" },
+    { key: "topic-anchor", sourceKey: "crossref:topic", query: description, sort: horizon.key === "days" ? "published" : horizon.sort, rotating: false, channel: "topic" },
+    { key: "profile-cluster", sourceKey: "crossref:profile", query: `${space.description} ${profileWindow.join(" ")}`, sort: "relevance", rotating: true, channel: "topic" },
   ];
   if (memoryWindow.length) {
-    queries.push({ key: "memory-cluster", query: `${space.name} ${memoryWindow.join(" ")}`, sort: horizon.key === "years" ? "is-referenced-by-count" : "relevance", rotating: true, channel: "topic" });
+    queries.push({ key: "memory-cluster", sourceKey: "crossref:memory", query: `${space.name} ${memoryWindow.join(" ")}`, sort: horizon.key === "years" ? "is-referenced-by-count" : "relevance", rotating: true, channel: "topic" });
   }
   for (const venue of venueWindow) {
     queries.push({
       key: "priority-journal",
+      sourceKey: `crossref:journal:${PRIORITY_JOURNAL_ISSNS.get(normalizeVenue(venue)) || normalizeVenue(venue)}`,
       query: `${space.description} ${profileWindow.slice(0, 2).join(" ")}`,
       venue,
       sort: horizon.key === "years" ? "is-referenced-by-count" : horizon.key === "days" ? "published" : "relevance",
@@ -411,6 +469,7 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
   if (horizon.key === "years") {
     queries.push({
       key: "durable-cluster",
+      sourceKey: "crossref:durable",
       query: `${space.name} ${memoryWindow.join(" ") || profileWindow.join(" ")}`,
       sort: "is-referenced-by-count",
       rotating: true,
@@ -421,7 +480,7 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
 }
 
 async function discoveryQueryKey(query: DiscoveryQuery) {
-  const identity = [query.key, query.channel, query.query.toLocaleLowerCase(), query.venue?.toLocaleLowerCase() || "", query.issn || "", query.sort].join("|");
+  const identity = [query.key, query.sourceKey, query.channel, query.query.toLocaleLowerCase(), query.venue?.toLocaleLowerCase() || "", query.issn || "", query.sort].join("|");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
   const suffix = Array.from(new Uint8Array(digest)).slice(0, 10).map((value) => value.toString(16).padStart(2, "0")).join("");
   return `${query.key}:${suffix}`;
@@ -437,7 +496,7 @@ async function discoveryOffset(database: D1Database, spaceId: string, horizon: H
 }
 
 async function advanceDiscoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery, offset: number, rows: number) {
-  if (!query.rotating) return;
+  if (!query.rotating) return 0;
   const queryKey = await discoveryQueryKey(query);
   const nextOffset = offset + rows >= DISCOVERY_OFFSET_LIMIT ? 0 : offset + rows;
   await database.prepare(
@@ -445,73 +504,161 @@ async function advanceDiscoveryOffset(database: D1Database, spaceId: string, hor
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(space_id, horizon, query_key) DO UPDATE SET next_offset = excluded.next_offset, updated_at = CURRENT_TIMESTAMP`,
   ).bind(crypto.randomUUID(), spaceId, horizon, queryKey, nextOffset).run();
+  return nextOffset;
 }
 
-async function fetchHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, priorityVenues: string[], profileKey: string, round: number) {
+async function countNewCandidates(database: D1Database, spaceId: string, candidates: Array<{ canonicalId: string }>) {
+  if (!candidates.length) return 0;
+  const ids = Array.from(new Set(candidates.map((candidate) => candidate.canonicalId)));
+  let known = 0;
+  for (let start = 0; start < ids.length; start += 70) {
+    const chunk = ids.slice(start, start + 70);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const row = await database.prepare(`SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`)
+      .bind(spaceId, ...chunk).first<{ count: number }>();
+    known += row?.count || 0;
+  }
+  return Math.max(0, ids.length - known);
+}
+
+async function recordDiscoveryCoverage(
+  database: D1Database,
+  spaceId: string,
+  horizon: Horizon,
+  plan: DiscoveryQuery,
+  nextCursor: number,
+  candidates: Array<{ canonicalId: string }>,
+  error: string | null = null,
+) {
+  const queryKey = await discoveryQueryKey(plan);
+  const newCount = error ? 0 : await countNewCandidates(database, spaceId, candidates);
+  await database.prepare(
+    `INSERT INTO monitor_discovery_coverage
+     (id, space_id, horizon, source_key, channel, query_key, next_cursor, attempt_count, candidate_count,
+      new_candidate_count, last_scanned_at, last_error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, CURRENT_TIMESTAMP, ?)
+     ON CONFLICT(space_id, horizon, source_key, query_key) DO UPDATE SET
+       next_cursor = excluded.next_cursor, attempt_count = monitor_discovery_coverage.attempt_count + 1,
+       candidate_count = excluded.candidate_count,
+       new_candidate_count = monitor_discovery_coverage.new_candidate_count + excluded.new_candidate_count,
+       last_scanned_at = CURRENT_TIMESTAMP, last_error = excluded.last_error, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(crypto.randomUUID(), spaceId, horizon, plan.sourceKey, plan.channel, queryKey, nextCursor,
+    candidates.length, newCount, error).run();
+}
+
+async function setScanSource(database: D1Database, jobId: string, horizon: Horizon, source: string, progress: number, discoveredCount: number) {
+  await database.prepare(
+    "UPDATE monitor_scan_jobs SET current_horizon = ?, current_source = ?, progress = ?, discovered_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+  ).bind(horizon, source, progress, discoveredCount, jobId).run();
+}
+
+async function fetchHorizon(
+  database: D1Database,
+  space: SpaceRow,
+  horizon: typeof HORIZONS[number],
+  now: Date,
+  priorityVenues: string[],
+  profileKey: string,
+  round: number,
+  jobId: string,
+  discoveredBefore: number,
+) {
   const rows = horizon.key === "years" ? 36 : 30;
   const plans = discoveryQueries(space, horizon, profileKey, round, priorityVenues);
   const requestOptions: RequestInit = {
     headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
     signal: AbortSignal.timeout(20_000),
   };
-  const fetched = await Promise.all(plans.map(async (plan) => {
+  await setScanSource(database, jobId, horizon.key, "Crossref · priority journals", horizon.key === "days" ? 8 : horizon.key === "months" ? 24 : 40, discoveredBefore);
+  const normalizedCrossref = (await Promise.all(plans.map(async (plan) => {
     const offset = await discoveryOffset(database, space.id, horizon.key, plan);
     const endpoint = new URL(plan.channel === "journal" && plan.issn
       ? `https://api.crossref.org/journals/${encodeURIComponent(plan.issn)}/works`
       : "https://api.crossref.org/works");
     if (plan.channel === "journal" && plan.venue && !plan.issn) endpoint.searchParams.set("query.container-title", plan.venue);
-    endpoint.searchParams.set("query.bibliographic", plan.query);
+    if (!(plan.channel === "journal" && horizon.key === "days")) endpoint.searchParams.set("query.bibliographic", plan.query);
     endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
     endpoint.searchParams.set("rows", String(rows));
     endpoint.searchParams.set("offset", String(offset));
     endpoint.searchParams.set("sort", plan.sort);
     endpoint.searchParams.set("order", "desc");
     endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
-    let response = await fetch(endpoint, requestOptions);
-    if (response.status === 429) {
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      response = await fetch(endpoint, requestOptions);
+    try {
+      let response = await fetch(endpoint, requestOptions);
+      if (response.status === 429) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        response = await fetch(endpoint, requestOptions);
+      }
+      if (!response.ok) throw new Error(`Crossref returned ${response.status}`);
+      const data = await response.json() as CrossrefResponse;
+      const queryKey = await discoveryQueryKey(plan);
+      const normalized = (await Promise.all((data.message?.items || []).map(async (item) => {
+        const candidate = await normalizeItem(item, horizon.key);
+        return candidate ? {
+          ...candidate,
+          discoveryChannel: plan.channel,
+          provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey }],
+        } : null;
+      }))).filter((candidate): candidate is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(candidate));
+      const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, rows);
+      await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
+      return normalized;
+    } catch (error) {
+      await recordDiscoveryCoverage(database, space.id, horizon.key, plan, offset, [], error instanceof Error ? error.message.slice(0, 180) : "Crossref request failed");
+      return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
     }
-    if (!response.ok) throw new Error(`Crossref returned ${response.status}`);
-    const data = await response.json() as CrossrefResponse;
-    await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, rows);
-    return (data.message?.items || []).map((item) => ({ item, channel: plan.channel }));
-  }));
-  const normalizedCrossref = await Promise.all(fetched.flat().map(async ({ item, channel }) => {
-    const normalized = await normalizeItem(item, horizon.key);
-    return normalized ? { ...normalized, discoveryChannel: channel } : null;
-  }));
-  const [semantic, openAlex] = await Promise.all([
-    fetchSemanticScholarHorizon(database, space, horizon, now),
-    fetchOpenAlexHorizon(database, space, horizon, now),
-  ]);
-  const normalized = [...normalizedCrossref, ...semantic, ...openAlex];
+  }))).flat();
+  await setScanSource(database, jobId, horizon.key, "Semantic Scholar", horizon.key === "days" ? 12 : horizon.key === "months" ? 28 : 44, discoveredBefore + normalizedCrossref.length);
+  const semantic = await fetchSemanticScholarHorizon(database, space, horizon, now, round);
+  await setScanSource(database, jobId, horizon.key, "OpenAlex", horizon.key === "days" ? 15 : horizon.key === "months" ? 31 : 47, discoveredBefore + normalizedCrossref.length + semantic.length);
+  const openAlex = await fetchOpenAlexHorizon(database, space, horizon, now, round);
+  await setScanSource(database, jobId, horizon.key, "arXiv", horizon.key === "days" ? 18 : horizon.key === "months" ? 34 : 50, discoveredBefore + normalizedCrossref.length + semantic.length + openAlex.length);
+  const arxiv = await fetchArxivHorizon(database, space, horizon, now, round);
+  const citationFrontier = horizon.key === "years"
+    ? await fetchCitationFrontier(database, space, horizon, now, round, jobId, discoveredBefore + normalizedCrossref.length + semantic.length + openAlex.length + arxiv.length)
+    : [];
+  const normalized = [...normalizedCrossref, ...semantic, ...openAlex, ...arxiv, ...citationFrontier];
   const unique = new Map<string, Candidate>();
   for (const item of normalized
     .filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item))
     .map((item) => ({ item, signals: relevanceSignals(`${item.title} ${item.abstractText} ${item.venue}`, space, profileKey) }))
     .map(({ item, signals }) => scoreCandidate({ ...item, relevanceScore: item.relevanceScore + signals.score * 20 }, priorityVenues, now))) {
-    const previous = unique.get(item.canonicalId);
+    const workKey = normalizeWorkTitle(item.title) || item.canonicalId;
+    const previous = unique.get(workKey);
     if (!previous) {
-      unique.set(item.canonicalId, item);
+      unique.set(workKey, item);
       continue;
     }
     const preferred = item.qualityScore > previous.qualityScore ? item : previous;
-    unique.set(item.canonicalId, {
+    const doiPreferred = item.doi ? item : previous.doi ? previous : preferred;
+    unique.set(workKey, {
       ...preferred,
+      canonicalId: doiPreferred.canonicalId,
+      doi: doiPreferred.doi,
+      url: doiPreferred.url || preferred.url,
       abstractText: item.abstractText.length > previous.abstractText.length ? item.abstractText : previous.abstractText,
       citationCount: Math.max(item.citationCount, previous.citationCount),
       relevanceScore: Math.max(item.relevanceScore, previous.relevanceScore),
       source: item.source !== "crossref" && item.abstractText ? item.source : previous.source,
+      provenance: Array.from(new Map([...previous.provenance, ...item.provenance].map((entry) => [`${entry.sourceKey}|${entry.queryKey}`, entry])).values()),
     });
   }
   return Array.from(unique.values()).sort((left, right) => right.qualityScore - left.qualityScore).slice(0, HORIZON_POOL_LIMITS[horizon.key]);
 }
 
-async function fetchSemanticScholarHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date) {
-  const profileQuery = cleanText(`${space.description} ${space.positiveExamples || ""}`).slice(0, 260);
+function sourceFocusQuery(space: SpaceRow, round: number) {
+  const branches = [
+    space.description,
+    space.positiveExamples || "",
+    ...(space.memoryContext || "").split(";").map(cleanText).filter((item) => item.length >= 4),
+  ].filter(Boolean);
+  return cleanText(`${space.description} ${rotatedSlice(branches, round, 2).join(" ")}`).slice(0, 260);
+}
+
+async function fetchSemanticScholarHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, round: number) {
+  const profileQuery = sourceFocusQuery(space, round);
   if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
-  const plan: DiscoveryQuery = { key: "semantic-topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "topic" };
+  const plan: DiscoveryQuery = { key: "semantic-topic", sourceKey: "semantic_scholar:topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "semantic" };
   const limit = 40;
   const offset = await discoveryOffset(database, space.id, horizon.key, plan);
   const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
@@ -530,21 +677,27 @@ async function fetchSemanticScholarHorizon(database: D1Database, space: SpaceRow
       await new Promise((resolve) => setTimeout(resolve, 900));
       response = await fetch(endpoint, options);
     }
-    if (!response.ok) return [];
+    if (!response.ok) throw new Error(`Semantic Scholar returned ${response.status}`);
     const data = await response.json() as SemanticScholarResponse;
-    await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
-    const normalized = await Promise.all((data.data || []).map((item) => normalizeSemanticScholarItem(item, horizon.key)));
-    return normalized.filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item));
-  } catch {
+    const queryKey = await discoveryQueryKey(plan);
+    const normalized = (await Promise.all((data.data || []).map(async (item) => {
+      const candidate = await normalizeSemanticScholarItem(item, horizon.key);
+      return candidate ? { ...candidate, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey }] } : null;
+    }))).filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item));
+    const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
+    await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
+    return normalized;
+  } catch (error) {
+    await recordDiscoveryCoverage(database, space.id, horizon.key, plan, offset, [], error instanceof Error ? error.message.slice(0, 180) : "Semantic Scholar request failed");
     // Crossref and journal discovery remain available when this enrichment source is temporarily unavailable.
     return [];
   }
 }
 
-async function fetchOpenAlexHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date) {
-  const profileQuery = cleanText(`${space.description} ${space.positiveExamples || ""}`).slice(0, 260);
+async function fetchOpenAlexHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, round: number) {
+  const profileQuery = sourceFocusQuery(space, round);
   if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
-  const plan: DiscoveryQuery = { key: "openalex-topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "topic" };
+  const plan: DiscoveryQuery = { key: "openalex-topic", sourceKey: "openalex:topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "semantic" };
   const limit = 40;
   const offset = await discoveryOffset(database, space.id, horizon.key, plan);
   const endpoint = new URL("https://api.openalex.org/works");
@@ -565,14 +718,121 @@ async function fetchOpenAlexHorizon(database: D1Database, space: SpaceRow, horiz
       await new Promise((resolve) => setTimeout(resolve, 900));
       response = await fetch(endpoint, options);
     }
-    if (!response.ok) return [];
+    if (!response.ok) throw new Error(`OpenAlex returned ${response.status}`);
     const data = await response.json() as OpenAlexResponse;
-    await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
-    const normalized = await Promise.all((data.results || []).map((item) => normalizeOpenAlexItem(item, horizon.key)));
-    return normalized.filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item));
-  } catch {
+    const queryKey = await discoveryQueryKey(plan);
+    const normalized = (await Promise.all((data.results || []).map(async (item) => {
+      const candidate = await normalizeOpenAlexItem(item, horizon.key);
+      return candidate ? { ...candidate, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey }] } : null;
+    }))).filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item));
+    const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
+    await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
+    return normalized;
+  } catch (error) {
+    await recordDiscoveryCoverage(database, space.id, horizon.key, plan, offset, [], error instanceof Error ? error.message.slice(0, 180) : "OpenAlex request failed");
     return [];
   }
+}
+
+async function fetchArxivHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, round: number) {
+  const profileQuery = sourceFocusQuery(space, round);
+  if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
+  const plan: DiscoveryQuery = { key: "arxiv-topic", sourceKey: "arxiv:topic", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "preprint" };
+  const limit = horizon.key === "years" ? 32 : 40;
+  const offset = await discoveryOffset(database, space.id, horizon.key, plan);
+  const endpoint = new URL("https://export.arxiv.org/api/query");
+  endpoint.searchParams.set("search_query", buildArxivSearchQuery(profileQuery, dateBefore(now, horizon.daysFrom), dateBefore(now, horizon.daysUntil)));
+  endpoint.searchParams.set("start", String(offset));
+  endpoint.searchParams.set("max_results", String(limit));
+  endpoint.searchParams.set("sortBy", horizon.key === "days" ? "submittedDate" : "relevance");
+  endpoint.searchParams.set("sortOrder", "descending");
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Accept: "application/atom+xml", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!response.ok) throw new Error(`arXiv returned ${response.status}`);
+    const records = parseArxivAtom(await response.text());
+    const queryKey = await discoveryQueryKey(plan);
+    const normalized = (await Promise.all(records.map(async (item) => {
+      const candidate = await normalizeArxivItem(item, horizon.key);
+      return candidate ? { ...candidate, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey }] } : null;
+    }))).filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item));
+    const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
+    await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
+    return normalized;
+  } catch (error) {
+    await recordDiscoveryCoverage(database, space.id, horizon.key, plan, offset, [], error instanceof Error ? error.message.slice(0, 180) : "arXiv request failed");
+    return [];
+  }
+}
+
+function candidateWithinHorizon(candidate: { publishedAt: string | null }, horizon: typeof HORIZONS[number], now: Date) {
+  if (!candidate.publishedAt) return false;
+  const published = Date.parse(candidate.publishedAt);
+  return published >= dateBefore(now, horizon.daysFrom).getTime() && published <= dateBefore(now, horizon.daysUntil).getTime() + 24 * 60 * 60 * 1000;
+}
+
+async function fetchCitationFrontier(
+  database: D1Database,
+  space: SpaceRow,
+  horizon: typeof HORIZONS[number],
+  now: Date,
+  round: number,
+  jobId: string,
+  discoveredBefore: number,
+) {
+  const seeds = await database.prepare(
+    `SELECT doi, url, title FROM research_track_papers
+     WHERE space_id = ? AND (doi IS NOT NULL OR url LIKE '%arxiv.org/%')
+     ORDER BY CASE role WHEN 'milestone' THEN 0 ELSE 1 END, citation_count DESC, created_at ASC LIMIT 24`,
+  ).bind(space.id).all<{ doi: string | null; url: string; title: string }>();
+  if (!seeds.results.length) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
+  const seed = seeds.results[round % seeds.results.length];
+  const arxivId = arxivIdFromUrl(seed.url);
+  const paperId = seed.doi ? `DOI:${seed.doi}` : arxivId ? `ARXIV:${arxivId}` : "";
+  if (!paperId) return [];
+  await setScanSource(database, jobId, horizon.key, `Citation frontier · ${cleanText(seed.title).slice(0, 70)}`, 53, discoveredBefore);
+  const results: Array<Omit<Candidate, "qualityScore" | "priorityVenue">> = [];
+  for (const relation of ["references", "citations"] as const) {
+    const plan: DiscoveryQuery = {
+      key: `citation-${relation}`,
+      sourceKey: `semantic_scholar:${relation}`,
+      query: paperId,
+      sort: "relevance",
+      rotating: true,
+      channel: "citation",
+    };
+    const limit = 40;
+    const offset = await discoveryOffset(database, space.id, horizon.key, plan);
+    const endpoint = new URL(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(paperId)}/${relation}`);
+    endpoint.searchParams.set("offset", String(offset));
+    endpoint.searchParams.set("limit", String(limit));
+    endpoint.searchParams.set("fields", "externalIds,title,abstract,authors,venue,url,publicationDate,year,citationCount");
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) throw new Error(`Semantic Scholar ${relation} returned ${response.status}`);
+      const data = await response.json() as SemanticScholarGraphResponse;
+      const papers = (data.data || []).map((entry) => relation === "references" ? entry.citedPaper : entry.citingPaper).filter((item): item is SemanticScholarPaper => Boolean(item));
+      const queryKey = await discoveryQueryKey(plan);
+      const normalizedCandidates = await Promise.all(papers.map(async (item) => {
+        const candidate = await normalizeSemanticScholarItem(item, horizon.key);
+        return candidate && candidateWithinHorizon(candidate, horizon, now)
+          ? { ...candidate, discoveryChannel: "citation" as const, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey }] }
+          : null;
+      }));
+      const normalized = normalizedCandidates.filter((item): item is NonNullable<typeof item> => item !== null);
+      const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
+      await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
+      results.push(...normalized);
+    } catch (error) {
+      await recordDiscoveryCoverage(database, space.id, horizon.key, plan, offset, [], error instanceof Error ? error.message.slice(0, 180) : `Semantic Scholar ${relation} failed`);
+    }
+  }
+  return results;
 }
 
 async function ownedSpace(request: Request, spaceId: string) {
@@ -692,7 +952,59 @@ function parseReviewPayload(content: string) {
   }
 }
 
-async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[]) {
+async function persistReviewBatch(database: D1Database, spaceId: string, candidates: Candidate[], reviews: PaperReview[]) {
+  if (!reviews.length) return;
+  const candidateByCanonical = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const placeholders = reviews.map(() => "?").join(", ");
+  const paperRows = await database.prepare(
+    `SELECT id, canonical_id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`,
+  ).bind(spaceId, ...reviews.map((review) => review.canonicalId)).all<{ id: string; canonical_id: string }>();
+  const paperIds = new Map(paperRows.results.map((row) => [row.canonical_id, row.id]));
+  const insightStatements = reviews.flatMap((review) => {
+    const candidate = candidateByCanonical.get(review.canonicalId);
+    const paperId = paperIds.get(review.canonicalId);
+    if (!candidate || !paperId) return [];
+    return [database.prepare(
+      `INSERT INTO paper_insights
+       (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en, quality_score,
+        priority_venue, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text, summary_zh = excluded.summary_zh,
+       summary_en = excluded.summary_en, why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
+       quality_score = excluded.quality_score, priority_venue = excluded.priority_venue,
+       analysis_source = excluded.analysis_source, analysis_model = excluded.analysis_model,
+       llm_recommended = excluded.llm_recommended, llm_relevance_score = excluded.llm_relevance_score,
+       screening_reason = excluded.screening_reason, updated_at = CURRENT_TIMESTAMP`,
+    ).bind(paperId, spaceId, candidate.abstractText, review.summaryZh, review.summaryEn, review.whyReadZh, review.whyReadEn,
+      review.qualityScore, candidate.priorityVenue ? 1 : 0, review.recommended ? "deepseek" : "deepseek_rejected",
+      MONITOR_MODEL, review.recommended ? 1 : 0, review.relevanceScore, review.screeningReason)];
+  });
+  if (insightStatements.length) await database.batch(insightStatements);
+
+  const trackStatements = reviews.flatMap((review) => {
+    if (!review.recommended || !review.trackId) return [];
+    const candidate = candidateByCanonical.get(review.canonicalId);
+    if (!candidate) return [];
+    return [database.prepare(
+      `INSERT OR IGNORE INTO research_track_papers
+       (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role,
+        summary_zh, summary_en, rationale_zh, rationale_en, position)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        (SELECT COALESCE(MAX(position) + 1, 0) FROM research_track_papers WHERE track_id = ?))`,
+    ).bind(crypto.randomUUID(), review.trackId, spaceId, candidate.canonicalId, candidate.doi, candidate.title,
+      candidate.authors, candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, review.mapRole,
+      review.summaryZh, review.summaryEn, review.mapRationaleZh, review.mapRationaleEn, review.trackId)];
+  });
+  if (trackStatements.length) await database.batch(trackStatements);
+  const trackIds = Array.from(new Set(reviews.filter((review) => review.recommended && review.trackId).map((review) => review.trackId)));
+  if (trackIds.length) {
+    await database.batch(trackIds.map((trackId) => database.prepare(
+      "UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?",
+    ).bind(trackId, spaceId)));
+  }
+}
+
+async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string) {
   if (!candidates.length) return [] as PaperReview[];
   const runtime = getRuntimeEnv();
   if (!runtime.DEEPSEEK_API_KEY) throw new Error("DeepSeek Pro is required before papers can be recommended");
@@ -714,6 +1026,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
 
   for (let start = 0; start < candidates.length; start += REVIEW_BATCH_SIZE) {
     const batch = candidates.slice(start, start + REVIEW_BATCH_SIZE);
+    const completedBefore = completed.length;
     const prompt = [
       "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
       "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, summaryZh, summaryEn, whyReadZh, whyReadEn, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
@@ -797,8 +1110,16 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       const summaryEn = cleanText(item.summaryEn || "").slice(0, 1200);
       const whyReadZh = cleanText(item.whyReadZh || "").slice(0, 800);
       const whyReadEn = cleanText(item.whyReadEn || "").slice(0, 1000);
-      const hasBrief = Boolean(summaryZh && summaryEn && whyReadZh && whyReadEn);
-      const recommended = item.isPaper === true && item.recommended === true && relevanceScore >= RECOMMENDATION_THRESHOLD && qualityScore >= 65 && hasBrief;
+      const recommended = passesRecommendationGate({
+        isPaper: item.isPaper === true,
+        requestedRecommendation: item.recommended === true,
+        relevanceScore,
+        qualityScore,
+        summaryZh,
+        summaryEn,
+        whyReadZh,
+        whyReadEn,
+      }, RECOMMENDATION_THRESHOLD);
       const trackId = recommended && validTrackIds.has(cleanText(item.trackId || "")) ? cleanText(item.trackId || "") : "";
       const mapRationaleZh = trackId ? cleanText(item.mapRationaleZh || "").slice(0, 700) : "";
       const mapRationaleEn = trackId ? cleanText(item.mapRationaleEn || "").slice(0, 900) : "";
@@ -819,6 +1140,10 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         mapRationaleEn,
       });
     }
+    await persistReviewBatch(database, space.id, batch, completed.slice(completedBefore));
+    await database.prepare(
+      "UPDATE monitor_scan_jobs SET reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ).bind(completed.length, completed.filter((review) => review.recommended).length, completed.length, candidates.length, jobId).run();
   }
   return completed;
 }
@@ -859,6 +1184,18 @@ async function persistCandidatePool(database: D1Database, spaceId: string, candi
   for (let start = 0; start < metadataStatements.length; start += 70) {
     await database.batch(metadataStatements.slice(start, start + 70));
   }
+  const provenanceStatements = Array.from(paperIds.entries()).flatMap(([canonicalId, paperId]) => {
+    const candidate = candidateByCanonical.get(canonicalId)!;
+    return candidate.provenance.map((entry) => database.prepare(
+      `INSERT INTO monitor_candidate_sources (id, space_id, paper_id, source_key, channel, query_key)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(paper_id, source_key, query_key) DO UPDATE SET
+         appearances = monitor_candidate_sources.appearances + 1, last_seen_at = CURRENT_TIMESTAMP`,
+    ).bind(crypto.randomUUID(), spaceId, paperId, entry.sourceKey, entry.channel, entry.queryKey));
+  });
+  for (let start = 0; start < provenanceStatements.length; start += 70) {
+    await database.batch(provenanceStatements.slice(start, start + 70));
+  }
 }
 
 async function pendingCandidateQueue(database: D1Database, spaceId: string) {
@@ -888,8 +1225,13 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string) {
     relevanceScore: row.relevance_score,
     qualityScore: row.quality_score,
     priorityVenue: Boolean(row.priority_venue),
-    source: row.source === "semantic_scholar" ? "semantic_scholar" as const : row.source === "openalex" ? "openalex" as const : "crossref" as const,
-    discoveryChannel: row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
+    source: row.source === "semantic_scholar" ? "semantic_scholar" as const : row.source === "openalex" ? "openalex" as const : row.source === "arxiv" ? "arxiv" as const : "crossref" as const,
+    discoveryChannel: row.source === "arxiv" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
+    provenance: [{
+      sourceKey: `${row.source}:stored`,
+      channel: row.source === "arxiv" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
+      queryKey: "stored-candidate",
+    }],
   }));
 }
 
@@ -901,10 +1243,16 @@ function selectUnseenReviewBatch(candidates: Candidate[]) {
   return selected;
 }
 
-async function updateRunPhase(database: D1Database, spaceId: string, status: string, scannedCount: number, newCount = 0) {
-  await database.prepare(
-    "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
-  ).bind(status, scannedCount, newCount, spaceId).run();
+async function updateRunPhase(database: D1Database, spaceId: string, jobId: string, status: string, scannedCount: number, newCount = 0) {
+  const progress = status === "deduplicating" ? 54 : status === "reviewing" ? 58 : status === "saving" ? 90 : 4;
+  await database.batch([
+    database.prepare(
+      "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
+    ).bind(status, scannedCount, newCount, spaceId),
+    database.prepare(
+      "UPDATE monitor_scan_jobs SET status = ?, progress = MAX(progress, ?), discovered_count = ?, recommended_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ).bind(status, progress, scannedCount, newCount, jobId),
+  ]);
 }
 
 function paperUserState(paper: PaperRow, now: number) {
@@ -960,7 +1308,7 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known] = await Promise.all([
+  const [run, papers, known, job, coverage] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -980,6 +1328,18 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 300`,
     ).bind(space.id, MONITOR_MODEL).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
+    database.prepare(
+      `SELECT id, status, current_horizon, current_source, progress, discovered_count, reviewed_count,
+       recommended_count, started_at, completed_at, error
+       FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
+    ).bind(space.id).first<ScanJobRow>(),
+    database.prepare(
+      `SELECT source_key, channel, SUM(attempt_count) AS attempt_count, SUM(candidate_count) AS candidate_count,
+       SUM(new_candidate_count) AS new_candidate_count, MAX(last_scanned_at) AS last_scanned_at,
+       MAX(last_error) AS last_error
+       FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY source_key, channel
+       ORDER BY MAX(last_scanned_at) DESC LIMIT 12`,
+    ).bind(space.id).all<CoverageRow>(),
   ]);
   const now = Date.now();
   const duePapers = papers.results
@@ -1002,8 +1362,30 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       knownCount: known?.count || 0,
       error: run?.error || null,
       cadenceHours: 24,
-      source: "Crossref · OpenAlex · Semantic Scholar · priority journals",
+      source: "Crossref · priority journals · arXiv · OpenAlex · Semantic Scholar · citation frontier",
       horizons: ["days", "months", "years"],
+      scanJob: job ? {
+        id: job.id,
+        status: job.status,
+        currentHorizon: job.current_horizon,
+        currentSource: job.current_source,
+        progress: job.progress,
+        discoveredCount: job.discovered_count,
+        reviewedCount: job.reviewed_count,
+        recommendedCount: job.recommended_count,
+        startedAt: job.started_at,
+        completedAt: job.completed_at,
+        error: job.error,
+      } : null,
+      coverage: coverage.results.map((row) => ({
+        sourceKey: row.source_key,
+        channel: row.channel,
+        attempts: row.attempt_count,
+        candidates: row.candidate_count,
+        newCandidates: row.new_candidate_count,
+        lastScannedAt: row.last_scanned_at,
+        healthy: !row.last_error,
+      })),
       preferences: preference,
       papers: selected.map((paper) => toPaper(paper, now)),
       historyPapers,
@@ -1094,24 +1476,31 @@ export async function POST(request: Request) {
       return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
     }
 
-    await database.prepare(
-      `INSERT INTO monitor_runs (id, space_id, status, error, updated_at)
-       VALUES (?, ?, 'scanning', NULL, CURRENT_TIMESTAMP)
-       ON CONFLICT(space_id) DO UPDATE SET status = 'scanning', error = NULL, new_count = 0,
-       scanned_count = 0, updated_at = CURRENT_TIMESTAMP`,
-    ).bind(crypto.randomUUID(), space.id).run();
+    const jobId = crypto.randomUUID();
+    await database.batch([
+      database.prepare(
+        `INSERT INTO monitor_runs (id, space_id, status, error, updated_at)
+         VALUES (?, ?, 'scanning', NULL, CURRENT_TIMESTAMP)
+         ON CONFLICT(space_id) DO UPDATE SET status = 'scanning', error = NULL, new_count = 0,
+         scanned_count = 0, updated_at = CURRENT_TIMESTAMP`,
+      ).bind(crypto.randomUUID(), space.id),
+      database.prepare(
+        `INSERT INTO monitor_scan_jobs (id, space_id, status, progress, discovered_count, reviewed_count, recommended_count)
+         VALUES (?, ?, 'scanning', 4, 0, 0, 0)`,
+      ).bind(jobId, space.id),
+    ]);
 
     try {
       const batches: Candidate[][] = [];
       let discoveredCount = 0;
       for (const horizon of HORIZONS) {
-        await updateRunPhase(database, space.id, `discovering_${horizon.key}`, discoveredCount);
-        const batch = await fetchHorizon(database, enrichedSpace, horizon, now, preference.priorityVenues, preference.profileKey, discoveryRound);
+        await updateRunPhase(database, space.id, jobId, `discovering_${horizon.key}`, discoveredCount);
+        const batch = await fetchHorizon(database, enrichedSpace, horizon, now, preference.priorityVenues, preference.profileKey, discoveryRound, jobId, discoveredCount);
         batches.push(batch);
         discoveredCount += batch.length;
-        await updateRunPhase(database, space.id, `discovering_${horizon.key}`, discoveredCount);
+        await updateRunPhase(database, space.id, jobId, `discovering_${horizon.key}`, discoveredCount);
       }
-      await updateRunPhase(database, space.id, "deduplicating", discoveredCount);
+      await updateRunPhase(database, space.id, jobId, "deduplicating", discoveredCount);
       const candidates = new Map<string, Candidate>();
       for (const candidate of batches.flat()) {
         const existing = candidates.get(candidate.canonicalId);
@@ -1122,71 +1511,31 @@ export async function POST(request: Request) {
       await persistCandidatePool(database, space.id, candidateList);
       const pendingQueue = await pendingCandidateQueue(database, space.id);
       const pendingCandidates = selectUnseenReviewBatch(pendingQueue);
-      await updateRunPhase(database, space.id, "reviewing", scannedCount);
-      const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates);
-      const reviewsById = new Map(reviews.map((review) => [review.canonicalId, review]));
+      await updateRunPhase(database, space.id, jobId, "reviewing", scannedCount);
+      const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates, jobId);
 
       const newCount = reviews.filter((review) => review.recommended).length;
-      await updateRunPhase(database, space.id, "saving", scannedCount, newCount);
-      for (const candidate of pendingCandidates) {
-        const review = reviewsById.get(candidate.canonicalId);
-        const generatedId = crypto.randomUUID();
-        await database.prepare(
-          `INSERT OR IGNORE INTO monitored_papers
-           (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon, citation_count, relevance_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(generatedId, space.id, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
-          candidate.url, candidate.publishedAt, candidate.source, candidate.horizon, candidate.citationCount, candidate.relevanceScore).run();
-        const paper = await database.prepare("SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id = ? LIMIT 1")
-          .bind(space.id, candidate.canonicalId).first<{ id: string }>();
-        if (!paper) continue;
-        await database.prepare(
-          `UPDATE monitored_papers SET title = ?, authors = ?, venue = ?, url = ?, published_at = ?, horizon = ?,
-           last_seen_at = CURRENT_TIMESTAMP, citation_count = MAX(citation_count, ?), relevance_score = MAX(relevance_score, ?)
-           WHERE id = ?`,
-        ).bind(candidate.title, candidate.authors, candidate.venue, candidate.url, candidate.publishedAt, candidate.horizon,
-          candidate.citationCount, candidate.relevanceScore, paper.id).run();
-        if (review) {
-          await database.prepare(
-            `INSERT INTO paper_insights
-             (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en, quality_score,
-              priority_venue, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text, summary_zh = excluded.summary_zh,
-             summary_en = excluded.summary_en, why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
-             quality_score = excluded.quality_score, priority_venue = excluded.priority_venue,
-             analysis_source = excluded.analysis_source, analysis_model = excluded.analysis_model,
-             llm_recommended = excluded.llm_recommended, llm_relevance_score = excluded.llm_relevance_score,
-             screening_reason = excluded.screening_reason, updated_at = CURRENT_TIMESTAMP`,
-          ).bind(paper.id, space.id, candidate.abstractText, review.summaryZh, review.summaryEn, review.whyReadZh, review.whyReadEn,
-            review.qualityScore, candidate.priorityVenue ? 1 : 0, review.recommended ? "deepseek" : "deepseek_rejected",
-            MONITOR_MODEL, review.recommended ? 1 : 0, review.relevanceScore, review.screeningReason).run();
-         }
-        if (review?.recommended && review.trackId) {
-          await database.prepare(
-            `INSERT OR IGNORE INTO research_track_papers
-             (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role,
-              summary_zh, summary_en, rationale_zh, rationale_en, position)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              (SELECT COALESCE(MAX(position) + 1, 0) FROM research_track_papers WHERE track_id = ?))`,
-          ).bind(crypto.randomUUID(), review.trackId, space.id, candidate.canonicalId, candidate.doi, candidate.title,
-            candidate.authors, candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, review.mapRole,
-            review.summaryZh, review.summaryEn, review.mapRationaleZh, review.mapRationaleEn, review.trackId).run();
-          await database.prepare("UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
-            .bind(review.trackId, space.id).run();
-        }
-      }
+      await updateRunPhase(database, space.id, jobId, "saving", scannedCount, newCount);
 
       const completedAt = new Date();
-      await database.prepare(
-        "UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?, discovery_round = discovery_round + 1, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
-      ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), newCount, scannedCount, space.id).run();
+      await database.batch([
+        database.prepare(
+          "UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?, discovery_round = discovery_round + 1, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
+        ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), newCount, scannedCount, space.id),
+        database.prepare(
+          "UPDATE monitor_scan_jobs SET status = 'ready', current_horizon = '', current_source = '', progress = 100, discovered_count = ?, reviewed_count = ?, recommended_count = ?, completed_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(scannedCount, reviews.length, newCount, completedAt.toISOString(), jobId),
+      ]);
       return Response.json(await readState(database, space, { cached: false }));
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 300) : "Monitoring scan failed";
       const failedAt = new Date();
-      await database.prepare("UPDATE monitor_runs SET status = 'error', next_run_at = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
-        .bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id).run();
+      await database.batch([
+        database.prepare("UPDATE monitor_runs SET status = 'error', next_run_at = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
+          .bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id),
+        database.prepare("UPDATE monitor_scan_jobs SET status = 'error', error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .bind(message, failedAt.toISOString(), jobId),
+      ]);
       return Response.json(await readState(database, space), { status: 502 });
     }
   } catch (error) {

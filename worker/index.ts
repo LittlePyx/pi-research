@@ -29,18 +29,18 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext) {
        (r.status IN ('ready', 'error', 'idle') AND (r.next_run_at IS NULL OR datetime(r.next_run_at) <= CURRENT_TIMESTAMP))
        OR (r.status NOT IN ('ready', 'error', 'idle') AND datetime(r.updated_at) <= datetime('now', '-20 minutes'))
      )
-     ORDER BY COALESCE(r.next_run_at, r.last_run_at, r.updated_at) ASC LIMIT 1`,
+     ORDER BY COALESCE(r.next_run_at, r.last_run_at, r.updated_at) ASC LIMIT 2`,
   ).all<{ id: string; owner_user_id: string }>();
-  for (const space of due.results) {
+  await Promise.allSettled(due.results.map(async (space) => {
     const workspaceId = space.owner_user_id.startsWith("anonymous:") ? space.owner_user_id.slice("anonymous:".length) : "";
-    if (!workspaceId) continue;
+    if (!workspaceId) return;
     const request = new Request("https://pi-research.internal/api/monitor", {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${workspaceId}` },
       body: JSON.stringify({ spaceId: space.id }),
     });
     await handler.fetch(request, env, ctx);
-  }
+  }));
 }
 
 // Image security config. SVG sources with .svg extension auto-skip the
