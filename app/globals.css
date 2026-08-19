@@ -3201,3 +3201,19 @@ main { min-width: 0; }
 
 /* Pi Research V43 — reminders follow the primary research workflow */
 .v2-today .v2-action-inbox { scroll-margin-top: 82px; }
+
+/* Pi Research V44 — one action surface and a transparent review funnel */
+.v2-today-hero-actions.status-only { min-width: 190px; grid-template-columns: 1fr; }
+.v2-today-hero-actions.status-only .v2-monitor-status { grid-column: 1; margin: 0; }
+.v2-daily-brief-metrics { grid-template-columns: repeat(4,1fr); }
+.v2-daily-brief-metrics dd { font-size: 23px; }
+.v2-daily-zero-state { margin: 16px 0 0; padding: 18px; border: 1px solid #d7e0dc; border-radius: 11px; background: #f3f6f4; }
+.v2-daily-zero-state strong { color: #3e5148; font-size: 13px; }
+.v2-daily-zero-state p { margin: 8px 0 0; color: #63716b; font-size: 11px; line-height: 1.65; }
+.v2-daily-zero-state small { display: block; margin-top: 8px; color: #7d8983; font-size: 10px; line-height: 1.55; }
+
+@media (max-width: 620px) {
+  .v2-today-hero-actions.status-only { min-width: 0; }
+  .v2-today-hero-actions.status-only .v2-monitor-status { justify-self: start; }
+  .v2-daily-brief-metrics { grid-template-columns: repeat(2,1fr); }
+}

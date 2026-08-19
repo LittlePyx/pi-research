@@ -38,7 +38,12 @@ export const DOMAIN_PROFILES: DomainProfile[] = [
     key: "applied_mathematics",
     nameZh: "应用数学与分析",
     nameEn: "Applied mathematics & analysis",
-    keywords: ["applied mathematics", "optimal transport", "functional inequality", "partial differential", "stochastic", "calculus of variations", "应用数学", "最优传输", "偏微分", "随机分析"],
+    keywords: [
+      "applied mathematics", "optimal transport", "Wasserstein gradient flow", "functional inequality", "log-Sobolev inequality",
+      "Poincare inequality", "concentration of measure", "stochastic localization", "Langevin diffusion", "sampling and optimization",
+      "Fokker-Planck equation", "partial differential equation", "stochastic differential equation", "calculus of variations",
+      "应用数学", "最优传输", "泛函不等式", "随机局部化", "偏微分", "随机分析",
+    ],
     venues: [
       "Communications on Pure and Applied Mathematics",
       "Archive for Rational Mechanics and Analysis",
@@ -47,6 +52,13 @@ export const DOMAIN_PROFILES: DomainProfile[] = [
       "Calculus of Variations and Partial Differential Equations",
       "Annals of Probability",
       "Inventiones Mathematicae",
+      "Annals of Mathematics",
+      "Journal of the European Mathematical Society",
+      "Probability Theory and Related Fields",
+      "Analysis & PDE",
+      "Duke Mathematical Journal",
+      "Mathematical Programming",
+      "SIAM Journal on Optimization",
     ],
   },
   {

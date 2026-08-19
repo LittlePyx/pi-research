@@ -64,6 +64,10 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /thinking: \{ type: "disabled" \}/);
   assert.match(monitor, /reasoning_effort: "medium"/);
   assert.match(monitor, /DEEP_REVIEW_LIMIT = 8/);
+  assert.match(monitor, /DEEP_REVIEW_RESCUE_LIMIT = 4/);
+  assert.match(monitor, /DEEP_REVIEW_MAX_LIMIT/);
+  assert.match(monitor, /rescueReview: true/);
+  assert.match(monitor, /首批高潜力论文未入选/);
   assert.match(monitor, /DEEP_REVIEW_BATCH_SIZE = 1/);
   assert.match(monitor, /DEEP_REVIEW_CONCURRENCY = 2/);
   assert.match(monitor, /runIncrementalDeepReview/);
@@ -85,7 +89,10 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
 });
 
 test("screening refreshes stale fallback plans and enriches evidence before deep review", async () => {
-  const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
+  const [monitor, profiles] = await Promise.all([
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/monitor/domain-profiles.ts", import.meta.url), "utf8"),
+  ]);
 
   assert.match(monitor, /existing\.model === "deterministic-fallback"/);
   assert.match(monitor, /ON CONFLICT\(space_id, plan_date\) DO UPDATE/);
@@ -96,6 +103,9 @@ test("screening refreshes stale fallback plans and enriches evidence before deep
   assert.match(monitor, /fetchOpenAlexAbstract/);
   assert.match(monitor, /checkpoint === "enriching_abstracts"/);
   assert.match(monitor, /MONITOR_REVIEW_PIPELINE_RELEASED_AT/);
+  assert.match(profiles, /stochastic localization/);
+  assert.match(profiles, /log-Sobolev inequality/);
+  assert.match(profiles, /Probability Theory and Related Fields/);
 });
 
 test("today and its daily brief are capped at six and reranked across directions", async () => {
@@ -119,6 +129,9 @@ test("today and its daily brief are capped at six and reranked across directions
   assert.match(client, /<details key=\{paper\?\.id/);
   assert.match(client, /它带来了什么/);
   assert.match(client, /建议怎么读/);
+  assert.match(client, /latestDeepReviewedCount/);
+  assert.match(client, /v2-daily-zero-state/);
+  assert.equal((client.match(/shareSnapshot\("daily"/g) || []).length, 1);
   assert.match(styles, /\.v2-daily-brief-list/);
   assert.match(styles, /focused daily research desk/);
   assert.doesNotMatch(monitor, /reviews\.filter\(\(review\) => review\.recommended\)[\s\S]{0,220}slice\(0, 8\)/);

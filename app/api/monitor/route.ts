@@ -339,6 +339,8 @@ const QUICK_SCREEN_CONCURRENCY = 2;
 const DEEP_REVIEW_BATCH_SIZE = 1;
 const DEEP_REVIEW_CONCURRENCY = 2;
 const DEEP_REVIEW_LIMIT = 8;
+const DEEP_REVIEW_RESCUE_LIMIT = 4;
+const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
 const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
 const HORIZONS = [
@@ -2065,7 +2067,7 @@ async function generateDailyBrief(
   jobId: string,
   candidates: Candidate[],
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; recommended: number; rejected: number },
   now: Date,
   apiKey: string,
   deferLlm = false,
@@ -2096,17 +2098,17 @@ async function generateDailyBrief(
     headlineZh: selected.length ? `今天有 ${selected.length} 篇论文通过严格筛选` : "今天没有论文达到严格推荐门槛",
     headlineEn: selected.length ? `${selected.length} papers passed today's strict review` : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
-      ? `Pi 从 ${metrics.scanned} 篇候选中完成 ${metrics.reviewed} 篇深度评审，并保留 ${selected.length} 篇。其余结果仍在探索账本中，不会因本轮未推荐而丢失。`
-      : `Pi 扫描了 ${metrics.scanned} 篇候选，没有为了填满页面而降低标准。探索游标和待评审池已经保存，下一轮会从新的位置继续。`,
+      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并保留 ${selected.length} 篇。其余结果仍在探索账本中，不会因本轮未推荐而丢失。`
+      : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。`,
     overviewEn: selected.length
-      ? `Pi deeply reviewed ${metrics.reviewed} of ${metrics.scanned} candidates and retained ${selected.length}. Other discoveries remain in the exploration ledger instead of being discarded.`
-      : `Pi scanned ${metrics.scanned} candidates without lowering the bar to fill the page. Cursors and the pending review pool are saved for the next pass.`,
+      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, and retained ${selected.length}. Other discoveries remain in the exploration ledger instead of being discarded.`
+      : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.`,
     signalsZh: selected.slice(0, 6).map((review) => review.summaryZh || review.whyReadZh).filter(Boolean),
     signalsEn: selected.slice(0, 6).map((review) => review.summaryEn || review.whyReadEn).filter(Boolean),
     readingPlanZh: selected.slice(0, 6).map((review) => review.whyReadZh || review.summaryZh).filter(Boolean),
     readingPlanEn: selected.slice(0, 6).map((review) => review.whyReadEn || review.summaryEn).filter(Boolean),
-    watchlistZh: selected.length ? [] : ["本轮没有强推荐；等待低收益分支冷却结束，并继续扩展期刊、作者与引用路径。"],
-    watchlistEn: selected.length ? [] : ["No strong recommendation this round; Pi will revisit cooled branches and expand journal, author, and citation paths."],
+    watchlistZh: selected.length ? [] : ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"],
+    watchlistEn: selected.length ? [] : ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."],
     paperIds, metrics, model: error ? "deterministic-fallback" : "evidence-summary", error: error || null,
   });
   if (!selected.length) return fallback();
@@ -2233,7 +2235,7 @@ async function createScanNotifications(
   spaceId: string,
   briefDate: string,
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; recommended: number; rejected: number },
   resumed: boolean,
 ) {
   const brief = await database.prepare(
@@ -2243,8 +2245,8 @@ async function createScanNotifications(
     spaceId, dedupeKey: `daily:${briefDate}`, kind: "daily_brief", priority: metrics.recommended ? "high" : "normal",
     titleZh: brief?.headline_zh || `今日扫描完成：${metrics.recommended} 篇入选`,
     titleEn: brief?.headline_en || `Today's scan is complete: ${metrics.recommended} selected`,
-    bodyZh: brief?.overview_zh || `评审 ${metrics.reviewed} 篇，避免 ${metrics.duplicates} 次重复分析。`,
-    bodyEn: brief?.overview_en || `${metrics.reviewed} reviewed and ${metrics.duplicates} duplicate analyses avoided.`,
+    bodyZh: brief?.overview_zh || `快速筛选 ${metrics.screened || metrics.reviewed} 篇，深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，避免 ${metrics.duplicates} 次重复分析。`,
+    bodyEn: brief?.overview_en || `${metrics.screened || metrics.reviewed} fast-screened, ${metrics.deepReviewed || metrics.reviewed} deeply reviewed, and ${metrics.duplicates} duplicate analyses avoided.`,
     actionView: "today",
   });
   const mustRead = reviews.filter((review) => review.recommended && review.recommendationTier === "must_read");
@@ -3367,8 +3369,8 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
     return {
       candidateIds: Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, 120) : [],
       screens: Array.isArray(parsed.screens) ? parsed.screens.filter((screen): screen is QuickScreen => Boolean(screen && typeof screen.canonicalId === "string")).slice(0, 120) : [],
-      deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_LIMIT) : [],
-      deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_LIMIT) : [],
+      deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       rawCandidateCount: Math.max(0, Number(parsed.rawCandidateCount) || 0),
       newCandidateCount: Math.max(0, Number(parsed.newCandidateCount) || 0),
       screenFailureCount: Math.max(0, Number(parsed.screenFailureCount) || 0),
@@ -3421,7 +3423,7 @@ async function saveScanWorkQueue(database: D1Database, jobId: string, work: Scan
     .bind(JSON.stringify(work), jobId).run();
 }
 
-function chooseDeepCandidateIds(candidates: Candidate[], screens: QuickScreen[]) {
+function chooseDeepCandidateIds(candidates: Candidate[], screens: QuickScreen[], limit = DEEP_REVIEW_LIMIT) {
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
   const ranked = screens
     .filter((screen) => screen.isPaper && screen.relevanceScore >= 68 && screen.qualityScore >= 55 && candidateById.has(screen.canonicalId))
@@ -3430,7 +3432,7 @@ function chooseDeepCandidateIds(candidates: Candidate[], screens: QuickScreen[])
     ranked,
     (screen) => `horizon:${candidateById.get(screen.canonicalId)?.horizon || "days"}`,
     (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
-    DEEP_REVIEW_LIMIT,
+    limit,
   ).map((screen) => screen.canonicalId);
 }
 
@@ -3768,7 +3770,9 @@ export async function POST(request: Request) {
         scanned: job.discovered_count,
         newCandidates: job.new_candidate_count,
         duplicates: job.duplicate_count,
-        reviewed: work.screens.length,
+        reviewed: reviews.length,
+        screened: work.screens.length,
+        deepReviewed: reviews.length,
         recommended: reviews.filter((review) => review.recommended).length,
         rejected: Math.max(0, work.screens.length - reviews.filter((review) => review.recommended).length),
       }, completedAt, apiKey);
@@ -3815,14 +3819,16 @@ export async function POST(request: Request) {
         scanned: job.discovered_count,
         newCandidates: work.newCandidateCount,
         duplicates: duplicateCount,
-        reviewed: work.screens.length,
+        reviewed: reviews.length,
+        screened: work.screens.length,
+        deepReviewed: reviews.length,
         recommended,
         rejected,
       }, completedAt, apiKey, true);
       try {
         await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), reviews, {
           scanned: job.discovered_count, newCandidates: work.newCandidateCount, duplicates: duplicateCount,
-          reviewed: work.screens.length, recommended, rejected,
+          reviewed: reviews.length, screened: work.screens.length, deepReviewed: reviews.length, recommended, rejected,
         }, Boolean(job.resume_of_job_id));
       } catch (notificationError) {
         console.error("Failed to create staged scan notifications", notificationError);
@@ -3960,6 +3966,19 @@ export async function POST(request: Request) {
         ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
           `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${recommended} 篇已可阅读`, deepProgress, job.id).run();
         if (work.deepCompletedIds.length >= work.deepIds.length) {
+          if (!recommended && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
+            const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
+            const scheduled = new Set(work.deepIds);
+            const rescueIds = chooseDeepCandidateIds(allCandidates, work.screens, DEEP_REVIEW_MAX_LIMIT)
+              .filter((id) => !scheduled.has(id))
+              .slice(0, DEEP_REVIEW_RESCUE_LIMIT);
+            if (rescueIds.length) {
+              work.deepIds = [...work.deepIds, ...rescueIds];
+              await saveScanWorkQueue(database, job.id, work);
+              await setStage("enriching_abstracts", "deep_reviewing", 76, `首批高潜力论文未入选，正在追加 ${rescueIds.length} 篇第二批评审`);
+              return Response.json(await readState(database, space, { rescueReview: true }), { status: 202 });
+            }
+          }
           const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
           return finalizeMain(candidates, persistedReviews);
         }
