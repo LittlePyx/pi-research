@@ -1,5 +1,6 @@
-import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import type { LearningPath, LearningPathState, LearningResource, LearningStepKind, LearningStepStatus } from "../../../lib/learning-path";
+import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type PathRow = {
@@ -145,9 +146,8 @@ function extractJson(value: string) {
   return JSON.parse(candidate);
 }
 
-async function buildDraft(database: D1Database, workspaceId: string, space: SpaceRow, target: string, context: Awaited<ReturnType<typeof contextForSpace>>) {
-  const runtime = getRuntimeEnv();
-  if (!runtime.DEEPSEEK_API_KEY) throw new Error("DeepSeek Pro is not configured");
+async function buildDraft(database: D1Database, workspaceId: string, space: SpaceRow, target: string, context: Awaited<ReturnType<typeof contextForSpace>>, apiKey: string) {
+  if (!apiKey) throw new Error("DeepSeek Pro is not configured");
   const date = new Date().toISOString().slice(0, 10);
   const workspaceScope = "learning-path-workspace:" + workspaceId;
   const [globalCount, workspaceCount] = await Promise.all([usageCount(database, "learning-path:global", date), usageCount(database, workspaceScope, date)]);
@@ -158,7 +158,7 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
   }));
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
-    headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+    headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: MODEL,
       messages: [
@@ -217,7 +217,7 @@ export async function POST(request: Request) {
   const target = cleanText(body.target, 240) || context.suggestedTarget;
   if (target.length < 2) return Response.json({ error: "Please provide a learning target" }, { status: 400 });
   try {
-    const draft = await buildDraft(owned.database, owned.user.userId, owned.space, target, context);
+    const draft = await buildDraft(owned.database, owned.user.userId, owned.space, target, context, resolveDeepSeekCredential(request).apiKey);
     const pathId = crypto.randomUUID();
     const estimatedMinutes = draft.steps.reduce((sum, step) => sum + step.estimatedMinutes, 0);
     const candidateMap = new Map(context.candidates.map((item) => [item.resource_id, item]));

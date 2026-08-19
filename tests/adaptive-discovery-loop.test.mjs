@@ -55,14 +55,26 @@ test("accepted-paper token efficiency uses private audit allocations", async () 
   assert.match(client, /const SHOW_INTERNAL_QUALITY_UI = false/);
 });
 
-test("the pending model state opens safe server-side setup instead of a dead end", async () => {
-  const [client, styles] = await Promise.all([
+test("the pending model state opens a secure browser API key setup", async () => {
+  const [client, styles, credentials, settingsRoute] = await Promise.all([
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../lib/model-credentials.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/model-settings/route.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(client, /setModelSettingsOpen\(true\)/);
-  assert.match(client, /DEEPSEEK_API_KEY/);
+  assert.match(client, /saveModelCredential/);
+  assert.match(client, /type=\{showModelApiKey \? "text" : "password"\}/);
+  assert.match(client, /测试并保存/);
   assert.match(client, /refreshModelStatus/);
+  assert.doesNotMatch(client, /DEEPSEEK_API_KEY|\.dev\.vars/);
   assert.match(styles, /v2-model-settings/);
+  assert.match(credentials, /HttpOnly/);
+  assert.match(credentials, /SameSite=Strict/);
+  assert.match(credentials, /Path=\/api/);
+  assert.match(credentials, /Max-Age=/);
+  assert.match(settingsRoute, /https:\/\/api\.deepseek\.com\/models/);
+  assert.match(settingsRoute, /"Set-Cookie"/);
+  assert.doesNotMatch(settingsRoute, /apiKey:/);
 });

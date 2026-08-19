@@ -1,7 +1,8 @@
-import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { passesRecommendationGate } from "../../../lib/discovery/review-gate";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
+import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
 type Horizon = "days" | "months" | "years";
@@ -1246,6 +1247,7 @@ async function ensureDailyQueryPlan(
   space: SpaceRow,
   userId: string,
   preference: Awaited<ReturnType<typeof ensurePreference>>,
+  apiKey: string,
 ): Promise<QueryPlan> {
   const planDate = new Date().toISOString().slice(0, 10);
   const existing = await database.prepare(
@@ -1282,21 +1284,20 @@ async function ensureDailyQueryPlan(
     ).bind(space.id).all<{ source_key: string; channel: string; attempts: number; new_candidates: number }>(),
     loadDiscoveryBranchScores(database, space.id),
   ]);
-  const runtime = getRuntimeEnv();
   let queries: Record<Horizon, string[]> = { days: [], months: [], years: [] };
   let rationaleZh = "";
   let rationaleEn = "";
   let error: string | null = null;
   let model = MONITOR_MODEL;
 
-  if (!runtime.DEEPSEEK_API_KEY) {
+  if (!apiKey) {
     error = "DeepSeek Pro is not configured; deterministic discovery remains active.";
     model = "deterministic-fallback";
   } else {
     try {
       const response = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
-        headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+        headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: MONITOR_MODEL,
           messages: [
@@ -1576,10 +1577,9 @@ async function persistRecommendationAuditBatch(
   if (statements.length) await database.batch(statements);
 }
 
-async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string, lockToken: string) {
+async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string, lockToken: string, apiKey: string) {
   if (!candidates.length) return [] as PaperReview[];
-  const runtime = getRuntimeEnv();
-  if (!runtime.DEEPSEEK_API_KEY) throw new Error("DeepSeek Pro is required before papers can be recommended");
+  if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be recommended");
   const usageDate = new Date().toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.slice("anonymous:".length);
   const expectedCalls = Math.ceil(candidates.length / REVIEW_BATCH_SIZE);
@@ -1647,7 +1647,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       try {
         const response = await fetch("https://api.deepseek.com/chat/completions", {
           method: "POST",
-          headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+          headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
           body: JSON.stringify({
             model: MONITOR_MODEL,
             messages: [
@@ -1864,6 +1864,7 @@ async function generateDailyBrief(
   reviews: PaperReview[],
   metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; recommended: number; rejected: number },
   now: Date,
+  apiKey: string,
 ) {
   const briefDate = shanghaiDateKey(now);
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
@@ -1906,15 +1907,14 @@ async function generateDailyBrief(
   });
   if (!selected.length) return fallback();
 
-  const runtime = getRuntimeEnv();
   const usageDate = now.toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
   const [globalCount, workspaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate),
     usageCount(database, workspaceScope, usageDate),
   ]);
-  if (!runtime.DEEPSEEK_API_KEY || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
-    return fallback(!runtime.DEEPSEEK_API_KEY ? "DeepSeek Pro is not configured" : "Daily brief analysis budget reached");
+  if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+    return fallback(!apiKey ? "DeepSeek Pro is not configured" : "Daily brief analysis budget reached");
   }
   try {
     const records = selected.map((review) => {
@@ -1939,7 +1939,7 @@ async function generateDailyBrief(
     });
     const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
-      headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+      headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: MONITOR_MODEL,
         messages: [
@@ -2093,7 +2093,7 @@ async function saveWeeklyReview(database: D1Database, input: {
   ).run();
 }
 
-async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, userId: string, now: Date) {
+async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, userId: string, now: Date, apiKey: string) {
   const dateKey = shanghaiDateKey(now);
   const weekKey = mondayKey(dateKey);
   const briefs = await database.prepare(
@@ -2150,20 +2150,19 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
     await saveWeeklyReview(database, review);
     return review;
   };
-  const runtime = getRuntimeEnv();
   const usageDate = now.toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
   const [globalCount, workspaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate), usageCount(database, workspaceScope, usageDate),
   ]);
   let review: Awaited<ReturnType<typeof fallback>>;
-  if (!runtime.DEEPSEEK_API_KEY || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
-    review = await fallback(!runtime.DEEPSEEK_API_KEY ? "DeepSeek Pro is not configured" : "Weekly review analysis budget reached");
+  if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+    review = await fallback(!apiKey ? "DeepSeek Pro is not configured" : "Weekly review analysis budget reached");
   } else {
     try {
       const response = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
-        headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+        headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: MONITOR_MODEL,
           messages: [
@@ -3025,6 +3024,7 @@ export async function POST(request: Request) {
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
     const { database, space, user } = context;
+    const apiKey = resolveDeepSeekCredential(request).apiKey;
     const trigger: ScanTrigger = payload.trigger === "scheduled" || payload.trigger === "manual" || payload.trigger === "visit"
       ? payload.trigger : payload.force ? "manual" : "visit";
     const preference = await ensurePreference(database, space);
@@ -3078,7 +3078,7 @@ export async function POST(request: Request) {
          VALUES (?, ?, 'scanning', 4, 0, 0, 0, ?, ?, ?, 'scanning')`,
       ).bind(jobId, space.id, resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null).run();
       await setScanSource(database, jobId, "days", "DeepSeek Pro · daily query plan", 6, 0);
-      const queryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference);
+      const queryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
       const batches: Array<{ candidates: Candidate[]; rawCount: number }> = [];
       let discoveredCount = 0;
       for (const horizon of HORIZONS) {
@@ -3103,7 +3103,7 @@ export async function POST(request: Request) {
       const pendingQueue = await pendingCandidateQueue(database, space.id);
       const pendingCandidates = selectUnseenReviewBatch(pendingQueue);
       await updateRunPhase(database, space.id, jobId, lockToken, "reviewing", scannedCount);
-      const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates, jobId, lockToken);
+      const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates, jobId, lockToken, apiKey);
 
       const newCount = reviews.filter((review) => review.recommended).length;
       const rejectedCount = reviews.length - newCount;
@@ -3118,7 +3118,7 @@ export async function POST(request: Request) {
         reviewed: reviews.length,
         recommended: newCount,
         rejected: rejectedCount,
-      }, completedAt);
+      }, completedAt, apiKey);
       try {
         await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), reviews, {
           scanned: scannedCount,
@@ -3128,7 +3128,7 @@ export async function POST(request: Request) {
           recommended: newCount,
           rejected: rejectedCount,
         }, resumable);
-        await maybeGenerateWeeklyReview(database, enrichedSpace, user.userId, completedAt);
+        await maybeGenerateWeeklyReview(database, enrichedSpace, user.userId, completedAt, apiKey);
       } catch (supplementalError) {
         // Catch-up notifications and weekly synthesis enrich a completed scan, but must never
         // turn successfully discovered and reviewed papers into a failed monitoring run.

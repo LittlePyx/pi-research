@@ -1,4 +1,5 @@
-import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { upsertPreferenceSignal } from "../../../lib/preference-memory";
 
 const READING_STATUSES = new Set(["unread", "queued", "reading", "read", "mastered", "cited"]);
@@ -86,7 +87,7 @@ async function recordUsage(database: D1Database, scope: string, date: string, in
   ).bind(crypto.randomUUID(), scope, date, inputTokens, outputTokens).run();
 }
 
-async function analyzeReadingNote(database: D1Database, space: { id: string; name: string }, userId: string, paper: ReadingPaper, note: string, readingStatus: string) {
+async function analyzeReadingNote(database: D1Database, space: { id: string; name: string }, userId: string, paper: ReadingPaper, note: string, readingStatus: string, apiKey: string) {
   const noteHash = await contentHash(note);
   const existing = await database.prepare(
     "SELECT note_hash, analysis_status FROM paper_reading_memories WHERE space_id = ? AND paper_id = ? LIMIT 1",
@@ -100,8 +101,7 @@ async function analyzeReadingNote(database: D1Database, space: { id: string; nam
      model = excluded.model, error = NULL, updated_at = CURRENT_TIMESTAMP`,
   ).bind(crypto.randomUUID(), space.id, paper.id, noteHash, READING_MEMORY_MODEL).run();
 
-  const runtime = getRuntimeEnv();
-  if (!runtime.DEEPSEEK_API_KEY) return { status: "pending", cached: false };
+  if (!apiKey) return { status: "pending", cached: false };
   const usageDate = new Date().toISOString().slice(0, 10);
   const workspaceScope = "reading-memory-workspace:" + userId.replace(/^anonymous:/, "");
   const [workspaceUsage, globalUsage] = await Promise.all([
@@ -121,7 +121,7 @@ async function analyzeReadingNote(database: D1Database, space: { id: string; nam
   try {
     const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
-      headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+      headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: READING_MEMORY_MODEL,
         messages: [
@@ -289,7 +289,7 @@ export async function PATCH(request: Request) {
   ).bind(crypto.randomUUID(), spaceId, paperId, status, note, status === "reading" ? now : null,
     ["read", "mastered", "cited"].includes(status) ? now : null).run();
   const memoryAnalysis = payload?.analyze
-    ? note.length >= 40 ? await analyzeReadingNote(context.database, context.space, context.user.userId, paper, note, status)
+    ? note.length >= 40 ? await analyzeReadingNote(context.database, context.space, context.user.userId, paper, note, status, resolveDeepSeekCredential(request).apiKey)
       : { status: "needs_more_context", cached: false }
     : null;
   return Response.json({ ok: true, status, note, memoryAnalysis });

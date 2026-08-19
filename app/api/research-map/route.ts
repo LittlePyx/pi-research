@@ -1,4 +1,5 @@
-import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import type { ResearchDirectionIntelligence, ResearchDirectionRole, ResearchHeatLevel, ResearchMapState, ResearchPaperEdge, ResearchPaperEdgeKind, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -304,9 +305,8 @@ async function recordUsage(database: D1Database, scope: string, date: string, in
   ).bind(crypto.randomUUID(), scope, date, inputTokens, outputTokens).run();
 }
 
-async function callDeepSeek<T>(database: D1Database, workspaceId: string, system: string, prompt: string, maxTokens = 12000) {
-  const runtime = getRuntimeEnv();
-  if (!runtime.DEEPSEEK_API_KEY) throw new Error("DeepSeek Pro is required to build the research map");
+async function callDeepSeek<T>(database: D1Database, workspaceId: string, system: string, prompt: string, maxTokens: number, apiKey: string) {
+  if (!apiKey) throw new Error("DeepSeek Pro is required to build the research map");
   const date = new Date().toISOString().slice(0, 10);
   const workspaceScope = "research-map-workspace:" + workspaceId;
   const [globalCount, workspaceCount] = await Promise.all([
@@ -316,7 +316,7 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
   if (globalCount >= GLOBAL_DAILY_LIMIT || workspaceCount >= WORKSPACE_DAILY_LIMIT) throw new Error("Research-map analysis budget reached for today");
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
-    headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+    headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: MODEL,
       messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
@@ -338,7 +338,7 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
   return JSON.parse(content) as T;
 }
 
-async function generateDirections(database: D1Database, workspaceId: string, space: SpaceRow, memory: string) {
+async function generateDirections(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, apiKey: string) {
   const parsed = await callDeepSeek<{ directions?: Array<Partial<DirectionDraft>>; relationships?: Array<Partial<DirectionRelationship>> }>(
     database,
     workspaceId,
@@ -354,6 +354,7 @@ async function generateDirections(database: D1Database, workspaceId: string, spa
       `User-confirmed research memory: ${memory || "none"}`,
     ].join("\n"),
     8000,
+    apiKey,
   );
   const directions = (parsed.directions || []).map((item, index) => ({
     key: `${cleanText(item.key || "direction").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 52)}-${index + 1}`,
@@ -445,6 +446,7 @@ async function selectPapers(
   directions: DirectionDraft[],
   candidates: MapCandidate[],
   mode: "initialize" | "expand",
+  apiKey: string,
   existingEvidence: Array<{ canonicalId: string; title: string; publishedAt: string | null; role: ResearchTrackRole; summaryEn: string; rationaleEn: string }> = [],
 ) {
   const compact = candidates.map((item) => ({
@@ -481,6 +483,7 @@ async function selectPapers(
       `Candidate records: ${JSON.stringify(compact)}`,
     ].join("\n"),
     20000,
+    apiKey,
   );
   const allowed = new Set(candidates.map((item) => item.directionKey + ":" + item.canonicalId));
   const selections = (parsed.selections || []).map((item) => ({
@@ -508,6 +511,7 @@ async function interpretDirection(
   memory: string,
   track: TrackRow,
   evidence: Array<{ canonicalId: string; title: string; authors: string; venue: string; publishedAt: string | null; citations: number; role: ResearchTrackRole; summaryZh: string; summaryEn: string; rationaleZh: string; rationaleEn: string }>,
+  apiKey: string,
 ) {
   if (!evidence.length) return null;
   const parsed = await callDeepSeek<{ directionIntelligence?: Partial<DirectionIntelligenceDraft> }>(
@@ -527,6 +531,7 @@ async function interpretDirection(
       `Accepted evidence papers: ${JSON.stringify(evidence)}`,
     ].join("\n"),
     7000,
+    apiKey,
   );
   return sanitizeIntelligence(parsed.directionIntelligence, track.id, new Set(evidence.map((item) => item.canonicalId)));
 }
@@ -631,6 +636,7 @@ async function generatePaperNetworkEdges(
   memory: string,
   papers: TrackPaperRow[],
   citationEdges: Array<Omit<ResearchPaperEdge, "id">>,
+  apiKey: string,
 ) {
   if (papers.length < 2) return [] as Array<Omit<ResearchPaperEdge, "id">>;
   const compact = papers.map((paper) => ({
@@ -660,6 +666,7 @@ async function generatePaperNetworkEdges(
       `Actual citation pairs (source cites target): ${JSON.stringify(citationEdges.map((edge) => [edge.sourcePaperId, edge.targetPaperId]))}`,
     ].join("\n"),
     10000,
+    apiKey,
   );
   const validIds = new Set(papers.map((paper) => paper.id));
   const citationPairs = new Set(citationEdges.map((edge) => edge.sourcePaperId + ":" + edge.targetPaperId));
@@ -690,7 +697,7 @@ async function generatePaperNetworkEdges(
   return Array.from(unique.values());
 }
 
-async function rebuildPaperNetwork(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, force = false) {
+async function rebuildPaperNetwork(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, apiKey: string, force = false) {
   const allPapers = await database.prepare(
     "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY track_id, position, created_at",
   ).bind(space.id).all<TrackPaperRow>();
@@ -719,7 +726,7 @@ async function rebuildPaperNetwork(database: D1Database, workspaceId: string, sp
     errors.push(error instanceof Error ? error.message : "Citation lookup failed");
   }
   try {
-    curatedEdges = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers, citationEdges);
+    curatedEdges = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers, citationEdges, apiKey);
     sources.push(MODEL);
   } catch (error) {
     errors.push(error instanceof Error ? error.message : "Pi path analysis failed");
@@ -766,7 +773,7 @@ function heatLevel(score: number, recentPaperCount: number): ResearchHeatLevel {
   return "quiet";
 }
 
-async function structureExistingTracks(database: D1Database, workspaceId: string, space: SpaceRow, memory: string) {
+async function structureExistingTracks(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, apiKey: string) {
   const tracks = await database.prepare(
     "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
   ).bind(space.id).all<TrackRow>();
@@ -782,7 +789,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
     `Research space: ${space.name} — ${space.description}`,
     `User-confirmed memory: ${memory || "none"}`,
     `Existing directions: ${JSON.stringify(tracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, paperCountHint: track.expansion_count, searchQueries: parseJsonArray(track.search_queries) })))}`,
-  ].join("\n"), 10000);
+  ].join("\n"), 10000, apiKey);
   const validIds = new Set(tracks.results.map((track) => track.id));
   for (const profile of parsed.profiles || []) {
     const trackId = cleanText(profile.trackId || "");
@@ -916,10 +923,11 @@ export async function POST(request: Request) {
     if ("error" in context) return context.error;
     const { database, space, user } = context;
     const workspaceId = user.userId.replace(/^anonymous:/, "");
+    const apiKey = resolveDeepSeekCredential(request).apiKey;
     const memory = await importedMemory(database, space.id);
 
     if (payload.action === "network") {
-      await rebuildPaperNetwork(database, workspaceId, space, memory, payload.force === true);
+      await rebuildPaperNetwork(database, workspaceId, space, memory, apiKey, payload.force === true);
       return Response.json(await readMap(database, space.id, { networkRefreshed: true }));
     }
 
@@ -931,14 +939,14 @@ export async function POST(request: Request) {
     }
 
     if (payload.action === "structure") {
-      await structureExistingTracks(database, workspaceId, space, memory);
+      await structureExistingTracks(database, workspaceId, space, memory, apiKey);
       return Response.json(await readMap(database, space.id, { structured: true }));
     }
 
     if ((payload.action || "initialize") === "initialize") {
       const existing = await database.prepare("SELECT COUNT(*) AS count FROM research_tracks WHERE space_id = ?").bind(space.id).first<{ count: number }>();
       if ((existing?.count || 0) > 0) return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
-      const generated = await generateDirections(database, workspaceId, space, memory);
+      const generated = await generateDirections(database, workspaceId, space, memory, apiKey);
       const directions = generated.directions;
       if (directions.length < 3) throw new Error("DeepSeek Pro did not return enough distinct research directions");
       const trackIdByKey = new Map<string, string>();
@@ -986,7 +994,7 @@ export async function POST(request: Request) {
       citations: item.citation_count, role: item.role, summaryZh: item.summary_zh, summaryEn: item.summary_en, rationaleZh: item.rationale_zh, rationaleEn: item.rationale_en,
     }));
     if (payload.action === "interpret") {
-      const intelligence = await interpretDirection(database, workspaceId, space, memory, track, existingEvidence);
+      const intelligence = await interpretDirection(database, workspaceId, space, memory, track, existingEvidence, apiKey);
       if (!intelligence) return Response.json({ error: "This direction does not yet have enough accepted evidence for a grounded assessment" }, { status: 422 });
       await saveDirectionIntelligence(database, space.id, track.id, intelligence);
       return Response.json(await readMap(database, space.id, { interpretedTrackId: track.id }));
@@ -1003,6 +1011,7 @@ export async function POST(request: Request) {
       [direction],
       candidates,
       hydrating ? "initialize" : "expand",
+      apiKey,
       existingEvidence.map((item) => ({ canonicalId: item.canonicalId, title: item.title, publishedAt: item.publishedAt, role: item.role, summaryEn: item.summaryEn, rationaleEn: item.rationaleEn })),
     ) : { selections: [], intelligence: [] };
     const selections = reviewed.selections;

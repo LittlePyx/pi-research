@@ -1015,6 +1015,24 @@ main { min-width: 0; }
 .v2-model-status-card small { color: #788179; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .v2-model-status-card strong { color: #27372e; font: 21px/1.2 Georgia, serif; }
 .v2-model-status-card p { margin: 0; color: #69736c; font-size: 13px; }
+.v2-model-status-card > button { margin-left: auto; padding: 8px 11px; border: 1px solid #ccd6cf; border-radius: 6px; background: #f5f8f5; color: #53645a; font-size: 12px; font-weight: 800; cursor: pointer; }
+.v2-model-status-card > button:disabled { opacity: .5; cursor: wait; }
+.v2-model-key-form { margin: 0 26px; padding: 19px; border: 1px solid #d7ded8; border-radius: 10px; background: white; }
+.v2-model-key-form label > span { display: block; margin-bottom: 8px; color: #55645b; font-size: 12px; font-weight: 800; }
+.v2-model-key-form label > div { height: 44px; display: flex; align-items: center; border: 1px solid #cbd4ce; border-radius: 7px; overflow: hidden; background: #fbfcfb; }
+.v2-model-key-form input { min-width: 0; height: 100%; flex: 1; padding: 0 13px; border: 0; outline: 0; background: transparent; color: #25352c; font: 14px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.v2-model-key-form label > div > button { align-self: stretch; padding: 0 13px; border: 0; border-left: 1px solid #dce2dd; background: #f1f5f2; color: #5b6b61; font-size: 12px; font-weight: 800; cursor: pointer; }
+.v2-model-key-error { margin: 10px 0 0; padding: 9px 10px; border-radius: 6px; background: #fff1ef; color: #9a4339; font-size: 12px; line-height: 1.45; }
+.v2-model-key-actions { margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.v2-model-key-actions button { min-height: 38px; padding: 0 14px; border-radius: 7px; font-size: 12px; font-weight: 800; cursor: pointer; }
+.v2-model-key-actions .save { border: 0; background: #275d43; color: white; }
+.v2-model-key-actions .remove { border: 1px solid #dfcfc9; background: transparent; color: #8a5148; }
+.v2-model-key-actions button:disabled { opacity: .48; cursor: wait; }
+.v2-model-key-privacy { margin: 12px 26px 24px; padding: 14px 16px; display: grid; grid-template-columns: 24px 1fr; gap: 10px; border-radius: 9px; background: #edf3ef; }
+.v2-model-key-privacy > b { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: #dce9e0; color: #397050; font-size: 11px; }
+.v2-model-key-privacy strong { color: #3d5145; font-size: 12px; }
+.v2-model-key-privacy p { margin: 4px 0 6px; color: #617067; font-size: 12px; line-height: 1.5; }
+.v2-model-key-privacy small { color: #77837b; font-size: 10px; line-height: 1.45; }
 .v2-model-setup-steps { margin: 0 26px; display: grid; gap: 9px; }
 .v2-model-setup-steps article { padding: 15px 16px; display: grid; grid-template-columns: 28px 1fr; gap: 11px; border: 1px solid #dce1dd; border-radius: 9px; background: rgba(255,255,255,.68); }
 .v2-model-setup-steps article > b { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 50%; background: #e9efeb; color: #486151; font-size: 12px; }
@@ -2261,6 +2279,9 @@ main { min-width: 0; }
   .v2-import-actions button { width: 100%; }
   .v2-draft-opportunities article { grid-template-columns: 27px 1fr; }
   .v2-draft-opportunities article > button { grid-column: 2; }
+  .v2-model-key-actions { align-items: stretch; flex-direction: column-reverse; }
+  .v2-model-key-actions button { width: 100%; }
+  .v2-model-key-actions > span { display: none; }
 }
 
 /* Pi Research V7 — durable reading inbox and calmer navigation */

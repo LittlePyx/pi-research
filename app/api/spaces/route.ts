@@ -1,4 +1,5 @@
-import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 
 type SpaceRow = {
   id: string;
@@ -65,14 +66,15 @@ export async function GET(request: Request) {
         .all<SpaceRow>();
     }
 
-    const runtime = getRuntimeEnv();
-    const modelConfigured = Boolean(runtime.DEEPSEEK_API_KEY);
+    const credential = resolveDeepSeekCredential(request);
+    const modelConfigured = Boolean(credential.apiKey);
     return Response.json({
       spaces: result.results.map(toSpace),
       user,
       modelConfigured,
       provider: modelConfigured ? "deepseek" : null,
       model: modelConfigured ? "deepseek-v4-pro" : null,
+      modelCredentialSource: credential.source,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load research spaces";

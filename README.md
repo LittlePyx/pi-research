@@ -25,7 +25,7 @@ npm install
 npm run dev
 ```
 
-The application needs a D1 binding named `DB`. AI screening requires `DEEPSEEK_API_KEY`; put it in an ignored `.dev.vars` file for local development or in the hosted Sites secret store, then restart or republish. Never commit the key. The in-product model status opens these instructions and can re-check the server connection, but deliberately never stores a key in the browser.
+The application needs a D1 binding named `DB`. For interactive use, open the AI model status in the webpage and paste a DeepSeek API key there. Pi verifies the key and stores it only in a protected, `HttpOnly` browser cookie; it is never written to D1 or exposed back to page JavaScript. The cookie is limited to `/api`, uses `SameSite=Strict`, and expires after 30 days. A hosted `DEEPSEEK_API_KEY` secret remains optional for unattended scheduled scans that run without a user's browser session. Never commit API keys.
 
 ## Validation
 

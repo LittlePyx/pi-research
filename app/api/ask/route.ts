@@ -1,4 +1,5 @@
-import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 
 type DeepSeekResponse = {
   choices?: Array<{ message?: { content?: string | null } }>;
@@ -60,13 +61,13 @@ export async function POST(request: Request) {
       .first<{ id: string; name: string; member_name: string; description: string }>();
     if (!space) return Response.json({ error: "Research space not found" }, { status: 404 });
 
-    const runtime = getRuntimeEnv();
+    const credential = resolveDeepSeekCredential(request);
     const model = "deepseek-v4-pro";
     let answer: string;
     let mode: "deepseek" | "preview" = "preview";
     let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
-    if (runtime.DEEPSEEK_API_KEY) {
+    if (credential.apiKey) {
       const [importedProfiles, readingRows, trackRows] = await Promise.all([
         database.prepare(
           "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5",
@@ -122,7 +123,7 @@ export async function POST(request: Request) {
       const response = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
         headers: {
-          "Authorization": "Bearer " + runtime.DEEPSEEK_API_KEY,
+          "Authorization": "Bearer " + credential.apiKey,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({

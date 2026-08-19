@@ -1283,8 +1283,12 @@ export default function ResearchApp({ user }: { user: User }) {
   const [learningAction, setLearningAction] = useState<string | null>(null);
   const [modelConfigured, setModelConfigured] = useState(false);
   const [connectedModel, setConnectedModel] = useState<string | null>(null);
+  const [modelCredentialSource, setModelCredentialSource] = useState<"browser" | "server" | null>(null);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [checkingModel, setCheckingModel] = useState(false);
+  const [modelApiKey, setModelApiKey] = useState("");
+  const [showModelApiKey, setShowModelApiKey] = useState(false);
+  const [modelSettingsError, setModelSettingsError] = useState("");
   const [askOpen, setAskOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
@@ -1409,6 +1413,7 @@ export default function ResearchApp({ user }: { user: User }) {
           spaces?: Space[];
           modelConfigured?: boolean;
           model?: string | null;
+          modelCredentialSource?: "browser" | "server" | null;
         }>;
       })
       .then((data) => {
@@ -1421,6 +1426,7 @@ export default function ResearchApp({ user }: { user: User }) {
         }
         setModelConfigured(Boolean(data.modelConfigured));
         setConnectedModel(data.model || null);
+        setModelCredentialSource(data.modelCredentialSource || null);
       })
       .catch(() => {
         setSpaces(fallbackSpaces);
@@ -2359,17 +2365,69 @@ export default function ResearchApp({ user }: { user: User }) {
   const refreshModelStatus = async () => {
     if (checkingModel) return;
     setCheckingModel(true);
+    setModelSettingsError("");
     try {
-      const response = await fetch("/api/spaces", { cache: "no-store" });
-      const data = await response.json() as { modelConfigured?: boolean; model?: string | null; error?: string };
+      const response = await fetch("/api/model-settings", { cache: "no-store" });
+      const data = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
       if (!response.ok) throw new Error(data.error || "model status unavailable");
-      setModelConfigured(Boolean(data.modelConfigured));
+      setModelConfigured(Boolean(data.configured));
       setConnectedModel(data.model || null);
-      setToast(data.modelConfigured
+      setModelCredentialSource(data.source || null);
+      setToast(data.configured
         ? (locale === "zh" ? "DeepSeek Pro 已连接" : "DeepSeek Pro is connected")
-        : (locale === "zh" ? "仍未检测到服务端密钥" : "No server-side key was detected"));
-    } catch {
-      setToast(locale === "zh" ? "暂时无法检测模型状态" : "Could not check the model status");
+        : (locale === "zh" ? "当前浏览器还没有可用的 API Key" : "This browser does not have a usable API key yet"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : (locale === "zh" ? "暂时无法检测模型状态" : "Could not check the model status");
+      setModelSettingsError(message);
+    } finally {
+      setCheckingModel(false);
+    }
+  };
+
+  const saveModelCredential = async () => {
+    const apiKey = modelApiKey.trim();
+    if (!apiKey || checkingModel) return;
+    setCheckingModel(true);
+    setModelSettingsError("");
+    try {
+      const response = await fetch("/api/model-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey }),
+      });
+      const data = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
+      if (!response.ok) throw new Error(data.error || "DeepSeek connection failed");
+      setModelConfigured(true);
+      setConnectedModel(data.model || "deepseek-v4-pro");
+      setModelCredentialSource("browser");
+      setModelApiKey("");
+      setShowModelApiKey(false);
+      setToast(locale === "zh" ? "API Key 已验证并保存到当前浏览器" : "The API key was verified and saved in this browser");
+    } catch (error) {
+      setModelSettingsError(error instanceof Error ? error.message : (locale === "zh" ? "API Key 无法连接 DeepSeek" : "The API key could not connect to DeepSeek"));
+    } finally {
+      setCheckingModel(false);
+    }
+  };
+
+  const removeBrowserModelCredential = async () => {
+    if (checkingModel) return;
+    setCheckingModel(true);
+    setModelSettingsError("");
+    try {
+      const response = await fetch("/api/model-settings", { method: "DELETE" });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Could not remove the key");
+      setModelApiKey("");
+      setShowModelApiKey(false);
+      const statusResponse = await fetch("/api/model-settings", { cache: "no-store" });
+      const status = await statusResponse.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null };
+      setModelConfigured(Boolean(status.configured));
+      setConnectedModel(status.model || null);
+      setModelCredentialSource(status.source || null);
+      setToast(locale === "zh" ? "当前浏览器保存的 API Key 已删除" : "The browser-stored API key was removed");
+    } catch (error) {
+      setModelSettingsError(error instanceof Error ? error.message : (locale === "zh" ? "暂时无法删除 API Key" : "Could not remove the API key"));
     } finally {
       setCheckingModel(false);
     }
@@ -2778,16 +2836,16 @@ export default function ResearchApp({ user }: { user: User }) {
 
       {modelSettingsOpen && (
         <div className="v2-modal" role="dialog" aria-modal="true" aria-label={locale === "zh" ? "AI 模型设置" : "AI model settings"}>
-          <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setModelSettingsOpen(false)} />
+          <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => { setModelSettingsOpen(false); setModelApiKey(""); setModelSettingsError(""); setShowModelApiKey(false); }} />
           <div className="v2-model-settings">
-            <div className="v2-modal-head"><div><p className="v2-kicker">π {locale === "zh" ? "服务端模型" : "SERVER-SIDE MODEL"}</p><h2>{locale === "zh" ? "AI 模型设置" : "AI model settings"}</h2><p>{locale === "zh" ? "密钥只保存在服务端，不写入浏览器、本地存储或研究数据库。" : "The key stays server-side and is never written to the browser, local storage, or research database."}</p></div><button type="button" onClick={() => setModelSettingsOpen(false)}>×</button></div>
-            <section className={"v2-model-status-card " + (modelConfigured ? "live" : "pending")}><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConfigured ? (locale === "zh" ? "已连接" : "Connected") : (locale === "zh" ? "等待服务端配置" : "Waiting for server setup")}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-v4-pro")}</p></div></section>
-            {!modelConfigured && <div className="v2-model-setup-steps">
-              <article><b>1</b><div><strong>{locale === "zh" ? "本地开发" : "Local development"}</strong><p>{locale === "zh" ? "在项目根目录创建仅本机可见的 .dev.vars，并设置 DEEPSEEK_API_KEY。不要提交到 Git。" : "Create a local-only .dev.vars in the project root and set DEEPSEEK_API_KEY. Never commit it to Git."}</p><code>.dev.vars · DEEPSEEK_API_KEY</code></div></article>
-              <article><b>2</b><div><strong>{locale === "zh" ? "托管版本" : "Hosted version"}</strong><p>{locale === "zh" ? "在 Sites 项目的 Secret 设置中添加同名密钥；数据库里不保存明文 Key。" : "Add the same key in the Sites project Secret settings; the plaintext key is not stored in the database."}</p><code>Sites Secret · DEEPSEEK_API_KEY</code></div></article>
-              <article><b>3</b><div><strong>{locale === "zh" ? "让配置生效" : "Apply the setting"}</strong><p>{locale === "zh" ? "本地修改后重启开发服务；托管 Secret 更新后重新发布，再回到这里检测。" : "Restart the local dev server, or republish after updating the hosted Secret, then check again here."}</p></div></article>
-            </div>}
-            <footer className="v2-model-settings-actions"><small>{locale === "zh" ? "Pi 不提供会把密钥留在浏览器里的输入框。" : "Pi deliberately avoids a key input that would leave the secret in the browser."}</small><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{checkingModel ? (locale === "zh" ? "检测中…" : "Checking…") : (locale === "zh" ? "重新检测连接" : "Check connection")}</button></footer>
+            <div className="v2-modal-head"><div><p className="v2-kicker">π {locale === "zh" ? "浏览器自带密钥" : "BRING YOUR OWN KEY"}</p><h2>{locale === "zh" ? "连接 DeepSeek" : "Connect DeepSeek"}</h2><p>{locale === "zh" ? "直接粘贴 API Key。Pi 会先验证连接，再把它安全保存在当前浏览器。" : "Paste an API key directly. Pi verifies the connection before saving it securely in this browser."}</p></div><button type="button" onClick={() => { setModelSettingsOpen(false); setModelApiKey(""); setModelSettingsError(""); setShowModelApiKey(false); }}>×</button></div>
+            <section className={"v2-model-status-card " + (modelConfigured ? "live" : "pending")}><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConfigured ? (locale === "zh" ? "已连接" : "Connected") : (locale === "zh" ? "尚未连接" : "Not connected")}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-v4-pro")}{modelConfigured ? ` · ${modelCredentialSource === "browser" ? (locale === "zh" ? "当前浏览器 Key" : "browser key") : (locale === "zh" ? "平台 Key" : "host key")}` : ""}</p></div><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{locale === "zh" ? "检测" : "Check"}</button></section>
+            <form className="v2-model-key-form" onSubmit={(event) => { event.preventDefault(); void saveModelCredential(); }}>
+              <label><span>{locale === "zh" ? (modelCredentialSource === "browser" ? "粘贴新 Key 以替换" : "DeepSeek API Key") : (modelCredentialSource === "browser" ? "Paste a new key to replace it" : "DeepSeek API key")}</span><div><input type={showModelApiKey ? "text" : "password"} value={modelApiKey} onChange={(event) => { setModelApiKey(event.target.value); setModelSettingsError(""); }} placeholder="sk-…" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowModelApiKey((current) => !current)}>{showModelApiKey ? (locale === "zh" ? "隐藏" : "Hide") : (locale === "zh" ? "显示" : "Show")}</button></div></label>
+              {modelSettingsError && <p className="v2-model-key-error" role="alert">{modelSettingsError}</p>}
+              <div className="v2-model-key-actions">{modelCredentialSource === "browser" ? <button className="remove" type="button" onClick={() => void removeBrowserModelCredential()} disabled={checkingModel}>{locale === "zh" ? "删除当前浏览器 Key" : "Remove browser key"}</button> : <span /> }<button className="save" type="submit" disabled={checkingModel || !modelApiKey.trim()}>{checkingModel ? (locale === "zh" ? "正在验证…" : "Verifying…") : (locale === "zh" ? "测试并保存" : "Test & save")} →</button></div>
+            </form>
+            <section className="v2-model-key-privacy"><b>✓</b><div><strong>{locale === "zh" ? "只保存在这个浏览器" : "Stored only in this browser"}</strong><p>{locale === "zh" ? "Key 使用 HttpOnly 安全 Cookie 保存，页面脚本无法读取，也不会写入论文数据库。关闭浏览器后仍可使用，30 天后自动失效。" : "The key is kept in an HttpOnly security cookie that page scripts cannot read. It never enters the paper database and expires automatically after 30 days."}</p><small>{locale === "zh" ? "网页发起的扫描和 AI 功能都会使用它；无人打开网页时的后台定时扫描仍需要平台 Key。" : "Browser-started scans and AI features use it. Unattended background scans still require a host key."}</small></div></section>
           </div>
         </div>
       )}

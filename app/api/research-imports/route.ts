@@ -1,4 +1,5 @@
-import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { upsertPreferenceSignal } from "../../../lib/preference-memory";
 import type {
   ImportSourceKind,
@@ -237,8 +238,8 @@ export async function POST(request: Request) {
     ).bind(space.id, hash).first<ImportRow>();
     if (existing) return Response.json({ import: toRecord(existing), cached: true, rawFilesStored: false });
 
-    const runtime = getRuntimeEnv();
-    if (!runtime.DEEPSEEK_API_KEY) return Response.json({ error: "DeepSeek Pro is not configured" }, { status: 503 });
+    const credential = resolveDeepSeekCredential(request);
+    if (!credential.apiKey) return Response.json({ error: "DeepSeek Pro is not configured" }, { status: 503 });
     const usageDate = new Date().toISOString().slice(0, 10);
     const workspaceScope = "import-workspace:" + user.userId.slice("anonymous:".length);
     const [globalCount, workspaceCount] = await Promise.all([
@@ -270,7 +271,7 @@ export async function POST(request: Request) {
 
     const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
-      headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+      headers: { Authorization: "Bearer " + credential.apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: IMPORT_MODEL,
         messages: [
