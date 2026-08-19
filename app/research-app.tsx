@@ -147,7 +147,7 @@ type ResearchNotification = {
   readAt: string | null;
   createdAt: string;
 };
-type MonitorStatus = "idle" | "scanning" | "discovering_days" | "discovering_months" | "discovering_years" | "deduplicating" | "reviewing" | "saving" | "briefing" | "ready" | "error";
+type MonitorStatus = "idle" | "scanning" | "discovering_days" | "discovering_months" | "discovering_years" | "deduplicating" | "screening" | "deep_reviewing" | "reviewing" | "saving" | "briefing" | "ready" | "error";
 type MonitorState = {
   status: MonitorStatus;
   lastRunAt: string | null;
@@ -937,6 +937,8 @@ const monitorProgressByStatus: Record<MonitorStatus, number> = {
   discovering_months: 24,
   discovering_years: 38,
   deduplicating: 48,
+  screening: 56,
+  deep_reviewing: 76,
   reviewing: 58,
   saving: 88,
   briefing: 94,
@@ -956,6 +958,8 @@ function monitorPhaseLabel(status: MonitorStatus | undefined, locale: Locale) {
     discovering_months: { zh: "正在检索近 6 个月的高质量论文", en: "Searching the latest 6 months" },
     discovering_years: { zh: "正在回溯近 5 年的重要论文", en: "Reviewing the last 5 years" },
     deduplicating: { zh: "正在去重并排除已评审记录", en: "Deduplicating previously reviewed records" },
+    screening: { zh: "DeepSeek Pro 正在快速筛选候选", en: "DeepSeek Pro is triaging candidates" },
+    deep_reviewing: { zh: "高潜力论文正在并行深度解读", en: "High-potential papers are being interpreted in parallel" },
     reviewing: { zh: "DeepSeek Pro 正在逐篇筛选并撰写", en: "DeepSeek Pro is screening and writing each brief" },
     saving: { zh: "正在保存推荐与淘汰记录", en: "Saving recommendations and rejected records" },
     briefing: { zh: "Pi 正在生成今日研究简报", en: "Pi is writing today's research brief" },
@@ -999,6 +1003,38 @@ function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) 
     stopped = true;
     window.clearInterval(timer);
   };
+}
+
+async function advanceMonitorPipeline(
+  spaceId: string,
+  initialMonitor: MonitorState,
+  onUpdate: (monitor: MonitorState) => void,
+  isCancelled: () => boolean = () => false,
+) {
+  let current = initialMonitor;
+  for (let step = 0; step < 14 && !isCancelled(); step += 1) {
+    if (["ready", "error"].includes(current.status)) break;
+    const response = await fetch("/api/monitor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spaceId, action: "advance", jobId: current.scanJob?.id }),
+    });
+    const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
+    if (!response.ok || !data.monitor) throw new Error(data.error || "scan stage unavailable");
+    current = data.monitor;
+    if (!isCancelled()) onUpdate(current);
+  }
+  if (!isCancelled() && current.status === "ready" && current.scanJob?.checkpoint === "main_complete") {
+    void fetch("/api/monitor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spaceId, action: "enhance", jobId: current.scanJob.id }),
+    }).then(async (response) => {
+      const data = await response.json().catch(() => ({})) as { monitor?: MonitorState };
+      if (!isCancelled() && response.ok && data.monitor) onUpdate(data.monitor);
+    }).catch(() => undefined);
+  }
+  return current;
 }
 
 function modelDisplayName(model: string | null | undefined) {
@@ -1300,6 +1336,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [mobileNav, setMobileNav] = useState(false);
   const [monitor, setMonitor] = useState<MonitorState | null>(null);
   const [monitoring, setMonitoring] = useState(false);
+  const [scanElapsedSeconds, setScanElapsedSeconds] = useState(0);
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
   const [venueDraft, setVenueDraft] = useState("");
   const [authorDraft, setAuthorDraft] = useState("");
@@ -1464,11 +1501,15 @@ export default function ResearchApp({ user }: { user: User }) {
       fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, trigger: "visit" }),
+        body: JSON.stringify({ spaceId: activeSpace.id, trigger: "visit", action: "start" }),
       })
-        .then((response) => response.json() as Promise<{ monitor?: MonitorState }>)
-        .then((data) => {
-          if (!cancelled && data.monitor) setMonitor(data.monitor);
+        .then(async (response) => {
+          const data = await response.json() as { monitor?: MonitorState; error?: string };
+          if (!response.ok || !data.monitor) throw new Error(data.error || "monitor unavailable");
+          if (!cancelled) setMonitor(data.monitor);
+          if (!data.monitor.throttled && !["ready", "error"].includes(data.monitor.status)) {
+            await advanceMonitorPipeline(activeSpace.id, data.monitor, (nextMonitor) => { if (!cancelled) setMonitor(nextMonitor); }, () => cancelled);
+          }
         })
         .catch(() => {
           if (!cancelled) setMonitor({
@@ -1490,6 +1531,18 @@ export default function ResearchApp({ user }: { user: User }) {
     const timer = window.setTimeout(() => setToast(""), 2500);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    const startedAt = activeScanJob?.startedAt;
+    if (!startedAt) {
+      const resetTimer = window.setTimeout(() => setScanElapsedSeconds(0), 0);
+      return () => window.clearTimeout(resetTimer);
+    }
+    const update = () => setScanElapsedSeconds(Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000)));
+    const initialTimer = window.setTimeout(update, 0);
+    const timer = window.setInterval(update, 1000);
+    return () => { window.clearTimeout(initialTimer); window.clearInterval(timer); };
+  }, [activeScanJob?.id, activeScanJob?.startedAt]);
 
   useEffect(() => {
     if (view !== "memory" || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
@@ -1811,12 +1864,13 @@ export default function ResearchApp({ user }: { user: User }) {
       const response = await fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, force: true, trigger: "manual" }),
+        body: JSON.stringify({ spaceId: activeSpace.id, force: true, trigger: "manual", action: "start" }),
       });
       const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
       if (!response.ok || !data.monitor) throw new Error(data.error || "scan unavailable");
       setMonitor(data.monitor);
       if (data.monitor.throttled) setToast(t.manualCooling);
+      else if (!["ready", "error"].includes(data.monitor.status)) await advanceMonitorPipeline(activeSpace.id, data.monitor, setMonitor);
     } catch {
       setToast(locale === "zh" ? "扫描未能启动，请稍后重试" : "The scan could not start. Please try again shortly.");
     } finally {
@@ -1857,10 +1911,13 @@ export default function ResearchApp({ user }: { user: User }) {
       const scanResponse = await fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, trigger: "manual" }),
+        body: JSON.stringify({ spaceId: activeSpace.id, trigger: "manual", action: "start" }),
       });
       const scanData = await scanResponse.json() as { monitor?: MonitorState };
-      if (scanData.monitor) setMonitor(scanData.monitor);
+      if (scanData.monitor) {
+        setMonitor(scanData.monitor);
+        if (!["ready", "error"].includes(scanData.monitor.status)) await advanceMonitorPipeline(activeSpace.id, scanData.monitor, setMonitor);
+      }
     } finally {
       stopPolling?.();
       setMonitoring(false);
@@ -2531,10 +2588,13 @@ export default function ResearchApp({ user }: { user: User }) {
                   <i><b style={{ width: `${scanProgress}%` }} /></i>
                   <small>
                     {activeScanJob?.discoveredCount || monitor?.scannedCount || 0} {locale === "zh" ? "条候选" : "candidates"}
-                    {effectiveScanStatus === "reviewing" && <> · {activeScanJob?.reviewedCount || 0} {locale === "zh" ? "篇已审核" : "reviewed"}</>}
+                    {["screening", "deep_reviewing", "reviewing"].includes(effectiveScanStatus) && <> · {activeScanJob?.reviewedCount || 0} {locale === "zh" ? "篇已筛选" : "screened"}</>}
+                    {effectiveScanStatus === "deep_reviewing" && <> · {activeScanJob?.recommendedCount || 0} {locale === "zh" ? "篇已可阅读" : "ready to read"}</>}
                     {healthyCoverageCount > 0 && <> · {healthyCoverageCount} {locale === "zh" ? "类来源正常" : "source groups healthy"}</>}
+                    {scanElapsedSeconds > 0 && <> · {scanElapsedSeconds < 60 ? `${scanElapsedSeconds}s` : `${Math.floor(scanElapsedSeconds / 60)}m ${scanElapsedSeconds % 60}s`}</>}
                     {locale === "zh" ? " · 上次推荐仍可继续阅读" : " · Previous recommendations remain readable"}
                   </small>
+                  {["screening", "deep_reviewing"].includes(effectiveScanStatus) && <em className="v2-resume-note">✓ {locale === "zh" ? "每完成一批就会立即保存；推荐出现后可先阅读，无需等待整轮结束" : "Each completed batch is saved immediately. You can start reading before the full scan finishes."}</em>}
                   {activeScanJob?.resumeOfJobId && <em className="v2-resume-note">↻ {locale === "zh" ? `正在从已保存检查点续跑 · 第 ${activeScanJob.attempt || 2} 次尝试` : `Resuming from a saved checkpoint · attempt ${activeScanJob.attempt || 2}`}</em>}
                 </div>
               )}

@@ -34,12 +34,29 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext) {
   await Promise.allSettled(due.results.map(async (space) => {
     const workspaceId = space.owner_user_id.startsWith("anonymous:") ? space.owner_user_id.slice("anonymous:".length) : "";
     if (!workspaceId) return;
+    const headers = { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${workspaceId}` };
     const request = new Request("https://pi-research.internal/api/monitor", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${workspaceId}` },
-      body: JSON.stringify({ spaceId: space.id, trigger: "scheduled" }),
+      headers,
+      body: JSON.stringify({ spaceId: space.id, trigger: "scheduled", action: "start" }),
     });
-    await handler.fetch(request, env, ctx);
+    let response = await handler.fetch(request, env, ctx);
+    let state = await response.json().catch(() => ({})) as { monitor?: { status?: string; scanJob?: { id?: string; checkpoint?: string } | null } };
+    for (let step = 0; step < 14 && state.monitor && !["ready", "error"].includes(state.monitor.status || ""); step += 1) {
+      response = await handler.fetch(new Request("https://pi-research.internal/api/monitor", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ spaceId: space.id, action: "advance", jobId: state.monitor.scanJob?.id }),
+      }), env, ctx);
+      state = await response.json().catch(() => ({})) as typeof state;
+    }
+    if (state.monitor?.status === "ready" && state.monitor.scanJob?.checkpoint === "main_complete") {
+      await handler.fetch(new Request("https://pi-research.internal/api/monitor", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ spaceId: space.id, action: "enhance", jobId: state.monitor.scanJob.id }),
+      }), env, ctx);
+    }
   }));
 }
 

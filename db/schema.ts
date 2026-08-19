@@ -138,6 +138,7 @@ export const monitorScanJobs = sqliteTable(
     triggerSource: text("trigger_source").notNull().default("manual"),
     resumeOfJobId: text("resume_of_job_id"),
     checkpoint: text("checkpoint").notNull().default("queued"),
+    workQueueJson: text("work_queue_json").notNull().default("{}"),
     error: text("error"),
     startedAt: text("started_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     completedAt: text("completed_at"),

@@ -1,0 +1,1 @@
+ALTER TABLE `monitor_scan_jobs` ADD `work_queue_json` text DEFAULT '{}' NOT NULL;

@@ -47,6 +47,32 @@ test("legacy local databases self-heal before route coverage indexes are created
   assert.match(client, /扫描未能启动，请稍后重试/);
 });
 
+test("monitoring starts immediately and advances through resumable two-pass AI stages", async () => {
+  const [monitor, client, worker, schema, migration] = await Promise.all([
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0021_lush_the_professor.sql", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(monitor, /checkpoint, work_queue_json/);
+  assert.match(monitor, /status: 202/);
+  assert.match(monitor, /quickScreenCandidates/);
+  assert.match(monitor, /QUICK_SCREEN_CONCURRENCY = 2/);
+  assert.match(monitor, /reasoning_effort: "medium"/);
+  assert.match(monitor, /DEEP_REVIEW_LIMIT = 8/);
+  assert.match(monitor, /runConcurrentDeepReview/);
+  assert.match(monitor, /deferLlm/);
+  assert.match(monitor, /checkpoint = 'main_complete'/);
+  assert.match(client, /advanceMonitorPipeline/);
+  assert.match(client, /action: "enhance"/);
+  assert.match(client, /每完成一批就会立即保存/);
+  assert.match(worker, /action: "advance"/);
+  assert.match(schema, /workQueueJson/);
+  assert.match(migration, /work_queue_json/);
+});
+
 test("today and its daily brief are capped at six and reranked across directions", async () => {
   const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
 

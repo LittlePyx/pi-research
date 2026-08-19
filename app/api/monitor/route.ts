@@ -304,6 +304,24 @@ type PaperReview = {
   researchQuestionsZh: string[];
   researchQuestionsEn: string[];
 };
+type QuickScreen = {
+  canonicalId: string;
+  isPaper: boolean;
+  relevanceScore: number;
+  qualityScore: number;
+  screeningReason: string;
+};
+type ScanWorkQueue = {
+  candidateIds: string[];
+  screens: QuickScreen[];
+  deepIds: string[];
+  deepCompletedIds: string[];
+  rawCandidateCount: number;
+  newCandidateCount: number;
+  screenFailureCount: number;
+  deepFailureCount: number;
+};
+type StagedJobRow = ScanJobRow & { work_queue_json: string };
 type MapTrackContext = { id: string; title_zh: string; title_en: string; summary_en: string; search_queries: string };
 
 const CADENCE_MS = 24 * 60 * 60 * 1000;
@@ -313,6 +331,10 @@ const STALE_RUN_MS = 20 * 60 * 1000;
 const RUN_LOCK_LEASE_MS = 10 * 60 * 1000;
 const DISCOVERY_OFFSET_LIMIT = 3000;
 const REVIEW_BATCH_SIZE = 14;
+const QUICK_SCREEN_BATCH_SIZE = 14;
+const QUICK_SCREEN_CONCURRENCY = 2;
+const DEEP_REVIEW_BATCH_SIZE = 4;
+const DEEP_REVIEW_LIMIT = 8;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
 const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
 const HORIZONS = [
@@ -909,14 +931,15 @@ async function fetchHorizon(
       if (!response.ok) throw new Error(`Crossref returned ${response.status}`);
       const data = await response.json() as CrossrefResponse;
       const queryKey = await discoveryQueryKey(plan);
-      const normalized = (await Promise.all((data.message?.items || []).map(async (item) => {
+      const normalizedItems = await Promise.all((data.message?.items || []).map(async (item) => {
         const candidate = await normalizeItem(item, horizon.key);
         return candidate ? {
           ...candidate,
           discoveryChannel: plan.channel,
           provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, queryText: cleanText(plan.query).slice(0, 500) }],
         } : null;
-      }))).filter((candidate): candidate is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(candidate));
+      }));
+      const normalized = normalizedItems.filter((candidate): candidate is Exclude<(typeof normalizedItems)[number], null> => candidate !== null);
       const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, rows);
       await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
       return normalized;
@@ -1433,6 +1456,137 @@ function parseReviewPayload(content: string) {
   }
 }
 
+function parseQuickScreenPayload(content: string) {
+  const cleaned = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const parsed = parseJsonObject(cleaned) as { screens?: Array<Partial<QuickScreen>> };
+  return Array.isArray(parsed.screens) ? parsed.screens : [];
+}
+
+async function quickScreenBatch(
+  database: D1Database,
+  space: SpaceRow,
+  userId: string,
+  candidates: Candidate[],
+  apiKey: string,
+) {
+  const prompt = [
+    "Return one JSON object only with shape {\"screens\":[...]}. Screen every supplied record.",
+    "Each screen must contain canonicalId, isPaper, relevanceScore, qualityScore, and screeningReason.",
+    "This is a fast but rigorous academic triage pass. Reject mastheads, publication information, author instructions, contents, corrections, calls for papers, and non-research records.",
+    "Judge direct fit to the research space, evidence quality, durable usefulness, and the different standards for 14 days, 6 months, and 5 years.",
+    "Do not write summaries or reading advice in this pass. Keep screeningReason under 35 words and use only supplied metadata.",
+    `Research space: ${space.name} — ${space.description}`,
+    `Confirmed research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
+    `Positive examples: ${space.positiveExamples || "None yet"}`,
+    `Negative examples: ${space.negativeExamples || "None yet"}`,
+    `Records: ${JSON.stringify(candidates.map((paper) => ({
+      canonicalId: paper.canonicalId,
+      title: paper.title,
+      authors: paper.authors,
+      venue: paper.venue,
+      publishedAt: paper.publishedAt,
+      horizon: paper.horizon,
+      citations: paper.citationCount,
+      priorityVenue: paper.priorityVenue,
+      abstract: paper.abstractText.slice(0, 900),
+    })))}`,
+  ].join("\n");
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: MONITOR_MODEL,
+          messages: [
+            { role: "system", content: "You are Pi Research's fast evidence-disciplined paper triage editor. Return strict JSON." },
+            { role: "user", content: prompt },
+          ],
+          thinking: { type: "enabled" },
+          reasoning_effort: "medium",
+          response_format: { type: "json_object" },
+          max_tokens: 5200,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(55_000),
+      });
+      const data = await response.json() as DeepSeekResponse;
+      if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro quick screening failed");
+      const content = data.choices?.[0]?.message?.content || "";
+      if (!content.trim()) throw new Error("DeepSeek Pro returned an empty screening result");
+      const byId = new Map(parseQuickScreenPayload(content).map((item) => [cleanText(item.canonicalId || ""), item]));
+      const screens = candidates.map((candidate) => {
+        const item = byId.get(candidate.canonicalId);
+        if (!item) throw new Error("DeepSeek Pro did not screen every candidate");
+        return {
+          canonicalId: candidate.canonicalId,
+          isPaper: item.isPaper === true,
+          relevanceScore: boundedScore(item.relevanceScore),
+          qualityScore: boundedScore(item.qualityScore),
+          screeningReason: cleanText(item.screeningReason || "Fast screening completed").slice(0, 300),
+        } satisfies QuickScreen;
+      });
+      const usageDate = new Date().toISOString().slice(0, 10);
+      const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
+      await Promise.all([
+        recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+        recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+        recordUsage(database, "monitor-space:" + space.id, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+      ]);
+      return screens;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 700));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("DeepSeek Pro quick screening failed twice");
+}
+
+async function quickScreenCandidates(
+  database: D1Database,
+  space: SpaceRow,
+  userId: string,
+  candidates: Candidate[],
+  apiKey: string,
+) {
+  if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be screened");
+  const usageDate = new Date().toISOString().slice(0, 10);
+  const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
+  const groups = Array.from({ length: QUICK_SCREEN_CONCURRENCY }, (_, index) => candidates.slice(index * QUICK_SCREEN_BATCH_SIZE, (index + 1) * QUICK_SCREEN_BATCH_SIZE)).filter((group) => group.length);
+  const [globalCount, workspaceCount] = await Promise.all([
+    usageCount(database, "monitor:global", usageDate),
+    usageCount(database, workspaceScope, usageDate),
+  ]);
+  if (globalCount + groups.length > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount + groups.length > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+    throw new Error("DeepSeek Pro screening budget reached");
+  }
+  const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey)));
+  const screens = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+  return { screens, errors };
+}
+
+async function persistQuickScreens(database: D1Database, spaceId: string, screens: QuickScreen[]) {
+  if (!screens.length) return;
+  const placeholders = screens.map(() => "?").join(", ");
+  const rows = await database.prepare(
+    `SELECT p.id, p.canonical_id FROM monitored_papers p WHERE p.space_id = ? AND p.canonical_id IN (${placeholders})`,
+  ).bind(spaceId, ...screens.map((screen) => screen.canonicalId)).all<{ id: string; canonical_id: string }>();
+  const paperIds = new Map(rows.results.map((row) => [row.canonical_id, row.id]));
+  const statements = screens.flatMap((screen) => {
+    const paperId = paperIds.get(screen.canonicalId);
+    if (!paperId) return [];
+    const eligible = screen.isPaper && screen.relevanceScore >= 68 && screen.qualityScore >= 55;
+    return [database.prepare(
+      `UPDATE paper_insights SET analysis_source = ?, analysis_model = ?, llm_recommended = 0,
+       llm_relevance_score = ?, quality_score = MAX(quality_score, ?), screening_reason = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE paper_id = ? AND space_id = ?`,
+    ).bind(eligible ? "deepseek_screened" : "deepseek_rejected", MONITOR_MODEL, screen.relevanceScore, screen.qualityScore, screen.screeningReason, paperId, spaceId)];
+  });
+  if (statements.length) await database.batch(statements);
+}
+
 async function persistReviewBatch(database: D1Database, spaceId: string, candidates: Candidate[], reviews: PaperReview[]) {
   if (!reviews.length) return;
   const candidateByCanonical = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
@@ -1865,6 +2019,7 @@ async function generateDailyBrief(
   metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; recommended: number; rejected: number },
   now: Date,
   apiKey: string,
+  deferLlm = false,
 ) {
   const briefDate = shanghaiDateKey(now);
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
@@ -1906,6 +2061,7 @@ async function generateDailyBrief(
     paperIds, metrics, model: error ? "deterministic-fallback" : "evidence-summary", error: error || null,
   });
   if (!selected.length) return fallback();
+  if (deferLlm) return fallback("LLM enhancement pending");
 
   const usageDate = now.toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
@@ -2263,15 +2419,18 @@ async function persistCandidatePool(database: D1Database, spaceId: string, candi
   }
 }
 
-async function pendingCandidateQueue(database: D1Database, spaceId: string) {
+async function pendingCandidateQueue(database: D1Database, spaceId: string, canonicalIds?: string[]) {
+  const restrictedIds = Array.from(new Set(canonicalIds || [])).slice(0, 120);
+  const candidateCondition = restrictedIds.length
+    ? `p.canonical_id IN (${restrictedIds.map(() => "?").join(", ")})`
+    : `(i.analysis_model = '' OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days')))`;
   const rows = await database.prepare(
     `SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
      p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
-     WHERE p.space_id = ? AND (i.analysis_model = '' OR
-       (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days')))
+     WHERE p.space_id = ? AND ${candidateCondition}
      ORDER BY i.quality_score DESC, p.citation_count DESC, p.discovered_at DESC LIMIT 360`,
-  ).bind(spaceId).all<{
+  ).bind(spaceId, ...restrictedIds).all<{
     paper_id: string; canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
     published_at: string | null; source: string; horizon: Horizon; citation_count: number; relevance_score: number;
     abstract_text: string; quality_score: number; priority_venue: number;
@@ -2306,7 +2465,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string) {
       provenanceByPaper.set(source.paper_id, current);
     }
   }
-  return rows.results.map((row) => ({
+  const candidates = rows.results.map((row) => ({
     canonicalId: row.canonical_id,
     doi: row.doi,
     title: row.title,
@@ -2330,6 +2489,9 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string) {
       appearances: 1,
     }],
   }));
+  if (!restrictedIds.length) return candidates;
+  const order = new Map(restrictedIds.map((id, index) => [id, index]));
+  return candidates.sort((left, right) => (order.get(left.canonicalId) ?? 999) - (order.get(right.canonicalId) ?? 999));
 }
 
 function selectUnseenReviewBatch(candidates: Candidate[]) {
@@ -3016,7 +3178,103 @@ export async function PATCH(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
+  const fallback: ScanWorkQueue = {
+    candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
+    screenFailureCount: 0, deepFailureCount: 0,
+  };
+  if (!value) return fallback;
+  try {
+    const parsed = JSON.parse(value) as Partial<ScanWorkQueue>;
+    return {
+      candidateIds: Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, 120) : [],
+      screens: Array.isArray(parsed.screens) ? parsed.screens.filter((screen): screen is QuickScreen => Boolean(screen && typeof screen.canonicalId === "string")).slice(0, 120) : [],
+      deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_LIMIT) : [],
+      deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_LIMIT) : [],
+      rawCandidateCount: Math.max(0, Number(parsed.rawCandidateCount) || 0),
+      newCandidateCount: Math.max(0, Number(parsed.newCandidateCount) || 0),
+      screenFailureCount: Math.max(0, Number(parsed.screenFailureCount) || 0),
+      deepFailureCount: Math.max(0, Number(parsed.deepFailureCount) || 0),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function saveScanWorkQueue(database: D1Database, jobId: string, work: ScanWorkQueue) {
+  await database.prepare("UPDATE monitor_scan_jobs SET work_queue_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .bind(JSON.stringify(work), jobId).run();
+}
+
+function chooseDeepCandidateIds(candidates: Candidate[], screens: QuickScreen[]) {
+  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const ranked = screens
+    .filter((screen) => screen.isPaper && screen.relevanceScore >= 68 && screen.qualityScore >= 55 && candidateById.has(screen.canonicalId))
+    .sort((left, right) => (right.relevanceScore * 0.62 + right.qualityScore * 0.38) - (left.relevanceScore * 0.62 + left.qualityScore * 0.38));
+  return selectDiverseItems(
+    ranked,
+    (screen) => `horizon:${candidateById.get(screen.canonicalId)?.horizon || "days"}`,
+    (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
+    DEEP_REVIEW_LIMIT,
+  ).map((screen) => screen.canonicalId);
+}
+
+async function loadPersistedReviews(database: D1Database, spaceId: string, canonicalIds: string[]) {
+  if (!canonicalIds.length) return [] as PaperReview[];
+  const placeholders = canonicalIds.map(() => "?").join(", ");
+  const rows = await database.prepare(
+    `SELECT p.canonical_id, i.analysis_source, i.llm_recommended, i.llm_relevance_score, i.quality_score,
+     i.summary_zh, i.summary_en, i.why_read_zh, i.why_read_en, i.screening_reason,
+     i.recommendation_tier, i.read_minutes, i.read_depth, i.problem_zh, i.problem_en,
+     i.method_zh, i.method_en, i.contribution_zh, i.contribution_en, i.limitations_zh,
+     i.limitations_en, i.reading_focus_zh, i.reading_focus_en, i.research_questions_zh, i.research_questions_en
+     FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+     WHERE p.space_id = ? AND p.canonical_id IN (${placeholders})`,
+  ).bind(spaceId, ...canonicalIds).all<{
+    canonical_id: string; analysis_source: string; llm_recommended: number; llm_relevance_score: number; quality_score: number;
+    summary_zh: string; summary_en: string; why_read_zh: string; why_read_en: string; screening_reason: string;
+    recommendation_tier: string; read_minutes: number; read_depth: string; problem_zh: string; problem_en: string;
+    method_zh: string; method_en: string; contribution_zh: string; contribution_en: string; limitations_zh: string;
+    limitations_en: string; reading_focus_zh: string; reading_focus_en: string; research_questions_zh: string; research_questions_en: string;
+  }>();
+  const byId = new Map(rows.results.map((row) => [row.canonical_id, row]));
+  return canonicalIds.flatMap((canonicalId) => {
+    const row = byId.get(canonicalId);
+    if (!row || !["deepseek", "deepseek_rejected"].includes(row.analysis_source)) return [];
+    const tier: PaperReview["recommendationTier"] = row.recommendation_tier === "must_read" || row.recommendation_tier === "reserve" ? row.recommendation_tier : "browse";
+    const depth: PaperReview["readDepth"] = row.read_depth === "deep" || row.read_depth === "overview" ? row.read_depth : "focused";
+    return [{
+      canonicalId, isPaper: true, recommended: Boolean(row.llm_recommended), relevanceScore: row.llm_relevance_score,
+      qualityScore: row.quality_score, summaryZh: row.summary_zh, summaryEn: row.summary_en, whyReadZh: row.why_read_zh,
+      whyReadEn: row.why_read_en, screeningReason: row.screening_reason, trackId: "", mapRole: "frontier" as const,
+      mapRationaleZh: "", mapRationaleEn: "", recommendationTier: tier, readMinutes: row.read_minutes, readDepth: depth,
+      problemZh: row.problem_zh, problemEn: row.problem_en, methodZh: row.method_zh, methodEn: row.method_en,
+      contributionZh: row.contribution_zh, contributionEn: row.contribution_en, limitationsZh: row.limitations_zh,
+      limitationsEn: row.limitations_en, readingFocusZh: row.reading_focus_zh, readingFocusEn: row.reading_focus_en,
+      researchQuestionsZh: parseVenues(row.research_questions_zh), researchQuestionsEn: parseVenues(row.research_questions_en),
+    }];
+  });
+}
+
+async function runConcurrentDeepReview(
+  database: D1Database,
+  space: SpaceRow,
+  userId: string,
+  priorityVenues: string[],
+  candidates: Candidate[],
+  jobId: string,
+  lockToken: string,
+  apiKey: string,
+) {
+  const groups = [candidates.slice(0, DEEP_REVIEW_BATCH_SIZE), candidates.slice(DEEP_REVIEW_BATCH_SIZE, DEEP_REVIEW_BATCH_SIZE * 2)].filter((group) => group.length);
+  const settled = await Promise.allSettled(groups.map((group) => reviewCandidates(database, space, userId, priorityVenues, group, jobId, lockToken, apiKey)));
+  return {
+    reviews: settled.flatMap((result) => result.status === "fulfilled" ? result.value : []),
+    errors: settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []),
+  };
+}
+
+async function runLegacyMonitor(request: Request) {
   try {
     const payload = await request.json() as { spaceId?: string; force?: boolean; trigger?: ScanTrigger };
     const spaceId = payload.spaceId?.trim() || "";
@@ -3151,6 +3409,283 @@ export async function POST(request: Request) {
           .bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id, lockToken),
         database.prepare("UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
           .bind(message, failedAt.toISOString(), jobId),
+      ]);
+      return Response.json(await readState(database, space), { status: 502 });
+    }
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Unable to run monitoring" }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  let payload: { spaceId?: string; force?: boolean; trigger?: ScanTrigger; action?: "start" | "advance" | "enhance" | "legacy"; jobId?: string };
+  try {
+    payload = await request.json();
+  } catch {
+    return Response.json({ error: "Invalid monitoring request" }, { status: 400 });
+  }
+  if (payload.action === "legacy") return runLegacyMonitor(new Request(request.url, { method: "POST", headers: request.headers, body: JSON.stringify(payload) }));
+  const spaceId = payload.spaceId?.trim() || "";
+  if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
+  const context = await ownedSpace(request, spaceId);
+  if ("error" in context) return context.error;
+  const { database, space, user } = context;
+  const apiKey = resolveDeepSeekCredential(request).apiKey;
+  const action = payload.action || "start";
+  const trigger: ScanTrigger = payload.trigger === "scheduled" || payload.trigger === "manual" || payload.trigger === "visit"
+    ? payload.trigger : payload.force ? "manual" : "visit";
+
+  try {
+    if (action === "start") {
+      if (!apiKey) return Response.json({ error: "请先在网页中连接 DeepSeek API Key" }, { status: 400 });
+      await ensurePreference(database, space);
+      const previous = await database.prepare(
+        "SELECT status, last_run_at, next_run_at, updated_at, discovery_round, lock_token, lock_expires_at FROM monitor_runs WHERE space_id = ? LIMIT 1",
+      ).bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null }>();
+      const activeJob = await database.prepare(
+        "SELECT id, status, checkpoint FROM monitor_scan_jobs WHERE space_id = ? AND status NOT IN ('ready', 'error') ORDER BY started_at DESC LIMIT 1",
+      ).bind(space.id).first<{ id: string; status: string; checkpoint: string }>();
+      const now = new Date();
+      const lockExpiry = previous?.lock_expires_at ? Date.parse(previous.lock_expires_at) : 0;
+      if (activeJob && previous && !["idle", "ready", "error"].includes(previous.status)) {
+        if (!previous.lock_token || lockExpiry <= now.getTime()) {
+          const resumedLock = crypto.randomUUID();
+          await database.prepare(
+            "UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
+          ).bind(resumedLock, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), space.id).run();
+        }
+        return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }), { status: 202 });
+      }
+      const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
+      const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
+      if (previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
+        return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
+      }
+      const lockToken = crypto.randomUUID();
+      const jobId = crypto.randomUUID();
+      const previousJob = await database.prepare(
+        "SELECT id, status, attempt FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1",
+      ).bind(space.id).first<{ id: string; status: string; attempt: number }>();
+      const resumable = Boolean(previousJob && previousJob.status !== "ready");
+      await database.prepare(
+        "INSERT OR IGNORE INTO monitor_runs (id, space_id, status, last_trigger, updated_at) VALUES (?, ?, 'idle', ?, CURRENT_TIMESTAMP)",
+      ).bind(crypto.randomUUID(), space.id, trigger).run();
+      await database.prepare(
+        `UPDATE monitor_runs SET status = 'scanning', lock_token = ?, lock_expires_at = ?, last_trigger = ?, error = NULL,
+         new_count = 0, scanned_count = 0, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
+      ).bind(lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), trigger, space.id).run();
+      await database.prepare(
+        `INSERT INTO monitor_scan_jobs
+         (id, space_id, status, current_source, progress, discovered_count, reviewed_count, recommended_count,
+          attempt, trigger_source, resume_of_job_id, checkpoint, work_queue_json)
+         VALUES (?, ?, 'scanning', 'Pi 正在制定本轮检索计划', 3, 0, 0, 0, ?, ?, ?, 'planning', '{}')`,
+      ).bind(jobId, space.id, resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null).run();
+      return Response.json(await readState(database, space, { accepted: true }), { status: 202 });
+    }
+
+    const job = payload.jobId
+      ? await database.prepare(
+        `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
+         duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
+         resume_of_job_id, checkpoint, work_queue_json, started_at, completed_at, error
+         FROM monitor_scan_jobs WHERE id = ? AND space_id = ? LIMIT 1`,
+      ).bind(payload.jobId, space.id).first<StagedJobRow>()
+      : await database.prepare(
+        `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
+         duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
+         resume_of_job_id, checkpoint, work_queue_json, started_at, completed_at, error
+         FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
+      ).bind(space.id).first<StagedJobRow>();
+    if (!job) return Response.json({ error: "No scan job is available" }, { status: 404 });
+    const work = parseScanWorkQueue(job.work_queue_json);
+    const preference = await ensurePreference(database, space);
+    const enrichedSpace = await enrichSpaceWithImportedMemory(database, space);
+
+    if (action === "enhance") {
+      if (!["main_complete", "complete"].includes(job.checkpoint)) return Response.json(await readState(database, space, { enhancementPending: true }), { status: 202 });
+      if (job.checkpoint === "complete") return Response.json(await readState(database, space, { enhanced: true }));
+      const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
+      const reviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
+      const completedAt = job.completed_at ? new Date(job.completed_at) : new Date();
+      await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, reviews, {
+        scanned: job.discovered_count,
+        newCandidates: job.new_candidate_count,
+        duplicates: job.duplicate_count,
+        reviewed: work.screens.length,
+        recommended: reviews.filter((review) => review.recommended).length,
+        rejected: Math.max(0, work.screens.length - reviews.filter((review) => review.recommended).length),
+      }, completedAt, apiKey);
+      try {
+        await maybeGenerateWeeklyReview(database, enrichedSpace, user.userId, completedAt, apiKey);
+      } catch (supplementalError) {
+        console.error("Failed to generate the non-blocking weekly review", supplementalError);
+      }
+      await database.prepare(
+        "UPDATE monitor_scan_jobs SET checkpoint = 'complete', current_source = '', error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      ).bind(job.id).run();
+      return Response.json(await readState(database, space, { enhanced: true }));
+    }
+
+    if (action !== "advance") return Response.json({ error: "Unknown monitoring action" }, { status: 400 });
+    if (!apiKey) return Response.json({ error: "请先在网页中连接 DeepSeek API Key" }, { status: 400 });
+    if (["ready", "error"].includes(job.status)) return Response.json(await readState(database, space, { cached: true }));
+    const run = await database.prepare(
+      "SELECT status, discovery_round, lock_token, lock_expires_at FROM monitor_runs WHERE space_id = ? LIMIT 1",
+    ).bind(space.id).first<{ status: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null }>();
+    let lockToken = run?.lock_token || "";
+    if (!lockToken || !run?.lock_expires_at || Date.parse(run.lock_expires_at) <= Date.now()) lockToken = crypto.randomUUID();
+    await database.prepare(
+      "UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
+    ).bind(lockToken, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id).run();
+
+    const setStage = async (checkpoint: string, status: string, progress: number, source: string, horizon = "") => {
+      await database.batch([
+        database.prepare(
+          "UPDATE monitor_runs SET status = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
+        ).bind(status, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken),
+        database.prepare(
+          "UPDATE monitor_scan_jobs SET status = ?, checkpoint = ?, current_horizon = ?, current_source = ?, progress = MAX(progress, ?), error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(status, checkpoint, horizon, source, progress, job.id),
+      ]);
+    };
+
+    const finalizeMain = async (candidates: Candidate[], reviews: PaperReview[]) => {
+      const completedAt = new Date();
+      const recommended = reviews.filter((review) => review.recommended).length;
+      const rejected = Math.max(0, work.screens.length - recommended);
+      const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
+      await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, reviews, {
+        scanned: job.discovered_count,
+        newCandidates: work.newCandidateCount,
+        duplicates: duplicateCount,
+        reviewed: work.screens.length,
+        recommended,
+        rejected,
+      }, completedAt, apiKey, true);
+      try {
+        await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), reviews, {
+          scanned: job.discovered_count, newCandidates: work.newCandidateCount, duplicates: duplicateCount,
+          reviewed: work.screens.length, recommended, rejected,
+        }, Boolean(job.resume_of_job_id));
+      } catch (notificationError) {
+        console.error("Failed to create staged scan notifications", notificationError);
+      }
+      await database.batch([
+        database.prepare(
+          `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,
+           discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, error = NULL,
+           updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?`,
+        ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), recommended, job.discovered_count, space.id, lockToken),
+        database.prepare(
+          `UPDATE monitor_scan_jobs SET status = 'ready', checkpoint = 'main_complete', current_horizon = '',
+           current_source = '推荐已可阅读，Pi 正在后台整理今日简报', progress = 100, new_candidate_count = ?,
+           duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?,
+           error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        ).bind(work.newCandidateCount, duplicateCount, work.screens.length, recommended, rejected, completedAt.toISOString(), job.id),
+      ]);
+      return Response.json(await readState(database, space, { mainComplete: true }));
+    };
+
+    try {
+      if (job.checkpoint === "planning" || job.checkpoint === "queued") {
+        await setStage("planning", "scanning", 5, "DeepSeek Pro 正在规划本轮检索");
+        await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
+        await setStage("discovering_days", "discovering_days", 10, "正在检索近 14 天", "days");
+      } else if (["discovering_days", "discovering_months", "discovering_years"].includes(job.checkpoint)) {
+        const horizonKey = job.checkpoint.replace("discovering_", "") as Horizon;
+        const horizon = HORIZONS.find((item) => item.key === horizonKey)!;
+        const queryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
+        const batch = await fetchHorizon(database, enrichedSpace, horizon, new Date(), preference.priorityVenues, preference.trackedAuthors, preference.profileKey, Math.max(0, run?.discovery_round || 0), job.id, job.discovered_count, queryPlan);
+        const newCandidates = await countNewCandidates(database, space.id, batch.candidates);
+        await persistCandidatePool(database, space.id, batch.candidates);
+        work.candidateIds = Array.from(new Set([...work.candidateIds, ...batch.candidates.map((candidate) => candidate.canonicalId)]));
+        work.rawCandidateCount += batch.rawCount;
+        work.newCandidateCount += newCandidates;
+        await saveScanWorkQueue(database, job.id, work);
+        const nextCheckpoint = horizonKey === "days" ? "discovering_months" : horizonKey === "months" ? "discovering_years" : "deduplicating";
+        const nextStatus = nextCheckpoint === "deduplicating" ? "deduplicating" : nextCheckpoint;
+        const progress = horizonKey === "days" ? 22 : horizonKey === "months" ? 36 : 50;
+        const source = nextCheckpoint === "deduplicating" ? "正在去重并准备候选队列" : nextCheckpoint === "discovering_months" ? "正在检索近 6 个月" : "正在回溯近 5 年";
+        await database.prepare(
+          "UPDATE monitor_scan_jobs SET discovered_count = ?, new_candidate_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(work.candidateIds.length, work.newCandidateCount, job.id).run();
+        await setStage(nextCheckpoint, nextStatus, progress, source, nextCheckpoint.startsWith("discovering_") ? nextCheckpoint.replace("discovering_", "") : "");
+      } else if (job.checkpoint === "deduplicating") {
+        const pendingQueue = await pendingCandidateQueue(database, space.id);
+        const selected = selectUnseenReviewBatch(pendingQueue);
+        work.candidateIds = selected.map((candidate) => candidate.canonicalId);
+        work.screens = [];
+        work.deepIds = [];
+        work.deepCompletedIds = [];
+        await saveScanWorkQueue(database, job.id, work);
+        await database.prepare(
+          "UPDATE monitor_scan_jobs SET duplicate_count = ?, reviewed_count = 0, recommended_count = 0, rejected_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(Math.max(0, work.rawCandidateCount - work.newCandidateCount), job.id).run();
+        if (!selected.length) return finalizeMain([], []);
+        await setStage("screening", "screening", 56, `DeepSeek Pro 正在快速筛选 0 / ${selected.length}`);
+      } else if (job.checkpoint === "screening") {
+        const screenedIds = new Set(work.screens.map((screen) => screen.canonicalId));
+        const remainingIds = work.candidateIds.filter((id) => !screenedIds.has(id));
+        if (remainingIds.length) {
+          const ids = remainingIds.slice(0, QUICK_SCREEN_BATCH_SIZE * QUICK_SCREEN_CONCURRENCY);
+          const candidates = await pendingCandidateQueue(database, space.id, ids);
+          const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey);
+          await persistQuickScreens(database, space.id, result.screens);
+          const byId = new Map(work.screens.map((screen) => [screen.canonicalId, screen]));
+          for (const screen of result.screens) byId.set(screen.canonicalId, screen);
+          work.screens = Array.from(byId.values());
+          work.screenFailureCount = result.errors.length && !result.screens.length ? work.screenFailureCount + 1 : 0;
+          await saveScanWorkQueue(database, job.id, work);
+          if (work.screenFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Quick screening failed twice");
+        }
+        const screenRemaining = work.candidateIds.filter((id) => !new Set(work.screens.map((screen) => screen.canonicalId)).has(id));
+        const screeningProgress = Math.min(74, 56 + Math.round(work.screens.length / Math.max(1, work.candidateIds.length) * 18));
+        await database.prepare(
+          "UPDATE monitor_scan_jobs SET reviewed_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(work.screens.length, work.screens.filter((screen) => !screen.isPaper || screen.relevanceScore < 68 || screen.qualityScore < 55).length,
+          `DeepSeek Pro 已快速筛选 ${work.screens.length} / ${work.candidateIds.length}`, screeningProgress, job.id).run();
+        if (!screenRemaining.length) {
+          const candidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
+          work.deepIds = chooseDeepCandidateIds(candidates, work.screens);
+          await saveScanWorkQueue(database, job.id, work);
+          if (!work.deepIds.length) return finalizeMain([], []);
+          await setStage("deep_reviewing", "deep_reviewing", 76, `正在深度解读 0 / ${work.deepIds.length}`);
+        }
+      } else if (job.checkpoint === "deep_reviewing") {
+        const completedIds = new Set(work.deepCompletedIds);
+        const remainingIds = work.deepIds.filter((id) => !completedIds.has(id));
+        if (remainingIds.length) {
+          const ids = remainingIds.slice(0, DEEP_REVIEW_BATCH_SIZE * 2);
+          const candidates = await pendingCandidateQueue(database, space.id, ids);
+          const result = await runConcurrentDeepReview(database, enrichedSpace, user.userId, preference.priorityVenues, candidates, job.id, lockToken, apiKey);
+          work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...result.reviews.map((review) => review.canonicalId)]));
+          work.deepFailureCount = result.errors.length && !result.reviews.length ? work.deepFailureCount + 1 : 0;
+          await saveScanWorkQueue(database, job.id, work);
+          if (work.deepFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Deep review failed twice");
+        }
+        const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
+        const recommended = persistedReviews.filter((review) => review.recommended).length;
+        const deepProgress = Math.min(94, 76 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 18));
+        await database.prepare(
+          "UPDATE monitor_scan_jobs SET reviewed_count = ?, recommended_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
+          `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${recommended} 篇已可阅读`, deepProgress, job.id).run();
+        if (work.deepCompletedIds.length >= work.deepIds.length) {
+          const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
+          return finalizeMain(candidates, persistedReviews);
+        }
+      }
+      return Response.json(await readState(database, space, { advanced: true }), { status: 202 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 300) : "Monitoring stage failed";
+      const failedAt = new Date();
+      await database.batch([
+        database.prepare(
+          "UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
+        ).bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id),
+        database.prepare(
+          "UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(message, failedAt.toISOString(), job.id),
       ]);
       return Response.json(await readState(database, space), { status: 502 });
     }
