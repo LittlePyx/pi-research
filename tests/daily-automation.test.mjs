@@ -35,6 +35,7 @@ test("each completed scan persists an evidence-grounded bilingual daily brief", 
 test("daily brief generation is budgeted and does not block scan completion on LLM failure", async () => {
   const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
   assert.match(monitor, /workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT/);
+  assert.match(monitor, /spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT/);
   assert.match(monitor, /status: error \? "degraded" : "ready"/);
   assert.match(monitor, /await fallback\(error instanceof Error/);
   assert.match(monitor, /lock_token = NULL, lock_expires_at = NULL/);

@@ -373,8 +373,9 @@ const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T06:39:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-19T09:00:00.000Z");
 const MONITOR_PIPELINE_VERSION = "evidence-rescue-v2";
-const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 200;
-const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 20;
+const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
+const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
+const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48;
 const MONITOR_MODEL = "deepseek-v4-pro";
 const RECOMMENDATION_THRESHOLD = 75;
 const DEEPSEEK_BALANCE_ERROR = "deepseek_insufficient_balance";
@@ -1643,12 +1644,16 @@ async function quickScreenCandidates(
   if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be screened");
   const usageDate = new Date().toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
+  const spaceScope = "monitor-space:" + space.id;
   const groups = Array.from({ length: QUICK_SCREEN_CONCURRENCY }, (_, index) => candidates.slice(index * QUICK_SCREEN_BATCH_SIZE, (index + 1) * QUICK_SCREEN_BATCH_SIZE)).filter((group) => group.length);
-  const [globalCount, workspaceCount] = await Promise.all([
+  const [globalCount, workspaceCount, spaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate),
     usageCount(database, workspaceScope, usageDate),
+    usageCount(database, spaceScope, usageDate),
   ]);
-  if (globalCount + groups.length > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount + groups.length > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+  if (globalCount + groups.length > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+    || workspaceCount + groups.length > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
+    || spaceCount + groups.length > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
     throw new Error("DeepSeek Pro screening budget reached");
   }
   const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey, mode)));
@@ -1828,12 +1833,16 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
   if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be recommended");
   const usageDate = new Date().toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.slice("anonymous:".length);
+  const spaceScope = "monitor-space:" + space.id;
   const expectedCalls = Math.ceil(candidates.length / REVIEW_BATCH_SIZE);
-  const [globalCount, workspaceCount] = await Promise.all([
+  const [globalCount, workspaceCount, spaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate),
     usageCount(database, workspaceScope, usageDate),
+    usageCount(database, spaceScope, usageDate),
   ]);
-  if (globalCount + expectedCalls > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount + expectedCalls > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+  if (globalCount + expectedCalls > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+    || workspaceCount + expectedCalls > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
+    || spaceCount + expectedCalls > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
     throw new Error("DeepSeek Pro review budget reached; unreviewed papers were not published");
   }
   const mapTracks = await database.prepare(
@@ -2168,11 +2177,15 @@ async function generateDailyBrief(
 
   const usageDate = now.toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
-  const [globalCount, workspaceCount] = await Promise.all([
+  const spaceScope = "monitor-space:" + space.id;
+  const [globalCount, workspaceCount, spaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate),
     usageCount(database, workspaceScope, usageDate),
+    usageCount(database, spaceScope, usageDate),
   ]);
-  if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+  if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+    || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
+    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
     return fallback(!apiKey ? "DeepSeek Pro is not configured" : "Daily brief analysis budget reached");
   }
   try {
@@ -2427,11 +2440,14 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
   };
   const usageDate = now.toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
-  const [globalCount, workspaceCount] = await Promise.all([
-    usageCount(database, "monitor:global", usageDate), usageCount(database, workspaceScope, usageDate),
+  const spaceScope = "monitor-space:" + space.id;
+  const [globalCount, workspaceCount, spaceCount] = await Promise.all([
+    usageCount(database, "monitor:global", usageDate), usageCount(database, workspaceScope, usageDate), usageCount(database, spaceScope, usageDate),
   ]);
   let review: Awaited<ReturnType<typeof fallback>>;
-  if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+  if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+    || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
+    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
     review = await fallback(!apiKey ? "DeepSeek Pro is not configured" : "Weekly review analysis budget reached");
   } else {
     try {
