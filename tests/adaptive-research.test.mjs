@@ -34,9 +34,13 @@ test("new recommendations update route changes and quality metrics", async () =>
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(monitor, /INSERT OR IGNORE INTO research_map_changes/);
+  assert.match(monitor, /reconcileRecommendedReviewTracks/);
+  assert.match(monitor, /route_initialized/);
+  assert.match(monitor, /inferredMapChanges/);
   assert.match(monitor, /recommendationYield/);
   assert.match(monitor, /acceptanceRate/);
   assert.match(client, /v2-route-changes/);
+  assert.match(client, /routeChangeKindLabel/);
   assert.match(client, /v2-layered-memory/);
   assert.match(client, /v2-feedback-options/);
 });

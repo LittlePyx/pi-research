@@ -1052,6 +1052,15 @@ function pilotCriterionLabel(id: string, locale: Locale) {
   return (labels[id] || { zh: id, en: id })[locale];
 }
 
+function routeChangeKindLabel(kind: string, locale: Locale) {
+  const labels: Record<string, { zh: string; en: string; symbol: string }> = {
+    new_evidence: { zh: "新增证据", en: "New evidence", symbol: "＋" },
+    route_initialized: { zh: "新建路线", en: "Route created", symbol: "◎" },
+    node_added: { zh: "节点扩展", en: "Nodes added", symbol: "↗" },
+  };
+  return labels[kind] || { zh: "路线更新", en: "Route update", symbol: "＋" };
+}
+
 function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) => void) {
   let stopped = false;
   let polling = false;
@@ -1748,6 +1757,23 @@ export default function ResearchApp({ user }: { user: User }) {
             }
           } catch {
             // The direction remains usable and will be interpreted again on the next visit.
+          }
+        }
+        if (!cancelled) {
+          try {
+            const reconciliationResponse = await fetch("/api/research-map", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ spaceId: activeSpace.id, action: "reconcile" }),
+            });
+            const reconciled = await reconciliationResponse.json() as ResearchMapState & { error?: string };
+            if (reconciliationResponse.ok && !cancelled) {
+              data = reconciled;
+              setResearchMap(reconciled);
+              setSelectedThread((current) => reconciled.tracks.find((track) => track.id === current?.id) || reconciled.tracks[0] || null);
+            }
+          } catch {
+            // Route reconciliation is additive and must never block the usable map.
           }
         }
       } catch {
@@ -2782,7 +2808,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
             {SHOW_INTERNAL_QUALITY_UI && monitor?.operationsDashboard && <section className="v2-operations-dashboard"><header><div><p className="v2-kicker">π {locale === "zh" ? "发现质量" : "DISCOVERY QUALITY"}</p><h2>{locale === "zh" ? "每次扫描是否真的带来新的、有用的论文" : "Whether each scan finds genuinely new, useful work"}</h2></div><small>{locale === "zh" ? `近 ${monitor.operationsDashboard.periodDays} 天真实运行数据` : `Last ${monitor.operationsDashboard.periodDays} days of real activity`}</small></header><div className="v2-operations-metrics"><article><span>{locale === "zh" ? "新候选" : "New candidates"}</span><strong>{monitor.operationsDashboard.totals.newCandidates}</strong><small>{monitor.operationsDashboard.totals.candidates} {locale === "zh" ? "篇独立候选" : "unique candidates"}</small></article><article><span>{locale === "zh" ? "去重节省" : "Duplicates avoided"}</span><strong>{monitor.operationsDashboard.totals.duplicatesAvoided}</strong><small>{monitor.operationsDashboard.totals.duplicateAvoidanceRate}% {locale === "zh" ? "无需重复交给 LLM" : "kept away from the LLM"}</small></article><article><span>{locale === "zh" ? "深审入选率" : "Review yield"}</span><strong>{monitor.operationsDashboard.totals.recommendationYield}%</strong><small>{monitor.operationsDashboard.totals.recommended} / {monitor.operationsDashboard.totals.reviewed} {locale === "zh" ? "篇入选" : "selected"}</small></article><article><span>{locale === "zh" ? "用户接受率" : "Acceptance"}</span><strong>{monitor.operationsDashboard.totals.acceptanceRate}%</strong><small>{monitor.operationsDashboard.totals.tokensPerRecommendation ? `${Math.round(monitor.operationsDashboard.totals.tokensPerRecommendation / 100) / 10}k token / ${locale === "zh" ? "推荐" : "recommendation"}` : (locale === "zh" ? "等待更多反馈" : "Awaiting feedback")}</small></article></div><div className="v2-operations-body"><div className="v2-scan-trend"><h3>{locale === "zh" ? "每日发现趋势" : "Daily discovery trend"}</h3>{monitor.operationsDashboard.daily.length ? monitor.operationsDashboard.daily.map((day) => <div key={day.date}><time>{day.date.slice(5)}</time><i><b style={{ width: `${Math.max(3, day.candidates / operationsMaxCandidates * 100)}%` }} /></i><span>+{day.newCandidates}</span><em>{day.recommended} {locale === "zh" ? "入选" : "selected"}</em></div>) : <p>{locale === "zh" ? "完成第一轮新版本扫描后，这里会开始记录趋势。" : "Trend data will appear after the first scan on this version."}</p>}</div><div className="v2-horizon-performance"><h3>{locale === "zh" ? "三层覆盖效率" : "Three-horizon efficiency"}</h3>{monitor.operationsDashboard.horizons.map((item) => <article key={item.horizon}><span>{item.horizon === "days" ? t.daysHorizon : item.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><strong>{item.discoveryYield}%</strong><small>{item.branches} {locale === "zh" ? "条分支" : "branches"} · {item.cooling} {locale === "zh" ? "条降频" : "cooling"}</small></article>)}</div></div>{Boolean(monitor.explorationLedger?.length) && <details className="v2-exploration-ledger"><summary><span><b>{locale === "zh" ? "持续探索账本" : "Continuous exploration ledger"}</b><small>{locale === "zh" ? "Pi 记录每条检索分支的位置；低收益分支自动降频，之后再回访。" : "Pi remembers each branch position, cools low-yield paths, and revisits them later."}</small></span><strong>{monitor.explorationLedger?.length} →</strong></summary><div>{monitor.explorationLedger?.slice(0, 16).map((branch) => <article className={branch.status} key={`${branch.horizon}:${branch.id}`}><header><span>{branch.horizon === "days" ? t.daysHorizon : branch.horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {branch.channel}</span><b>{explorationStatusLabel(branch.status, locale)}</b></header><p>{branch.queryText || branch.sourceKey.replace(/_/g, " ")}</p><footer><span>{locale === "zh" ? "游标" : "cursor"} {branch.nextCursor}</span><span>{branch.attempts} {locale === "zh" ? "轮" : "rounds"}</span><span>{branch.newCandidates}/{branch.candidates} {locale === "zh" ? "新发现" : "new"}</span><strong>{branch.discoveryYield}%</strong></footer></article>)}</div></details>}</section>}
 
-            {!!monitor?.mapChanges?.length && <section className="v2-route-changes"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究路线变化" : "Research route changes"}</p><h2>{locale === "zh" ? "新论文如何改变你的地图" : "How new papers changed your map"}</h2></div><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "打开地图" : "Open map"} →</button></header><div>{monitor.mapChanges.slice(0, 3).map((change) => <article key={change.id}><span>＋</span><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {change.confidence}%</small><h3>{change.paperTitle}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>)}</div></section>}
+            {!!monitor?.mapChanges?.length && <section className="v2-route-changes"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究路线变化" : "Research route changes"}</p><h2>{locale === "zh" ? "路线、证据与论文节点最近发生了什么" : "What changed across routes, evidence, and paper nodes"}</h2></div><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "打开地图" : "Open map"} →</button></header><div>{monitor.mapChanges.slice(0, 3).map((change) => { const kind = routeChangeKindLabel(change.kind, locale); return <article key={change.id}><span>{kind.symbol}</span><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {locale === "zh" ? kind.zh : kind.en}{change.kind === "new_evidence" ? ` · ${change.confidence}%` : ""}</small><h3>{change.kind === "new_evidence" ? change.paperTitle : locale === "zh" ? change.titleZh : change.titleEn}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>; })}</div></section>}
 
             {Boolean(additionalTodayPapers.length) && <section className="v2-today-more">
               <header><div><p className="v2-kicker warm">{locale === "zh" ? "更多推荐" : "MORE RECOMMENDATIONS"}</p><h2>{locale === "zh" ? "不在今日主队列，但仍值得保留" : "Worth keeping beyond the main queue"}</h2></div><span>{additionalTodayPapers.length} {locale === "zh" ? "篇" : "papers"}</span></header>

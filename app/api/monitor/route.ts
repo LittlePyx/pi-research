@@ -1874,7 +1874,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "Choose recommendationTier=must_read only for a direct, high-consequence match; browse for a useful paper worth focused reading; reserve for a credible paper that should be kept as supporting material. Choose readDepth=deep|focused|overview and estimate readMinutes from 5 to 90.",
       "Do not write generic phrases such as 'it is recent', 'it has a high score', or 'it comes from a priority venue' as the main reason to read.",
       "For rejected records, set all summary, whyRead, problem, method, contribution, limitations, and readingFocus fields to empty strings, set both researchQuestions arrays to [], and give a short screeningReason. Never spend narrative tokens explaining a rejected record.",
-      "When research-map directions are supplied, assign a recommended paper to the single best-fitting trackId only when the fit is direct. Otherwise use an empty trackId.",
+      "When research-map directions are supplied, assign every recommended paper to the single best-fitting trackId whenever a credible direct or supporting relationship exists. Use an empty trackId only when every available direction would create a misleading relationship.",
       "For a track assignment, use mapRole=frontier for current active work or mapRole=milestone for a durable development, and write a concrete bilingual map rationale explaining how it extends that direction. For no assignment, keep both map rationales empty.",
       `Research space: ${space.name} — ${space.description}`,
       `User-confirmed imported research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
@@ -2025,6 +2025,94 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     ]);
   }
   return completed;
+}
+
+async function reconcileRecommendedReviewTracks(
+  database: D1Database,
+  space: SpaceRow,
+  userId: string,
+  candidates: Candidate[],
+  reviews: PaperReview[],
+  apiKey: string,
+) {
+  const missing = reviews.filter((review) => review.recommended && !review.trackId);
+  if (!missing.length || !apiKey) return reviews;
+  const tracks = await database.prepare(
+    "SELECT id, title_zh, title_en, summary_zh, summary_en FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 12",
+  ).bind(space.id).all<{ id: string; title_zh: string; title_en: string; summary_zh: string; summary_en: string }>();
+  if (!tracks.results.length) return reviews;
+  const usageDate = new Date().toISOString().slice(0, 10);
+  const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
+  const spaceScope = "monitor-space:" + space.id;
+  const [globalCount, workspaceCount, spaceCount] = await Promise.all([
+    usageCount(database, "monitor:global", usageDate), usageCount(database, workspaceScope, usageDate), usageCount(database, spaceScope, usageDate),
+  ]);
+  if (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+    || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
+    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) return reviews;
+  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const validTrackIds = new Set(tracks.results.map((track) => track.id));
+  try {
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MONITOR_MODEL,
+        messages: [
+          { role: "system", content: "You are Pi Research's research-map routing editor. Return strict JSON grounded only in supplied paper and route evidence." },
+          { role: "user", content: [
+            "Return {\"assignments\":[...]} and review every supplied paper.",
+            "Each assignment needs canonicalId, trackId, mapRole (milestone|frontier), rationaleZh, rationaleEn, confidence (0-100).",
+            "Choose the single route that the paper most credibly extends, supports, challenges, or connects. Do not rely on title keywords alone.",
+            "Use an empty trackId and empty rationales only when all available routes would be misleading. Never invent a result beyond supplied summaries.",
+            `Research space: ${space.name} — ${space.description}`,
+            `Routes: ${JSON.stringify(tracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en })))}`,
+            `Recommended papers: ${JSON.stringify(missing.map((review) => ({
+              canonicalId: review.canonicalId,
+              title: candidateById.get(review.canonicalId)?.title || "",
+              abstract: candidateById.get(review.canonicalId)?.abstractText.slice(0, 1400) || "",
+              summaryZh: review.summaryZh,
+              summaryEn: review.summaryEn,
+              contributionZh: review.contributionZh,
+              contributionEn: review.contributionEn,
+            })))}`,
+          ].join("\n") },
+        ],
+        thinking: { type: "disabled" },
+        reasoning_effort: "low",
+        response_format: { type: "json_object" },
+        max_tokens: 3600,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const data = await response.json() as DeepSeekResponse;
+    if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro route reconciliation failed");
+    await Promise.all([
+      recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+      recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+      recordUsage(database, spaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+    ]);
+    const parsed = parseJsonObject(data.choices?.[0]?.message?.content || "") as { assignments?: Array<Record<string, unknown>> };
+    const assignments = new Map((parsed.assignments || []).flatMap((item) => {
+      const canonicalId = cleanText(String(item.canonicalId || ""));
+      const trackId = cleanText(String(item.trackId || ""));
+      const rationaleZh = cleanText(String(item.rationaleZh || "")).slice(0, 700);
+      const rationaleEn = cleanText(String(item.rationaleEn || "")).slice(0, 900);
+      if (!canonicalId || !validTrackIds.has(trackId) || !rationaleZh || !rationaleEn) return [];
+      return [[canonicalId, {
+        trackId,
+        mapRole: item.mapRole === "milestone" ? "milestone" as const : "frontier" as const,
+        mapRationaleZh: rationaleZh,
+        mapRationaleEn: rationaleEn,
+      }] as const];
+    }));
+    return reviews.map((review) => review.trackId || !review.recommended || !assignments.has(review.canonicalId)
+      ? review : { ...review, ...assignments.get(review.canonicalId)! });
+  } catch (error) {
+    console.error("Non-blocking route reconciliation failed", error);
+    return reviews;
+  }
 }
 
 function briefList(value: unknown, limit = 4, maxLength = 360) {
@@ -2887,7 +2975,7 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics] = await Promise.all([
+  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -2949,6 +3037,35 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     ).bind(space.id).all<{
       id: string; kind: string; title_zh: string; title_en: string; summary_zh: string; summary_en: string;
       confidence: number; created_at: string; track_title_zh: string; track_title_en: string; paper_id: string; paper_title: string;
+    }>(),
+    database.prepare(
+      `SELECT t.id AS track_id, t.title_zh, t.title_en, t.created_at AS track_created_at,
+       COUNT(tp.id) AS paper_count, MAX(COALESCE(tp.created_at, t.created_at)) AS latest_activity_at
+       FROM research_tracks t
+       LEFT JOIN research_track_papers tp ON tp.track_id = t.id AND tp.space_id = t.space_id
+        AND tp.created_at >= datetime('now', '-7 days')
+       WHERE t.space_id = ? AND (t.created_at >= datetime('now', '-7 days') OR tp.id IS NOT NULL)
+       GROUP BY t.id, t.title_zh, t.title_en, t.created_at
+       ORDER BY latest_activity_at DESC LIMIT 12`,
+    ).bind(space.id).all<{
+      track_id: string; title_zh: string; title_en: string; track_created_at: string; paper_count: number; latest_activity_at: string;
+    }>(),
+    database.prepare(
+      `SELECT ('inferred:' || p.id || ':' || tp.track_id) AS id, tp.track_id,
+       t.title_zh AS track_title_zh, t.title_en AS track_title_en, p.id AS paper_id, p.title AS paper_title,
+       tp.rationale_zh AS summary_zh, tp.rationale_en AS summary_en,
+       i.llm_relevance_score AS confidence, MAX(p.discovered_at, tp.created_at) AS created_at
+       FROM monitored_papers p
+       JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id AND i.llm_recommended = 1
+       JOIN research_track_papers tp ON tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
+       JOIN research_tracks t ON t.id = tp.track_id AND t.space_id = tp.space_id
+       LEFT JOIN research_map_changes c ON c.paper_id = p.id AND c.track_id = tp.track_id AND c.kind = 'new_evidence'
+       WHERE p.space_id = ? AND c.id IS NULL
+        AND (p.discovered_at >= datetime('now', '-7 days') OR tp.created_at >= datetime('now', '-7 days'))
+       ORDER BY created_at DESC LIMIT 12`,
+    ).bind(space.id).all<{
+      id: string; track_id: string; track_title_zh: string; track_title_en: string; paper_id: string; paper_title: string;
+      summary_zh: string; summary_en: string; confidence: number; created_at: string;
     }>(),
     database.prepare(
       `SELECT COALESCE(SUM(request_count), 0) AS requests, COALESCE(SUM(input_tokens), 0) AS input_tokens,
@@ -3262,6 +3379,59 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       screened: scanWork?.screens.filter((screen) => screen.horizon === horizon).length || 0,
     };
   });
+  const persistedMapChanges = mapChanges.results.map((change) => ({
+    id: change.id,
+    kind: change.kind,
+    titleZh: change.title_zh,
+    titleEn: change.title_en,
+    summaryZh: change.summary_zh,
+    summaryEn: change.summary_en,
+    confidence: change.confidence,
+    createdAt: change.created_at,
+    trackTitleZh: change.track_title_zh,
+    trackTitleEn: change.track_title_en,
+    paperId: change.paper_id,
+    paperTitle: change.paper_title,
+  }));
+  const inferredEvidenceChanges = inferredMapChanges.results.map((change) => ({
+    id: change.id,
+    kind: "new_evidence",
+    titleZh: `${change.track_title_zh}新增证据：${change.paper_title}`,
+    titleEn: `New evidence for ${change.track_title_en}: ${change.paper_title}`,
+    summaryZh: change.summary_zh,
+    summaryEn: change.summary_en,
+    confidence: change.confidence,
+    createdAt: change.created_at,
+    trackTitleZh: change.track_title_zh,
+    trackTitleEn: change.track_title_en,
+    paperId: change.paper_id,
+    paperTitle: change.paper_title,
+  }));
+  const structuralMapChanges = recentTrackActivity.results.map((activity) => {
+    const initialized = Date.parse(activity.track_created_at + "Z") >= Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const count = activity.paper_count || 0;
+    return {
+      id: `${initialized ? "route-initialized" : "route-expanded"}:${activity.track_id}:${activity.latest_activity_at}`,
+      kind: initialized ? "route_initialized" : "node_added",
+      titleZh: initialized ? `建立研究路线：${activity.title_zh}` : `${activity.title_zh}新增 ${count} 篇代表论文`,
+      titleEn: initialized ? `Research route created: ${activity.title_en}` : `${count} representative papers added to ${activity.title_en}`,
+      summaryZh: initialized
+        ? `Pi 已建立这条研究路线${count ? `，并纳入 ${count} 篇奠基、里程碑或前沿论文作为初始证据` : "，代表论文仍在持续填充"}。`
+        : `这条路线最近补充了 ${count} 篇代表论文，研究地图的证据覆盖随之更新。`,
+      summaryEn: initialized
+        ? `Pi created this research route${count ? ` with ${count} foundation, milestone, or frontier papers as its initial evidence` : "; representative papers are still being added"}.`
+        : `${count} representative papers were added recently, updating the route's evidence coverage.`,
+      confidence: 100,
+      createdAt: activity.latest_activity_at,
+      trackTitleZh: activity.title_zh,
+      trackTitleEn: activity.title_en,
+      paperId: "",
+      paperTitle: initialized ? activity.title_zh : `${activity.title_zh} · +${count}`,
+    };
+  });
+  const mapChangeItems = [...persistedMapChanges, ...inferredEvidenceChanges, ...structuralMapChanges]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 12);
   return {
     monitor: {
       status: run?.status || "idle",
@@ -3329,20 +3499,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         degraded: Boolean(queryPlanRow.error),
       } : null,
       preferenceSignals,
-      mapChanges: mapChanges.results.map((change) => ({
-        id: change.id,
-        kind: change.kind,
-        titleZh: change.title_zh,
-        titleEn: change.title_en,
-        summaryZh: change.summary_zh,
-        summaryEn: change.summary_en,
-        confidence: change.confidence,
-        createdAt: change.created_at,
-        trackTitleZh: change.track_title_zh,
-        trackTitleEn: change.track_title_en,
-        paperId: change.paper_id,
-        paperTitle: change.paper_title,
-      })),
+      mapChanges: mapChangeItems,
       qualityMetrics: {
         windowDays: 7,
         scans: scanMetrics?.scans || 0,
@@ -3668,7 +3825,15 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
      i.summary_zh, i.summary_en, i.why_read_zh, i.why_read_en, i.screening_reason,
      i.recommendation_tier, i.read_minutes, i.read_depth, i.problem_zh, i.problem_en,
      i.method_zh, i.method_en, i.contribution_zh, i.contribution_en, i.limitations_zh,
-     i.limitations_en, i.reading_focus_zh, i.reading_focus_en, i.research_questions_zh, i.research_questions_en
+     i.limitations_en, i.reading_focus_zh, i.reading_focus_en, i.research_questions_zh, i.research_questions_en,
+     COALESCE((SELECT tp.track_id FROM research_track_papers tp
+       WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS track_id,
+     COALESCE((SELECT tp.role FROM research_track_papers tp
+       WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), 'frontier') AS map_role,
+     COALESCE((SELECT tp.rationale_zh FROM research_track_papers tp
+       WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_zh,
+     COALESCE((SELECT tp.rationale_en FROM research_track_papers tp
+       WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_en
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
      WHERE p.space_id = ? AND p.canonical_id IN (${placeholders})`,
   ).bind(spaceId, ...canonicalIds).all<{
@@ -3677,6 +3842,7 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
     recommendation_tier: string; read_minutes: number; read_depth: string; problem_zh: string; problem_en: string;
     method_zh: string; method_en: string; contribution_zh: string; contribution_en: string; limitations_zh: string;
     limitations_en: string; reading_focus_zh: string; reading_focus_en: string; research_questions_zh: string; research_questions_en: string;
+    track_id: string; map_role: string; map_rationale_zh: string; map_rationale_en: string;
   }>();
   const byId = new Map(rows.results.map((row) => [row.canonical_id, row]));
   return canonicalIds.flatMap((canonicalId) => {
@@ -3687,8 +3853,10 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
     return [{
       canonicalId, isPaper: true, recommended: Boolean(row.llm_recommended), relevanceScore: row.llm_relevance_score,
       qualityScore: row.quality_score, summaryZh: row.summary_zh, summaryEn: row.summary_en, whyReadZh: row.why_read_zh,
-      whyReadEn: row.why_read_en, screeningReason: row.screening_reason, trackId: "", mapRole: "frontier" as const,
-      mapRationaleZh: "", mapRationaleEn: "", recommendationTier: tier, readMinutes: row.read_minutes, readDepth: depth,
+      whyReadEn: row.why_read_en, screeningReason: row.screening_reason, trackId: row.track_id,
+      mapRole: row.map_role === "milestone" ? "milestone" as const : "frontier" as const,
+      mapRationaleZh: row.map_rationale_zh, mapRationaleEn: row.map_rationale_en,
+      recommendationTier: tier, readMinutes: row.read_minutes, readDepth: depth,
       problemZh: row.problem_zh, problemEn: row.problem_en, methodZh: row.method_zh, methodEn: row.method_en,
       contributionZh: row.contribution_zh, contributionEn: row.contribution_en, limitationsZh: row.limitations_zh,
       limitationsEn: row.limitations_en, readingFocusZh: row.reading_focus_zh, readingFocusEn: row.reading_focus_en,
@@ -4038,10 +4206,14 @@ export async function POST(request: Request) {
 
     const finalizeMain = async (candidates: Candidate[], reviews: PaperReview[]) => {
       const completedAt = new Date();
-      const recommended = reviews.filter((review) => review.recommended).length;
+      const reconciledReviews = await reconcileRecommendedReviewTracks(database, enrichedSpace, user.userId, candidates, reviews, apiKey);
+      if (reconciledReviews.some((review, index) => review.trackId && review.trackId !== reviews[index]?.trackId)) {
+        await persistReviewBatch(database, space.id, candidates, reconciledReviews);
+      }
+      const recommended = reconciledReviews.filter((review) => review.recommended).length;
       const rejected = Math.max(0, work.screens.length - recommended);
       const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
-      await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, reviews, {
+      await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, reconciledReviews, {
         scanned: job.discovered_count,
         newCandidates: work.newCandidateCount,
         duplicates: duplicateCount,
@@ -4052,7 +4224,7 @@ export async function POST(request: Request) {
         rejected,
       }, completedAt, apiKey, true);
       try {
-        await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), reviews, {
+        await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), reconciledReviews, {
           scanned: job.discovered_count, newCandidates: work.newCandidateCount, duplicates: duplicateCount,
           reviewed: reviews.length, screened: work.screens.length, deepReviewed: reviews.length, recommended, rejected,
         }, Boolean(job.resume_of_job_id));

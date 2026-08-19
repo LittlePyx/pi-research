@@ -78,6 +78,8 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48/);
   assert.match(monitor, /spaceCount \+ groups\.length > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT/);
   assert.match(monitor, /runIncrementalDeepReview/);
+  assert.match(monitor, /Non-blocking route reconciliation failed/);
+  assert.match(monitor, /row\.map_rationale_zh/);
   assert.match(monitor, /任一篇完成都会立即显示/);
   assert.match(monitor, /当前论文响应较慢，正在切换快速模式重试/);
   assert.match(monitor, /deferLlm/);

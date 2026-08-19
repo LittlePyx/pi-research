@@ -138,7 +138,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(monitor, /SET intelligence_json = '\{\}', intelligence_model = '', intelligence_updated_at = NULL/);
   assert.match(mapRoute, /MODEL = "deepseek-v4-pro"/);
   assert.match(mapRoute, /reasoning_effort: "high"/);
-  assert.match(mapRoute, /WORKSPACE_DAILY_LIMIT = 16/);
+  assert.match(mapRoute, /WORKSPACE_DAILY_LIMIT = 32/);
   assert.match(mapRoute, /Foundation = field-defining concepts or methods/);
   assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand"/);
   assert.match(mapRoute, /INSERT OR IGNORE INTO research_track_papers/);
@@ -159,7 +159,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /last14Days \* 30 \+ last6Months \* 10/);
   assert.match(mapRoute, /recentPaperCount/);
   assert.match(mapRoute, /api\.semanticscholar\.org\/graph\/v1\/paper\/batch/);
-  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "interpret" \| "structure" \| "activity" \| "network"/);
+  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "interpret" \| "structure" \| "activity" \| "network" \| "reconcile"/);
+  assert.match(mapRoute, /reconcileRecentRecommendations/);
+  assert.match(mapRoute, /map-reconcile-space:/);
   assert.match(mapRoute, /generatePaperNetworkEdges/);
   assert.match(mapRoute, /never invent citation claims/);
   assert.match(mapRoute, /kind: "citation"/);
@@ -185,6 +187,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /directionHeatLabel/);
   assert.match(client, /当前发现热度/);
   assert.match(client, /action: "hydrate"/);
+  assert.match(client, /action: "reconcile"/);
   assert.match(client, /mapBuildTrackId/);
   assert.match(client, /先建立可浏览的方向骨架/);
   assert.match(client, /切换页面不会丢失已经完成的内容/);
