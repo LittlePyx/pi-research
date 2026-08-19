@@ -28,7 +28,7 @@ test("completed scans create non-blocking catch-up notifications and evidence-gr
   assert.match(monitor, /must never[\s\S]*turn successfully discovered and reviewed papers into a failed monitoring run/);
 });
 
-test("the daily workbench exposes alerts, weekly synthesis, and seven-day pilot criteria", async () => {
+test("the daily workbench exposes research catch-up while keeping quality telemetry internal", async () => {
   const [monitor, client, styles] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
@@ -40,8 +40,9 @@ test("the daily workbench exposes alerts, weekly synthesis, and seven-day pilot 
   assert.match(monitor, /tokensPerRecommendation/);
   assert.match(client, /v2-research-catchup/);
   assert.match(client, /v2-weekly-review/);
-  assert.match(client, /v2-pilot-evaluation/);
+  assert.match(client, /const SHOW_INTERNAL_QUALITY_UI = false/);
+  assert.match(client, /SHOW_INTERNAL_QUALITY_UI && monitor\?\.pilotEvaluation/);
   assert.match(client, /markNotificationsRead/);
+  assert.doesNotMatch(client, /type View = [^\n]*"audit"/);
   assert.match(styles, /\.v2-research-catchup/);
-  assert.match(styles, /\.v2-pilot-evaluation/);
 });

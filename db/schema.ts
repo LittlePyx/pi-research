@@ -493,6 +493,35 @@ export const monitorCandidateSources = sqliteTable(
   ],
 );
 
+export const recommendationAuditEvents = sqliteTable(
+  "recommendation_audit_events",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    scanJobId: text("scan_job_id").notNull().references(() => monitorScanJobs.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    decision: text("decision").notNull(),
+    isPaper: integer("is_paper", { mode: "boolean" }).notNull().default(true),
+    recommended: integer("recommended", { mode: "boolean" }).notNull().default(false),
+    horizon: text("horizon").notNull(),
+    model: text("model").notNull().default(""),
+    relevanceScore: integer("relevance_score").notNull().default(0),
+    qualityScore: integer("quality_score").notNull().default(0),
+    recommendationTier: text("recommendation_tier").notNull().default("browse"),
+    screeningReason: text("screening_reason").notNull().default(""),
+    provenanceJson: text("provenance_json").notNull().default("[]"),
+    appearanceCount: integer("appearance_count").notNull().default(1),
+    allocatedInputTokens: integer("allocated_input_tokens").notNull().default(0),
+    allocatedOutputTokens: integer("allocated_output_tokens").notNull().default(0),
+    reviewedAt: text("reviewed_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_recommendation_audit_job_paper").on(table.scanJobId, table.paperId),
+    index("idx_recommendation_audit_space_reviewed").on(table.spaceId, table.reviewedAt),
+    index("idx_recommendation_audit_space_decision_reviewed").on(table.spaceId, table.decision, table.reviewedAt),
+  ],
+);
+
 export const shareSnapshots = sqliteTable(
   "share_snapshots",
   {

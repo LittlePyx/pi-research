@@ -40,13 +40,13 @@ test("reading notes are deduplicated before LLM memory synthesis", async () => {
   assert.match(monitor, /FROM paper_reading_memories WHERE space_id/);
 });
 
-test("research memory and quality dashboard are visible product surfaces", async () => {
+test("research memory stays visible while operational quality telemetry stays internal", async () => {
   const [client, styles] = await Promise.all([
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
-  assert.match(client, /v2-operations-dashboard/);
-  assert.match(client, /v2-exploration-ledger/);
+  assert.match(client, /const SHOW_INTERNAL_QUALITY_UI = false/);
+  assert.match(client, /SHOW_INTERNAL_QUALITY_UI && monitor\?\.operationsDashboard/);
   assert.match(client, /v2-reading-memory/);
   assert.match(client, /保存并沉淀到研究记忆/);
   assert.match(styles, /Pi Research V16/);

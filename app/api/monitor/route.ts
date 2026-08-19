@@ -241,6 +241,8 @@ type CandidateProvenance = {
   sourceKey: string;
   channel: Candidate["discoveryChannel"];
   queryKey: string;
+  queryText?: string;
+  appearances?: number;
 };
 type DiscoveryQuery = {
   key: string;
@@ -1363,6 +1365,63 @@ async function persistReviewBatch(database: D1Database, spaceId: string, candida
   }
 }
 
+function allocatedTokenShare(total: number, count: number, index: number) {
+  if (count <= 0 || total <= 0) return 0;
+  return Math.floor(total / count) + (index < total % count ? 1 : 0);
+}
+
+async function persistRecommendationAuditBatch(
+  database: D1Database,
+  spaceId: string,
+  jobId: string,
+  candidates: Candidate[],
+  reviews: PaperReview[],
+  inputTokens: number,
+  outputTokens: number,
+) {
+  if (!reviews.length) return;
+  const candidateByCanonical = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const placeholders = reviews.map(() => "?").join(", ");
+  const paperRows = await database.prepare(
+    `SELECT id, canonical_id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`,
+  ).bind(spaceId, ...reviews.map((review) => review.canonicalId)).all<{ id: string; canonical_id: string }>();
+  const paperIds = new Map(paperRows.results.map((row) => [row.canonical_id, row.id]));
+  const statements = reviews.flatMap((review, index) => {
+    const candidate = candidateByCanonical.get(review.canonicalId);
+    const paperId = paperIds.get(review.canonicalId);
+    if (!candidate || !paperId) return [];
+    const provenance = candidate.provenance.slice(0, 16).map((entry) => ({
+      sourceKey: entry.sourceKey,
+      channel: entry.channel,
+      queryKey: entry.queryKey,
+      queryText: cleanText(entry.queryText || "").slice(0, 500),
+      appearances: Math.max(1, entry.appearances || 1),
+    }));
+    const appearanceCount = provenance.reduce((sum, entry) => sum + entry.appearances, 0) || 1;
+    const decision = !review.isPaper ? "not_paper" : review.recommended ? "recommended" : "rejected";
+    return [database.prepare(
+      `INSERT INTO recommendation_audit_events
+       (id, space_id, scan_job_id, paper_id, decision, is_paper, recommended, horizon, model,
+        relevance_score, quality_score, recommendation_tier, screening_reason, provenance_json,
+        appearance_count, allocated_input_tokens, allocated_output_tokens)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(scan_job_id, paper_id) DO UPDATE SET decision = excluded.decision,
+       is_paper = excluded.is_paper, recommended = excluded.recommended, horizon = excluded.horizon,
+       model = excluded.model, relevance_score = excluded.relevance_score, quality_score = excluded.quality_score,
+       recommendation_tier = excluded.recommendation_tier, screening_reason = excluded.screening_reason,
+       provenance_json = excluded.provenance_json, appearance_count = excluded.appearance_count,
+       allocated_input_tokens = excluded.allocated_input_tokens,
+       allocated_output_tokens = excluded.allocated_output_tokens, reviewed_at = CURRENT_TIMESTAMP`,
+    ).bind(
+      crypto.randomUUID(), spaceId, jobId, paperId, decision, review.isPaper ? 1 : 0, review.recommended ? 1 : 0,
+      candidate.horizon, MONITOR_MODEL, review.relevanceScore, review.qualityScore, review.recommendationTier,
+      review.screeningReason, JSON.stringify(provenance), appearanceCount,
+      allocatedTokenShare(inputTokens, reviews.length, index), allocatedTokenShare(outputTokens, reviews.length, index),
+    )];
+  });
+  if (statements.length) await database.batch(statements);
+}
+
 async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string, lockToken: string) {
   if (!candidates.length) return [] as PaperReview[];
   const runtime = getRuntimeEnv();
@@ -1386,6 +1445,8 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
   for (let start = 0; start < candidates.length; start += REVIEW_BATCH_SIZE) {
     const batch = candidates.slice(start, start + REVIEW_BATCH_SIZE);
     const completedBefore = completed.length;
+    let batchInputTokens = 0;
+    let batchOutputTokens = 0;
     const prompt = [
       "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
       "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, recommendationTier, readMinutes, readDepth, summaryZh, summaryEn, whyReadZh, whyReadEn, problemZh/En, methodZh/En, contributionZh/En, limitationsZh/En, readingFocusZh/En, researchQuestionsZh/En, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
@@ -1449,10 +1510,12 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         });
         const data = await response.json() as DeepSeekResponse;
         if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro review failed");
+        batchInputTokens = data.usage?.prompt_tokens || 0;
+        batchOutputTokens = data.usage?.completion_tokens || 0;
         await Promise.all([
-          recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
-          recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
-          recordUsage(database, "monitor-space:" + space.id, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+          recordUsage(database, "monitor:global", usageDate, batchInputTokens, batchOutputTokens),
+          recordUsage(database, workspaceScope, usageDate, batchInputTokens, batchOutputTokens),
+          recordUsage(database, "monitor-space:" + space.id, usageDate, batchInputTokens, batchOutputTokens),
         ]);
         const content = data.choices?.[0]?.message?.content || "";
         if (!content.trim()) throw new Error("DeepSeek Pro returned an empty review");
@@ -1524,7 +1587,14 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         researchQuestionsEn,
       });
     }
-    await persistReviewBatch(database, space.id, batch, completed.slice(completedBefore));
+    const batchReviews = completed.slice(completedBefore);
+    await persistReviewBatch(database, space.id, batch, batchReviews);
+    try {
+      await persistRecommendationAuditBatch(database, space.id, jobId, batch, batchReviews, batchInputTokens, batchOutputTokens);
+    } catch (auditError) {
+      // Internal evaluation must not force another paid LLM review when recommendation persistence succeeded.
+      console.error("Failed to persist internal recommendation audit", auditError);
+    }
     await database.batch([
       database.prepare(
         "UPDATE monitor_scan_jobs SET checkpoint = 'reviewing', reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -2009,17 +2079,47 @@ async function persistCandidatePool(database: D1Database, spaceId: string, candi
 
 async function pendingCandidateQueue(database: D1Database, spaceId: string) {
   const rows = await database.prepare(
-    `SELECT p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
+    `SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
      p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
      WHERE p.space_id = ? AND (i.analysis_model = '' OR
        (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days')))
      ORDER BY i.quality_score DESC, p.citation_count DESC, p.discovered_at DESC LIMIT 360`,
   ).bind(spaceId).all<{
-    canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
+    paper_id: string; canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
     published_at: string | null; source: string; horizon: Horizon; citation_count: number; relevance_score: number;
     abstract_text: string; quality_score: number; priority_venue: number;
   }>();
+  const provenanceByPaper = new Map<string, CandidateProvenance[]>();
+  for (let start = 0; start < rows.results.length; start += 70) {
+    const ids = rows.results.slice(start, start + 70).map((row) => row.paper_id);
+    if (!ids.length) continue;
+    const placeholders = ids.map(() => "?").join(", ");
+    const sources = await database.prepare(
+      `SELECT cs.paper_id, cs.source_key, cs.channel, cs.query_key, cs.appearances,
+       COALESCE(coverage.query_text, '') AS query_text
+       FROM monitor_candidate_sources cs
+       JOIN monitored_papers paper ON paper.id = cs.paper_id AND paper.space_id = cs.space_id
+       LEFT JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id
+         AND coverage.horizon = paper.horizon AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
+       WHERE cs.space_id = ? AND cs.paper_id IN (${placeholders})
+       ORDER BY cs.last_seen_at DESC`,
+    ).bind(spaceId, ...ids).all<{
+      paper_id: string; source_key: string; channel: string; query_key: string; appearances: number; query_text: string;
+    }>();
+    for (const source of sources.results) {
+      const current = provenanceByPaper.get(source.paper_id) || [];
+      if (current.some((entry) => entry.sourceKey === source.source_key && entry.queryKey === source.query_key)) continue;
+      current.push({
+        sourceKey: source.source_key,
+        channel: source.channel as Candidate["discoveryChannel"],
+        queryKey: source.query_key,
+        queryText: source.query_text,
+        appearances: source.appearances,
+      });
+      provenanceByPaper.set(source.paper_id, current);
+    }
+  }
   return rows.results.map((row) => ({
     canonicalId: row.canonical_id,
     doi: row.doi,
@@ -2036,10 +2136,12 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string) {
     priorityVenue: Boolean(row.priority_venue),
     source: row.source === "semantic_scholar" ? "semantic_scholar" as const : row.source === "openalex" ? "openalex" as const : row.source === "arxiv" ? "arxiv" as const : "crossref" as const,
     discoveryChannel: row.source === "arxiv" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
-    provenance: [{
+    provenance: provenanceByPaper.get(row.paper_id)?.length ? provenanceByPaper.get(row.paper_id)! : [{
       sourceKey: `${row.source}:stored`,
       channel: row.source === "arxiv" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
       queryKey: "stored-candidate",
+      queryText: "",
+      appearances: 1,
     }],
   }));
 }
