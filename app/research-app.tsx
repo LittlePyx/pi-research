@@ -182,6 +182,8 @@ type MonitorState = {
     candidateCount?: number;
     deepCandidateCount?: number;
     deepCompletedCount?: number;
+    pipelineVersion?: string;
+    needsRefresh?: boolean;
     attempt?: number;
     triggerSource?: string;
     resumeOfJobId?: string | null;
@@ -2669,7 +2671,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     </details>;
                   })}
                 </div>
-                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "为什么今天没有推荐？" : "Why are there no recommendations today?"}</strong><p>{locale === "zh" ? `${latestQuickScreenedCount} 篇论文完成快速筛选，其中 ${latestDeepReviewedCount} 篇进入逐篇深度解读；它们没有同时通过研究相关性、论文质量、证据完整度与模型明确推荐四项门槛。` : `${latestQuickScreenedCount} papers passed fast screening and ${latestDeepReviewedCount} received paper-by-paper deep review; none cleared all four gates for research fit, quality, evidence completeness, and an explicit model recommendation.`}</p><small>{locale === "zh" ? "Pi 不会为了填满页面降低标准；首批高潜力论文为零入选时，下一轮会自动扩展第二批评审。" : "Pi will not lower the bar to fill the page. When the first high-potential batch yields nothing, the next scan will automatically expand to a second review batch."}</small></div>}
+                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "为什么今天没有推荐？" : "Why are there no recommendations today?"}</strong><p>{locale === "zh" ? `${latestQuickScreenedCount} 篇论文完成快速筛选，其中 ${latestDeepReviewedCount} 篇进入逐篇深度解读；它们没有同时通过研究相关性、论文质量、证据完整度与模型明确推荐四项门槛。` : `${latestQuickScreenedCount} papers passed fast screening and ${latestDeepReviewedCount} received paper-by-paper deep review; none cleared all four gates for research fit, quality, evidence completeness, and an explicit model recommendation.`}</p><small>{locale === "zh" ? "Pi 不会为了填满页面降低标准；首批高潜力论文为零入选时，会在本轮补全证据并追加临界论文复审。" : "Pi will not lower the bar to fill the page. When the first high-potential batch yields nothing, the same scan enriches evidence and adds a near-miss review batch."}</small></div>}
                 {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <aside><strong>{locale === "zh" ? "继续观察" : "Keep watching"}</strong><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></aside>}
               </div>
             </section>}
@@ -2685,9 +2687,10 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
-                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : t.scanNow}</button>
+                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
                 </div>
               </div>
+              {monitor?.scanJob?.needsRefresh && !scanIsActive && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先补全摘要、按研究方向分配名额，并在首批零入选时复审临界论文。重新扫描不受本小时冷却限制。" : "The new method enriches abstracts, allocates slots by research direction, and rechecks near-miss papers when the first batch yields nothing. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}
               {monitor?.status === "error" && (
                 <div className={`v2-scan-failure ${isModelCredentialFailure(failedScanError) ? "credential" : ""}`} role="alert">
                   <span>!</span>

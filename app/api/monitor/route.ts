@@ -2,6 +2,12 @@ import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { hasStrongFitScoreContradiction, inferModelScoreScale, normalizeModelScore } from "../../../lib/discovery/model-score";
 import { passesRecommendationGate } from "../../../lib/discovery/review-gate";
+import {
+  deepCandidateScore,
+  isPrimaryDeepCandidate,
+  isRescueDeepCandidate,
+  selectBalancedByGroup,
+} from "../../../lib/discovery/candidate-selection.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
@@ -246,6 +252,7 @@ type CandidateProvenance = {
   channel: Candidate["discoveryChannel"];
   queryKey: string;
   queryText?: string;
+  routeId?: string;
   appearances?: number;
 };
 type DiscoveryQuery = {
@@ -318,10 +325,13 @@ type ScanWorkQueue = {
   screens: QuickScreen[];
   deepIds: string[];
   deepCompletedIds: string[];
+  rescueScreenIds: string[];
+  rescueScreened: boolean;
   rawCandidateCount: number;
   newCandidateCount: number;
   screenFailureCount: number;
   deepFailureCount: number;
+  pipelineVersion: string;
   resumeCheckpoint?: string;
 };
 type StagedJobRow = ScanJobRow & { work_queue_json: string };
@@ -341,6 +351,7 @@ const DEEP_REVIEW_CONCURRENCY = 2;
 const DEEP_REVIEW_LIMIT = 8;
 const DEEP_REVIEW_RESCUE_LIMIT = 4;
 const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
+const RESCUE_SCREEN_LIMIT = 8;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
 const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
 const HORIZONS = [
@@ -350,6 +361,8 @@ const HORIZONS = [
 ] as const;
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T06:39:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
+const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-19T09:00:00.000Z");
+const MONITOR_PIPELINE_VERSION = "evidence-rescue-v2";
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 200;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 20;
 const MONITOR_MODEL = "deepseek-v4-pro";
@@ -373,6 +386,13 @@ const PRIORITY_JOURNAL_ISSNS = new Map<string, string>([
   ["calculus of variations and partial differential equations", "0944-2669"],
   ["annals of probability", "0091-1798"],
   ["inventiones mathematicae", "0020-9910"],
+  ["annals of mathematics", "0003-486X"],
+  ["journal of the european mathematical society", "1435-9855"],
+  ["probability theory and related fields", "0178-8051"],
+  ["analysis & pde", "1948-206X"],
+  ["duke mathematical journal", "0012-7094"],
+  ["mathematical programming", "0025-5610"],
+  ["siam journal on optimization", "1052-6234"],
   ["annals of statistics", "0090-5364"],
   ["journal of the american statistical association", "0162-1459"],
   ["biometrika", "0006-3444"],
@@ -945,7 +965,7 @@ async function fetchHorizon(
         return candidate ? {
           ...candidate,
           discoveryChannel: plan.channel,
-          provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, queryText: cleanText(plan.query).slice(0, 500) }],
+          provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, queryText: cleanText(plan.query).slice(0, 500), routeId: plan.routeId }],
         } : null;
       }));
       const normalized = normalizedItems.filter((candidate): candidate is Exclude<(typeof normalizedItems)[number], null> => candidate !== null);
@@ -1214,6 +1234,19 @@ async function ensurePreference(database: D1Database, space: SpaceRow) {
     row = await database.prepare("SELECT profile_key, priority_venues, tracked_authors, exploration_mode, user_modified FROM monitor_preferences WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<PreferenceRow>();
   }
+  if (row && !row.user_modified) {
+    const inferred = inferDomainProfile(space.name, space.description);
+    const currentVenues = parseVenues(row.priority_venues);
+    const defaultsChanged = row.profile_key !== inferred.key
+      || currentVenues.length !== inferred.venues.length
+      || currentVenues.some((venue, index) => venue !== inferred.venues[index]);
+    if (defaultsChanged) {
+      await database.prepare(
+        "UPDATE monitor_preferences SET profile_key = ?, priority_venues = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND user_modified = 0",
+      ).bind(inferred.key, JSON.stringify(inferred.venues), space.id).run();
+      row = { ...row, profile_key: inferred.key, priority_venues: JSON.stringify(inferred.venues) };
+    }
+  }
   const profile = getDomainProfile(row?.profile_key || "general_research");
   const explorationMode: ExplorationMode = ["focused", "balanced", "open"].includes(row?.exploration_mode || "")
     ? row!.exploration_mode as ExplorationMode : "balanced";
@@ -1298,12 +1331,13 @@ async function ensureDailyQueryPlan(
 ): Promise<QueryPlan> {
   const planDate = new Date().toISOString().slice(0, 10);
   const existing = await database.prepare(
-    "SELECT plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error FROM monitor_query_plans WHERE space_id = ? AND plan_date = ? LIMIT 1",
+    "SELECT plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error, created_at FROM monitor_query_plans WHERE space_id = ? AND plan_date = ? LIMIT 1",
   ).bind(space.id, planDate).first<{
-    plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null;
+    plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null; created_at: string;
   }>();
   const staleFallback = Boolean(existing && apiKey && existing.model === "deterministic-fallback");
-  if (existing && !staleFallback) {
+  const stalePipelinePlan = Boolean(existing && databaseTime(existing.created_at) < MONITOR_QUERY_PLAN_RELEASED_AT);
+  if (existing && !staleFallback && !stalePipelinePlan) {
     let parsed: Partial<Record<Horizon, string[]>> = {};
     try { parsed = JSON.parse(existing.queries_json) as Partial<Record<Horizon, string[]>>; } catch { parsed = {}; }
     return {
@@ -1320,7 +1354,7 @@ async function ensureDailyQueryPlan(
       error: existing.error,
     };
   }
-  if (staleFallback) {
+  if (staleFallback || stalePipelinePlan) {
     await database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = ?")
       .bind(space.id, planDate).run();
   }
@@ -1496,12 +1530,16 @@ async function quickScreenBatch(
   userId: string,
   candidates: Candidate[],
   apiKey: string,
+  mode: "fast" | "rescue" = "fast",
 ) {
+  const deliberate = mode === "rescue";
   const prompt = [
     "Return one JSON object only with shape {\"screens\":[...]}. Screen every supplied record.",
     "Each screen must contain canonicalId, isPaper, relevanceScore, qualityScore, and screeningReason.",
     "relevanceScore and qualityScore must be integer scores on a 0-100 scale, never decimals on a 0-1 scale. 0 means no fit/evidence and 100 means exceptional fit/evidence.",
-    "This is a fast but rigorous academic triage pass. Reject mastheads, publication information, author instructions, contents, corrections, calls for papers, and non-research records.",
+    deliberate
+      ? "This is a second-pass review of near-miss papers after abstract enrichment. Reconsider subtle theoretical or methodological fit carefully; do not preserve an earlier low score merely because the connection is not stated in generic keywords."
+      : "This is a fast but rigorous academic triage pass. Reject mastheads, publication information, author instructions, contents, corrections, calls for papers, and non-research records.",
     "Judge direct fit to the research space, evidence quality, durable usefulness, and the different standards for 14 days, 6 months, and 5 years.",
     "Do not write summaries or reading advice in this pass. Keep screeningReason under 35 words and use only supplied metadata.",
     `Research space: ${space.name} — ${space.description}`,
@@ -1529,16 +1567,18 @@ async function quickScreenBatch(
         body: JSON.stringify({
           model: MONITOR_MODEL,
           messages: [
-            { role: "system", content: "You are Pi Research's fast evidence-disciplined paper triage editor. Return strict JSON." },
+            { role: "system", content: deliberate
+              ? "You are Pi Research's careful evidence-disciplined second-pass paper triage editor. Return strict JSON."
+              : "You are Pi Research's fast evidence-disciplined paper triage editor. Return strict JSON." },
             { role: "user", content: prompt },
           ],
-          thinking: { type: "disabled" },
-          reasoning_effort: "low",
+          thinking: { type: deliberate ? "enabled" : "disabled" },
+          reasoning_effort: deliberate ? "medium" : "low",
           response_format: { type: "json_object" },
           max_tokens: 3600,
           stream: false,
         }),
-        signal: AbortSignal.timeout(38_000),
+        signal: AbortSignal.timeout(deliberate ? 55_000 : 38_000),
       });
       const data = await response.json() as DeepSeekResponse;
       if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro quick screening failed");
@@ -1587,6 +1627,7 @@ async function quickScreenCandidates(
   userId: string,
   candidates: Candidate[],
   apiKey: string,
+  mode: "fast" | "rescue" = "fast",
 ) {
   if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be screened");
   const usageDate = new Date().toISOString().slice(0, 10);
@@ -1599,7 +1640,7 @@ async function quickScreenCandidates(
   if (globalCount + groups.length > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount + groups.length > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
     throw new Error("DeepSeek Pro screening budget reached");
   }
-  const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey)));
+  const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey, mode)));
   const screens = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
   const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
   const fatalError = errors.find((error) => isNonRetryableDeepSeekError(error));
@@ -2521,7 +2562,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
     const placeholders = ids.map(() => "?").join(", ");
     const sources = await database.prepare(
       `SELECT cs.paper_id, cs.source_key, cs.channel, cs.query_key, cs.appearances,
-       COALESCE(coverage.query_text, '') AS query_text
+       COALESCE(coverage.query_text, '') AS query_text, COALESCE(coverage.route_id, '') AS route_id
        FROM monitor_candidate_sources cs
        JOIN monitored_papers paper ON paper.id = cs.paper_id AND paper.space_id = cs.space_id
        LEFT JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id
@@ -2529,7 +2570,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
        WHERE cs.space_id = ? AND cs.paper_id IN (${placeholders})
        ORDER BY cs.last_seen_at DESC`,
     ).bind(spaceId, ...ids).all<{
-      paper_id: string; source_key: string; channel: string; query_key: string; appearances: number; query_text: string;
+      paper_id: string; source_key: string; channel: string; query_key: string; appearances: number; query_text: string; route_id: string;
     }>();
     for (const source of sources.results) {
       const current = provenanceByPaper.get(source.paper_id) || [];
@@ -2539,6 +2580,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
         channel: source.channel as Candidate["discoveryChannel"],
         queryKey: source.query_key,
         queryText: source.query_text,
+        routeId: source.route_id || undefined,
         appearances: source.appearances,
       });
       provenanceByPaper.set(source.paper_id, current);
@@ -2573,22 +2615,72 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
   return candidates.sort((left, right) => (order.get(left.canonicalId) ?? 999) - (order.get(right.canonicalId) ?? 999));
 }
 
-function candidateScreeningPriority(candidate: Candidate) {
+function candidateScreeningPriority(candidate: Candidate, includeAbstract = true) {
   const deterministicFit = Math.min(105, Math.log1p(Math.max(0, candidate.relevanceScore)) * 19);
-  const abstractEvidence = Math.min(26, candidate.abstractText.length / 60);
+  const abstractEvidence = includeAbstract ? Math.min(26, candidate.abstractText.length / 60) : 0;
   const metadataQuality = Math.min(100, Math.max(0, candidate.qualityScore)) * 0.2;
   const citationEvidence = Math.min(12, Math.log1p(Math.max(0, candidate.citationCount)) * 2.5);
   const sourceDiversity = Math.min(8, new Set(candidate.provenance.map((entry) => entry.channel)).size * 2);
   return deterministicFit + abstractEvidence + metadataQuality + citationEvidence + sourceDiversity;
 }
 
+function candidateDirectionKey(candidate: Candidate) {
+  const routed = candidate.provenance.find((entry) => entry.routeId);
+  if (routed?.routeId) return `route:${routed.routeId}`;
+  const haystack = normalizedResearchText(`${candidate.title} ${candidate.abstractText} ${candidate.venue}`);
+  for (const provenance of candidate.provenance) {
+    const matchedTerms = cleanText(provenance.queryText || "").toLocaleLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((term) => term.length >= 4 && !GENERIC_TERMS.has(term) && haystack.includes(` ${term} `))
+      .slice(0, 3);
+    if (matchedTerms.length) return `topic:${matchedTerms.join("+")}`;
+  }
+  const branch = candidate.provenance[0];
+  return branch ? `branch:${branch.sourceKey}:${branch.queryKey}` : `channel:${candidate.discoveryChannel}`;
+}
+
+function selectHorizonScreeningCandidates(candidates: Candidate[], limit: number) {
+  const ranked = [...candidates].sort((left, right) => candidateScreeningPriority(right) - candidateScreeningPriority(left));
+  const evidenceGapLimit = Math.min(Math.max(1, Math.round(limit * 0.2)), candidates.filter((candidate) => candidate.abstractText.trim().length < 120).length);
+  const primary = selectBalancedByGroup(ranked, candidateDirectionKey, Math.max(0, limit - evidenceGapLimit));
+  const primaryIds = new Set(primary.map((candidate) => candidate.canonicalId));
+  const evidenceGaps = candidates
+    .filter((candidate) => candidate.abstractText.trim().length < 120 && !primaryIds.has(candidate.canonicalId))
+    .sort((left, right) => candidateScreeningPriority(right, false) - candidateScreeningPriority(left, false));
+  const seeded = [...primary, ...selectBalancedByGroup(evidenceGaps, candidateDirectionKey, evidenceGapLimit)];
+  const seededIds = new Set(seeded.map((candidate) => candidate.canonicalId));
+  const remaining = ranked.filter((candidate) => !seededIds.has(candidate.canonicalId));
+  return [...seeded, ...selectBalancedByGroup(remaining, candidateDirectionKey, Math.max(0, limit - seeded.length))];
+}
+
 function selectUnseenReviewBatch(candidates: Candidate[]) {
   const selected: Candidate[] = [];
   for (const horizon of ["days", "months", "years"] as Horizon[]) {
-    selected.push(...candidates
-      .filter((candidate) => candidate.horizon === horizon)
-      .sort((left, right) => candidateScreeningPriority(right) - candidateScreeningPriority(left))
-      .slice(0, HORIZON_REVIEW_LIMITS[horizon]));
+    selected.push(...selectHorizonScreeningCandidates(
+      candidates.filter((candidate) => candidate.horizon === horizon),
+      HORIZON_REVIEW_LIMITS[horizon],
+    ));
+  }
+  return selected;
+}
+
+function selectCurrentAndBacklogReviewBatch(candidates: Candidate[], currentCandidateIds: Iterable<string>) {
+  const currentIds = new Set(currentCandidateIds);
+  const selected: Candidate[] = [];
+  for (const horizon of ["days", "months", "years"] as Horizon[]) {
+    const limit = HORIZON_REVIEW_LIMITS[horizon];
+    const currentBudget = Math.max(1, Math.round(limit * 0.72));
+    const horizonCandidates = candidates.filter((candidate) => candidate.horizon === horizon);
+    const current = selectHorizonScreeningCandidates(horizonCandidates.filter((candidate) => currentIds.has(candidate.canonicalId)), currentBudget);
+    const currentSelected = new Set(current.map((candidate) => candidate.canonicalId));
+    const backlog = selectHorizonScreeningCandidates(
+      horizonCandidates.filter((candidate) => !currentIds.has(candidate.canonicalId) && !currentSelected.has(candidate.canonicalId)),
+      limit - current.length,
+    );
+    const seeded = [...current, ...backlog];
+    const seededIds = new Set(seeded.map((candidate) => candidate.canonicalId));
+    const fill = selectHorizonScreeningCandidates(horizonCandidates.filter((candidate) => !seededIds.has(candidate.canonicalId)), limit - seeded.length);
+    selected.push(...seeded, ...fill);
   }
   return selected;
 }
@@ -2636,24 +2728,36 @@ async function fetchSemanticScholarAbstracts(candidates: Candidate[]) {
   return abstracts;
 }
 
-async function fetchOpenAlexAbstract(candidate: Candidate) {
-  if (!candidate.doi) return "";
-  try {
-    const endpoint = new URL("https://api.openalex.org/works");
-    endpoint.searchParams.set("filter", `doi:https://doi.org/${candidate.doi}`);
-    endpoint.searchParams.set("select", "doi,abstract_inverted_index");
-    endpoint.searchParams.set("per-page", "1");
-    endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
-    const response = await fetch(endpoint, {
-      headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!response.ok) return "";
-    const data = await response.json() as OpenAlexResponse;
-    return openAlexAbstract(data.results?.[0]?.abstract_inverted_index);
-  } catch {
-    return "";
-  }
+async function fetchOpenAlexAbstracts(candidates: Candidate[]) {
+  const byDoi = new Map(candidates.filter((candidate) => candidate.doi).map((candidate) => [candidate.doi!.toLocaleLowerCase(), candidate]));
+  const abstracts = new Map<string, string>();
+  const dois = Array.from(byDoi.keys());
+  const chunks = Array.from({ length: Math.ceil(dois.length / 20) }, (_, index) => dois.slice(index * 20, (index + 1) * 20));
+  await Promise.all(chunks.map(async (chunk) => {
+    if (!chunk.length) return;
+    try {
+      const endpoint = new URL("https://api.openalex.org/works");
+      endpoint.searchParams.set("filter", `doi:${chunk.map((doi) => `https://doi.org/${doi}`).join("|")}`);
+      endpoint.searchParams.set("select", "doi,abstract_inverted_index");
+      endpoint.searchParams.set("per-page", String(chunk.length));
+      endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) return;
+      const data = await response.json() as OpenAlexResponse;
+      for (const item of data.results || []) {
+        const doi = item.doi?.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "").trim().toLocaleLowerCase();
+        const candidate = doi ? byDoi.get(doi) : null;
+        const abstractText = openAlexAbstract(item.abstract_inverted_index);
+        if (candidate && abstractText) abstracts.set(candidate.canonicalId, abstractText);
+      }
+    } catch {
+      // Missing enrichment evidence is handled by the downstream evidence gate.
+    }
+  }));
+  return abstracts;
 }
 
 async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, candidates: Candidate[]) {
@@ -2661,13 +2765,8 @@ async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, 
   if (!missing.length) return { requested: 0, enriched: 0 };
   const abstracts = await fetchSemanticScholarAbstracts(missing);
   const unresolved = missing.filter((candidate) => !abstracts.has(candidate.canonicalId) && candidate.doi);
-  for (let start = 0; start < unresolved.length; start += 4) {
-    const batch = unresolved.slice(start, start + 4);
-    const results = await Promise.all(batch.map((candidate) => fetchOpenAlexAbstract(candidate)));
-    results.forEach((abstractText, index) => {
-      if (abstractText) abstracts.set(batch[index].canonicalId, abstractText);
-    });
-  }
+  const openAlexAbstracts = await fetchOpenAlexAbstracts(unresolved);
+  for (const [canonicalId, abstractText] of openAlexAbstracts) abstracts.set(canonicalId, abstractText);
   const statements = Array.from(abstracts.entries()).map(([canonicalId, abstractText]) => database.prepare(
     `UPDATE paper_insights SET abstract_text = CASE WHEN length(?) > length(abstract_text) THEN ? ELSE abstract_text END,
      updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = (
@@ -3145,6 +3244,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         candidateCount: scanWork?.candidateIds.length || 0,
         deepCandidateCount: scanWork?.deepIds.length || 0,
         deepCompletedCount: scanWork?.deepCompletedIds.length || 0,
+        pipelineVersion: scanWork?.pipelineVersion || "",
+        needsRefresh: job.status === "ready" && scanWork?.pipelineVersion !== MONITOR_PIPELINE_VERSION,
         attempt: job.attempt,
         triggerSource: job.trigger_source,
         resumeOfJobId: job.resume_of_job_id,
@@ -3361,7 +3462,8 @@ export async function PATCH(request: Request) {
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
-    screenFailureCount: 0, deepFailureCount: 0, resumeCheckpoint: "",
+    rescueScreenIds: [], rescueScreened: false, screenFailureCount: 0, deepFailureCount: 0,
+    pipelineVersion: "", resumeCheckpoint: "",
   };
   if (!value) return fallback;
   try {
@@ -3371,10 +3473,13 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       screens: Array.isArray(parsed.screens) ? parsed.screens.filter((screen): screen is QuickScreen => Boolean(screen && typeof screen.canonicalId === "string")).slice(0, 120) : [],
       deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      rescueScreenIds: Array.isArray(parsed.rescueScreenIds) ? parsed.rescueScreenIds.filter((id): id is string => typeof id === "string").slice(0, RESCUE_SCREEN_LIMIT) : [],
+      rescueScreened: parsed.rescueScreened === true,
       rawCandidateCount: Math.max(0, Number(parsed.rawCandidateCount) || 0),
       newCandidateCount: Math.max(0, Number(parsed.newCandidateCount) || 0),
       screenFailureCount: Math.max(0, Number(parsed.screenFailureCount) || 0),
       deepFailureCount: Math.max(0, Number(parsed.deepFailureCount) || 0),
+      pipelineVersion: typeof parsed.pipelineVersion === "string" ? parsed.pipelineVersion : "",
       resumeCheckpoint: typeof parsed.resumeCheckpoint === "string" ? parsed.resumeCheckpoint : "",
     };
   } catch {
@@ -3382,9 +3487,17 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   }
 }
 
+function newScanWorkQueue(): ScanWorkQueue {
+  return {
+    candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
+    rawCandidateCount: 0, newCandidateCount: 0, screenFailureCount: 0, deepFailureCount: 0,
+    pipelineVersion: MONITOR_PIPELINE_VERSION, resumeCheckpoint: "",
+  };
+}
+
 const RESUMABLE_SCAN_CHECKPOINTS = new Set([
   "planning", "discovering_days", "discovering_months", "discovering_years", "deduplicating",
-  "screening", "enriching_abstracts", "deep_reviewing",
+  "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing",
 ]);
 
 function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_source">, work: ScanWorkQueue) {
@@ -3393,6 +3506,7 @@ function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_s
   if (work.deepIds.length) {
     return work.deepCompletedIds.length ? "deep_reviewing" : "enriching_abstracts";
   }
+  if (work.rescueScreenIds.length && !work.rescueScreened) return "rescue_screening";
   if (work.screens.length || /筛选|screen/i.test(job.current_source)) return "screening";
   if (work.candidateIds.length) return work.candidateIds.length <= Object.values(HORIZON_REVIEW_LIMITS).reduce((sum, value) => sum + value, 0)
     ? "screening" : "deduplicating";
@@ -3400,7 +3514,7 @@ function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_s
 }
 
 function statusForCheckpoint(checkpoint: string) {
-  if (checkpoint === "screening") return "screening";
+  if (["enriching_screening_abstracts", "screening", "rescue_screening"].includes(checkpoint)) return "screening";
   if (["enriching_abstracts", "deep_reviewing"].includes(checkpoint)) return "deep_reviewing";
   if (checkpoint === "deduplicating") return "deduplicating";
   if (checkpoint.startsWith("discovering_")) return checkpoint;
@@ -3408,7 +3522,9 @@ function statusForCheckpoint(checkpoint: string) {
 }
 
 function monitorProgressByCheckpoint(checkpoint: string) {
+  if (checkpoint === "enriching_screening_abstracts") return 54;
   if (checkpoint === "screening") return 56;
+  if (checkpoint === "rescue_screening") return 72;
   if (checkpoint === "enriching_abstracts") return 76;
   if (checkpoint === "deep_reviewing") return 80;
   if (checkpoint === "deduplicating") return 50;
@@ -3426,11 +3542,40 @@ async function saveScanWorkQueue(database: D1Database, jobId: string, work: Scan
 function chooseDeepCandidateIds(candidates: Candidate[], screens: QuickScreen[], limit = DEEP_REVIEW_LIMIT) {
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
   const ranked = screens
-    .filter((screen) => screen.isPaper && screen.relevanceScore >= 68 && screen.qualityScore >= 55 && candidateById.has(screen.canonicalId))
-    .sort((left, right) => (right.relevanceScore * 0.62 + right.qualityScore * 0.38) - (left.relevanceScore * 0.62 + left.qualityScore * 0.38));
+    .filter((screen) => isPrimaryDeepCandidate(screen) && candidateById.has(screen.canonicalId))
+    .sort((left, right) => deepCandidateScore(right) - deepCandidateScore(left));
   return selectDiverseItems(
     ranked,
-    (screen) => `horizon:${candidateById.get(screen.canonicalId)?.horizon || "days"}`,
+    (screen) => candidateDirectionKey(candidateById.get(screen.canonicalId)!),
+    (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
+    limit,
+  ).map((screen) => screen.canonicalId);
+}
+
+function chooseRescueScreenIds(candidates: Candidate[], screens: QuickScreen[], limit = RESCUE_SCREEN_LIMIT) {
+  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const ranked = screens
+    .filter((screen) => isRescueDeepCandidate(screen) && candidateById.has(screen.canonicalId))
+    .sort((left, right) => deepCandidateScore(right) - deepCandidateScore(left));
+  return selectDiverseItems(
+    ranked,
+    (screen) => candidateDirectionKey(candidateById.get(screen.canonicalId)!),
+    (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
+    limit,
+  ).map((screen) => screen.canonicalId);
+}
+
+function chooseRescueCandidateIds(candidates: Candidate[], screens: QuickScreen[], scheduledIds: Iterable<string>, limit = DEEP_REVIEW_RESCUE_LIMIT) {
+  const scheduled = new Set(scheduledIds);
+  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const ranked = screens
+    .filter((screen) => !scheduled.has(screen.canonicalId)
+      && candidateById.has(screen.canonicalId)
+      && (isPrimaryDeepCandidate(screen) || isRescueDeepCandidate(screen)))
+    .sort((left, right) => deepCandidateScore(right) - deepCandidateScore(left));
+  return selectDiverseItems(
+    ranked,
+    (screen) => candidateDirectionKey(candidateById.get(screen.canonicalId)!),
     (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
     limit,
   ).map((screen) => screen.canonicalId);
@@ -3694,22 +3839,24 @@ export async function POST(request: Request) {
       if (trigger !== "manual" && previousJob?.status === "error" && isNonRetryableDeepSeekError(previousJob.error)) {
         return Response.json(await readState(database, space, { cached: true, credentialActionRequired: true }));
       }
+      const previousWork = parseScanWorkQueue(previousJob?.work_queue_json);
+      const pipelineOutdated = Boolean(previousJob && previousWork.pipelineVersion !== MONITOR_PIPELINE_VERSION);
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
       const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
-      if (previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
+      if (!pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
         return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
       }
       const lockToken = crypto.randomUUID();
       const jobId = crypto.randomUUID();
-      const previousWork = parseScanWorkQueue(previousJob?.work_queue_json);
-      const resumeCheckpoint = previousJob?.status === "error" ? inferResumeCheckpoint(previousJob, previousWork) : "planning";
-      const resumable = Boolean(previousJob?.status === "error" && resumeCheckpoint !== "planning");
+      const resumeCheckpoint = previousJob?.status === "error" && !pipelineOutdated ? inferResumeCheckpoint(previousJob, previousWork) : "planning";
+      const resumable = Boolean(previousJob?.status === "error" && !pipelineOutdated && resumeCheckpoint !== "planning");
       if (resumable) {
         previousWork.resumeCheckpoint = "";
         previousWork.screenFailureCount = 0;
         previousWork.deepFailureCount = 0;
       }
       const initialCheckpoint = resumable ? resumeCheckpoint : "planning";
+      const initialWork = resumable ? previousWork : newScanWorkQueue();
       const initialStatus = statusForCheckpoint(initialCheckpoint);
       const initialProgress = resumable ? Math.max(previousJob?.progress || 3, monitorProgressByCheckpoint(initialCheckpoint)) : 3;
       const initialSource = resumable
@@ -3738,7 +3885,7 @@ export async function POST(request: Request) {
         resumable ? previousJob?.duplicate_count || 0 : 0, resumable ? previousJob?.reviewed_count || 0 : 0,
         resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.rejected_count || 0 : 0,
         resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null,
-        initialCheckpoint, resumable ? JSON.stringify(previousWork) : "{}").run();
+        initialCheckpoint, JSON.stringify(initialWork)).run();
       return Response.json(await readState(database, space, { accepted: true }), { status: 202 });
     }
 
@@ -3875,17 +4022,27 @@ export async function POST(request: Request) {
         await setStage(nextCheckpoint, nextStatus, progress, source, nextCheckpoint.startsWith("discovering_") ? nextCheckpoint.replace("discovering_", "") : "");
       } else if (job.checkpoint === "deduplicating") {
         const pendingQueue = await pendingCandidateQueue(database, space.id);
-        const selected = selectUnseenReviewBatch(pendingQueue);
+        const selected = selectCurrentAndBacklogReviewBatch(pendingQueue, work.candidateIds);
         work.candidateIds = selected.map((candidate) => candidate.canonicalId);
         work.screens = [];
         work.deepIds = [];
         work.deepCompletedIds = [];
+        work.rescueScreenIds = [];
+        work.rescueScreened = false;
+        work.pipelineVersion = MONITOR_PIPELINE_VERSION;
         await saveScanWorkQueue(database, job.id, work);
         await database.prepare(
           "UPDATE monitor_scan_jobs SET duplicate_count = ?, reviewed_count = 0, recommended_count = 0, rejected_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(Math.max(0, work.rawCandidateCount - work.newCandidateCount), job.id).run();
         if (!selected.length) return finalizeMain([], []);
-        await setStage("screening", "screening", 56, `DeepSeek Pro 正在快速筛选 0 / ${selected.length}`);
+        await setStage("enriching_screening_abstracts", "screening", 54, `正在为 ${selected.length} 篇候选批量补全摘要证据`);
+      } else if (job.checkpoint === "enriching_screening_abstracts") {
+        const candidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
+        const enrichment = await enrichDeepReviewAbstracts(database, space.id, candidates);
+        const source = enrichment.requested
+          ? `已批量补全 ${enrichment.enriched} / ${enrichment.requested} 篇缺失摘要，开始快速筛选`
+          : "候选摘要证据完整，开始快速筛选";
+        await setStage("screening", "screening", 56, source);
       } else if (job.checkpoint === "screening") {
         const screenedIds = new Set(work.screens.map((screen) => screen.canonicalId));
         const remainingIds = work.candidateIds.filter((id) => !screenedIds.has(id));
@@ -3916,10 +4073,38 @@ export async function POST(request: Request) {
           `DeepSeek Pro 已快速筛选 ${work.screens.length} / ${work.candidateIds.length}`, screeningProgress, job.id).run();
         if (!screenRemaining.length) {
           const candidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
+          const primaryIds = chooseDeepCandidateIds(candidates, work.screens);
+          if (!work.rescueScreened && primaryIds.length < DEEP_REVIEW_LIMIT) {
+            work.rescueScreenIds = chooseRescueScreenIds(candidates, work.screens, Math.min(RESCUE_SCREEN_LIMIT, DEEP_REVIEW_LIMIT - primaryIds.length + 2));
+            work.rescueScreened = true;
+            await saveScanWorkQueue(database, job.id, work);
+            if (work.rescueScreenIds.length) {
+              await setStage("rescue_screening", "screening", 72, `正在认真复审 ${work.rescueScreenIds.length} 篇临界论文，避免过早淘汰`);
+              return Response.json(await readState(database, space, { rescueScreening: true }), { status: 202 });
+            }
+          }
           work.deepIds = chooseDeepCandidateIds(candidates, work.screens);
+          if (!work.deepIds.length) work.deepIds = chooseRescueCandidateIds(candidates, work.screens, [], DEEP_REVIEW_RESCUE_LIMIT);
           await saveScanWorkQueue(database, job.id, work);
           if (!work.deepIds.length) return finalizeMain([], []);
           await setStage("enriching_abstracts", "deep_reviewing", 76, `正在为 ${work.deepIds.length} 篇高潜力论文补全摘要证据`);
+        }
+      } else if (job.checkpoint === "rescue_screening") {
+        const candidates = await pendingCandidateQueue(database, space.id, work.rescueScreenIds);
+        const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey, "rescue");
+        await persistQuickScreens(database, space.id, result.screens);
+        const byId = new Map(work.screens.map((screen) => [screen.canonicalId, screen]));
+        for (const screen of result.screens) byId.set(screen.canonicalId, screen);
+        work.screens = Array.from(byId.values());
+        work.screenFailureCount = result.errors.length && !result.screens.length ? work.screenFailureCount + 1 : 0;
+        await saveScanWorkQueue(database, job.id, work);
+        const fatalError = result.errors.find((error) => isNonRetryableDeepSeekError(error));
+        if (fatalError) throw fatalError;
+        if (work.screenFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Near-miss screening failed twice");
+        if (result.errors.length && !result.screens.length) {
+          await setStage("rescue_screening", "screening", 72, "临界论文复审响应较慢，正在从保存点重试");
+        } else {
+          await setStage("screening", "screening", 74, "临界论文复审完成，正在确定深度解读队列");
         }
       } else if (job.checkpoint === "enriching_abstracts") {
         const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
@@ -3968,10 +4153,7 @@ export async function POST(request: Request) {
         if (work.deepCompletedIds.length >= work.deepIds.length) {
           if (!recommended && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
-            const scheduled = new Set(work.deepIds);
-            const rescueIds = chooseDeepCandidateIds(allCandidates, work.screens, DEEP_REVIEW_MAX_LIMIT)
-              .filter((id) => !scheduled.has(id))
-              .slice(0, DEEP_REVIEW_RESCUE_LIMIT);
+            const rescueIds = chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, DEEP_REVIEW_RESCUE_LIMIT);
             if (rescueIds.length) {
               work.deepIds = [...work.deepIds, ...rescueIds];
               await saveScanWorkQueue(database, job.id, work);

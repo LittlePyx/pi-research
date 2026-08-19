@@ -3267,3 +3267,26 @@ main { min-width: 0; }
   .v2-alert-link { min-width: 28px; padding: 0 5px; }
   .v2-alert-link > span { display: none; }
 }
+.v2-scan-upgrade-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--blue) 22%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--blue) 6%, var(--paper));
+}
+.v2-scan-upgrade-note > span {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--blue);
+  color: white;
+  font-family: Georgia, serif;
+}
+.v2-scan-upgrade-note strong { display: block; color: var(--ink); }
+.v2-scan-upgrade-note p { margin: 4px 0 0; color: var(--muted); line-height: 1.55; }

@@ -61,7 +61,11 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /status: 202/);
   assert.match(monitor, /quickScreenCandidates/);
   assert.match(monitor, /QUICK_SCREEN_CONCURRENCY = 2/);
-  assert.match(monitor, /thinking: \{ type: "disabled" \}/);
+  assert.match(monitor, /thinking: \{ type: deliberate \? "enabled" : "disabled" \}/);
+  assert.match(monitor, /mode: "fast" \| "rescue"/);
+  assert.match(monitor, /rescue_screening/);
+  assert.match(monitor, /chooseRescueCandidateIds/);
+  assert.match(monitor, /enriching_screening_abstracts/);
   assert.match(monitor, /reasoning_effort: "medium"/);
   assert.match(monitor, /DEEP_REVIEW_LIMIT = 8/);
   assert.match(monitor, /DEEP_REVIEW_RESCUE_LIMIT = 4/);
