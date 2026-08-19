@@ -2629,11 +2629,10 @@ export default function ResearchApp({ user }: { user: User }) {
         <header className="v2-topbar">
           <button className="v2-mobile-menu" type="button" aria-label="Menu" onClick={() => setMobileNav(true)}>≡</button>
           <div className="v2-breadcrumb"><span>{defaultSpaceName(activeSpace.name, locale)}</span><b>/</b><strong>{navItems.find((item) => item.id === activeNav)?.label}</strong></div>
-          <button className="v2-ask-trigger" type="button" onClick={() => setAskOpen(true)}><span>⌕</span><span>{t.askPlaceholder}</span><kbd>⌘ K</kbd></button>
+          <button className="v2-ask-trigger v2-command-trigger" type="button" aria-label={t.askPi} onClick={() => setAskOpen(true)}><span className="v2-command-mark">π</span><span className="v2-command-copy"><strong>{t.askPi}</strong><small>{locale === "zh" ? "基于当前论文、研究路线与研究记忆" : "Grounded in your papers, routes, and research memory"}</small></span><kbd>⌘ K</kbd></button>
           <div className="v2-top-actions">
-            <button className="v2-notification-trigger" type="button" aria-label={locale === "zh" ? "研究提醒" : "Research alerts"} onClick={() => { navigate("today"); setNotificationsExpanded(true); window.setTimeout(() => document.querySelector(".v2-action-inbox")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }}><span>◌</span>{Boolean(pendingActionNotifications.length) && <b>{Math.min(99, pendingActionNotifications.length)}</b>}</button>
+            {pendingActionNotifications.length > 0 && <button className="v2-alert-link" type="button" onClick={() => { navigate("today"); setNotificationsExpanded(true); window.setTimeout(() => document.querySelector(".v2-action-inbox")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }}><span>{locale === "zh" ? "研究提醒" : "Alerts"}</span><b>{Math.min(99, pendingActionNotifications.length)}</b></button>}
             <div className="v2-language"><button className={locale === "zh" ? "active" : ""} type="button" onClick={() => setLocale("zh")}>中</button><button className={locale === "en" ? "active" : ""} type="button" onClick={() => setLocale("en")}>EN</button></div>
-            <button className="v2-ask-button" type="button" onClick={() => setAskOpen(true)}><span>π</span>{t.askPi}</button>
           </div>
         </header>
 

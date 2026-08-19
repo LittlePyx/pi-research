@@ -46,6 +46,10 @@ test("the daily workbench exposes research catch-up while keeping quality teleme
   assert.match(client, /Pi 运行记录/);
   assert.match(client, /不占用你的待处理数量/);
   assert.match(client, /notificationActionLabel/);
+  assert.match(client, /v2-command-trigger/);
+  assert.match(client, /pendingActionNotifications\.length > 0 && <button className="v2-alert-link"/);
+  assert.doesNotMatch(client, /v2-notification-trigger/);
+  assert.doesNotMatch(client, /v2-ask-button/);
   assert.match(client, /v2-weekly-review/);
   assert.match(client, /const SHOW_INTERNAL_QUALITY_UI = false/);
   assert.match(client, /SHOW_INTERNAL_QUALITY_UI && monitor\?\.pilotEvaluation/);
@@ -54,4 +58,5 @@ test("the daily workbench exposes research catch-up while keeping quality teleme
   assert.match(styles, /\.v2-research-catchup/);
   assert.match(styles, /actionable alerts separated from system activity/);
   assert.match(styles, /\.v2-activity-log/);
+  assert.match(styles, /one clear Pi entry point in the application bar/);
 });

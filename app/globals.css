@@ -3217,3 +3217,53 @@ main { min-width: 0; }
   .v2-today-hero-actions.status-only .v2-monitor-status { justify-self: start; }
   .v2-daily-brief-metrics { grid-template-columns: repeat(2,1fr); }
 }
+
+/* Pi Research V45 — one clear Pi entry point in the application bar */
+.v2-topbar { grid-template-columns: minmax(180px,.75fr) minmax(380px,680px) minmax(120px,.75fr); }
+.v2-command-trigger {
+  height: 50px;
+  padding: 6px 10px 6px 7px;
+  border-color: #cfd8d3;
+  border-radius: 13px;
+  background: rgba(255,255,255,.82);
+  box-shadow: 0 3px 12px rgba(36,50,43,.045);
+  display: grid;
+  grid-template-columns: 36px minmax(0,1fr) auto;
+  gap: 11px;
+  color: #394842;
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+.v2-command-trigger:hover,
+.v2-command-trigger:focus-visible { border-color: #9eb2aa; background: white; box-shadow: 0 5px 16px rgba(36,50,43,.08); outline: none; }
+.v2-command-trigger > .v2-command-mark { width: 36px; height: 36px; border-radius: 10px; background: #315f78; color: white; display: grid; place-items: center; font: italic 17px var(--font-serif); }
+.v2-command-copy { min-width: 0; }
+.v2-command-copy strong,
+.v2-command-copy small { overflow: hidden; display: block; text-overflow: ellipsis; white-space: nowrap; }
+.v2-command-copy strong { color: #34463f; font-size: 12px; }
+.v2-command-copy small { margin-top: 3px; color: #87918c; font-size: 9px; }
+.v2-command-trigger kbd { padding: 4px 7px; border-radius: 6px; font-size: 8px; }
+.v2-top-actions { gap: 8px; }
+.v2-alert-link { min-height: 32px; padding: 0 7px 0 10px; border: 1px solid #d4dbd7; border-radius: 8px; background: rgba(255,255,255,.64); color: #596b63; display: flex; align-items: center; gap: 7px; font-size: 9px; font-weight: 750; cursor: pointer; }
+.v2-alert-link:hover { border-color: #a9bbb3; background: white; }
+.v2-alert-link b { min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; background: #a65c3a; color: white; display: grid; place-items: center; font-size: 8px; }
+
+@media (max-width: 1180px) {
+  .v2-topbar { grid-template-columns: 120px minmax(320px,1fr) auto; }
+  .v2-command-copy small { display: none; }
+}
+
+@media (max-width: 820px) {
+  .v2-topbar { grid-template-columns: 34px minmax(0,1fr) auto; }
+  .v2-command-trigger { height: 44px; grid-template-columns: 32px minmax(0,1fr); }
+  .v2-command-trigger > .v2-command-mark { width: 32px; height: 32px; }
+  .v2-command-trigger kbd { display: none; }
+}
+
+@media (max-width: 620px) {
+  .v2-topbar { grid-template-columns: 31px minmax(0,1fr) auto; }
+  .v2-command-trigger { padding-right: 8px; }
+  .v2-command-copy strong { font-size: 11px; }
+  .v2-alert-link { min-width: 28px; padding: 0 5px; }
+  .v2-alert-link > span { display: none; }
+}
