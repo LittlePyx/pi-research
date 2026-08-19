@@ -2787,10 +2787,12 @@ main { min-width: 0; }
 .v2-paper-network-progress > span i { width: 7px; height: 7px; border-radius: 50%; background: #4f7489; animation: v2-build-pulse .9s ease-in-out infinite alternate; }
 .v2-paper-network-progress strong { color: #435d6d; font-size: 11px; }
 .v2-paper-network-progress p, .v2-paper-network-note p { margin: 2px 0 0; color: #697a84; font-size: 11px; line-height: 1.4; }
-.v2-paper-network-note { border-color: #dfd4c8; background: #f8f3ed; }
-.v2-paper-network-note > span { width: 20px; height: 20px; border: 1px solid #b99a79; border-radius: 50%; color: #8d6848; display: grid; place-items: center; font: italic 12px Georgia, serif; }
-.v2-paper-network-note > p { flex: 1; color: #765f4b; }
-.v2-paper-network-note > button { border: 0; background: transparent; color: #805a3d; font-size: 10px; font-weight: 800; }
+.v2-paper-network-note { min-height: 42px; margin: 0; padding: 7px 14px; border-width: 0 0 1px; border-color: #e1d9cf; border-radius: 0; background: #faf7f2; gap: 9px; }
+.v2-paper-network-note > span { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #a67557; }
+.v2-paper-network-note > div { min-width: 0; flex: 1; display: flex; align-items: baseline; gap: 8px; }
+.v2-paper-network-note > div strong { flex: 0 0 auto; color: #76543f; font-size: 10px; }
+.v2-paper-network-note > div p { margin: 0; color: #857264; font-size: 9px; line-height: 1.4; }
+.v2-paper-network-note > button { min-height: 27px; padding: 0 8px; border: 1px solid #d3c2b5; border-radius: 6px; background: transparent; color: #805a3d; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .v2-paper-network-stage { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .v2-paper-network-stage.has-drawer { grid-template-columns: minmax(0, 1fr) 340px; }
 .v2-paper-network-main { min-width: 0; }
@@ -3547,7 +3549,7 @@ main { min-width: 0; }
   }
 }
 
-/* Pi Research V52 — seed-driven paper graph and metro-style direction paths */
+/* Pi Research V54 — explicit direction semantics and resilient paper relations */
 .v2-field-network-legacy[hidden] { display: none !important; }
 .v2-direction-path-panel { margin-top: 24px; border: 1px solid #ced8d1; border-radius: 14px; background: rgba(255,255,255,.52); overflow: hidden; }
 .v2-direction-path-panel > header { min-height: 92px; padding: 20px 23px; border-bottom: 1px solid #dbe2dd; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
@@ -3556,7 +3558,7 @@ main { min-width: 0; }
 .v2-direction-path-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 13px; }
 .v2-direction-path-legend span { color: #707a73; display: flex; align-items: center; gap: 6px; font-size: 9px; white-space: nowrap; }
 .v2-direction-path-legend i { width: 22px; height: 0; border-top: 3px solid #416c57; }
-.v2-direction-path-legend i.bridge { border-top: 1px dashed #87978e; }
+.v2-direction-path-legend i.paper { width: 9px; height: 9px; border: 2px solid #fff; border-radius: 50%; background: #416c57; box-shadow: 0 0 0 1px #416c57; }
 .v2-direction-path-legend i.gap { width: 9px; height: 9px; border: 1px solid #a97855; transform: rotate(45deg); }
 .v2-direction-path-stage { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr) 310px; }
 .v2-direction-path-canvas { min-width: 0; overflow: auto; background: linear-gradient(180deg,rgba(245,248,245,.72),rgba(255,255,255,.42)); }
@@ -3566,6 +3568,7 @@ main { min-width: 0; }
 .v2-direction-lane { cursor: pointer; outline: 0; }
 .v2-direction-lane .lane-hit { fill: transparent; stroke: transparent; transition: fill .16s ease,stroke .16s ease; }
 .v2-direction-lane:hover .lane-hit,.v2-direction-lane:focus .lane-hit { fill: rgba(239,244,240,.82); }
+.v2-direction-lane:focus-visible .lane-hit { stroke: #315d48; stroke-width: 2; }
 .v2-direction-lane.selected .lane-hit { fill: rgba(235,242,237,.92); stroke: #c4d4c9; }
 .v2-direction-lane .lane-role { fill: #88918b; font-size: 9px; font-weight: 780; letter-spacing: .03em; text-transform: uppercase; }
 .v2-direction-lane .lane-title { fill: #2f4639; font: 500 15px Georgia,serif; }
@@ -3578,8 +3581,6 @@ main { min-width: 0; }
 .v2-direction-station .station-core { fill: #fff; stroke: none; filter: none; }
 .v2-direction-station.frontier circle:first-child { animation: v2-frontier-breathe 2.8s ease-in-out infinite; }
 @keyframes v2-frontier-breathe { 50% { filter: drop-shadow(0 0 7px rgba(66,111,86,.35)); } }
-.v2-direction-bridges path { fill: none; stroke: #84958b; stroke-width: 1.2; stroke-dasharray: 5 5; opacity: .7; }
-.v2-direction-bridges path.builds_on { stroke: #647f70; stroke-dasharray: none; }
 .v2-direction-path-inspector { min-width: 0; padding: 25px 22px; border-left: 1px solid #d9e1db; background: #fbfcf9; }
 .v2-direction-path-inspector > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .v2-direction-path-inspector > div:first-child small { color: #8a928d; font-size: 9px; font-weight: 760; letter-spacing: .05em; text-transform: uppercase; }
@@ -3592,6 +3593,21 @@ main { min-width: 0; }
 .v2-direction-path-inspector blockquote { margin: 0; padding: 13px; border: 0; border-radius: 8px; background: #eef3ef; }
 .v2-direction-path-inspector blockquote small { color: #53715f; font-size: 9px; font-weight: 780; }
 .v2-direction-path-inspector blockquote p { margin: 6px 0 0; color: #52645a; font-size: 10px; line-height: 1.55; }
+.v2-direction-relations { margin: 0 0 16px; padding: 13px 0; border-bottom: 1px solid #e0e5e1; }
+.v2-direction-relations > header { min-height: 0; padding: 0 0 8px; border: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.v2-direction-relations > header div { min-width: 0; display: grid; gap: 2px; }
+.v2-direction-relations > header strong { color: #46594e; font-size: 10px; }
+.v2-direction-relations > header small { color: #8a928d; font-size: 8px; line-height: 1.35; }
+.v2-direction-relations > header > span { min-width: 20px; height: 20px; border-radius: 10px; background: #e8eee9; color: #45614f; display: grid; place-items: center; font-size: 8px; font-weight: 800; }
+.v2-direction-relations > div { display: grid; gap: 6px; }
+.v2-direction-relations button { width: 100%; padding: 9px 10px; border: 1px solid #d9e1db; border-radius: 7px; background: #fff; color: inherit; display: grid; gap: 5px; text-align: left; cursor: pointer; }
+.v2-direction-relations button:hover,.v2-direction-relations button:focus-visible { border-color: #9eb4a6; background: #f4f7f4; outline: 0; }
+.v2-direction-relations button > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.v2-direction-relations button > span b { color: #315d48; font-size: 8px; letter-spacing: .04em; }
+.v2-direction-relations button > span em { color: #929a94; font-size: 7px; font-style: normal; }
+.v2-direction-relations button > strong { color: #3e5146; display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 5px; font-size: 9px; line-height: 1.35; }
+.v2-direction-relations button > strong i { color: #9a846e; font: 400 12px Georgia,serif; text-align: center; }
+.v2-direction-relations button > small { color: #718078; display: -webkit-box; overflow: hidden; font-size: 8px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .v2-direction-path-inspector footer { margin-top: 17px; display: grid; gap: 7px; }
 .v2-direction-path-inspector footer button { min-height: 37px; border: 1px solid #315d48; border-radius: 7px; background: transparent; color: #315d48; font-size: 10px; font-weight: 760; cursor: pointer; }
 .v2-direction-path-inspector footer button:first-child { background: #315d48; color: #fff; }

@@ -173,7 +173,7 @@ type SemanticScholarPaper = {
   references?: Array<{ paperId?: string; externalIds?: { DOI?: string } | null }> | null;
 };
 type DeepSeekResponse = {
-  choices?: Array<{ message?: { content?: string | null } }>;
+  choices?: Array<{ finish_reason?: string | null; message?: { content?: string | null; reasoning_content?: string | null } }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 };
@@ -347,12 +347,15 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
   });
   const data = await response.json() as DeepSeekResponse;
   if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro research-map analysis failed");
-  const content = data.choices?.[0]?.message?.content || "";
-  if (!content.trim()) throw new Error("DeepSeek Pro returned an empty research map");
   await Promise.all([
     recordUsage(database, "research-map:global", date, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
     recordUsage(database, workspaceScope, date, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
   ]);
+  const content = data.choices?.[0]?.message?.content || "";
+  if (!content.trim()) {
+    const finishReason = cleanText(data.choices?.[0]?.finish_reason || "unknown");
+    throw new Error(`DeepSeek Pro returned an empty research map (finish: ${finishReason})`);
+  }
   return JSON.parse(content) as T;
 }
 
@@ -810,11 +813,13 @@ async function generatePaperNetworkEdges(
     summary: cleanText(paper.summary_en).slice(0, 320),
     routeRationale: cleanText(paper.rationale_en).slice(0, 260),
   }));
-  const parsed = await callDeepSeek<{ edges?: Array<Partial<PaperNetworkEdgeDraft>> }>(
-    database,
-    workspaceId,
-    "You are Pi Research's evidence-disciplined scholarly network editor. Return strict JSON and never invent citation claims.",
-    [
+  const requestEdges = (input: typeof compact, maxTokens: number) => {
+    const inputIds = new Set(input.map((paper) => paper.id));
+    return callDeepSeek<{ edges?: Array<Partial<PaperNetworkEdgeDraft>> }>(
+      database,
+      workspaceId,
+      "You are Pi Research's evidence-disciplined scholarly network editor. Return strict JSON and never invent citation claims.",
+      [
       "Return {\"edges\":[...]} using only supplied paper ids.",
       "Create up to 18 semantic edges and 4-12 path edges. Every edge needs sourcePaperId, targetPaperId, kind (semantic|path), relationKind, relationshipZh, relationshipEn, confidence (0-100).",
       "Semantic relationKind must be extends, challenges, applies, unifies, bridges, or reframes. It describes an evidence-grounded intellectual relationship, not a factual citation unless it appears in actualCitationPairs.",
@@ -823,12 +828,30 @@ async function generatePaperNetworkEdges(
       "Do not duplicate an actual citation as a semantic edge. Do not connect papers merely because they share a direction label.",
       `Research space: ${space.name} — ${space.description}`,
       `User-confirmed research memory: ${memory || "none"}`,
-      `Papers: ${JSON.stringify(compact)}`,
-      `Actual citation pairs (source cites target): ${JSON.stringify(citationEdges.map((edge) => [edge.sourcePaperId, edge.targetPaperId]))}`,
-    ].join("\n"),
-    10000,
-    apiKey,
-  );
+      `Papers: ${JSON.stringify(input)}`,
+      `Actual citation pairs (source cites target): ${JSON.stringify(citationEdges.filter((edge) => inputIds.has(edge.sourcePaperId) && inputIds.has(edge.targetPaperId)).map((edge) => [edge.sourcePaperId, edge.targetPaperId]))}`,
+      ].join("\n"),
+      maxTokens,
+      apiKey,
+    );
+  };
+  let parsed: { edges?: Array<Partial<PaperNetworkEdgeDraft>> };
+  try {
+    parsed = await requestEdges(compact, 10000);
+  } catch (error) {
+    if (!(error instanceof Error) || !/empty research map/i.test(error.message) || compact.length <= 18) throw error;
+    const buckets = new Map<string, typeof compact>();
+    for (const paper of compact) buckets.set(paper.trackId, [...(buckets.get(paper.trackId) || []), paper]);
+    const reduced: typeof compact = [];
+    while (reduced.length < 18 && Array.from(buckets.values()).some((bucket) => bucket.length)) {
+      for (const bucket of buckets.values()) {
+        const paper = bucket.shift();
+        if (paper) reduced.push(paper);
+        if (reduced.length >= 18) break;
+      }
+    }
+    parsed = await requestEdges(reduced, 7000);
+  }
   const validIds = new Set(papers.map((paper) => paper.id));
   const citationPairs = new Set(citationEdges.map((edge) => edge.sourcePaperId + ":" + edge.targetPaperId));
   const counts = { semantic: 0, path: 0 };
@@ -863,6 +886,25 @@ async function rebuildPaperNetwork(database: D1Database, workspaceId: string, sp
     "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY track_id, position, created_at",
   ).bind(space.id).all<TrackPaperRow>();
   const papers = uniqueNetworkPapers(allPapers.results);
+  const existingRows = await database.prepare(
+    "SELECT id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source FROM research_paper_edges WHERE space_id = ?",
+  ).bind(space.id).all<PaperEdgeRow>();
+  const availablePaperIds = new Set(allPapers.results.map((paper) => paper.id));
+  const cachedEdges = existingRows.results
+    .filter((edge) => availablePaperIds.has(edge.source_paper_id) && availablePaperIds.has(edge.target_paper_id))
+    .map((row) => {
+      const edge = toPaperEdge(row);
+      return {
+        sourcePaperId: edge.sourcePaperId,
+        targetPaperId: edge.targetPaperId,
+        kind: edge.kind,
+        relationKind: edge.relationKind,
+        relationshipZh: edge.relationshipZh,
+        relationshipEn: edge.relationshipEn,
+        confidence: edge.confidence,
+        evidenceSource: edge.evidenceSource,
+      } satisfies Omit<ResearchPaperEdge, "id">;
+    });
   const state = await database.prepare("SELECT status, built_paper_count, model, sources_json, error, updated_at FROM research_paper_network_states WHERE space_id = ? LIMIT 1")
     .bind(space.id).first<PaperNetworkStateRow>();
   if (!force && state?.status === "ready" && state.built_paper_count >= papers.length && state.model === NETWORK_MODEL) return;
@@ -885,6 +927,8 @@ async function rebuildPaperNetwork(database: D1Database, workspaceId: string, sp
     sources.push("semantic-scholar");
   } catch (error) {
     errors.push(error instanceof Error ? error.message : "Citation lookup failed");
+    scholarlyEdges = cachedEdges.filter((edge) => edge.kind === "citation" || edge.kind === "similarity");
+    if (scholarlyEdges.length) sources.push("semantic-scholar-cache");
   }
   try {
     curatedEdges = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers,
@@ -892,6 +936,8 @@ async function rebuildPaperNetwork(database: D1Database, workspaceId: string, sp
     sources.push(MODEL);
   } catch (error) {
     errors.push(error instanceof Error ? error.message : "Pi path analysis failed");
+    curatedEdges = cachedEdges.filter((edge) => edge.kind === "semantic" || edge.kind === "path");
+    if (curatedEdges.length) sources.push(`${MODEL}-cache`);
   }
   const allEdges = [...scholarlyEdges, ...curatedEdges];
   const status = errors.length ? (allEdges.length ? "partial" : "error") : "ready";

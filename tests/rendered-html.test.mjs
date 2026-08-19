@@ -171,6 +171,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /kind: "similarity"/);
   assert.match(mapRoute, /bibliographic_coupling/);
   assert.match(mapRoute, /kind \(semantic\|path\)/);
+  assert.match(mapRoute, /semantic-scholar-cache/);
+  assert.match(mapRoute, /empty research map/i);
+  assert.match(mapRoute, /cachedEdges\.filter/);
   assert.match(mapRoute, /research_paper_edges/);
   assert.match(mapRoute, /research_paper_network_states/);
   assert.match(schema, /researchTracks/);
@@ -207,6 +210,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /种子论文/);
   assert.match(client, /数据库确认的引用/);
   assert.match(client, /Pi 解释的语义关系/);
+  assert.match(client, /Pi 推断，不代表论文之间存在真实引用/);
+  assert.match(client, /真实引用与文献耦合已更新/);
+  assert.doesNotMatch(client, /className="v2-direction-bridges"/);
   assert.match(client, /加入学习路径/);
   assert.match(client, /关键机会/);
   assert.match(client, /观察信号/);
