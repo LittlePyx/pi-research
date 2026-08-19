@@ -1800,7 +1800,11 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const runManualMonitor = async () => {
-    if (monitoring || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    if (monitoring) return;
+    if (activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) {
+      setToast(locale === "zh" ? "研究空间尚未连接，请刷新页面后再试" : "The research space is not connected yet. Refresh the page and try again.");
+      return;
+    }
     setMonitoring(true);
     const stopPolling = startMonitorPolling(activeSpace.id, setMonitor);
     try {
@@ -1809,11 +1813,12 @@ export default function ResearchApp({ user }: { user: User }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ spaceId: activeSpace.id, force: true, trigger: "manual" }),
       });
-      const data = await response.json() as { monitor?: MonitorState };
-      if (data.monitor) {
-        setMonitor(data.monitor);
-        if (data.monitor.throttled) setToast(t.manualCooling);
-      }
+      const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
+      if (!response.ok || !data.monitor) throw new Error(data.error || "scan unavailable");
+      setMonitor(data.monitor);
+      if (data.monitor.throttled) setToast(t.manualCooling);
+    } catch {
+      setToast(locale === "zh" ? "扫描未能启动，请稍后重试" : "The scan could not start. Please try again shortly.");
     } finally {
       stopPolling();
       setMonitoring(false);
