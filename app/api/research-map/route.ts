@@ -179,7 +179,7 @@ type DeepSeekResponse = {
 };
 
 const MODEL = "deepseek-v4-pro";
-const NETWORK_MODEL = "deepseek-v4-pro+coupling-v1";
+const NETWORK_MODEL = "deepseek-v4-pro+coupling-v2";
 const PAPER_TYPES = new Set(["journal-article", "proceedings-article", "posted-content"]);
 const NON_PAPER_PHRASES = /(publication information|information for authors|instructions for authors|table of contents|editorial board|front matter|back matter|issue information|journal masthead|correction|erratum)/i;
 const ROLES = new Set<ResearchTrackRole>(["foundation", "milestone", "frontier"]);
@@ -835,11 +835,7 @@ async function generatePaperNetworkEdges(
       apiKey,
     );
   };
-  let parsed: { edges?: Array<Partial<PaperNetworkEdgeDraft>> };
-  try {
-    parsed = await requestEdges(compact, 10000);
-  } catch (error) {
-    if (!(error instanceof Error) || !/empty research map/i.test(error.message) || compact.length <= 18) throw error;
+  const reducedInput = () => {
     const buckets = new Map<string, typeof compact>();
     for (const paper of compact) buckets.set(paper.trackId, [...(buckets.get(paper.trackId) || []), paper]);
     const reduced: typeof compact = [];
@@ -850,7 +846,17 @@ async function generatePaperNetworkEdges(
         if (reduced.length >= 18) break;
       }
     }
-    parsed = await requestEdges(reduced, 7000);
+    return reduced;
+  };
+  let parsed: { edges?: Array<Partial<PaperNetworkEdgeDraft>> };
+  try {
+    parsed = await requestEdges(compact, 10000);
+  } catch (error) {
+    if (!(error instanceof Error) || !/empty research map/i.test(error.message) || compact.length <= 18) throw error;
+    parsed = await requestEdges(reducedInput(), 7000);
+  }
+  if ((!(parsed.edges || []).length || !(parsed.edges || []).some((edge) => edge.kind === "path")) && compact.length > 18) {
+    parsed = await requestEdges(reducedInput(), 7000);
   }
   const validIds = new Set(papers.map((paper) => paper.id));
   const citationPairs = new Set(citationEdges.map((edge) => edge.sourcePaperId + ":" + edge.targetPaperId));
@@ -881,15 +887,59 @@ async function generatePaperNetworkEdges(
   return Array.from(unique.values());
 }
 
-async function rebuildPaperNetwork(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, apiKey: string, force = false) {
+type PaperNetworkBuildPhase = "all" | "verified" | "pi";
+
+async function replacePaperNetworkEdges(
+  database: D1Database,
+  spaceId: string,
+  kinds: ResearchPaperEdgeKind[],
+  edges: Array<Omit<ResearchPaperEdge, "id">>,
+) {
+  const statements = kinds.map((kind) => database.prepare("DELETE FROM research_paper_edges WHERE space_id = ? AND kind = ?").bind(spaceId, kind));
+  for (const edge of edges) {
+    statements.push(database.prepare(
+      `INSERT OR IGNORE INTO research_paper_edges
+       (id, space_id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), spaceId, edge.sourcePaperId, edge.targetPaperId, edge.kind, edge.relationKind,
+      edge.relationshipZh, edge.relationshipEn, edge.confidence, edge.evidenceSource));
+  }
+  await database.batch(statements);
+}
+
+async function writePaperNetworkState(
+  database: D1Database,
+  spaceId: string,
+  status: "building" | "ready" | "partial" | "error",
+  paperCount: number,
+  sources: string[],
+  error: string | null,
+) {
+  await database.prepare(
+    `INSERT INTO research_paper_network_states (space_id, status, built_paper_count, model, sources_json, error, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(space_id) DO UPDATE SET status = excluded.status, built_paper_count = excluded.built_paper_count,
+     model = excluded.model, sources_json = excluded.sources_json, error = excluded.error, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(spaceId, status, paperCount, NETWORK_MODEL, JSON.stringify(Array.from(new Set(sources))), error).run();
+}
+
+async function rebuildPaperNetwork(
+  database: D1Database,
+  workspaceId: string,
+  space: SpaceRow,
+  memory: string,
+  apiKey: string,
+  force = false,
+  phase: PaperNetworkBuildPhase = "all",
+) {
   const allPapers = await database.prepare(
-    "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY track_id, position, created_at",
+    "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY (SELECT position FROM research_tracks WHERE id = research_track_papers.track_id), position, created_at",
   ).bind(space.id).all<TrackPaperRow>();
   const papers = uniqueNetworkPapers(allPapers.results);
   const existingRows = await database.prepare(
     "SELECT id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source FROM research_paper_edges WHERE space_id = ?",
   ).bind(space.id).all<PaperEdgeRow>();
-  const availablePaperIds = new Set(allPapers.results.map((paper) => paper.id));
+  const availablePaperIds = new Set(papers.map((paper) => paper.id));
   const cachedEdges = existingRows.results
     .filter((edge) => availablePaperIds.has(edge.source_paper_id) && availablePaperIds.has(edge.target_paper_id))
     .map((row) => {
@@ -907,56 +957,59 @@ async function rebuildPaperNetwork(database: D1Database, workspaceId: string, sp
     });
   const state = await database.prepare("SELECT status, built_paper_count, model, sources_json, error, updated_at FROM research_paper_network_states WHERE space_id = ? LIMIT 1")
     .bind(space.id).first<PaperNetworkStateRow>();
-  if (!force && state?.status === "ready" && state.built_paper_count >= papers.length && state.model === NETWORK_MODEL) return;
-  await database.prepare(
-    `INSERT INTO research_paper_network_states (space_id, status, built_paper_count, model, sources_json, error)
-     VALUES (?, 'building', ?, '', '[]', NULL)
-     ON CONFLICT(space_id) DO UPDATE SET status = 'building', error = NULL, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(space.id, papers.length).run();
+  if (!force && phase === "all" && state?.status === "ready" && state.built_paper_count >= papers.length && state.model === NETWORK_MODEL) return;
+  let previousSources: string[] = [];
+  try {
+    previousSources = state ? parseJsonArray(state.sources_json) : [];
+  } catch {
+    previousSources = [];
+  }
+  if (phase !== "pi") await writePaperNetworkState(database, space.id, "building", papers.length, previousSources, null);
   if (papers.length < 2) {
-    await database.prepare("UPDATE research_paper_network_states SET status = 'ready', built_paper_count = ?, model = '', sources_json = '[]', updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
-      .bind(papers.length, space.id).run();
+    await writePaperNetworkState(database, space.id, "ready", papers.length, [], null);
     return;
   }
-  let scholarlyEdges: Array<Omit<ResearchPaperEdge, "id">> = [];
-  let curatedEdges: Array<Omit<ResearchPaperEdge, "id">> = [];
-  const sources: string[] = [];
+  let scholarlyEdges = cachedEdges.filter((edge) => edge.kind === "citation" || edge.kind === "similarity");
+  let curatedEdges = cachedEdges.filter((edge) => edge.kind === "semantic" || edge.kind === "path");
+  let sources = [...previousSources];
   const errors: string[] = [];
-  try {
-    scholarlyEdges = await fetchScholarlyEdges(papers);
-    sources.push("semantic-scholar");
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : "Citation lookup failed");
-    scholarlyEdges = cachedEdges.filter((edge) => edge.kind === "citation" || edge.kind === "similarity");
-    if (scholarlyEdges.length) sources.push("semantic-scholar-cache");
+
+  if (phase === "all" || phase === "verified") {
+    sources = sources.filter((source) => !source.startsWith("semantic-scholar"));
+    try {
+      const freshEdges = await fetchScholarlyEdges(papers);
+      if (!freshEdges.length && scholarlyEdges.length) throw new Error("Semantic Scholar returned no usable paper links");
+      scholarlyEdges = freshEdges;
+      sources.push("semantic-scholar");
+      await replacePaperNetworkEdges(database, space.id, ["citation", "similarity"], scholarlyEdges);
+    } catch (error) {
+      errors.push(`citation: ${error instanceof Error ? error.message : "Citation lookup failed"}`);
+      if (scholarlyEdges.length) sources.push("semantic-scholar-cache");
+    }
+    await writePaperNetworkState(database, space.id, "building", papers.length, sources, errors.join("; ").slice(0, 800) || null);
+    if (phase === "verified") return;
+  } else if (state?.error && /citation:|semantic scholar|citation lookup/i.test(state.error)) {
+    errors.push(state.error);
   }
-  try {
-    curatedEdges = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers,
-      scholarlyEdges.filter((edge) => edge.kind === "citation"), apiKey);
-    sources.push(MODEL);
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : "Pi path analysis failed");
-    curatedEdges = cachedEdges.filter((edge) => edge.kind === "semantic" || edge.kind === "path");
-    if (curatedEdges.length) sources.push(`${MODEL}-cache`);
+
+  if (phase === "all" || phase === "pi") {
+    sources = sources.filter((source) => !source.startsWith(MODEL));
+    try {
+      const freshEdges = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers,
+        scholarlyEdges.filter((edge) => edge.kind === "citation"), apiKey);
+      if (!freshEdges.length) throw new Error("DeepSeek Pro returned no defensible paper relations");
+      if (!freshEdges.some((edge) => edge.kind === "path")) throw new Error("DeepSeek Pro returned no defensible reading path");
+      curatedEdges = freshEdges;
+      sources.push(MODEL);
+      await replacePaperNetworkEdges(database, space.id, ["semantic", "path"], curatedEdges);
+    } catch (error) {
+      errors.push(`pi: ${error instanceof Error ? error.message : "Pi path analysis failed"}`);
+      if (curatedEdges.length) sources.push(`${MODEL}-cache`);
+    }
   }
   const allEdges = [...scholarlyEdges, ...curatedEdges];
   const status = errors.length ? (allEdges.length ? "partial" : "error") : "ready";
-  const statements = [database.prepare("DELETE FROM research_paper_edges WHERE space_id = ?").bind(space.id)];
-  for (const edge of allEdges) {
-    statements.push(database.prepare(
-      `INSERT OR IGNORE INTO research_paper_edges
-       (id, space_id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(crypto.randomUUID(), space.id, edge.sourcePaperId, edge.targetPaperId, edge.kind, edge.relationKind,
-      edge.relationshipZh, edge.relationshipEn, edge.confidence, edge.evidenceSource));
-  }
-  statements.push(database.prepare(
-    `INSERT INTO research_paper_network_states (space_id, status, built_paper_count, model, sources_json, error, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(space_id) DO UPDATE SET status = excluded.status, built_paper_count = excluded.built_paper_count,
-     model = excluded.model, sources_json = excluded.sources_json, error = excluded.error, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(space.id, status, papers.length, NETWORK_MODEL, JSON.stringify(sources), errors.join("; ").slice(0, 800) || null));
-  await database.batch(statements);
+  await writePaperNetworkState(database, space.id, status, papers.length, sources, errors.join("; ").slice(0, 800) || null);
 }
 
 function heatEvidence(papers: ResearchTrackPaper[]) {
@@ -1091,7 +1144,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     paperEdges,
     paperNetwork: {
       status: paperNetworkState?.status || "idle",
-      paperCount: uniquePaperCount,
+      paperCount: Math.min(uniquePaperCount, NETWORK_PAPER_LIMIT),
       builtPaperCount: paperNetworkState?.built_paper_count || 0,
       citationEdgeCount: paperEdges.filter((edge) => edge.kind === "citation").length,
       similarityEdgeCount: paperEdges.filter((edge) => edge.kind === "similarity").length,
@@ -1125,7 +1178,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean };
+    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -1136,7 +1189,8 @@ export async function POST(request: Request) {
     const memory = await importedMemory(database, space.id);
 
     if (payload.action === "network") {
-      await rebuildPaperNetwork(database, workspaceId, space, memory, apiKey, payload.force === true);
+      const networkPhase: PaperNetworkBuildPhase = payload.networkPhase === "verified" || payload.networkPhase === "pi" ? payload.networkPhase : "all";
+      await rebuildPaperNetwork(database, workspaceId, space, memory, apiKey, payload.force === true, networkPhase);
       return Response.json(await readMap(database, space.id, { networkRefreshed: true }));
     }
 

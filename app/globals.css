@@ -2804,7 +2804,7 @@ main { min-width: 0; }
 .v2-paper-network-columns text { fill: #89938d; font-size: 10px; font-weight: 760; letter-spacing: .04em; text-transform: uppercase; }
 .v2-paper-network-edges path { fill: none; opacity: .64; transition: opacity .16s ease, stroke-width .16s ease; }
 .v2-paper-network-edges path:hover { opacity: 1; stroke-width: 2.6; }
-.v2-paper-network-edges .citation { stroke: #4d6f80; stroke-width: 1.45; marker-end: url(#v2-paper-arrow); }
+.v2-paper-network-edges .citation { stroke: #4d6f80; stroke-width: 1.45; }
 .v2-paper-network-edges .semantic { stroke: #6e8090; stroke-width: 1.35; stroke-dasharray: 5 5; }
 .v2-paper-network-edges .path { stroke: #b48642; stroke-width: 2.35; }
 #v2-paper-arrow path { fill: #4d6f80; }
@@ -3577,6 +3577,7 @@ main { min-width: 0; }
 .v2-direction-lane .lane-title { fill: #2f4639; font: 500 15px Georgia,serif; }
 .v2-direction-lane .lane-depth { fill: #829087; font-size: 9px; }
 .v2-direction-lane .route-line { fill: none; stroke-linecap: round; opacity: .78; }
+.v2-direction-lane .route-chevrons path { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: .72; }
 .v2-direction-lane.queued .route-line { stroke-dasharray: 7 7; opacity: .45; }
 .v2-direction-lane .gap-line { fill: none; stroke: #b4aea1; stroke-width: 1.2; stroke-dasharray: 4 6; }
 .v2-direction-lane .gap-node { fill: #fffaf4; stroke: #a97855; stroke-width: 1.6; }
@@ -3664,6 +3665,39 @@ main { min-width: 0; }
 .v2-paper-origin-actions button { min-height: 34px; border: 1px solid #bdccbf; border-radius: 6px; background: #eef3ef; color: #315d48; font-size: 9px; font-weight: 760; }
 .v2-paper-origin-actions button:disabled { opacity: .38; }
 
+/* Pi Research V56 — progressive paper network, citation flow and numbered reading path */
+.v2-paper-network-scope { padding: 2px; border: 1px solid #cdd8d0; border-radius: 7px; background: rgba(255,255,255,.66); display: flex; align-items: center; gap: 2px; }
+.v2-paper-network-scope button { min-height: 29px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: #77847c; font-size: 9px; font-weight: 760; }
+.v2-paper-network-scope button.active { background: #e3ece6; color: #28513e; }
+.v2-paper-network-scope button:disabled { opacity: .34; cursor: not-allowed; }
+.v2-paper-network-context { min-height: 39px; padding: 7px 14px; border-bottom: 1px solid #dce3de; background: rgba(246,249,246,.86); display: flex; align-items: baseline; gap: 8px; }
+.v2-paper-network-context strong { color: #425c4d; font-size: 9px; white-space: nowrap; }
+.v2-paper-network-context span { color: #7a8780; font-size: 9px; line-height: 1.45; }
+.v2-paper-network-context.citations { background: #f3f7f9; }
+.v2-paper-network-context.citations strong { color: #41677a; }
+.v2-paper-network-context.path { background: #faf7f0; }
+.v2-paper-network-context.path strong { color: #8a6534; }
+.v2-paper-network-canvas.citations { background: linear-gradient(180deg,rgba(244,248,250,.94),rgba(255,255,255,.68)); }
+.v2-paper-network-canvas.path { background: linear-gradient(180deg,rgba(250,248,242,.94),rgba(255,255,255,.7)); }
+.v2-paper-network-columns line { stroke: #dfe7e3; stroke-width: 1; stroke-dasharray: 2 7; }
+.v2-paper-network-columns.path-columns text { fill: #806c4e; }
+.v2-paper-network-edges .edge-halo { stroke: rgba(255,255,255,.94) !important; stroke-width: 6 !important; opacity: .92; marker-end: none !important; pointer-events: none; }
+.v2-paper-network-edges .edge-line { --edge-opacity: .72; stroke-linecap: round; stroke-linejoin: round; }
+.v2-paper-network-edges .edge-line.revealing { opacity: 0; animation: v2-paper-edge-arrive .38s ease-out forwards; }
+.v2-paper-network-edges .edge-line.citation { stroke-width: 1.8; }
+.v2-paper-network-edges .edge-line.path { stroke-width: 2.6; filter: drop-shadow(0 1px 1px rgba(114,78,28,.18)); }
+.v2-paper-network-edges .edge-line.focused { --edge-opacity: 1; stroke-width: 3; }
+.v2-paper-network-edges .edge-line.muted { --edge-opacity: .07; }
+.v2-paper-network-edges .edge-halo.muted { opacity: .05; }
+#v2-paper-arrow path { fill: #4d6f80; }
+#v2-path-arrow path { fill: #b48642; }
+.v2-paper-network-node.path-step .paper-dot { stroke-width: 2; filter: drop-shadow(0 3px 4px rgba(95,72,35,.2)); }
+.v2-paper-network-node .path-step-number { fill: #fff; font-size: 9px; font-weight: 850; pointer-events: none; }
+.v2-paper-network-node.path-step .v2-paper-node-label { fill: #4f4a3f; font-weight: 720; }
+.v2-paper-network-legend span i.path-step-legend { width: 15px; height: 15px; border: 1px solid #a98551; border-radius: 50%; background: #b48642; position: relative; }
+.v2-paper-network-legend span i.path-step-legend::after { content: "1"; color: #fff; position: absolute; inset: 0; display: grid; place-items: center; font-size: 7px; font-style: normal; font-weight: 850; }
+@keyframes v2-paper-edge-arrive { from { opacity: 0; transform: translateY(2px); } to { opacity: var(--edge-opacity); transform: translateY(0); } }
+
 @media (max-width: 1020px) {
   .v2-direction-path-stage { grid-template-columns: 1fr; }
   .v2-direction-path-inspector { border-top: 1px solid #d9e1db; border-left: 0; }
@@ -3674,5 +3708,7 @@ main { min-width: 0; }
   .v2-network-origin-bar { grid-template-columns: 1fr; }
   .v2-network-origin-bar > small { display: none; }
   .v2-network-lineage { grid-template-columns: 1fr; }
+  .v2-paper-network-context { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .v2-paper-network-scope { order: 3; }
   .v2-paper-network-canvas,.v2-paper-network-canvas svg { min-height: 520px; }
 }
