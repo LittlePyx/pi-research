@@ -112,9 +112,15 @@ test("today and its daily brief are capped at six and reranked across directions
   assert.match(monitor, /Never mention section, page, figure, or theorem numbers/);
   assert.match(monitor, /must each contain exactly \$\{records\.length\} items in the supplied paper order/);
   assert.match(client, /v2-daily-brief-list/);
+  assert.match(client, /v2-daily-paper-authors/);
+  assert.match(client, /v2-daily-paper-publication/);
+  assert.match(client, /作者信息未提供/);
+  assert.match(client, /"被引"/);
+  assert.match(client, /<details key=\{paper\?\.id/);
   assert.match(client, /它带来了什么/);
   assert.match(client, /建议怎么读/);
   assert.match(styles, /\.v2-daily-brief-list/);
+  assert.match(styles, /focused daily research desk/);
   assert.doesNotMatch(monitor, /reviews\.filter\(\(review\) => review\.recommended\)[\s\S]{0,220}slice\(0, 8\)/);
 });
 

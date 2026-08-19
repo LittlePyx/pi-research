@@ -26,7 +26,7 @@ test("server-renders the Pi Research application", async () => {
   assert.match(html, /近 14 天/);
   assert.match(html, /三层扫描，严格筛选/);
   assert.match(html, /设置重点来源/);
-  assert.match(html, /真实研究简报/);
+  assert.match(html, /先看今天最重要的变化/);
   assert.match(html, /匿名浏览器工作区/);
 });
 

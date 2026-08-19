@@ -805,6 +805,16 @@ function formatPaperDate(value: string | null, locale: Locale) {
   }).format(new Date(value));
 }
 
+function formatTodayDate(locale: Locale) {
+  return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  }).format(new Date());
+}
+
 function researchRoleLabel(role: ResearchTrackRole, locale: Locale) {
   const labels: Record<ResearchTrackRole, Localized> = {
     foundation: { zh: "奠基", en: "Foundation" },
@@ -1458,6 +1468,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const dailySignals = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.signalsZh : monitor.dailyBrief.signalsEn) : [];
   const dailyReadingPlan = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.readingPlanZh : monitor.dailyBrief.readingPlanEn) : [];
   const dailyBriefEntryCount = Math.min(6, Math.max(dailyBriefPapers.length, dailySignals.length, dailyReadingPlan.length));
+  const dailyBriefPaperIds = new Set(monitor?.dailyBrief?.paperIds || []);
+  const additionalTodayPapers = rankedMonitorPapers.filter((paper) => !dailyBriefPaperIds.has(paper.id)).slice(0, 6);
   const unreadNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => !notification.readAt), [monitor?.notifications]);
   const operationsMaxCandidates = Math.max(1, ...(monitor?.operationsDashboard?.daily || []).map((day) => day.candidates));
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
@@ -2594,8 +2606,13 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "today" && (
           <main className="v2-page v2-today">
             <section className="v2-today-hero">
-              <div><p className="v2-kicker">{t.todayDate}</p><h1>{t.goodMorning}，{activeSpace.memberName}。</h1></div>
-              <div className="v2-attention-number"><strong>{rankedMonitorPapers.length || "—"}</strong><span>{locale === "zh" ? "篇待看" : "to review"}</span><button className="v2-share-action v2-today-share" type="button" onClick={() => shareSnapshot("daily", rankedMonitorPapers.slice(0, 6))} disabled={!rankedMonitorPapers.length || Boolean(sharingSnapshot)}>{sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily} ↗</button></div>
+              <div className="v2-today-hero-copy"><p className="v2-kicker">{formatTodayDate(locale)}</p><h1>{locale === "zh" ? `${activeSpace.memberName}，先看今天最重要的变化。` : `${activeSpace.memberName}, start with today's most important changes.`}</h1><p>{locale === "zh" ? `Pi 已为“${defaultSpaceName(activeSpace.name, locale)}”整理阅读优先级；先做判断，再决定是否深读。` : `Pi has prioritized today's reading for “${defaultSpaceName(activeSpace.name, locale)}” so you can decide before reading deeply.`}</p></div>
+              <div className="v2-today-hero-actions"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "ready" ? (locale === "zh" ? "今日扫描已完成" : "Today's scan is ready") : monitor?.status === "error" ? t.scanError : t.neverScanned}</span><button type="button" onClick={runManualMonitor} disabled={scanIsActive}>{scanIsActive ? `${scanProgress}%` : resumeAvailable ? (locale === "zh" ? "继续扫描" : "Resume scan") : (locale === "zh" ? "立即扫描" : "Scan now")}</button><button className="secondary" type="button" onClick={() => shareSnapshot("daily", rankedMonitorPapers.slice(0, 6))} disabled={!rankedMonitorPapers.length || Boolean(sharingSnapshot)}>{sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily} ↗</button></div>
+              <section className="v2-today-briefing" aria-label={locale === "zh" ? "今日科研简报" : "Today's research briefing"}>
+                <button type="button" onClick={() => rankedMonitorPapers[0] && openMonitorPaper(rankedMonitorPapers[0])} disabled={!rankedMonitorPapers.length}><span>01</span><strong>{mustReadCount}</strong><div><b>{locale === "zh" ? "今日必读" : "Must read"}</b><small>{locale === "zh" ? "最值得优先投入时间" : "Highest priority for your time"}</small></div><i>→</i></button>
+                <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor?.mapChanges?.length || 0}</strong><div><b>{locale === "zh" ? "路线变化" : "Route changes"}</b><small>{locale === "zh" ? "研究地图新增的证据" : "New evidence on your map"}</small></div><i>→</i></button>
+                <button type="button" onClick={() => { setLibraryFilter("accepted"); navigate("library"); }}><span>03</span><strong>{activeReadingCount}</strong><div><b>{locale === "zh" ? "待读与在读" : "Reading queue"}</b><small>{locale === "zh" ? "继续未完成的阅读" : "Continue unfinished reading"}</small></div><i>→</i></button>
+              </section>
             </section>
 
             {Boolean(monitor?.notifications?.length) && <section className="v2-research-catchup">
@@ -2603,28 +2620,29 @@ export default function ResearchApp({ user }: { user: User }) {
               <div>{monitor?.notifications?.slice(0, notificationsExpanded ? 12 : 3).map((notification) => <button className={`${notification.readAt ? "read" : "unread"} ${notification.priority}`} type="button" key={notification.id} onClick={() => openResearchNotification(notification)}><span>{notification.kind === "weekly_review" ? "7D" : notification.kind === "must_read" ? "!" : notification.kind === "scan_recovered" ? "↻" : "π"}</span><div><strong>{locale === "zh" ? notification.titleZh : notification.titleEn}</strong><p>{locale === "zh" ? notification.bodyZh : notification.bodyEn}</p><small>{formatMonitorDate(notification.createdAt, locale)}</small></div><b>→</b></button>)}</div>
             </section>}
 
-            <section className="v2-today-briefing" aria-label={locale === "zh" ? "今日科研简报" : "Today's research briefing"}>
-              <button type="button" onClick={() => rankedMonitorPapers[0] && openMonitorPaper(rankedMonitorPapers[0])} disabled={!rankedMonitorPapers.length}><span>01</span><strong>{mustReadCount}</strong><div><b>{locale === "zh" ? "今日必读" : "Must read"}</b><small>{locale === "zh" ? "高相关且高质量，优先投入时间" : "High-fit, high-quality work worth your time"}</small></div><i>→</i></button>
-              <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor?.mapChanges?.length || 0}</strong><div><b>{locale === "zh" ? "路线变化" : "Route changes"}</b><small>{locale === "zh" ? "新证据如何补充或改变研究地图" : "How new evidence changes your map"}</small></div><i>→</i></button>
-              <button type="button" onClick={() => { setLibraryFilter("accepted"); navigate("library"); }}><span>03</span><strong>{activeReadingCount}</strong><div><b>{locale === "zh" ? "待读与在读" : "Reading queue"}</b><small>{locale === "zh" ? "继续昨天没有读完的论文" : "Continue where you left off"}</small></div><i>→</i></button>
-            </section>
-
             {monitor?.dailyBrief && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
-              <header><div><p className="v2-kicker">π {locale === "zh" ? "每日研究简报" : "DAILY RESEARCH BRIEF"}</p><h2>{locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn}</h2></div><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
-              <p className="v2-daily-brief-overview">{locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn}</p>
-              <div className="v2-daily-brief-list">
-                {Array.from({ length: dailyBriefEntryCount }, (_, index) => {
-                  const paper = dailyBriefPapers[index];
-                  const signal = dailySignals[index];
-                  const readingAction = dailyReadingPlan[index];
-                  return <article key={paper?.id || `${index}:${signal || readingAction}`}>
-                    <header><span>{String(index + 1).padStart(2, "0")}</span><div><button type="button" disabled={!paper} onClick={() => paper && openMonitorPaper(paper)}>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</button>{paper && <small>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")} · {paper.readMinutes} {locale === "zh" ? "分钟" : "min"}</small>}</div><b>{paper ? "→" : ""}</b></header>
-                    <div>{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}</div>
-                  </article>;
-                })}
+              <div className="v2-daily-brief-lead">
+                <header><p className="v2-kicker">π {locale === "zh" ? "今日研究判断" : "TODAY'S RESEARCH JUDGMENT"}</p><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
+                <h2>{locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn}</h2>
+                <p className="v2-daily-brief-overview">{locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn}</p>
+                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "发现" : "Found"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div><div><dt>{locale === "zh" ? "避免重复" : "Deduplicated"}</dt><dd>{monitor.dailyBrief.metrics.duplicates || 0}</dd></div></dl>
+                <footer>{dailyBriefPapers[0] && <button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button>}<button className="secondary" type="button" onClick={() => shareSnapshot("daily", dailyBriefPapers)} disabled={!dailyBriefPapers.length || Boolean(sharingSnapshot)}>↗ {sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily}</button></footer>
+              </div>
+              <div className="v2-daily-paper-queue">
+                <header><div><strong>{locale === "zh" ? "今日阅读队列" : "Today's reading queue"}</strong><small>{locale === "zh" ? "先看书目信息，点击后再展开解读" : "Review the record first, then expand the interpretation"}</small></div><span>{dailyBriefEntryCount} {locale === "zh" ? "篇" : "papers"}</span></header>
+                <div className="v2-daily-brief-list">
+                  {Array.from({ length: dailyBriefEntryCount }, (_, index) => {
+                    const paper = dailyBriefPapers[index];
+                    const signal = dailySignals[index];
+                    const readingAction = dailyReadingPlan[index];
+                    return <details key={paper?.id || `${index}:${signal || readingAction}`}>
+                      <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i>{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}</div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
+                      <div className="v2-daily-paper-analysis">{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看完整解读" : "Open full analysis"} →</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(paper, "save")}>{(saved[activeSpace.id + ":" + paper.id] ?? paper.saved) ? "★ " + t.saved : "☆ " + t.save}</button></footer>}</div>
+                    </details>;
+                  })}
+                </div>
                 {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <aside><strong>{locale === "zh" ? "继续观察" : "Keep watching"}</strong><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></aside>}
               </div>
-              <footer><span>{locale === "zh" ? `${monitor.dailyBrief.metrics.scanned || 0} 篇候选 · ${monitor.dailyBrief.metrics.recommended || 0} 篇入选 · ${monitor.dailyBrief.metrics.duplicates || 0} 次重复已避免` : `${monitor.dailyBrief.metrics.scanned || 0} candidates · ${monitor.dailyBrief.metrics.recommended || 0} selected · ${monitor.dailyBrief.metrics.duplicates || 0} duplicates avoided`}</span>{dailyBriefPapers[0] && <button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button>}</footer>
             </section>}
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
@@ -2698,45 +2716,10 @@ export default function ResearchApp({ user }: { user: User }) {
 
             {!!monitor?.mapChanges?.length && <section className="v2-route-changes"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究路线变化" : "Research route changes"}</p><h2>{locale === "zh" ? "新论文如何改变你的地图" : "How new papers changed your map"}</h2></div><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "打开地图" : "Open map"} →</button></header><div>{monitor.mapChanges.slice(0, 3).map((change) => <article key={change.id}><span>＋</span><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {change.confidence}%</small><h3>{change.paperTitle}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>)}</div></section>}
 
-            <div className="v2-dashboard-grid">
-              <div className="v2-feed">
-                <div className="v2-section-title"><div><p className="v2-kicker warm">{t.realBrief}</p><h2>{t.topRecommendation}</h2><small>{t.realBriefIntro}</small></div><span>{rankedMonitorPapers.length} {t.realPapers}</span></div>
-                {rankedMonitorPapers[0] ? (
-                  <article className="v2-primary-paper" data-paper-impression={rankedMonitorPapers[0].id}>
-                    <div className="v2-paper-top">
-                      <span className={`v2-tier-badge ${rankedMonitorPapers[0].recommendationTier || "browse"}`}>{recommendationTierLabel(rankedMonitorPapers[0].recommendationTier || "browse", locale)}</span>
-                      {rankedMonitorPapers[0].priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}
-                      <span>{rankedMonitorPapers[0].analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span>
-                      <span>{formatPaperDate(rankedMonitorPapers[0].publishedAt, locale)}</span>
-                    </div>
-                    <button type="button" className="v2-title-link" onClick={() => openMonitorPaper(rankedMonitorPapers[0])}><h2>{rankedMonitorPapers[0].title}</h2></button>
-                    <p className="v2-paper-meta">{rankedMonitorPapers[0].authors} <span>·</span> {rankedMonitorPapers[0].venue}</p>
-                    <div className="v2-paper-intelligence">
-                      <div><p>{t.whySuitable}</p><strong>{locale === "zh" ? rankedMonitorPapers[0].whyReadZh : rankedMonitorPapers[0].whyReadEn}</strong></div>
-                      <div><p>{t.introLabel}</p><strong>{locale === "zh" ? rankedMonitorPapers[0].summaryZh : rankedMonitorPapers[0].summaryEn}</strong></div>
-                    </div>
-                    <div className="v2-paper-footer">
-                      <span>{readDepthLabel(rankedMonitorPapers[0].readDepth || "focused", locale)} · {rankedMonitorPapers[0].readMinutes || 15} min · {rankedMonitorPapers[0].horizon === "days" ? t.daysHorizon : rankedMonitorPapers[0].horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {t.relevanceScoreLabel} <b>{rankedMonitorPapers[0].relevanceScore}</b> · {t.qualityScore} {rankedMonitorPapers[0].qualityScore}</span>
-                      <div><button className={(saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ?? rankedMonitorPapers[0].saved) ? "active" : ""} type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "save")}>{(saved[activeSpace.id + ":" + rankedMonitorPapers[0].id] ?? rankedMonitorPapers[0].saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(rankedMonitorPapers[0], "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(rankedMonitorPapers[0], "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(rankedMonitorPapers[0], "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => shareSnapshot("paper", [rankedMonitorPapers[0]])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === rankedMonitorPapers[0].id ? t.creatingShare : t.sharePaper}</button></div>
-                      <button className="v2-open-paper" type="button" onClick={() => openMonitorPaper(rankedMonitorPapers[0])}>{t.openAnalysis} →</button>
-                    </div>
-                  </article>
-                ) : <p className="v2-monitor-empty">{scanIsActive ? scanPhase : t.noLivePapers}</p>}
-
-                <div className="v2-section-title v2-worth-title"><div><h2>{t.moreRealPapers}</h2></div><span>{Math.max(0, rankedMonitorPapers.length - 1)}</span></div>
-                <div className="v2-compact-list">
-                  {rankedMonitorPapers.slice(1).map((paper) => (
-                    <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}>
-                      <span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span>
-                      <span><strong>{paper.title}</strong><small>{paper.authors} · {formatPaperDate(paper.publishedAt, locale)}</small></span>
-                      <span className="v2-thread-chip">{paper.readMinutes || 15} min · {t.qualityScore} {paper.qualityScore}</span>
-                      <b>→</b>
-                    </button>
-                  ))}
-                </div>
-
-              </div>
-            </div>
+            {Boolean(additionalTodayPapers.length) && <section className="v2-today-more">
+              <header><div><p className="v2-kicker warm">{locale === "zh" ? "更多推荐" : "MORE RECOMMENDATIONS"}</p><h2>{locale === "zh" ? "不在今日主队列，但仍值得保留" : "Worth keeping beyond the main queue"}</h2></div><span>{additionalTodayPapers.length} {locale === "zh" ? "篇" : "papers"}</span></header>
+              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
+            </section>}
           </main>
         )}
 
