@@ -1045,7 +1045,7 @@ async function advanceMonitorPipeline(
   isCancelled: () => boolean = () => false,
 ) {
   let current = initialMonitor;
-  for (let step = 0; step < 14 && !isCancelled(); step += 1) {
+  for (let step = 0; step < 24 && !isCancelled(); step += 1) {
     if (["ready", "error"].includes(current.status)) break;
     const response = await fetch("/api/monitor", {
       method: "POST",

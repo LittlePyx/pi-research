@@ -336,7 +336,7 @@ const DISCOVERY_OFFSET_LIMIT = 3000;
 const REVIEW_BATCH_SIZE = 14;
 const QUICK_SCREEN_BATCH_SIZE = 14;
 const QUICK_SCREEN_CONCURRENCY = 2;
-const DEEP_REVIEW_BATCH_SIZE = 4;
+const DEEP_REVIEW_BATCH_SIZE = 1;
 const DEEP_REVIEW_LIMIT = 8;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
 const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
@@ -1846,13 +1846,13 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
               { role: "system", content: "You are Pi Research's evidence-disciplined paper screening and briefing editor. Produce strict JSON." },
               { role: "user", content: prompt },
             ],
-            thinking: { type: "enabled" },
-            reasoning_effort: "high",
+            thinking: { type: attempt === 0 ? "enabled" : "disabled" },
+            reasoning_effort: attempt === 0 ? "medium" : "low",
             response_format: { type: "json_object" },
-            max_tokens: 24000,
+            max_tokens: attempt === 0 ? 8500 : 7000,
             stream: false,
           }),
-          signal: AbortSignal.timeout(75_000),
+          signal: AbortSignal.timeout(attempt === 0 ? 55_000 : 45_000),
         });
         const data = await response.json() as DeepSeekResponse;
         if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro review failed");
@@ -1869,7 +1869,12 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       } catch (error) {
         lastError = error;
         if (isNonRetryableDeepSeekError(error)) throw error;
-        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800));
+        if (attempt === 0) {
+          await database.prepare(
+            "UPDATE monitor_scan_jobs SET current_source = '当前论文响应较慢，正在切换快速模式重试；已完成论文不会重做', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          ).bind(jobId).run();
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
       }
     }
     if (!parsed) throw lastError instanceof Error ? lastError : new Error("DeepSeek Pro review failed twice");
@@ -3447,7 +3452,7 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
   });
 }
 
-async function runConcurrentDeepReview(
+async function runIncrementalDeepReview(
   database: D1Database,
   space: SpaceRow,
   userId: string,
@@ -3457,13 +3462,13 @@ async function runConcurrentDeepReview(
   lockToken: string,
   apiKey: string,
 ) {
-  const groups = [candidates.slice(0, DEEP_REVIEW_BATCH_SIZE), candidates.slice(DEEP_REVIEW_BATCH_SIZE, DEEP_REVIEW_BATCH_SIZE * 2)].filter((group) => group.length);
-  const settled = await Promise.allSettled(groups.map((group) => reviewCandidates(database, space, userId, priorityVenues, group, jobId, lockToken, apiKey)));
-  const reviews = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-  const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
-  const fatalError = errors.find((error) => isNonRetryableDeepSeekError(error));
-  if (fatalError && !reviews.length) throw fatalError;
-  return { reviews, errors };
+  const candidate = candidates.slice(0, DEEP_REVIEW_BATCH_SIZE);
+  if (!candidate.length) return { reviews: [] as PaperReview[], errors: [] as unknown[] };
+  try {
+    return { reviews: await reviewCandidates(database, space, userId, priorityVenues, candidate, jobId, lockToken, apiKey), errors: [] as unknown[] };
+  } catch (error) {
+    return { reviews: [] as PaperReview[], errors: [error] };
+  }
 }
 
 async function runLegacyMonitor(request: Request) {
@@ -3891,14 +3896,13 @@ export async function POST(request: Request) {
         const completedIds = new Set(work.deepCompletedIds);
         const remainingIds = work.deepIds.filter((id) => !completedIds.has(id));
         if (remainingIds.length) {
-          const ids = remainingIds.slice(0, DEEP_REVIEW_BATCH_SIZE * 2);
+          const ids = remainingIds.slice(0, DEEP_REVIEW_BATCH_SIZE);
           const candidates = await pendingCandidateQueue(database, space.id, ids);
           const batchStart = work.deepCompletedIds.length + 1;
-          const batchEnd = Math.min(work.deepCompletedIds.length + ids.length, work.deepIds.length);
           await database.prepare(
             "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          ).bind(`DeepSeek Pro 正在深度解读第 ${batchStart}–${batchEnd} / ${work.deepIds.length} 篇；本批完成后自动保存`, job.id).run();
-          const result = await runConcurrentDeepReview(database, enrichedSpace, user.userId, preference.priorityVenues, candidates, job.id, lockToken, apiKey);
+          ).bind(`DeepSeek Pro 正在深度解读第 ${batchStart} / ${work.deepIds.length} 篇；完成后立即保存并显示`, job.id).run();
+          const result = await runIncrementalDeepReview(database, enrichedSpace, user.userId, preference.priorityVenues, candidates, job.id, lockToken, apiKey);
           work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...result.reviews.map((review) => review.canonicalId)]));
           work.deepFailureCount = result.errors.length && !result.reviews.length ? work.deepFailureCount + 1 : 0;
           await saveScanWorkQueue(database, job.id, work);
@@ -3910,7 +3914,7 @@ export async function POST(request: Request) {
         const recommended = persistedReviews.filter((review) => review.recommended).length;
         const deepProgress = Math.min(94, 76 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 18));
         await database.prepare(
-          "UPDATE monitor_scan_jobs SET reviewed_count = ?, recommended_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          "UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', reviewed_count = ?, recommended_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
           `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${recommended} 篇已可阅读`, deepProgress, job.id).run();
         if (work.deepCompletedIds.length >= work.deepIds.length) {

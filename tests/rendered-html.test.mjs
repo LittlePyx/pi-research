@@ -48,7 +48,8 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /MONITOR_MODEL = "deepseek-v4-pro"/);
   assert.match(route, /response_format: \{ type: "json_object" \}/);
   assert.match(route, /thinking: \{ type: "enabled" \}/);
-  assert.match(route, /max_tokens: 24000/);
+  assert.match(route, /max_tokens: attempt === 0 \? 8500 : 7000/);
+  assert.match(route, /AbortSignal\.timeout\(attempt === 0 \? 55_000 : 45_000\)/);
   assert.match(route, /llm_recommended = 1/);
   assert.match(route, /discovering_\$\{horizon\.key\}/);
   assert.match(route, /updateRunPhase\(database, space\.id, jobId, lockToken, "reviewing"/);

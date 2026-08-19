@@ -63,13 +63,16 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /QUICK_SCREEN_CONCURRENCY = 2/);
   assert.match(monitor, /reasoning_effort: "medium"/);
   assert.match(monitor, /DEEP_REVIEW_LIMIT = 8/);
-  assert.match(monitor, /runConcurrentDeepReview/);
+  assert.match(monitor, /DEEP_REVIEW_BATCH_SIZE = 1/);
+  assert.match(monitor, /runIncrementalDeepReview/);
+  assert.match(monitor, /当前论文响应较慢，正在切换快速模式重试/);
   assert.match(monitor, /deferLlm/);
   assert.match(monitor, /checkpoint = 'main_complete'/);
   assert.match(monitor, /inferResumeCheckpoint/);
   assert.match(monitor, /resumeCheckpoint/);
   assert.match(monitor, /isNonRetryableDeepSeekError/);
   assert.match(client, /advanceMonitorPipeline/);
+  assert.match(client, /step < 24/);
   assert.match(client, /action: "enhance"/);
   assert.match(client, /每完成一批就会立即保存/);
   assert.match(client, /从断点继续/);
