@@ -2711,16 +2711,20 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
               {monitor?.scanJob?.needsRefresh && !scanIsActive && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先补全摘要、按研究方向分配名额，并在首批零入选时复审临界论文。重新扫描不受本小时冷却限制。" : "The new method enriches abstracts, allocates slots by research direction, and rechecks near-miss papers when the first batch yields nothing. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}
               {monitor?.status === "error" && (
-                <div className={`v2-scan-failure ${isModelCredentialFailure(failedScanError) ? "credential" : ""}`} role="alert">
-                  <span>!</span>
+                <details className={`v2-scan-failure ${isModelCredentialFailure(failedScanError) ? "credential" : ""}`} role="alert">
+                  <summary>
+                    <span>!</span>
+                    <strong>{locale === "zh" ? "扫描暂停，进度已保存" : "Scan paused; progress saved"}</strong>
+                    {failedScanJob && <small>{locale === "zh"
+                      ? `${failedScanJob.discoveredCount || 0} 候选 · ${failedScanJob.reviewedCount || 0}/${failedScanJob.candidateCount || 0} 已筛选`
+                      : `${failedScanJob.discoveredCount || 0} candidates · ${failedScanJob.reviewedCount || 0}/${failedScanJob.candidateCount || 0} screened`}</small>}
+                    <b>{locale === "zh" ? "查看原因" : "Details"}<i>＋</i></b>
+                  </summary>
                   <div>
-                    <strong>{locale === "zh" ? "扫描已暂停，进度没有丢失" : "Scan paused; progress is safe"}</strong>
-                    <p>{monitorFailureMessage(failedScanError, locale)}{failedScanJob && (locale === "zh"
-                      ? ` · 已保存 ${failedScanJob.discoveredCount || 0} 条候选、${failedScanJob.reviewedCount || 0} / ${failedScanJob.candidateCount || 0} 篇筛选结果`
-                      : ` · Saved ${failedScanJob.discoveredCount || 0} candidates and ${failedScanJob.reviewedCount || 0} / ${failedScanJob.candidateCount || 0} screening results`)}</p>
+                    <p>{monitorFailureMessage(failedScanError, locale)}</p>
+                    {isModelCredentialFailure(failedScanError) && <button className="secondary" type="button" onClick={() => { setModelSettingsError(monitorFailureMessage(failedScanError, locale)); setModelSettingsOpen(true); }}>{locale === "zh" ? "检查 Key" : "Check key"}</button>}
                   </div>
-                  {isModelCredentialFailure(failedScanError) && <button className="secondary" type="button" onClick={() => { setModelSettingsError(monitorFailureMessage(failedScanError, locale)); setModelSettingsOpen(true); }}>{locale === "zh" ? "检查 Key" : "Check key"}</button>}
-                </div>
+                </details>
               )}
               {scanIsActive && (
                 <div className="v2-scan-progress" role="status" aria-live="polite" aria-label={`${scanPhase} ${scanProgress}%`}>

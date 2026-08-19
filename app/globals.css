@@ -3453,3 +3453,96 @@ main { min-width: 0; }
   .v2-research-utilities .v2-monitor-meta .v2-scan-details summary { justify-content: space-between; }
   .v2-research-utilities .v2-action-inbox > header { flex-direction: row; align-items: flex-start; }
 }
+
+/* Pi Research V50 — collapse interrupted-scan details into a quiet status row */
+.v2-research-utilities .v2-monitor-compact details.v2-scan-failure {
+  display: block;
+  margin-top: 8px;
+  padding: 0 9px;
+  border-color: rgba(155, 86, 72, .18);
+  border-radius: 6px;
+  background: rgba(251, 244, 241, .48);
+}
+.v2-research-utilities .v2-scan-failure > summary {
+  min-height: 34px;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  cursor: pointer;
+}
+.v2-research-utilities .v2-scan-failure > summary::-webkit-details-marker { display: none; }
+.v2-research-utilities .v2-scan-failure > summary > span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #a55d4c;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+  font-weight: 800;
+}
+.v2-research-utilities .v2-scan-failure > summary > strong {
+  color: #74473c;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.v2-research-utilities .v2-scan-failure > summary > small {
+  overflow: hidden;
+  margin: 0;
+  color: #9a7e76;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v2-research-utilities .v2-scan-failure > summary > b {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8e6358;
+  font-size: 8px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.v2-research-utilities .v2-scan-failure > summary > b i {
+  font-style: normal;
+  transition: transform .18s ease;
+}
+.v2-research-utilities .v2-scan-failure[open] > summary > b i { transform: rotate(45deg); }
+.v2-research-utilities .v2-scan-failure > div {
+  margin-left: 23px;
+  padding: 7px 0 8px;
+  border-top: 1px solid rgba(155, 86, 72, .12);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.v2-research-utilities .v2-scan-failure > div > p {
+  margin: 0;
+  color: #80635c;
+  font-size: 9px;
+  line-height: 1.45;
+}
+.v2-research-utilities .v2-scan-failure > div > button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+@media (max-width: 680px) {
+  .v2-research-utilities .v2-scan-failure > summary {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+  }
+  .v2-research-utilities .v2-scan-failure > summary > small {
+    grid-column: 2 / -1;
+    padding-bottom: 7px;
+  }
+  .v2-research-utilities .v2-scan-failure > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

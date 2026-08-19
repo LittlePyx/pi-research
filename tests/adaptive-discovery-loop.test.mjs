@@ -44,7 +44,7 @@ test("legacy local databases self-heal before route coverage indexes are created
   assert.equal((repository.match(/CREATE INDEX IF NOT EXISTS idx_monitor_coverage_space_route/g) || []).length, 1);
   assert.match(client, /研究空间尚未连接，请刷新页面后再试/);
   assert.match(client, /if \(!response\.ok \|\| !data\.monitor\) throw new Error/);
-  assert.match(client, /扫描已暂停，进度没有丢失/);
+  assert.match(client, /扫描暂停，进度已保存/);
   assert.match(client, /monitorFailureMessage/);
 });
 
