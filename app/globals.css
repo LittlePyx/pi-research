@@ -3236,7 +3236,8 @@ main { min-width: 0; }
 }
 .v2-command-trigger:hover,
 .v2-command-trigger:focus-visible { border-color: #9eb2aa; background: white; box-shadow: 0 5px 16px rgba(36,50,43,.08); outline: none; }
-.v2-command-trigger > .v2-command-mark { width: 36px; height: 36px; border-radius: 10px; background: #315f78; color: white; display: grid; place-items: center; font: italic 17px var(--font-serif); }
+.v2-command-trigger > .v2-command-mark { width: 36px; height: 36px; display: grid; place-items: center; }
+.v2-command-trigger > .v2-command-mark img { width: 31px; height: 27px; object-fit: contain; display: block; }
 .v2-command-copy { min-width: 0; }
 .v2-command-copy strong,
 .v2-command-copy small { overflow: hidden; display: block; text-overflow: ellipsis; white-space: nowrap; }
