@@ -90,6 +90,39 @@
   .v2-learning-footer { margin-left: 48px; align-items: flex-start; flex-direction: column; }
 }
 
+/* Pi Research V17 — persistent daily intelligence and resilient scans */
+.v2-ai-daily-brief {
+  margin-top: 18px;
+  border: 1px solid rgba(42, 73, 103, .16);
+  border-radius: 22px;
+  padding: 24px;
+  background: linear-gradient(135deg, rgba(235, 244, 249, .94), rgba(251, 249, 242, .96));
+  box-shadow: 0 16px 40px rgba(43, 66, 83, .06);
+}
+.v2-ai-daily-brief.degraded { border-style: dashed; }
+.v2-ai-daily-brief > header,
+.v2-ai-daily-brief > footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.v2-ai-daily-brief > header h2 { max-width: 780px; margin: 6px 0 0; font-family: var(--font-serif); font-size: clamp(24px, 3vw, 36px); line-height: 1.15; font-weight: 500; }
+.v2-ai-daily-brief > header > span { flex: none; color: var(--muted); font-size: 12px; }
+.v2-daily-brief-overview { max-width: 920px; margin: 18px 0 20px; color: #405467; font-size: 16px; line-height: 1.75; }
+.v2-daily-brief-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.v2-daily-brief-grid article { padding: 17px 18px; border: 1px solid rgba(42, 73, 103, .1); border-radius: 15px; background: rgba(255, 255, 255, .65); }
+.v2-daily-brief-grid article.watch { grid-column: 1 / -1; background: rgba(245, 241, 229, .7); }
+.v2-daily-brief-grid h3 { margin: 0 0 10px; font-size: 13px; letter-spacing: .04em; color: #365b77; }
+.v2-daily-brief-grid ol,
+.v2-daily-brief-grid ul { display: grid; gap: 8px; margin: 0; padding-left: 20px; color: #3f4f5c; line-height: 1.6; }
+.v2-ai-daily-brief > footer { align-items: center; margin-top: 18px; color: var(--muted); font-size: 12px; }
+.v2-ai-daily-brief > footer button { border: 0; border-radius: 999px; padding: 10px 15px; background: #214f70; color: #fff; cursor: pointer; }
+.v2-resume-note { display: block; margin-top: 8px; color: #356a83; font-size: 12px; font-style: normal; }
+
+@media (max-width: 720px) {
+  .v2-ai-daily-brief { padding: 18px; }
+  .v2-ai-daily-brief > header,
+  .v2-ai-daily-brief > footer { display: grid; }
+  .v2-daily-brief-grid { grid-template-columns: 1fr; }
+  .v2-daily-brief-grid article.watch { grid-column: auto; }
+}
+
 /* Focused Today brief + real research map */
 .v2-today .v2-monitor-panel { padding: 22px 24px; }
 .v2-today .v2-monitor-head h2 { margin-top: 5px; font-size: 22px; }

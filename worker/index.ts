@@ -37,7 +37,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext) {
     const request = new Request("https://pi-research.internal/api/monitor", {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${workspaceId}` },
-      body: JSON.stringify({ spaceId: space.id }),
+      body: JSON.stringify({ spaceId: space.id, trigger: "scheduled" }),
     });
     await handler.fetch(request, env, ctx);
   }));

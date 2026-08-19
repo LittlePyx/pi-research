@@ -51,8 +51,8 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /max_tokens: 24000/);
   assert.match(route, /llm_recommended = 1/);
   assert.match(route, /discovering_\$\{horizon\.key\}/);
-  assert.match(route, /updateRunPhase\(database, space\.id, jobId, "reviewing"/);
-  assert.match(route, /updateRunPhase\(database, space\.id, jobId, "saving"/);
+  assert.match(route, /updateRunPhase\(database, space\.id, jobId, lockToken, "reviewing"/);
+  assert.match(route, /updateRunPhase\(database, space\.id, jobId, lockToken, "saving"/);
   assert.match(route, /paper_delivery_state/);
   assert.match(route, /historyPapers/);
   assert.match(route, /paper\.show_count === 1 \? 1 : paper\.show_count === 2 \? 3 : 14/);

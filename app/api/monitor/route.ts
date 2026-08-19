@@ -5,6 +5,7 @@ import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/pref
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
 type Horizon = "days" | "months" | "years";
+type ScanTrigger = "manual" | "scheduled" | "visit";
 type CrossrefDate = { "date-parts"?: number[][] };
 type CrossrefItem = {
   DOI?: string;
@@ -80,6 +81,7 @@ type RunRow = {
   new_count: number;
   scanned_count: number;
   discovery_round: number;
+  last_trigger: string;
   error: string | null;
 };
 type ScanJobRow = {
@@ -94,9 +96,32 @@ type ScanJobRow = {
   reviewed_count: number;
   recommended_count: number;
   rejected_count: number;
+  attempt: number;
+  trigger_source: string;
+  resume_of_job_id: string | null;
+  checkpoint: string;
   started_at: string;
   completed_at: string | null;
   error: string | null;
+};
+type DailyBriefRow = {
+  brief_date: string;
+  status: string;
+  headline_zh: string;
+  headline_en: string;
+  overview_zh: string;
+  overview_en: string;
+  signals_zh: string;
+  signals_en: string;
+  reading_plan_zh: string;
+  reading_plan_en: string;
+  watchlist_zh: string;
+  watchlist_en: string;
+  paper_ids: string;
+  metrics_json: string;
+  model: string;
+  error: string | null;
+  updated_at: string;
 };
 type CoverageRow = {
   source_key: string;
@@ -234,6 +259,7 @@ const CADENCE_MS = 24 * 60 * 60 * 1000;
 const MANUAL_COOLDOWN_MS = 60 * 60 * 1000;
 const ERROR_RETRY_MS = 15 * 60 * 1000;
 const STALE_RUN_MS = 20 * 60 * 1000;
+const RUN_LOCK_LEASE_MS = 10 * 60 * 1000;
 const DISCOVERY_OFFSET_LIMIT = 3000;
 const REVIEW_BATCH_SIZE = 14;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
@@ -648,8 +674,8 @@ async function recordDiscoveryCoverage(
 
 async function setScanSource(database: D1Database, jobId: string, horizon: Horizon, source: string, progress: number, discoveredCount: number) {
   await database.prepare(
-    "UPDATE monitor_scan_jobs SET current_horizon = ?, current_source = ?, progress = ?, discovered_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-  ).bind(horizon, source, progress, discoveredCount, jobId).run();
+    "UPDATE monitor_scan_jobs SET current_horizon = ?, current_source = ?, checkpoint = ?, progress = ?, discovered_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+  ).bind(horizon, source, `${horizon}:${source}`, progress, discoveredCount, jobId).run();
 }
 
 async function fetchHorizon(
@@ -1306,7 +1332,7 @@ async function persistReviewBatch(database: D1Database, spaceId: string, candida
   }
 }
 
-async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string) {
+async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string, lockToken: string) {
   if (!candidates.length) return [] as PaperReview[];
   const runtime = getRuntimeEnv();
   if (!runtime.DEEPSEEK_API_KEY) throw new Error("DeepSeek Pro is required before papers can be recommended");
@@ -1468,11 +1494,200 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       });
     }
     await persistReviewBatch(database, space.id, batch, completed.slice(completedBefore));
-    await database.prepare(
-      "UPDATE monitor_scan_jobs SET reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-    ).bind(completed.length, completed.filter((review) => review.recommended).length, completed.length, candidates.length, jobId).run();
+    await database.batch([
+      database.prepare(
+        "UPDATE monitor_scan_jobs SET checkpoint = 'reviewing', reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      ).bind(completed.length, completed.filter((review) => review.recommended).length, completed.length, candidates.length, jobId),
+      database.prepare(
+        "UPDATE monitor_runs SET lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
+      ).bind(new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken),
+    ]);
   }
   return completed;
+}
+
+function briefList(value: unknown, limit = 4, maxLength = 360) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => cleanText(String(item)).slice(0, maxLength)).filter(Boolean).slice(0, limit);
+}
+
+async function saveDailyBrief(
+  database: D1Database,
+  input: {
+    id?: string;
+    spaceId: string;
+    briefDate: string;
+    jobId: string;
+    status: "ready" | "degraded";
+    headlineZh: string;
+    headlineEn: string;
+    overviewZh: string;
+    overviewEn: string;
+    signalsZh: string[];
+    signalsEn: string[];
+    readingPlanZh: string[];
+    readingPlanEn: string[];
+    watchlistZh: string[];
+    watchlistEn: string[];
+    paperIds: string[];
+    metrics: Record<string, number>;
+    model: string;
+    error?: string | null;
+  },
+) {
+  await database.prepare(
+    `INSERT INTO monitor_daily_briefs
+     (id, space_id, brief_date, scan_job_id, status, headline_zh, headline_en, overview_zh, overview_en,
+      signals_zh, signals_en, reading_plan_zh, reading_plan_en, watchlist_zh, watchlist_en,
+      paper_ids, metrics_json, model, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(space_id, brief_date) DO UPDATE SET scan_job_id = excluded.scan_job_id, status = excluded.status,
+      headline_zh = excluded.headline_zh, headline_en = excluded.headline_en,
+      overview_zh = excluded.overview_zh, overview_en = excluded.overview_en,
+      signals_zh = excluded.signals_zh, signals_en = excluded.signals_en,
+      reading_plan_zh = excluded.reading_plan_zh, reading_plan_en = excluded.reading_plan_en,
+      watchlist_zh = excluded.watchlist_zh, watchlist_en = excluded.watchlist_en,
+      paper_ids = excluded.paper_ids, metrics_json = excluded.metrics_json, model = excluded.model,
+      error = excluded.error, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(
+    input.id || crypto.randomUUID(), input.spaceId, input.briefDate, input.jobId, input.status,
+    input.headlineZh, input.headlineEn, input.overviewZh, input.overviewEn,
+    JSON.stringify(input.signalsZh), JSON.stringify(input.signalsEn),
+    JSON.stringify(input.readingPlanZh), JSON.stringify(input.readingPlanEn),
+    JSON.stringify(input.watchlistZh), JSON.stringify(input.watchlistEn),
+    JSON.stringify(input.paperIds), JSON.stringify(input.metrics), input.model, input.error || null,
+  ).run();
+}
+
+async function generateDailyBrief(
+  database: D1Database,
+  space: SpaceRow,
+  userId: string,
+  jobId: string,
+  candidates: Candidate[],
+  reviews: PaperReview[],
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; recommended: number; rejected: number },
+  now: Date,
+) {
+  const briefDateParts = Object.fromEntries(new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now).map((part) => [part.type, part.value]));
+  const briefDate = `${briefDateParts.year}-${briefDateParts.month}-${briefDateParts.day}`;
+  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const selected = reviews.filter((review) => review.recommended).sort((left, right) => {
+    const tier = { must_read: 3, browse: 2, reserve: 1 };
+    return tier[right.recommendationTier] - tier[left.recommendationTier] || right.relevanceScore - left.relevanceScore;
+  }).slice(0, 8);
+  const selectedCanonicalIds = selected.map((review) => review.canonicalId);
+  let paperIds: string[] = [];
+  if (selectedCanonicalIds.length) {
+    const placeholders = selectedCanonicalIds.map(() => "?").join(", ");
+    const rows = await database.prepare(`SELECT id, canonical_id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`)
+      .bind(space.id, ...selectedCanonicalIds).all<{ id: string; canonical_id: string }>();
+    const byCanonical = new Map(rows.results.map((row) => [row.canonical_id, row.id]));
+    paperIds = selectedCanonicalIds.map((id) => byCanonical.get(id)).filter((id): id is string => Boolean(id));
+  }
+  const fallback = async (error?: string) => saveDailyBrief(database, {
+    spaceId: space.id, briefDate, jobId, status: error ? "degraded" : "ready",
+    headlineZh: selected.length ? `今天有 ${selected.length} 篇论文通过严格筛选` : "今天没有论文达到严格推荐门槛",
+    headlineEn: selected.length ? `${selected.length} papers passed today's strict review` : "No paper cleared today's strict recommendation bar",
+    overviewZh: selected.length
+      ? `Pi 从 ${metrics.scanned} 篇候选中完成 ${metrics.reviewed} 篇深度评审，并保留 ${selected.length} 篇。其余结果仍在探索账本中，不会因本轮未推荐而丢失。`
+      : `Pi 扫描了 ${metrics.scanned} 篇候选，没有为了填满页面而降低标准。探索游标和待评审池已经保存，下一轮会从新的位置继续。`,
+    overviewEn: selected.length
+      ? `Pi deeply reviewed ${metrics.reviewed} of ${metrics.scanned} candidates and retained ${selected.length}. Other discoveries remain in the exploration ledger instead of being discarded.`
+      : `Pi scanned ${metrics.scanned} candidates without lowering the bar to fill the page. Cursors and the pending review pool are saved for the next pass.`,
+    signalsZh: selected.slice(0, 3).map((review) => review.contributionZh || review.summaryZh).filter(Boolean),
+    signalsEn: selected.slice(0, 3).map((review) => review.contributionEn || review.summaryEn).filter(Boolean),
+    readingPlanZh: selected.slice(0, 3).map((review) => review.readingFocusZh || review.whyReadZh).filter(Boolean),
+    readingPlanEn: selected.slice(0, 3).map((review) => review.readingFocusEn || review.whyReadEn).filter(Boolean),
+    watchlistZh: selected.length ? [] : ["本轮没有强推荐；等待低收益分支冷却结束，并继续扩展期刊、作者与引用路径。"],
+    watchlistEn: selected.length ? [] : ["No strong recommendation this round; Pi will revisit cooled branches and expand journal, author, and citation paths."],
+    paperIds, metrics, model: error ? "deterministic-fallback" : "evidence-summary", error: error || null,
+  });
+  if (!selected.length) return fallback();
+
+  const runtime = getRuntimeEnv();
+  const usageDate = now.toISOString().slice(0, 10);
+  const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
+  const [globalCount, workspaceCount] = await Promise.all([
+    usageCount(database, "monitor:global", usageDate),
+    usageCount(database, workspaceScope, usageDate),
+  ]);
+  if (!runtime.DEEPSEEK_API_KEY || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+    return fallback(!runtime.DEEPSEEK_API_KEY ? "DeepSeek Pro is not configured" : "Daily brief analysis budget reached");
+  }
+  try {
+    const records = selected.map((review) => {
+      const candidate = candidateById.get(review.canonicalId);
+      return {
+        canonicalId: review.canonicalId,
+        title: candidate?.title || "",
+        venue: candidate?.venue || "",
+        publishedAt: candidate?.publishedAt || null,
+        horizon: candidate?.horizon || "days",
+        recommendationTier: review.recommendationTier,
+        relevanceScore: review.relevanceScore,
+        summaryZh: review.summaryZh,
+        summaryEn: review.summaryEn,
+        contributionZh: review.contributionZh,
+        contributionEn: review.contributionEn,
+        readingFocusZh: review.readingFocusZh,
+        readingFocusEn: review.readingFocusEn,
+        questionsZh: review.researchQuestionsZh,
+        questionsEn: review.researchQuestionsEn,
+      };
+    });
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MONITOR_MODEL,
+        messages: [
+          { role: "system", content: "You are Pi Research's daily research editor. Return strict JSON, stay evidence-disciplined, and synthesize only the supplied paper analyses." },
+          { role: "user", content: [
+            "Create a concise bilingual daily research brief for a long-term researcher.",
+            "Return {headlineZh, headlineEn, overviewZh, overviewEn, signalsZh, signalsEn, readingPlanZh, readingPlanEn, watchlistZh, watchlistEn}.",
+            "Each list must have 1-4 concrete items. Identify cross-paper patterns only when supported. Do not invent results or imply that rejected candidates were useful.",
+            "The reading plan must name what the researcher should extract and in what order, not merely repeat titles.",
+            `Research space: ${space.name} — ${space.description}`,
+            `Scan metrics: ${JSON.stringify(metrics)}`,
+            `Selected paper analyses: ${JSON.stringify(records)}`,
+          ].join("\n") },
+        ],
+        thinking: { type: "enabled" },
+        reasoning_effort: "high",
+        response_format: { type: "json_object" },
+        max_tokens: 5200,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(75_000),
+    });
+    const data = await response.json() as DeepSeekResponse;
+    if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro daily brief failed");
+    const content = data.choices?.[0]?.message?.content || "";
+    if (!content.trim()) throw new Error("DeepSeek Pro returned an empty daily brief");
+    const parsed = parseJsonObject(content);
+    await Promise.all([
+      recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+      recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+      recordUsage(database, "monitor-space:" + space.id, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+    ]);
+    const headlineZh = cleanText(String(parsed.headlineZh || "")).slice(0, 180);
+    const headlineEn = cleanText(String(parsed.headlineEn || "")).slice(0, 240);
+    const overviewZh = cleanText(String(parsed.overviewZh || "")).slice(0, 900);
+    const overviewEn = cleanText(String(parsed.overviewEn || "")).slice(0, 1200);
+    if (!headlineZh || !headlineEn || !overviewZh || !overviewEn) throw new Error("DeepSeek Pro returned an incomplete daily brief");
+    await saveDailyBrief(database, {
+      spaceId: space.id, briefDate, jobId, status: "ready", headlineZh, headlineEn, overviewZh, overviewEn,
+      signalsZh: briefList(parsed.signalsZh), signalsEn: briefList(parsed.signalsEn),
+      readingPlanZh: briefList(parsed.readingPlanZh), readingPlanEn: briefList(parsed.readingPlanEn),
+      watchlistZh: briefList(parsed.watchlistZh), watchlistEn: briefList(parsed.watchlistEn),
+      paperIds, metrics, model: MONITOR_MODEL,
+    });
+  } catch (error) {
+    await fallback(error instanceof Error ? error.message.slice(0, 260) : "Daily brief generation failed");
+  }
 }
 
 async function persistCandidatePool(database: D1Database, spaceId: string, candidates: Candidate[]) {
@@ -1570,15 +1785,15 @@ function selectUnseenReviewBatch(candidates: Candidate[]) {
   return selected;
 }
 
-async function updateRunPhase(database: D1Database, spaceId: string, jobId: string, status: string, scannedCount: number, newCount = 0) {
-  const progress = status === "deduplicating" ? 54 : status === "reviewing" ? 58 : status === "saving" ? 90 : 4;
+async function updateRunPhase(database: D1Database, spaceId: string, jobId: string, lockToken: string, status: string, scannedCount: number, newCount = 0) {
+  const progress = status === "deduplicating" ? 54 : status === "reviewing" ? 58 : status === "saving" ? 90 : status === "briefing" ? 94 : 4;
   await database.batch([
     database.prepare(
-      "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
-    ).bind(status, scannedCount, newCount, spaceId),
+      "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
+    ).bind(status, scannedCount, newCount, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), spaceId, lockToken),
     database.prepare(
-      "UPDATE monitor_scan_jobs SET status = ?, progress = MAX(progress, ?), discovered_count = ?, recommended_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-    ).bind(status, progress, scannedCount, newCount, jobId),
+      "UPDATE monitor_scan_jobs SET status = ?, checkpoint = ?, progress = MAX(progress, ?), discovered_count = ?, recommended_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ).bind(status, status, progress, scannedCount, newCount, jobId),
   ]);
 }
 
@@ -1652,8 +1867,8 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows] = await Promise.all([
-    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
+  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow] = await Promise.all([
+    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
       `SELECT p.id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.horizon,
@@ -1684,7 +1899,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
     database.prepare(
       `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
-       duplicate_count, reviewed_count, recommended_count, rejected_count, started_at, completed_at, error
+       duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
+       resume_of_job_id, checkpoint, started_at, completed_at, error
        FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
     ).bind(space.id).first<ScanJobRow>(),
     database.prepare(
@@ -1797,6 +2013,11 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       `SELECT recommendation_tier, COUNT(*) AS count FROM paper_insights
        WHERE space_id = ? AND llm_recommended = 1 AND analysis_model = ? GROUP BY recommendation_tier`,
     ).bind(space.id, MONITOR_MODEL).all<{ recommendation_tier: string; count: number }>(),
+    database.prepare(
+      `SELECT brief_date, status, headline_zh, headline_en, overview_zh, overview_en, signals_zh, signals_en,
+       reading_plan_zh, reading_plan_en, watchlist_zh, watchlist_en, paper_ids, metrics_json, model, error, updated_at
+       FROM monitor_daily_briefs WHERE space_id = ? ORDER BY brief_date DESC, updated_at DESC LIMIT 1`,
+    ).bind(space.id).first<DailyBriefRow>(),
   ]);
   const now = Date.now();
   const duePapers = papers.results
@@ -1864,6 +2085,25 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     analyzedAt: row.analyzed_at,
     updatedAt: row.updated_at,
   }));
+  const dailyBrief = dailyBriefRow ? {
+    date: dailyBriefRow.brief_date,
+    status: dailyBriefRow.status,
+    headlineZh: dailyBriefRow.headline_zh,
+    headlineEn: dailyBriefRow.headline_en,
+    overviewZh: dailyBriefRow.overview_zh,
+    overviewEn: dailyBriefRow.overview_en,
+    signalsZh: parseVenues(dailyBriefRow.signals_zh),
+    signalsEn: parseVenues(dailyBriefRow.signals_en),
+    readingPlanZh: parseVenues(dailyBriefRow.reading_plan_zh),
+    readingPlanEn: parseVenues(dailyBriefRow.reading_plan_en),
+    watchlistZh: parseVenues(dailyBriefRow.watchlist_zh),
+    watchlistEn: parseVenues(dailyBriefRow.watchlist_en),
+    paperIds: parseVenues(dailyBriefRow.paper_ids),
+    metrics: (() => { try { return JSON.parse(dailyBriefRow.metrics_json) as Record<string, number>; } catch { return {}; } })(),
+    model: dailyBriefRow.model,
+    error: dailyBriefRow.error,
+    updatedAt: dailyBriefRow.updated_at,
+  } : null;
   return {
     monitor: {
       status: run?.status || "idle",
@@ -1872,9 +2112,17 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       newCount: run?.new_count || 0,
       scannedCount: run?.scanned_count || 0,
       explorationRound: run?.discovery_round || 0,
+      lastTrigger: run?.last_trigger || "visit",
       knownCount: known?.count || 0,
       error: run?.error || null,
       cadenceHours: 24,
+      automation: {
+        enabled: true,
+        cadenceHours: 24,
+        schedulerCheckMinutes: 10,
+        errorRetryMinutes: Math.round(ERROR_RETRY_MS / 60_000),
+        singleRunLock: true,
+      },
       source: "Crossref · priority journals · arXiv · OpenAlex · Semantic Scholar · citation frontier",
       horizons: ["days", "months", "years"],
       scanJob: job ? {
@@ -1889,6 +2137,10 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         reviewedCount: job.reviewed_count,
         recommendedCount: job.recommended_count,
         rejectedCount: job.rejected_count,
+        attempt: job.attempt,
+        triggerSource: job.trigger_source,
+        resumeOfJobId: job.resume_of_job_id,
+        checkpoint: job.checkpoint,
         startedAt: job.started_at,
         completedAt: job.completed_at,
         error: job.error,
@@ -2000,6 +2252,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         error: row.last_error,
       })),
       readingMemories,
+      dailyBrief,
       suggestedAuthors,
       papers: selected.map((paper) => toPaper(paper, now)),
       historyPapers,
@@ -2070,20 +2323,26 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; force?: boolean };
+    const payload = await request.json() as { spaceId?: string; force?: boolean; trigger?: ScanTrigger };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
     const { database, space, user } = context;
+    const trigger: ScanTrigger = payload.trigger === "scheduled" || payload.trigger === "manual" || payload.trigger === "visit"
+      ? payload.trigger : payload.force ? "manual" : "visit";
     const preference = await ensurePreference(database, space);
     const enrichedSpace = await enrichSpaceWithImportedMemory(database, space);
-    const previous = await database.prepare("SELECT status, last_run_at, next_run_at, updated_at, discovery_round FROM monitor_runs WHERE space_id = ? LIMIT 1")
-      .bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number }>();
+    const previous = await database.prepare("SELECT status, last_run_at, next_run_at, updated_at, discovery_round, lock_token, lock_expires_at FROM monitor_runs WHERE space_id = ? LIMIT 1")
+      .bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null }>();
     const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
     const now = new Date();
     const discoveryRound = Math.max(0, previous?.discovery_round || 0);
     const runUpdatedAt = previous?.updated_at ? databaseTime(previous.updated_at) : 0;
+    const lockExpiry = previous?.lock_expires_at ? Date.parse(previous.lock_expires_at) : 0;
+    if (previous?.lock_token && lockExpiry > now.getTime()) {
+      return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }));
+    }
     if (previous && !["idle", "ready", "error"].includes(previous.status) && now.getTime() - runUpdatedAt < STALE_RUN_MS) {
       return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }));
     }
@@ -2096,33 +2355,44 @@ export async function POST(request: Request) {
       return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
     }
 
+    const previousJob = await database.prepare(
+      "SELECT id, status, attempt FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1",
+    ).bind(space.id).first<{ id: string; status: string; attempt: number }>();
+    const resumable = Boolean(previousJob && previousJob.status !== "ready");
+    const lockToken = crypto.randomUUID();
     const jobId = crypto.randomUUID();
-    await database.batch([
-      database.prepare(
-        `INSERT INTO monitor_runs (id, space_id, status, error, updated_at)
-         VALUES (?, ?, 'scanning', NULL, CURRENT_TIMESTAMP)
-         ON CONFLICT(space_id) DO UPDATE SET status = 'scanning', error = NULL, new_count = 0,
-         scanned_count = 0, updated_at = CURRENT_TIMESTAMP`,
-      ).bind(crypto.randomUUID(), space.id),
-      database.prepare(
-        `INSERT INTO monitor_scan_jobs (id, space_id, status, progress, discovered_count, reviewed_count, recommended_count)
-         VALUES (?, ?, 'scanning', 4, 0, 0, 0)`,
-      ).bind(jobId, space.id),
-    ]);
-
+    await database.prepare(
+      "INSERT OR IGNORE INTO monitor_runs (id, space_id, status, last_trigger, updated_at) VALUES (?, ?, 'idle', ?, CURRENT_TIMESTAMP)",
+    ).bind(crypto.randomUUID(), space.id, trigger).run();
+    await database.prepare(
+      `UPDATE monitor_runs SET status = 'scanning', lock_token = ?, lock_expires_at = ?, last_trigger = ?,
+       error = NULL, new_count = 0, scanned_count = 0, updated_at = CURRENT_TIMESTAMP
+       WHERE space_id = ? AND (lock_token IS NULL OR lock_expires_at IS NULL OR datetime(lock_expires_at) <= CURRENT_TIMESTAMP)`,
+    ).bind(lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), trigger, space.id).run();
+    const acquired = await database.prepare("SELECT lock_token FROM monitor_runs WHERE space_id = ? LIMIT 1")
+      .bind(space.id).first<{ lock_token: string | null }>();
+    if (acquired?.lock_token !== lockToken) {
+      return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }));
+    }
     try {
+      await database.prepare(
+        `INSERT INTO monitor_scan_jobs
+         (id, space_id, status, progress, discovered_count, reviewed_count, recommended_count,
+          attempt, trigger_source, resume_of_job_id, checkpoint)
+         VALUES (?, ?, 'scanning', 4, 0, 0, 0, ?, ?, ?, 'scanning')`,
+      ).bind(jobId, space.id, resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null).run();
       await setScanSource(database, jobId, "days", "DeepSeek Pro · daily query plan", 6, 0);
       const queryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference);
       const batches: Array<{ candidates: Candidate[]; rawCount: number }> = [];
       let discoveredCount = 0;
       for (const horizon of HORIZONS) {
-        await updateRunPhase(database, space.id, jobId, `discovering_${horizon.key}`, discoveredCount);
+        await updateRunPhase(database, space.id, jobId, lockToken, `discovering_${horizon.key}`, discoveredCount);
         const batch = await fetchHorizon(database, enrichedSpace, horizon, now, preference.priorityVenues, preference.trackedAuthors, preference.profileKey, discoveryRound, jobId, discoveredCount, queryPlan);
         batches.push(batch);
         discoveredCount += batch.candidates.length;
-        await updateRunPhase(database, space.id, jobId, `discovering_${horizon.key}`, discoveredCount);
+        await updateRunPhase(database, space.id, jobId, lockToken, `discovering_${horizon.key}`, discoveredCount);
       }
-      await updateRunPhase(database, space.id, jobId, "deduplicating", discoveredCount);
+      await updateRunPhase(database, space.id, jobId, lockToken, "deduplicating", discoveredCount);
       const candidates = new Map<string, Candidate>();
       for (const candidate of batches.flatMap((batch) => batch.candidates)) {
         const existing = candidates.get(candidate.canonicalId);
@@ -2136,20 +2406,29 @@ export async function POST(request: Request) {
       await persistCandidatePool(database, space.id, candidateList);
       const pendingQueue = await pendingCandidateQueue(database, space.id);
       const pendingCandidates = selectUnseenReviewBatch(pendingQueue);
-      await updateRunPhase(database, space.id, jobId, "reviewing", scannedCount);
-      const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates, jobId);
+      await updateRunPhase(database, space.id, jobId, lockToken, "reviewing", scannedCount);
+      const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates, jobId, lockToken);
 
       const newCount = reviews.filter((review) => review.recommended).length;
       const rejectedCount = reviews.length - newCount;
-      await updateRunPhase(database, space.id, jobId, "saving", scannedCount, newCount);
+      await updateRunPhase(database, space.id, jobId, lockToken, "saving", scannedCount, newCount);
 
       const completedAt = new Date();
+      await updateRunPhase(database, space.id, jobId, lockToken, "briefing", scannedCount, newCount);
+      await generateDailyBrief(database, enrichedSpace, user.userId, jobId, pendingCandidates, reviews, {
+        scanned: scannedCount,
+        newCandidates: newCandidateCount,
+        duplicates: duplicateCount,
+        reviewed: reviews.length,
+        recommended: newCount,
+        rejected: rejectedCount,
+      }, completedAt);
       await database.batch([
         database.prepare(
-          "UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?, discovery_round = discovery_round + 1, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
-        ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), newCount, scannedCount, space.id),
+          "UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?, discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
+        ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), newCount, scannedCount, space.id, lockToken),
         database.prepare(
-          "UPDATE monitor_scan_jobs SET status = 'ready', current_horizon = '', current_source = '', progress = 100, discovered_count = ?, new_candidate_count = ?, duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          "UPDATE monitor_scan_jobs SET status = 'ready', checkpoint = 'complete', current_horizon = '', current_source = '', progress = 100, discovered_count = ?, new_candidate_count = ?, duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(scannedCount, newCandidateCount, duplicateCount, reviews.length, newCount, rejectedCount, completedAt.toISOString(), jobId),
       ]);
       return Response.json(await readState(database, space, { cached: false }));
@@ -2157,9 +2436,9 @@ export async function POST(request: Request) {
       const message = error instanceof Error ? error.message.slice(0, 300) : "Monitoring scan failed";
       const failedAt = new Date();
       await database.batch([
-        database.prepare("UPDATE monitor_runs SET status = 'error', next_run_at = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?")
-          .bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id),
-        database.prepare("UPDATE monitor_scan_jobs SET status = 'error', error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        database.prepare("UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?")
+          .bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id, lockToken),
+        database.prepare("UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
           .bind(message, failedAt.toISOString(), jobId),
       ]);
       return Response.json(await readState(database, space), { status: 502 });

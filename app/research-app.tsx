@@ -133,7 +133,7 @@ type ReadingMemory = {
   analyzedAt: string | null;
   updatedAt: string;
 };
-type MonitorStatus = "idle" | "scanning" | "discovering_days" | "discovering_months" | "discovering_years" | "deduplicating" | "reviewing" | "saving" | "ready" | "error";
+type MonitorStatus = "idle" | "scanning" | "discovering_days" | "discovering_months" | "discovering_years" | "deduplicating" | "reviewing" | "saving" | "briefing" | "ready" | "error";
 type MonitorState = {
   status: MonitorStatus;
   lastRunAt: string | null;
@@ -144,6 +144,8 @@ type MonitorState = {
   explorationRound?: number;
   error: string | null;
   cadenceHours: number;
+  lastTrigger?: string;
+  automation?: { enabled: boolean; cadenceHours: number; schedulerCheckMinutes: number; errorRetryMinutes: number; singleRunLock: boolean };
   source: string;
   horizons: string[];
   preferences?: MonitorPreferences;
@@ -159,6 +161,13 @@ type MonitorState = {
     discoveredCount: number;
     reviewedCount: number;
     recommendedCount: number;
+    newCandidateCount?: number;
+    duplicateCount?: number;
+    rejectedCount?: number;
+    attempt?: number;
+    triggerSource?: string;
+    resumeOfJobId?: string | null;
+    checkpoint?: string;
     startedAt: string;
     completedAt: string | null;
     error: string | null;
@@ -225,6 +234,25 @@ type MonitorState = {
   };
   explorationLedger?: ExplorationBranch[];
   readingMemories?: ReadingMemory[];
+  dailyBrief?: {
+    date: string;
+    status: string;
+    headlineZh: string;
+    headlineEn: string;
+    overviewZh: string;
+    overviewEn: string;
+    signalsZh: string[];
+    signalsEn: string[];
+    readingPlanZh: string[];
+    readingPlanEn: string[];
+    watchlistZh: string[];
+    watchlistEn: string[];
+    paperIds: string[];
+    metrics: Record<string, number>;
+    model: string;
+    error: string | null;
+    updatedAt: string;
+  } | null;
   suggestedAuthors?: string[];
   cached?: boolean;
   throttled?: boolean;
@@ -865,6 +893,7 @@ const monitorProgressByStatus: Record<MonitorStatus, number> = {
   deduplicating: 48,
   reviewing: 58,
   saving: 88,
+  briefing: 94,
   ready: 100,
   error: 0,
 };
@@ -883,6 +912,7 @@ function monitorPhaseLabel(status: MonitorStatus | undefined, locale: Locale) {
     deduplicating: { zh: "正在去重并排除已评审记录", en: "Deduplicating previously reviewed records" },
     reviewing: { zh: "DeepSeek Pro 正在逐篇筛选并撰写", en: "DeepSeek Pro is screening and writing each brief" },
     saving: { zh: "正在保存推荐与淘汰记录", en: "Saving recommendations and rejected records" },
+    briefing: { zh: "Pi 正在生成今日研究简报", en: "Pi is writing today's research brief" },
     ready: { zh: "扫描完成", en: "Scan complete" },
     error: { zh: "扫描暂时失败", en: "Scan temporarily failed" },
   };
@@ -1277,6 +1307,10 @@ export default function ResearchApp({ user }: { user: User }) {
   const healthyCoverageCount = monitor?.coverage?.filter((source) => source.healthy).length || 0;
   const mustReadCount = rankedMonitorPapers.filter((paper) => paper.recommendationTier === "must_read").length;
   const activeReadingCount = (monitor?.historyCounts?.reading?.queued || 0) + (monitor?.historyCounts?.reading?.reading || 0);
+  const dailyBriefPapers = useMemo(() => {
+    const ids = new Set(monitor?.dailyBrief?.paperIds || []);
+    return historyPapers.filter((paper) => ids.has(paper.id));
+  }, [historyPapers, monitor?.dailyBrief?.paperIds]);
   const operationsMaxCandidates = Math.max(1, ...(monitor?.operationsDashboard?.daily || []).map((day) => day.candidates));
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
   const confirmedProfile = latestConfirmedImport?.analysis || null;
@@ -1362,7 +1396,7 @@ export default function ResearchApp({ user }: { user: User }) {
       fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id }),
+        body: JSON.stringify({ spaceId: activeSpace.id, trigger: "visit" }),
       })
         .then((response) => response.json() as Promise<{ monitor?: MonitorState }>)
         .then((data) => {
@@ -1705,7 +1739,7 @@ export default function ResearchApp({ user }: { user: User }) {
       const response = await fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, force: true }),
+        body: JSON.stringify({ spaceId: activeSpace.id, force: true, trigger: "manual" }),
       });
       const data = await response.json() as { monitor?: MonitorState };
       if (data.monitor) {
@@ -1750,7 +1784,7 @@ export default function ResearchApp({ user }: { user: User }) {
       const scanResponse = await fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id }),
+        body: JSON.stringify({ spaceId: activeSpace.id, trigger: "manual" }),
       });
       const scanData = await scanResponse.json() as { monitor?: MonitorState };
       if (scanData.monitor) setMonitor(scanData.monitor);
@@ -2285,6 +2319,17 @@ export default function ResearchApp({ user }: { user: User }) {
               <button type="button" onClick={() => { setLibraryFilter("accepted"); navigate("library"); }}><span>03</span><strong>{activeReadingCount}</strong><div><b>{locale === "zh" ? "待读与在读" : "Reading queue"}</b><small>{locale === "zh" ? "继续昨天没有读完的论文" : "Continue where you left off"}</small></div><i>→</i></button>
             </section>
 
+            {monitor?.dailyBrief && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
+              <header><div><p className="v2-kicker">π {locale === "zh" ? "每日研究简报" : "DAILY RESEARCH BRIEF"}</p><h2>{locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn}</h2></div><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
+              <p className="v2-daily-brief-overview">{locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn}</p>
+              <div className="v2-daily-brief-grid">
+                <article><h3>{locale === "zh" ? "今天出现的研究信号" : "Signals emerging today"}</h3><ol>{(locale === "zh" ? monitor.dailyBrief.signalsZh : monitor.dailyBrief.signalsEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ol></article>
+                <article><h3>{locale === "zh" ? "建议阅读顺序" : "Suggested reading sequence"}</h3><ol>{(locale === "zh" ? monitor.dailyBrief.readingPlanZh : monitor.dailyBrief.readingPlanEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ol></article>
+                {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <article className="watch"><h3>{locale === "zh" ? "继续观察" : "Keep watching"}</h3><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></article>}
+              </div>
+              <footer><span>{locale === "zh" ? `${monitor.dailyBrief.metrics.scanned || 0} 篇候选 · ${monitor.dailyBrief.metrics.recommended || 0} 篇入选 · ${monitor.dailyBrief.metrics.duplicates || 0} 次重复已避免` : `${monitor.dailyBrief.metrics.scanned || 0} candidates · ${monitor.dailyBrief.metrics.recommended || 0} selected · ${monitor.dailyBrief.metrics.duplicates || 0} duplicates avoided`}</span>{dailyBriefPapers[0] && <button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button>}</footer>
+            </section>}
+
             <section className="v2-monitor-panel">
               <div className="v2-monitor-head">
                 <div><p className="v2-kicker">{t.liveMonitor}</p><h2>{locale === "zh" ? "三层扫描，严格筛选" : "Three horizons, strictly screened"}</h2></div>
@@ -2304,6 +2349,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     {healthyCoverageCount > 0 && <> · {healthyCoverageCount} {locale === "zh" ? "类来源正常" : "source groups healthy"}</>}
                     {locale === "zh" ? " · 上次推荐仍可继续阅读" : " · Previous recommendations remain readable"}
                   </small>
+                  {activeScanJob?.resumeOfJobId && <em className="v2-resume-note">↻ {locale === "zh" ? `正在从已保存检查点续跑 · 第 ${activeScanJob.attempt || 2} 次尝试` : `Resuming from a saved checkpoint · attempt ${activeScanJob.attempt || 2}`}</em>}
                 </div>
               )}
               <button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); navigate("library"); }}>
@@ -2316,7 +2362,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
                 <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div>{Boolean(monitor?.preferences?.trackedAuthors?.length) && <div><span>{locale === "zh" ? "追踪作者" : "Tracked authors"}</span><p>{monitor?.preferences?.trackedAuthors.slice(0, 6).map((author) => <i key={author}>{author}</i>)}</p></div>}</div>
                 {monitor?.queryPlan && <div className="v2-query-plan"><span>π</span><div><strong>{locale === "zh" ? "今日检索计划" : "Today's query plan"} · {monitor.queryPlan.queryCount} {locale === "zh" ? "组查询" : "queries"}</strong><p>{locale === "zh" ? monitor.queryPlan.rationaleZh : monitor.queryPlan.rationaleEn}</p><small>{monitor.queryPlan.degraded ? (locale === "zh" ? "智能规划暂不可用，已使用稳定检索策略" : "Stable fallback discovery is active") : modelDisplayName(monitor.queryPlan.model)}</small></div></div>}
-                <dl className="v2-monitor-metrics"><div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div><div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div><div><dt>{locale === "zh" ? "持续探索轮次" : "Exploration round"}</dt><dd>#{monitor?.explorationRound || 0}</dd></div><div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div></dl>
+                <dl className="v2-monitor-metrics"><div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div><div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div><div><dt>{locale === "zh" ? "自动监控" : "Automatic monitoring"}</dt><dd>{locale === "zh" ? `每 ${monitor?.automation?.cadenceHours || 24} 小时 · ${monitor?.automation?.schedulerCheckMinutes || 10} 分钟检查一次` : `Every ${monitor?.automation?.cadenceHours || 24}h · due check every ${monitor?.automation?.schedulerCheckMinutes || 10}m`}</dd></div><div><dt>{locale === "zh" ? "上次触发" : "Last trigger"}</dt><dd>{monitor?.lastTrigger === "scheduled" ? (locale === "zh" ? "后台定时" : "Scheduled") : monitor?.lastTrigger === "manual" ? (locale === "zh" ? "手动深挖" : "Manual deep dive") : (locale === "zh" ? "打开时补扫" : "Catch-up on visit")}</dd></div><div><dt>{locale === "zh" ? "持续探索轮次" : "Exploration round"}</dt><dd>#{monitor?.explorationRound || 0}</dd></div><div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div></dl>
                 {monitor?.qualityMetrics && <dl className="v2-quality-metrics"><div><dt>{locale === "zh" ? "7日入选率" : "7-day selection yield"}</dt><dd>{monitor.qualityMetrics.recommendationYield}%</dd></div><div><dt>{locale === "zh" ? "用户接受率" : "User acceptance"}</dt><dd>{monitor.qualityMetrics.acceptanceRate}%</dd></div><div><dt>{locale === "zh" ? "候选 / 深度评审" : "Candidates / reviewed"}</dt><dd>{monitor.qualityMetrics.candidates} / {monitor.qualityMetrics.reviewed}</dd></div><div><dt>{locale === "zh" ? "7日智能用量" : "7-day AI usage"}</dt><dd>{Math.round((monitor.qualityMetrics.inputTokens + monitor.qualityMetrics.outputTokens) / 1000)}k tokens</dd></div></dl>}
                 {Boolean(monitor?.discoveryPerformance?.sources.length) && <div className="v2-discovery-performance"><header><strong>{locale === "zh" ? "发现来源表现" : "Discovery performance"}</strong><small>{locale === "zh" ? "依据真实入选与反馈持续调整" : "Updated from real selections and feedback"}</small></header>{monitor?.discoveryPerformance?.sources.slice(0, 6).map((source) => <div key={`${source.channel}:${source.sourceKey}`}><span>{source.sourceKey.replace(/_/g, " ")}</span><i>{source.channel}</i><b>{source.papers}</b><em>{source.acceptanceRate}%</em></div>)}</div>}
                 {Boolean(monitor?.discoveryPerformance?.tracks.length) && <div className="v2-track-performance"><span>{locale === "zh" ? "研究方向命中" : "Research-track fit"}</span><div>{monitor?.discoveryPerformance?.tracks.slice(0, 6).map((track) => <i key={track.trackId}><b>{locale === "zh" ? track.titleZh : track.titleEn}</b><small>{track.papers} {locale === "zh" ? "篇" : "papers"} · {track.acceptanceRate}%</small></i>)}</div></div>}
