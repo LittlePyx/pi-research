@@ -210,9 +210,13 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /种子论文/);
   assert.match(client, /数据库确认的引用/);
   assert.match(client, /Pi 解释的语义关系/);
-  assert.match(client, /Pi 推断，不代表论文之间存在真实引用/);
+  assert.match(client, /Pi 推断，不代表真实引用/);
   assert.match(client, /真实引用与文献耦合已更新/);
   assert.doesNotMatch(client, /className="v2-direction-bridges"/);
+  assert.match(client, /v2-direction-live-relations/);
+  assert.match(client, /directionPinnedRelationId/);
+  assert.match(client, /onPointerEnter/);
+  assert.match(client, /悬停预览，点击固定/);
   assert.match(client, /加入学习路径/);
   assert.match(client, /关键机会/);
   assert.match(client, /观察信号/);
@@ -229,6 +233,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /dual-layer direction and paper network/);
   assert.match(css, /\.v2-paper-network-canvas/);
   assert.match(css, /\.v2-paper-network-drawer/);
+  assert.match(css, /@keyframes v2-relation-draw/);
+  assert.match(css, /\.v2-direction-live-relation\.supports/);
   assert.match(worker, /runScheduledMonitorSweep/);
   assert.match(worker, /async scheduled/);
   assert.match(worker, /LIMIT 2/);

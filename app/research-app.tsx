@@ -1488,23 +1488,40 @@ function DirectionPathMap({
   map,
   locale,
   selectedTrackId,
+  focusedEdgeId,
   onSelect,
+  onClear,
 }: {
   map: ResearchMapState;
   locale: Locale;
   selectedTrackId: string | null;
+  focusedEdgeId: string | null;
   onSelect: (trackId: string) => void;
+  onClear: () => void;
 }) {
+  const [hoveredTrackId, setHoveredTrackId] = useState<string | null>(null);
   const width = 1180;
   const laneHeight = 118;
   const top = 78;
   const height = Math.max(390, top + map.tracks.length * laneHeight + 34);
   const stageX: Record<ResearchTrackRole, number> = { foundation: 390, milestone: 690, frontier: 970 };
   const trackY = new Map(map.tracks.map((track, index) => [track.id, top + index * laneHeight + laneHeight / 2]));
+  const activeTrackId = hoveredTrackId || selectedTrackId;
+  const visibleEdges = (focusedEdgeId
+    ? map.edges.filter((edge) => edge.id === focusedEdgeId)
+    : activeTrackId ? map.edges.filter((edge) => edge.sourceTrackId === activeTrackId || edge.targetTrackId === activeTrackId) : [])
+    .sort((left, right) => right.strength - left.strength).slice(0, focusedEdgeId ? 1 : 4);
+  const connectedTrackIds = new Set(visibleEdges.flatMap((edge) => [edge.sourceTrackId, edge.targetTrackId]));
+  const hasRelationshipPreview = visibleEdges.length > 0;
   return <div className="v2-direction-path-canvas">
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={locale === "zh" ? "研究方向发展路径" : "Research direction development paths"}>
       <title>{locale === "zh" ? "研究方向发展路径" : "Research direction development paths"}</title>
       <desc>{locale === "zh" ? "每条横线代表一个方向自身的发展顺序。跨方向关系在右侧以文字单独解释。" : "Each horizontal line shows one direction's own development. Cross-direction relationships are explained separately in the side panel."}</desc>
+      <defs>
+        <marker id="v2-direction-build-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 Z" /></marker>
+        <marker id="v2-direction-bridge-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 Z" /></marker>
+        <marker id="v2-direction-support-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 8 4 L 0 8 Z" /></marker>
+      </defs>
       <g className="v2-direction-stage-headings">
         <text x="390" y="38" textAnchor="middle">{locale === "zh" ? "理论奠基" : "Foundations"}</text>
         <text x="690" y="38" textAnchor="middle">{locale === "zh" ? "关键推进" : "Milestones"}</text>
@@ -1515,6 +1532,9 @@ function DirectionPathMap({
       {map.tracks.map((track, trackIndex) => {
         const y = trackY.get(track.id)!;
         const selected = selectedTrackId === track.id;
+        const previewed = hoveredTrackId === track.id;
+        const related = connectedTrackIds.has(track.id);
+        const muted = hasRelationshipPreview && !related;
         const color = paperNetworkPalette[trackIndex % paperNetworkPalette.length];
         const grouped = new Map<ResearchTrackRole, ResearchTrackPaper[]>();
         for (const paper of track.papers) grouped.set(paper.role, [...(grouped.get(paper.role) || []), paper]);
@@ -1525,7 +1545,7 @@ function DirectionPathMap({
           return { paper, x: stageX[paper.role] + offset };
         });
         const trackTitle = locale === "zh" ? track.titleZh : track.titleEn;
-        return <g key={track.id} className={`v2-direction-lane ${selected ? "selected" : ""} ${track.buildStatus}`} role="button" tabIndex={0} aria-pressed={selected} aria-label={locale === "zh" ? `${trackTitle}，${directionRoleLabel(track.userRole, locale)}，${track.papers.length} 篇论文，研究深度 ${track.depthScore}` : `${trackTitle}, ${directionRoleLabel(track.userRole, locale)}, ${track.papers.length} papers, depth ${track.depthScore}`} onClick={() => onSelect(track.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(track.id); } }}>
+        return <g key={track.id} className={`v2-direction-lane ${selected ? "selected" : ""} ${previewed ? "previewed" : ""} ${related ? "related" : ""} ${muted ? "muted" : ""} ${track.buildStatus}`} role="button" tabIndex={0} aria-pressed={selected} aria-label={locale === "zh" ? `${trackTitle}，${directionRoleLabel(track.userRole, locale)}，${track.papers.length} 篇论文，研究深度 ${track.depthScore}` : `${trackTitle}, ${directionRoleLabel(track.userRole, locale)}, ${track.papers.length} papers, depth ${track.depthScore}`} onPointerEnter={() => setHoveredTrackId(track.id)} onPointerLeave={() => setHoveredTrackId(null)} onFocus={() => setHoveredTrackId(track.id)} onBlur={() => setHoveredTrackId(null)} onClick={() => onSelect(track.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(track.id); } else if (event.key === "Escape") { event.preventDefault(); setHoveredTrackId(null); onClear(); } }}>
           <rect className="lane-hit" x="12" y={y - 48} width="1154" height="96" rx="12" />
           <text className="lane-role" x="32" y={y - 18}>{directionRoleLabel(track.userRole, locale)} · {directionHeatLabel(track.heatLevel, locale)}</text>
           <text className="lane-title" x="32" y={y + 8}>{trackTitle.slice(0, 26)}</text>
@@ -1540,7 +1560,29 @@ function DirectionPathMap({
           <path className="gap-node" transform={`translate(1110 ${y})`} d="M 0 -9 L 9 0 L 0 9 L -9 0 Z"><title>{track.intelligence ? locale === "zh" ? track.intelligence.evidenceGapZh : track.intelligence.evidenceGapEn : locale === "zh" ? "等待更多真实证据" : "Awaiting more evidence"}</title></path>
         </g>;
       })}
+      <g className={`v2-direction-live-relations ${focusedEdgeId ? "single" : "grouped"}`} aria-hidden="true">
+        {visibleEdges.map((edge, index) => {
+          const sourceY = trackY.get(edge.sourceTrackId);
+          const targetY = trackY.get(edge.targetTrackId);
+          if (sourceY == null || targetY == null) return null;
+          const bendX = 342 + index * 8;
+          const middleY = (sourceY + targetY) / 2;
+          const path = `M 302 ${sourceY} C ${bendX} ${sourceY}, ${bendX} ${targetY}, 302 ${targetY}`;
+          const marker = edge.kind === "builds_on" ? "url(#v2-direction-build-arrow)" : edge.kind === "bridges" ? "url(#v2-direction-bridge-arrow)" : "url(#v2-direction-support-arrow)";
+          return <g className={`v2-direction-live-relation ${edge.kind}`} key={edge.id}>
+            <path className="relation-halo" d={path} />
+            <path className="relation-path" pathLength="100" d={path} markerStart={edge.kind === "bridges" ? marker : undefined} markerEnd={marker} />
+            <circle className="relation-end source" cx="302" cy={sourceY} r="7" />
+            <circle className="relation-end target" cx="302" cy={targetY} r="7" />
+            <g className="relation-label" transform={`translate(${bendX - 66} ${middleY})`}>
+              <rect x="-4" y="-11" width={locale === "zh" ? 58 : 72} height="22" rx="11" />
+              <text x={locale === "zh" ? 25 : 32} y="3" textAnchor="middle">{directionRelationshipLabel(edge.kind, locale)}</text>
+            </g>
+          </g>;
+        })}
+      </g>
     </svg>
+    <span className="v2-sr-only" aria-live="polite">{focusedEdgeId && visibleEdges[0] ? (locale === "zh" ? `正在预览${directionRelationshipLabel(visibleEdges[0].kind, locale)}关系，Pi 推断强度 ${visibleEdges[0].strength}%` : `Previewing a ${directionRelationshipLabel(visibleEdges[0].kind, locale)} relationship with ${visibleEdges[0].strength}% Pi confidence`) : ""}</span>
   </div>;
 }
 
@@ -1560,6 +1602,8 @@ export default function ResearchApp({ user }: { user: User }) {
   });
   const [selectedThread, setSelectedThread] = useState<ResearchTrack | null>(null);
   const [directionOverviewId, setDirectionOverviewId] = useState<string | null>(null);
+  const [directionRelationFocusId, setDirectionRelationFocusId] = useState<string | null>(null);
+  const [directionPinnedRelationId, setDirectionPinnedRelationId] = useState<string | null>(null);
   const [researchMapMode, setResearchMapMode] = useState<ResearchMapMode>("directions");
   const [paperNetworkMode, setPaperNetworkMode] = useState<PaperNetworkMode>("similarity");
   const [paperNetworkTrackId, setPaperNetworkTrackId] = useState("all");
@@ -3044,15 +3088,15 @@ export default function ResearchApp({ user }: { user: User }) {
                 {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `还有 ${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes are waiting to be filled`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成的部分已经保存，可以打开路线浏览或选择失败方向重试。" : "Completed work is saved; browse ready routes or retry a pending direction.")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i><small>{locale === "zh" ? "切换页面不会丢失已经完成的内容，下次进入会从未完成处继续。" : "Completed work will not be lost if you leave; the next visit resumes unfinished routes."}</small></section> : null}
                 {(researchMap.intelligenceProgress?.pendingTrackIds.length || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress" role="status"><div><span className={mapIntelligenceTrackId ? "working" : "paused"}><i>π</i></span><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "DeepSeek Pro 正在形成方向研判" : "DeepSeek Pro is forming a direction assessment") : (locale === "zh" ? "部分方向等待 Pi 研判" : "Some directions await Pi's assessment")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "路线和论文已经可以正常浏览，研判将在下次进入时继续。" : "Routes and papers remain available; interpretation resumes on the next visit.")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i><small>{locale === "zh" ? "Pi 会给出当前判断、关键机会和应关注的变化信号，并绑定真实论文证据。" : "Pi adds a current assessment, key opportunity, and watch signal grounded in real paper evidence."}</small></section> : null}
                 <section className={`v2-direction-path-panel ${directionOverviewTrack ? "has-inspector" : ""}`}>
-                  <header><div><p className="v2-kicker">{locale === "zh" ? "领域演化" : "FIELD EVOLUTION"}</p><h2>{locale === "zh" ? "从理论奠基走到当前前沿" : "From foundations to the current frontier"}</h2><p>{locale === "zh" ? "每条横线只表示该方向自身的发展；选中方向后，右侧会单独解释 Pi 推断的跨方向关系。" : "Each horizontal line shows only that direction's development; select one to inspect Pi-inferred cross-direction links separately."}</p></div><div className="v2-direction-path-legend"><span><i className="solid" />{locale === "zh" ? "方向主线" : "Direction"}</span><span><i className="paper" />{locale === "zh" ? "真实论文" : "Real paper"}</span><span><i className="gap" />{locale === "zh" ? "待补证据" : "Evidence gap"}</span></div></header>
+                  <header><div><p className="v2-kicker">{locale === "zh" ? "领域演化" : "FIELD EVOLUTION"}</p><h2>{locale === "zh" ? "从理论奠基走到当前前沿" : "From foundations to the current frontier"}</h2><p>{locale === "zh" ? "悬停方向可临时预览关系，点击可锁定；右侧会解释每条 Pi 推断的具体含义。" : "Hover a direction to preview its links, or click to pin them; the side panel explains every Pi-inferred relationship."}</p></div><div className="v2-direction-path-legend"><span><i className="solid" />{locale === "zh" ? "方向主线" : "Direction"}</span><span><i className="paper" />{locale === "zh" ? "真实论文" : "Real paper"}</span><span><i className="gap" />{locale === "zh" ? "待补证据" : "Evidence gap"}</span></div></header>
                   <div className="v2-direction-path-stage">
-                    <DirectionPathMap map={researchMap} locale={locale} selectedTrackId={directionOverviewTrack?.id || null} onSelect={setDirectionOverviewId} />
+                    <DirectionPathMap map={researchMap} locale={locale} selectedTrackId={directionOverviewId} focusedEdgeId={directionRelationFocusId || directionPinnedRelationId} onSelect={(trackId) => { setDirectionOverviewId(trackId); setDirectionRelationFocusId(null); setDirectionPinnedRelationId(null); }} onClear={() => { setDirectionOverviewId(null); setDirectionRelationFocusId(null); setDirectionPinnedRelationId(null); }} />
                     {directionOverviewTrack && <aside className="v2-direction-path-inspector">
                       <div><span className={`v2-direction-heat ${directionOverviewTrack.heatLevel}`}><i />{directionHeatLabel(directionOverviewTrack.heatLevel, locale)}</span><small>{directionRoleLabel(directionOverviewTrack.userRole, locale)}</small></div>
                       <h2>{locale === "zh" ? directionOverviewTrack.titleZh : directionOverviewTrack.titleEn}</h2>
                       <p>{locale === "zh" ? directionOverviewTrack.summaryZh : directionOverviewTrack.summaryEn}</p>
                       <dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{directionOverviewTrack.depthScore}</dd></div><div><dt>{locale === "zh" ? "路线论文" : "Papers"}</dt><dd>{directionOverviewTrack.papers.length}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{directionOverviewTrack.recentPaperCount}</dd></div></dl>
-                      {directionOverviewRelations.length > 0 && <section className="v2-direction-relations"><header><div><strong>{locale === "zh" ? "与其他方向的关系" : "Links to other directions"}</strong><small>{locale === "zh" ? "Pi 推断，不代表论文之间存在真实引用" : "Pi-inferred; not a claim of paper-to-paper citation"}</small></div><span>{directionOverviewRelations.length}</span></header><div>{directionOverviewRelations.map(({ edge, source, target, other }) => { const sourceTitle = locale === "zh" ? source.titleZh : source.titleEn; const targetTitle = locale === "zh" ? target.titleZh : target.titleEn; return <button type="button" key={edge.id} onClick={() => setDirectionOverviewId(other.id)} aria-label={`${directionRelationshipLabel(edge.kind, locale)}: ${sourceTitle} ${edge.kind === "bridges" ? "↔" : "→"} ${targetTitle}. ${locale === "zh" ? edge.relationshipZh : edge.relationshipEn}`}><span><b>{directionRelationshipLabel(edge.kind, locale)}</b><em>Pi · {edge.strength}%</em></span><strong>{sourceTitle}<i>{edge.kind === "bridges" ? "↔" : "→"}</i>{targetTitle}</strong><small>{locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</small></button>; })}</div></section>}
+                      {directionOverviewRelations.length > 0 && <section className="v2-direction-relations"><header><div><strong>{locale === "zh" ? "与其他方向的关系" : "Links to other directions"}</strong><small>{locale === "zh" ? "悬停预览，点击固定 · Pi 推断，不代表真实引用" : "Hover to preview, click to pin · Pi-inferred, not a citation claim"}</small></div><span>{directionOverviewRelations.length}</span></header><div>{directionOverviewRelations.map(({ edge, source, target }) => { const sourceTitle = locale === "zh" ? source.titleZh : source.titleEn; const targetTitle = locale === "zh" ? target.titleZh : target.titleEn; const clearPreview = () => setDirectionRelationFocusId((current) => current === edge.id ? null : current); const pinned = directionPinnedRelationId === edge.id; return <button type="button" className={`${directionRelationFocusId === edge.id ? "previewing" : ""} ${pinned ? "pinned" : ""}`} key={edge.id} onPointerEnter={() => setDirectionRelationFocusId(edge.id)} onPointerLeave={clearPreview} onFocus={() => setDirectionRelationFocusId(edge.id)} onBlur={clearPreview} onClick={() => { setDirectionPinnedRelationId((current) => current === edge.id ? null : edge.id); setDirectionRelationFocusId(null); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setDirectionRelationFocusId(null); setDirectionPinnedRelationId(null); } }} aria-pressed={pinned} aria-label={`${directionRelationshipLabel(edge.kind, locale)}: ${sourceTitle} ${edge.kind === "bridges" ? "↔" : "→"} ${targetTitle}. ${locale === "zh" ? edge.relationshipZh : edge.relationshipEn}`}><span><b>{directionRelationshipLabel(edge.kind, locale)}</b><em>{pinned ? (locale === "zh" ? "已固定" : "Pinned") : `Pi · ${edge.strength}%`}</em></span><strong>{sourceTitle}<i>{edge.kind === "bridges" ? "↔" : "→"}</i>{targetTitle}</strong><small>{locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</small></button>; })}</div></section>}
                       {directionOverviewTrack.intelligence && <blockquote><small>{locale === "zh" ? "Pi 当前判断" : "Pi assessment"}</small><p>{locale === "zh" ? directionOverviewTrack.intelligence.assessmentZh : directionOverviewTrack.intelligence.assessmentEn}</p></blockquote>}
                       <footer><button type="button" onClick={() => openThread(directionOverviewTrack)}>{locale === "zh" ? "查看完整路径" : "Open full path"} →</button><button type="button" onClick={() => void expandResearchTrack(directionOverviewTrack)} disabled={Boolean(mapAction || mapBuildTrackId)}>{mapAction === directionOverviewTrack.id ? (locale === "zh" ? "正在深挖…" : "Mining…") : (locale === "zh" ? "继续深挖" : "Mine deeper")} ＋</button></footer>
                     </aside>}
