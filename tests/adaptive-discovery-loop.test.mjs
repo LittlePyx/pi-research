@@ -61,10 +61,13 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /status: 202/);
   assert.match(monitor, /quickScreenCandidates/);
   assert.match(monitor, /QUICK_SCREEN_CONCURRENCY = 2/);
+  assert.match(monitor, /thinking: \{ type: "disabled" \}/);
   assert.match(monitor, /reasoning_effort: "medium"/);
   assert.match(monitor, /DEEP_REVIEW_LIMIT = 8/);
   assert.match(monitor, /DEEP_REVIEW_BATCH_SIZE = 1/);
+  assert.match(monitor, /DEEP_REVIEW_CONCURRENCY = 2/);
   assert.match(monitor, /runIncrementalDeepReview/);
+  assert.match(monitor, /任一篇完成都会立即显示/);
   assert.match(monitor, /当前论文响应较慢，正在切换快速模式重试/);
   assert.match(monitor, /deferLlm/);
   assert.match(monitor, /checkpoint = 'main_complete'/);
@@ -96,13 +99,31 @@ test("screening refreshes stale fallback plans and enriches evidence before deep
 });
 
 test("today and its daily brief are capped at six and reranked across directions", async () => {
-  const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
+  const [monitor, client, styles] = await Promise.all([
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
 
   assert.match(monitor, /function selectDiverseItems/);
   assert.match(monitor, /groupCounts/);
   assert.match(monitor, /track_id \|\| `horizon:/);
   assert.match(monitor, /rankedReviews,/);
+  assert.match(monitor, /Never mention section, page, figure, or theorem numbers/);
+  assert.match(monitor, /must each contain exactly \$\{records\.length\} items in the supplied paper order/);
+  assert.match(client, /v2-daily-brief-list/);
+  assert.match(client, /它带来了什么/);
+  assert.match(client, /建议怎么读/);
+  assert.match(styles, /\.v2-daily-brief-list/);
   assert.doesNotMatch(monitor, /reviews\.filter\(\(review\) => review\.recommended\)[\s\S]{0,220}slice\(0, 8\)/);
+});
+
+test("discovery and evidence expansion run independent upstream calls concurrently", async () => {
+  const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
+
+  assert.match(monitor, /Semantic Scholar · OpenAlex · arXiv 并行检索/);
+  assert.match(monitor, /const \[semantic, openAlex, arxiv\] = await Promise\.all/);
+  assert.match(monitor, /const relationResults = await Promise\.all/);
 });
 
 test("accepted-paper token efficiency uses private audit allocations", async () => {

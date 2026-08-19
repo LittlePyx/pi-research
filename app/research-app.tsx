@@ -1449,8 +1449,15 @@ export default function ResearchApp({ user }: { user: User }) {
   const activeReadingCount = (monitor?.historyCounts?.reading?.queued || 0) + (monitor?.historyCounts?.reading?.reading || 0);
   const dailyBriefPapers = useMemo(() => {
     const ids = new Set(monitor?.dailyBrief?.paperIds || []);
-    return historyPapers.filter((paper) => ids.has(paper.id));
+    const byId = new Map(historyPapers.filter((paper) => ids.has(paper.id)).map((paper) => [paper.id, paper]));
+    return (monitor?.dailyBrief?.paperIds || []).flatMap((id) => {
+      const paper = byId.get(id);
+      return paper ? [paper] : [];
+    });
   }, [historyPapers, monitor?.dailyBrief?.paperIds]);
+  const dailySignals = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.signalsZh : monitor.dailyBrief.signalsEn) : [];
+  const dailyReadingPlan = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.readingPlanZh : monitor.dailyBrief.readingPlanEn) : [];
+  const dailyBriefEntryCount = Math.min(6, Math.max(dailyBriefPapers.length, dailySignals.length, dailyReadingPlan.length));
   const unreadNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => !notification.readAt), [monitor?.notifications]);
   const operationsMaxCandidates = Math.max(1, ...(monitor?.operationsDashboard?.daily || []).map((day) => day.candidates));
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
@@ -2605,10 +2612,17 @@ export default function ResearchApp({ user }: { user: User }) {
             {monitor?.dailyBrief && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
               <header><div><p className="v2-kicker">π {locale === "zh" ? "每日研究简报" : "DAILY RESEARCH BRIEF"}</p><h2>{locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn}</h2></div><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
               <p className="v2-daily-brief-overview">{locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn}</p>
-              <div className="v2-daily-brief-grid">
-                <article><h3>{locale === "zh" ? "今天出现的研究信号" : "Signals emerging today"}</h3><ol>{(locale === "zh" ? monitor.dailyBrief.signalsZh : monitor.dailyBrief.signalsEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ol></article>
-                <article><h3>{locale === "zh" ? "建议阅读顺序" : "Suggested reading sequence"}</h3><ol>{(locale === "zh" ? monitor.dailyBrief.readingPlanZh : monitor.dailyBrief.readingPlanEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ol></article>
-                {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <article className="watch"><h3>{locale === "zh" ? "继续观察" : "Keep watching"}</h3><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></article>}
+              <div className="v2-daily-brief-list">
+                {Array.from({ length: dailyBriefEntryCount }, (_, index) => {
+                  const paper = dailyBriefPapers[index];
+                  const signal = dailySignals[index];
+                  const readingAction = dailyReadingPlan[index];
+                  return <article key={paper?.id || `${index}:${signal || readingAction}`}>
+                    <header><span>{String(index + 1).padStart(2, "0")}</span><div><button type="button" disabled={!paper} onClick={() => paper && openMonitorPaper(paper)}>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</button>{paper && <small>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")} · {paper.readMinutes} {locale === "zh" ? "分钟" : "min"}</small>}</div><b>{paper ? "→" : ""}</b></header>
+                    <div>{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}</div>
+                  </article>;
+                })}
+                {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <aside><strong>{locale === "zh" ? "继续观察" : "Keep watching"}</strong><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></aside>}
               </div>
               <footer><span>{locale === "zh" ? `${monitor.dailyBrief.metrics.scanned || 0} 篇候选 · ${monitor.dailyBrief.metrics.recommended || 0} 篇入选 · ${monitor.dailyBrief.metrics.duplicates || 0} 次重复已避免` : `${monitor.dailyBrief.metrics.scanned || 0} candidates · ${monitor.dailyBrief.metrics.recommended || 0} selected · ${monitor.dailyBrief.metrics.duplicates || 0} duplicates avoided`}</span>{dailyBriefPapers[0] && <button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button>}</footer>
             </section>}

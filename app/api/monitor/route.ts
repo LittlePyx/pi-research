@@ -337,6 +337,7 @@ const REVIEW_BATCH_SIZE = 14;
 const QUICK_SCREEN_BATCH_SIZE = 14;
 const QUICK_SCREEN_CONCURRENCY = 2;
 const DEEP_REVIEW_BATCH_SIZE = 1;
+const DEEP_REVIEW_CONCURRENCY = 2;
 const DEEP_REVIEW_LIMIT = 8;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
 const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
@@ -954,12 +955,12 @@ async function fetchHorizon(
       return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
     }
   }))).flat();
-  await setScanSource(database, jobId, horizon.key, "Semantic Scholar", horizon.key === "days" ? 12 : horizon.key === "months" ? 28 : 44, discoveredBefore + normalizedCrossref.length);
-  const semantic = await fetchSemanticScholarHorizon(database, space, horizon, now, round, queryPlan);
-  await setScanSource(database, jobId, horizon.key, "OpenAlex", horizon.key === "days" ? 15 : horizon.key === "months" ? 31 : 47, discoveredBefore + normalizedCrossref.length + semantic.length);
-  const openAlex = await fetchOpenAlexHorizon(database, space, horizon, now, round, queryPlan);
-  await setScanSource(database, jobId, horizon.key, "arXiv", horizon.key === "days" ? 18 : horizon.key === "months" ? 34 : 50, discoveredBefore + normalizedCrossref.length + semantic.length + openAlex.length);
-  const arxiv = await fetchArxivHorizon(database, space, horizon, now, round, queryPlan);
+  await setScanSource(database, jobId, horizon.key, "Semantic Scholar · OpenAlex · arXiv 并行检索", horizon.key === "days" ? 12 : horizon.key === "months" ? 28 : 44, discoveredBefore + normalizedCrossref.length);
+  const [semantic, openAlex, arxiv] = await Promise.all([
+    fetchSemanticScholarHorizon(database, space, horizon, now, round, queryPlan),
+    fetchOpenAlexHorizon(database, space, horizon, now, round, queryPlan),
+    fetchArxivHorizon(database, space, horizon, now, round, queryPlan),
+  ]);
   const citationFrontier = horizon.key === "years"
     ? await fetchCitationFrontier(database, space, horizon, now, round, jobId, discoveredBefore + normalizedCrossref.length + semantic.length + openAlex.length + arxiv.length)
     : [];
@@ -1147,8 +1148,7 @@ async function fetchCitationFrontier(
   const paperId = seed.doi ? `DOI:${seed.doi}` : arxivId ? `ARXIV:${arxivId}` : "";
   if (!paperId) return [];
   await setScanSource(database, jobId, horizon.key, `Citation frontier · ${cleanText(seed.title).slice(0, 70)}`, 53, discoveredBefore);
-  const results: Array<Omit<Candidate, "qualityScore" | "priorityVenue">> = [];
-  for (const relation of ["references", "citations"] as const) {
+  const relationResults = await Promise.all((["references", "citations"] as const).map(async (relation) => {
     const plan: DiscoveryQuery = {
       key: `citation-${relation}`,
       sourceKey: `semantic_scholar:${relation}`,
@@ -1157,7 +1157,7 @@ async function fetchCitationFrontier(
       rotating: true,
       channel: "citation",
     };
-    if (!(await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan))) continue;
+    if (!(await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan))) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
     const limit = 40;
     const offset = await discoveryOffset(database, space.id, horizon.key, plan);
     const endpoint = new URL(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(paperId)}/${relation}`);
@@ -1182,12 +1182,13 @@ async function fetchCitationFrontier(
       const normalized = normalizedCandidates.filter((item): item is NonNullable<typeof item> => item !== null);
       const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
       await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
-      results.push(...normalized);
+      return normalized;
     } catch (error) {
       await recordDiscoveryCoverage(database, space.id, horizon.key, plan, offset, [], error instanceof Error ? error.message.slice(0, 180) : `Semantic Scholar ${relation} failed`);
+      return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
     }
-  }
-  return results;
+  }));
+  return relationResults.flat();
 }
 
 async function ownedSpace(request: Request, spaceId: string) {
@@ -1366,12 +1367,12 @@ async function ensureDailyQueryPlan(
             ].join("\n") },
           ],
           thinking: { type: "enabled" },
-          reasoning_effort: "high",
+          reasoning_effort: "medium",
           response_format: { type: "json_object" },
-          max_tokens: 5000,
+          max_tokens: 2800,
           stream: false,
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(45_000),
       });
       const data = await response.json() as DeepSeekResponse;
       if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro query planning failed");
@@ -1529,13 +1530,13 @@ async function quickScreenBatch(
             { role: "system", content: "You are Pi Research's fast evidence-disciplined paper triage editor. Return strict JSON." },
             { role: "user", content: prompt },
           ],
-          thinking: { type: "enabled" },
-          reasoning_effort: "medium",
+          thinking: { type: "disabled" },
+          reasoning_effort: "low",
           response_format: { type: "json_object" },
-          max_tokens: 5200,
+          max_tokens: 3600,
           stream: false,
         }),
-        signal: AbortSignal.timeout(55_000),
+        signal: AbortSignal.timeout(38_000),
       });
       const data = await response.json() as DeepSeekResponse;
       if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro quick screening failed");
@@ -1801,6 +1802,8 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       `Set recommended=true only when relevanceScore >= ${RECOMMENDATION_THRESHOLD}, the work directly advances the research-space scope, and it satisfies its horizon standard. Recency, citations, or a priority venue alone never justify recommendation.`,
       "Horizon standards: days = genuinely relevant new development; months = relevant, new, and high quality; years = highly relevant, durable, useful, and methodologically or strategically instructive.",
       "Use only supplied title, abstract, authors, venue, date, citation, and priority-venue evidence. Never invent a theorem, method, experiment, result, section, or conclusion.",
+      "Because only metadata and abstracts are supplied, never cite section, page, figure, table, appendix, or theorem numbers in readingFocus or any other field.",
+      "Never claim that a work is the first, provides a complete characterization, proves a result, validates it experimentally, establishes a convergence rate, or is optimal unless the supplied abstract explicitly states that exact point.",
       "For recommended papers, summaryZh must be a concrete 100-180 Chinese-character introduction explaining the research question, approach, and evidence-backed contribution; summaryEn must convey the same substance in 55-95 words.",
       "For recommended papers, whyReadZh must be a specific 80-150 Chinese-character explanation of how the paper helps this exact research space and which idea, method, comparison, or decision the reader should extract; whyReadEn must convey the same substance in 45-80 words.",
       "For recommended papers, write evidence-disciplined bilingual fields for the research problem, method, main contribution, limitations or uncertainty, and concrete reading focus. If the metadata cannot support a claim, state that the abstract/metadata is insufficient instead of inventing it.",
@@ -2098,10 +2101,10 @@ async function generateDailyBrief(
     overviewEn: selected.length
       ? `Pi deeply reviewed ${metrics.reviewed} of ${metrics.scanned} candidates and retained ${selected.length}. Other discoveries remain in the exploration ledger instead of being discarded.`
       : `Pi scanned ${metrics.scanned} candidates without lowering the bar to fill the page. Cursors and the pending review pool are saved for the next pass.`,
-    signalsZh: selected.slice(0, 3).map((review) => review.contributionZh || review.summaryZh).filter(Boolean),
-    signalsEn: selected.slice(0, 3).map((review) => review.contributionEn || review.summaryEn).filter(Boolean),
-    readingPlanZh: selected.slice(0, 3).map((review) => review.readingFocusZh || review.whyReadZh).filter(Boolean),
-    readingPlanEn: selected.slice(0, 3).map((review) => review.readingFocusEn || review.whyReadEn).filter(Boolean),
+    signalsZh: selected.slice(0, 6).map((review) => review.summaryZh || review.whyReadZh).filter(Boolean),
+    signalsEn: selected.slice(0, 6).map((review) => review.summaryEn || review.whyReadEn).filter(Boolean),
+    readingPlanZh: selected.slice(0, 6).map((review) => review.whyReadZh || review.summaryZh).filter(Boolean),
+    readingPlanEn: selected.slice(0, 6).map((review) => review.whyReadEn || review.summaryEn).filter(Boolean),
     watchlistZh: selected.length ? [] : ["本轮没有强推荐；等待低收益分支冷却结束，并继续扩展期刊、作者与引用路径。"],
     watchlistEn: selected.length ? [] : ["No strong recommendation this round; Pi will revisit cooled branches and expand journal, author, and citation paths."],
     paperIds, metrics, model: error ? "deterministic-fallback" : "evidence-summary", error: error || null,
@@ -2137,6 +2140,7 @@ async function generateDailyBrief(
         readingFocusEn: review.readingFocusEn,
         questionsZh: review.researchQuestionsZh,
         questionsEn: review.researchQuestionsEn,
+        abstract: candidate?.abstractText.slice(0, 1400) || "",
       };
     });
     const response = await fetch("https://api.deepseek.com/chat/completions", {
@@ -2149,20 +2153,25 @@ async function generateDailyBrief(
           { role: "user", content: [
             "Create a concise bilingual daily research brief for a long-term researcher.",
             "Return {headlineZh, headlineEn, overviewZh, overviewEn, signalsZh, signalsEn, readingPlanZh, readingPlanEn, watchlistZh, watchlistEn}.",
-            "Each list must have 1-4 concrete items. Identify cross-paper patterns only when supported. Do not invent results or imply that rejected candidates were useful.",
-            "The reading plan must name what the researcher should extract and in what order, not merely repeat titles.",
+            `signalsZh/signalsEn and readingPlanZh/readingPlanEn must each contain exactly ${records.length} items in the supplied paper order, so every signal and reading action stays attached to one titled paper.`,
+            "headlineZh should be at most 22 Chinese characters and headlineEn at most 12 words. overviewZh should be 70-140 Chinese characters and overviewEn 45-85 words; explain the common theme, important difference, or decision for this research space instead of repeating paper abstracts.",
+            "Each Chinese signal must be 45-95 characters and each English signal 25-55 words. Use plain language: state what changed or became newly usable, then why it matters to this research space. Do not dump numbered contributions or chains of theorem statements.",
+            "Each Chinese reading-plan item must be 35-75 characters and each English item 20-45 words. Give one practical reading action and one question to carry into the paper.",
+            "Never mention section, page, figure, or theorem numbers because only metadata and abstracts are supplied. Never claim 'first', 'complete characterization', proof, experiment, convergence rate, or optimality unless that exact claim is explicitly supported by the supplied abstract.",
+            "Briefly explain specialized abbreviations on first use. Avoid generic praise, repeated scores, and phrases such as 'focus on the derivation' without saying what decision or concept the reader should extract.",
+            "Identify cross-paper patterns only when supported. Do not invent results or imply that rejected candidates were useful.",
             `Research space: ${space.name} — ${space.description}`,
             `Scan metrics: ${JSON.stringify(metrics)}`,
             `Selected paper analyses: ${JSON.stringify(records)}`,
           ].join("\n") },
         ],
         thinking: { type: "enabled" },
-        reasoning_effort: "high",
+        reasoning_effort: "medium",
         response_format: { type: "json_object" },
-        max_tokens: 5200,
+        max_tokens: 3600,
         stream: false,
       }),
-      signal: AbortSignal.timeout(75_000),
+      signal: AbortSignal.timeout(50_000),
     });
     const data = await response.json() as DeepSeekResponse;
     if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro daily brief failed");
@@ -2181,8 +2190,8 @@ async function generateDailyBrief(
     if (!headlineZh || !headlineEn || !overviewZh || !overviewEn) throw new Error("DeepSeek Pro returned an incomplete daily brief");
     await saveDailyBrief(database, {
       spaceId: space.id, briefDate, jobId, status: "ready", headlineZh, headlineEn, overviewZh, overviewEn,
-      signalsZh: briefList(parsed.signalsZh), signalsEn: briefList(parsed.signalsEn),
-      readingPlanZh: briefList(parsed.readingPlanZh), readingPlanEn: briefList(parsed.readingPlanEn),
+      signalsZh: briefList(parsed.signalsZh, selected.length, 280), signalsEn: briefList(parsed.signalsEn, selected.length, 420),
+      readingPlanZh: briefList(parsed.readingPlanZh, selected.length, 240), readingPlanEn: briefList(parsed.readingPlanEn, selected.length, 360),
       watchlistZh: briefList(parsed.watchlistZh), watchlistEn: briefList(parsed.watchlistEn),
       paperIds, metrics, model: MONITOR_MODEL,
     });
@@ -3461,14 +3470,25 @@ async function runIncrementalDeepReview(
   jobId: string,
   lockToken: string,
   apiKey: string,
+  onReviewsSaved: (reviews: PaperReview[]) => Promise<void>,
 ) {
-  const candidate = candidates.slice(0, DEEP_REVIEW_BATCH_SIZE);
-  if (!candidate.length) return { reviews: [] as PaperReview[], errors: [] as unknown[] };
-  try {
-    return { reviews: await reviewCandidates(database, space, userId, priorityVenues, candidate, jobId, lockToken, apiKey), errors: [] as unknown[] };
-  } catch (error) {
-    return { reviews: [] as PaperReview[], errors: [error] };
-  }
+  const queue = candidates.slice(0, DEEP_REVIEW_CONCURRENCY);
+  if (!queue.length) return { reviews: [] as PaperReview[], errors: [] as unknown[] };
+  let saveQueue = Promise.resolve();
+  const settled = await Promise.all(queue.map(async (candidate) => {
+    try {
+      const reviews = await reviewCandidates(database, space, userId, priorityVenues, [candidate], jobId, lockToken, apiKey);
+      saveQueue = saveQueue.then(() => onReviewsSaved(reviews));
+      await saveQueue;
+      return { reviews, error: null as unknown };
+    } catch (error) {
+      return { reviews: [] as PaperReview[], error };
+    }
+  }));
+  return {
+    reviews: settled.flatMap((result) => result.reviews),
+    errors: settled.flatMap((result) => result.error ? [result.error] : []),
+  };
 }
 
 async function runLegacyMonitor(request: Request) {
@@ -3896,13 +3916,25 @@ export async function POST(request: Request) {
         const completedIds = new Set(work.deepCompletedIds);
         const remainingIds = work.deepIds.filter((id) => !completedIds.has(id));
         if (remainingIds.length) {
-          const ids = remainingIds.slice(0, DEEP_REVIEW_BATCH_SIZE);
+          const concurrency = work.deepCompletedIds.length ? DEEP_REVIEW_CONCURRENCY : 1;
+          const ids = remainingIds.slice(0, concurrency * DEEP_REVIEW_BATCH_SIZE);
           const candidates = await pendingCandidateQueue(database, space.id, ids);
           const batchStart = work.deepCompletedIds.length + 1;
+          const batchEnd = Math.min(batchStart + ids.length - 1, work.deepIds.length);
           await database.prepare(
             "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          ).bind(`DeepSeek Pro 正在深度解读第 ${batchStart} / ${work.deepIds.length} 篇；完成后立即保存并显示`, job.id).run();
-          const result = await runIncrementalDeepReview(database, enrichedSpace, user.userId, preference.priorityVenues, candidates, job.id, lockToken, apiKey);
+          ).bind(`DeepSeek Pro 正在解读第 ${batchStart}${batchEnd > batchStart ? `–${batchEnd}` : ""} / ${work.deepIds.length} 篇；任一篇完成都会立即显示`, job.id).run();
+          const result = await runIncrementalDeepReview(database, enrichedSpace, user.userId, preference.priorityVenues, candidates, job.id, lockToken, apiKey, async (savedReviews) => {
+            work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...savedReviews.map((review) => review.canonicalId)]));
+            work.deepFailureCount = 0;
+            await saveScanWorkQueue(database, job.id, work);
+            const saved = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
+            const ready = saved.filter((review) => review.recommended).length;
+            const progress = Math.min(94, 76 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 18));
+            await database.prepare(
+              "UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', recommended_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            ).bind(ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${ready} 篇已可阅读`, progress, job.id).run();
+          });
           work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...result.reviews.map((review) => review.canonicalId)]));
           work.deepFailureCount = result.errors.length && !result.reviews.length ? work.deepFailureCount + 1 : 0;
           await saveScanWorkQueue(database, job.id, work);
