@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   deepCandidateScore,
+  isContinuityDeepCandidate,
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
   selectBalancedByGroup,
@@ -35,4 +36,11 @@ test("rescue eligibility never bypasses the final recommendation decision", () =
   const nearMiss = { isPaper: true, relevanceScore: 60, qualityScore: 50 };
   assert.equal(isRescueDeepCandidate(nearMiss), true);
   assert.equal(isPrimaryDeepCandidate(nearMiss), false);
+});
+
+test("long-term monitoring preserves credible lower-scoring papers for one evidence review", () => {
+  const subtle = { isPaper: true, relevanceScore: 49, qualityScore: 58 };
+  assert.equal(isContinuityDeepCandidate(subtle), true);
+  assert.equal(isRescueDeepCandidate(subtle), false);
+  assert.equal(isContinuityDeepCandidate({ ...subtle, isPaper: false }), false);
 });

@@ -126,6 +126,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(monitor, /persistReviewBatch/);
   assert.match(monitor, /persistCandidatePool/);
   assert.match(monitor, /pendingCandidateQueue/);
+  assert.match(monitor, /loadCachedQuickScreens/);
+  assert.match(monitor, /chooseContinuityCandidateIds/);
+  assert.match(monitor, /i\.analysis_source = 'deepseek_screened'/);
   assert.match(monitor, /selectUnseenReviewBatch/);
   assert.match(monitor, /positiveExamples/);
   assert.match(monitor, /negativeExamples/);
@@ -165,6 +168,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /generatePaperNetworkEdges/);
   assert.match(mapRoute, /never invent citation claims/);
   assert.match(mapRoute, /kind: "citation"/);
+  assert.match(mapRoute, /kind: "similarity"/);
+  assert.match(mapRoute, /bibliographic_coupling/);
   assert.match(mapRoute, /kind \(semantic\|path\)/);
   assert.match(mapRoute, /research_paper_edges/);
   assert.match(mapRoute, /research_paper_network_states/);
@@ -197,8 +202,11 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /引用关系/);
   assert.match(client, /发展路径/);
   assert.match(client, /PaperNetworkGraph/);
+  assert.match(client, /DirectionPathMap/);
+  assert.match(client, /相似性地图/);
+  assert.match(client, /种子论文/);
   assert.match(client, /数据库确认的引用/);
-  assert.match(client, /Pi 语义判断/);
+  assert.match(client, /Pi 解释的语义关系/);
   assert.match(client, /加入学习路径/);
   assert.match(client, /关键机会/);
   assert.match(client, /观察信号/);

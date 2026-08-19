@@ -2,7 +2,7 @@ export type ResearchTrackRole = "foundation" | "milestone" | "frontier";
 export type ResearchDirectionRole = "core" | "support" | "explore";
 export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
 export type ResearchTrackBuildStatus = "queued" | "ready";
-export type ResearchPaperEdgeKind = "citation" | "semantic" | "path";
+export type ResearchPaperEdgeKind = "citation" | "similarity" | "semantic" | "path";
 export type ResearchPaperNetworkStatus = "idle" | "building" | "ready" | "partial" | "error";
 
 export type ResearchDirectionIntelligence = {
@@ -86,6 +86,7 @@ export type ResearchPaperNetworkState = {
   paperCount: number;
   builtPaperCount: number;
   citationEdgeCount: number;
+  similarityEdgeCount: number;
   semanticEdgeCount: number;
   pathEdgeCount: number;
   model: string;

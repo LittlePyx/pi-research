@@ -4,6 +4,7 @@ import { hasStrongFitScoreContradiction, inferModelScoreScale, normalizeModelSco
 import { passesRecommendationGate } from "../../../lib/discovery/review-gate";
 import {
   deepCandidateScore,
+  isContinuityDeepCandidate,
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
   selectBalancedByGroup,
@@ -361,6 +362,7 @@ const DEEP_REVIEW_LIMIT = 8;
 const DEEP_REVIEW_RESCUE_LIMIT = 4;
 const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
 const RESCUE_SCREEN_LIMIT = 8;
+const CONTINUITY_DEEP_REVIEW_LIMIT = 4;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
 const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
 const CANDIDATE_WORK_QUEUE_LIMIT = Object.values(HORIZON_POOL_LIMITS).reduce((sum, value) => sum + value, 0);
@@ -369,15 +371,15 @@ const HORIZONS = [
   { key: "months" as const, daysFrom: 180, daysUntil: 15, sort: "relevance" },
   { key: "years" as const, daysFrom: 365 * 5, daysUntil: 181, sort: "is-referenced-by-count" },
 ] as const;
-const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T06:39:00.000Z";
+const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-19T09:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "evidence-rescue-v2";
+const MONITOR_PIPELINE_VERSION = "continuous-evidence-v3";
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
 const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48;
 const MONITOR_MODEL = "deepseek-v4-pro";
-const RECOMMENDATION_THRESHOLD = 75;
+const RECOMMENDATION_THRESHOLD = 72;
 const DEEPSEEK_BALANCE_ERROR = "deepseek_insufficient_balance";
 const DEEPSEEK_CREDENTIAL_ERROR = "deepseek_credential_invalid";
 const PAPER_TYPES = new Set(["journal-article", "proceedings-article", "posted-content"]);
@@ -1552,6 +1554,7 @@ async function quickScreenBatch(
       ? "This is a second-pass review of near-miss papers after abstract enrichment. Reconsider subtle theoretical or methodological fit carefully; do not preserve an earlier low score merely because the connection is not stated in generic keywords."
       : "This is a fast but rigorous academic triage pass. Reject mastheads, publication information, author instructions, contents, corrections, calls for papers, and non-research records.",
     "Judge direct fit to the research space, evidence quality, durable usefulness, and the different standards for 14 days, 6 months, and 5 years.",
+    "Calibrate relevance consistently: 80-100 means a direct advance; 65-79 means a credible theoretical, methodological, or foundational contribution to a confirmed route; 55-64 means useful adjacent support; below 55 means genuinely weak fit. Do not require the title to repeat the research-space keywords when the supplied abstract or route context establishes the connection.",
     "Do not write summaries or reading advice in this pass. Keep screeningReason under 35 words and use only supplied metadata.",
     `Research space: ${space.name} — ${space.description}`,
     `Confirmed research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
@@ -1674,7 +1677,7 @@ async function persistQuickScreens(database: D1Database, spaceId: string, screen
   const statements = screens.flatMap((screen) => {
     const paperId = paperIds.get(screen.canonicalId);
     if (!paperId) return [];
-    const eligible = screen.isPaper && screen.relevanceScore >= 68 && screen.qualityScore >= 55;
+    const eligible = isPrimaryDeepCandidate(screen) || isRescueDeepCandidate(screen) || isContinuityDeepCandidate(screen);
     return [database.prepare(
       `UPDATE paper_insights SET analysis_source = ?, analysis_model = ?, llm_recommended = 0,
        llm_relevance_score = ?, quality_score = MAX(quality_score, ?), screening_reason = ?, updated_at = CURRENT_TIMESTAMP
@@ -1862,7 +1865,8 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "relevanceScore and qualityScore must be integer scores on a 0-100 scale, never decimals on a 0-1 scale.",
       "Act as a strict academic editor, not a search-result summarizer. A real paper can still be irrelevant and must then be rejected.",
       "Set isPaper=false for mastheads, publication information, author instructions, contents, editorials without research content, corrections, calls for papers, or other non-paper records.",
-      `Set recommended=true only when relevanceScore >= ${RECOMMENDATION_THRESHOLD}, the work directly advances the research-space scope, and it satisfies its horizon standard. Recency, citations, or a priority venue alone never justify recommendation.`,
+      `Set recommended=true only when relevanceScore >= ${RECOMMENDATION_THRESHOLD}, the work directly advances, rigorously underpins, or methodologically enables a confirmed research-space direction, and it satisfies its horizon standard. Recency, citations, or a priority venue alone never justify recommendation.`,
+      "A paper may be recommended as reserve reading when its connection is supporting rather than central, but the connection must still be concrete and useful. Do not reject a strong foundational or bridge paper merely because its title does not repeat the research-space keywords.",
       "Horizon standards: days = genuinely relevant new development; months = relevant, new, and high quality; years = highly relevant, durable, useful, and methodologically or strategically instructive.",
       "Use only supplied title, abstract, authors, venue, date, citation, and priority-venue evidence. Never invent a theorem, method, experiment, result, section, or conclusion.",
       "Because only metadata and abstracts are supplied, never cite section, page, figure, table, appendix, or theorem numbers in readingFocus or any other field.",
@@ -2647,7 +2651,10 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
   const candidateCondition = restrictedIds.length
     ? `p.canonical_id IN (${restrictedIds.map(() => "?").join(", ")})`
     : `(i.analysis_model = ''
+       OR i.analysis_source = 'deepseek_screened'
        OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days'))
+       OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime(?)
+         AND i.llm_relevance_score >= 45 AND i.quality_score >= 48)
        OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime(?) AND (
          (i.llm_relevance_score <= 1 AND (
            lower(i.screening_reason) LIKE '%directly relevant%' OR lower(i.screening_reason) LIKE '%direct fit%'
@@ -2656,13 +2663,15 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
          ))
          OR (length(trim(i.abstract_text)) = 0 AND lower(i.screening_reason) LIKE '%abstract missing%')
        )))`;
-  const candidateParameters = restrictedIds.length ? restrictedIds : [MONITOR_REVIEW_PIPELINE_RELEASED_AT];
+  const candidateParameters = restrictedIds.length ? restrictedIds : [MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT];
   const rows = await database.prepare(
     `SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
      p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
      WHERE p.space_id = ? AND ${candidateCondition}
-     ORDER BY p.relevance_score DESC,
+     ORDER BY CASE WHEN i.analysis_source = 'deepseek_screened' THEN 1 ELSE 0 END DESC,
+       CASE WHEN i.analysis_source = 'deepseek_screened' THEN i.llm_relevance_score ELSE p.relevance_score END DESC,
+       p.relevance_score DESC,
        CASE WHEN length(trim(i.abstract_text)) >= 120 THEN 1 ELSE 0 END DESC,
        i.quality_score DESC, p.citation_count DESC, p.discovered_at DESC LIMIT 360`,
   ).bind(spaceId, ...candidateParameters).all<{
@@ -3817,6 +3826,48 @@ function chooseRescueCandidateIds(candidates: Candidate[], screens: QuickScreen[
   ).map((screen) => screen.canonicalId);
 }
 
+function chooseContinuityCandidateIds(candidates: Candidate[], screens: QuickScreen[], scheduledIds: Iterable<string>, limit = CONTINUITY_DEEP_REVIEW_LIMIT) {
+  const scheduled = new Set(scheduledIds);
+  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const ranked = screens
+    .filter((screen) => !scheduled.has(screen.canonicalId)
+      && candidateById.has(screen.canonicalId)
+      && isContinuityDeepCandidate(screen))
+    .sort((left, right) => {
+      const leftCandidate = candidateById.get(left.canonicalId)!;
+      const rightCandidate = candidateById.get(right.canonicalId)!;
+      return (deepCandidateScore(right) + candidateScreeningPriority(rightCandidate) * 0.18)
+        - (deepCandidateScore(left) + candidateScreeningPriority(leftCandidate) * 0.18);
+    });
+  return selectDiverseItems(
+    ranked,
+    (screen) => candidateDirectionKey(candidateById.get(screen.canonicalId)!),
+    (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
+    limit,
+  ).map((screen) => screen.canonicalId);
+}
+
+async function loadCachedQuickScreens(database: D1Database, spaceId: string, canonicalIds: string[]) {
+  if (!canonicalIds.length) return [] as QuickScreen[];
+  const uniqueIds = Array.from(new Set(canonicalIds)).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
+  const rows = await database.prepare(
+    `SELECT p.canonical_id, p.horizon, i.llm_relevance_score, i.quality_score, i.screening_reason
+     FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+     WHERE p.space_id = ? AND i.analysis_source = 'deepseek_screened' AND i.analysis_model = ?
+       AND p.canonical_id IN (${uniqueIds.map(() => "?").join(", ")})`,
+  ).bind(spaceId, MONITOR_MODEL, ...uniqueIds).all<{
+    canonical_id: string; horizon: Horizon; llm_relevance_score: number; quality_score: number; screening_reason: string;
+  }>();
+  return rows.results.map((row) => ({
+    canonicalId: row.canonical_id,
+    isPaper: true,
+    relevanceScore: row.llm_relevance_score,
+    qualityScore: row.quality_score,
+    screeningReason: row.screening_reason,
+    horizon: row.horizon,
+  }));
+}
+
 async function loadPersistedReviews(database: D1Database, spaceId: string, canonicalIds: string[]) {
   if (!canonicalIds.length) return [] as PaperReview[];
   const placeholders = canonicalIds.map(() => "?").join(", ");
@@ -4282,7 +4333,7 @@ export async function POST(request: Request) {
         const pendingQueue = await pendingCandidateQueue(database, space.id);
         const selected = selectCurrentAndBacklogReviewBatch(pendingQueue, work.candidateIds);
         work.candidateIds = selected.map((candidate) => candidate.canonicalId);
-        work.screens = [];
+        work.screens = await loadCachedQuickScreens(database, space.id, work.candidateIds);
         work.deepIds = [];
         work.deepCompletedIds = [];
         work.rescueScreenIds = [];
@@ -4296,7 +4347,10 @@ export async function POST(request: Request) {
           "UPDATE monitor_scan_jobs SET duplicate_count = ?, reviewed_count = 0, recommended_count = 0, rejected_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(Math.max(0, work.rawCandidateCount - work.newCandidateCount), job.id).run();
         if (!selected.length) return finalizeMain([], []);
-        await setStage("enriching_screening_abstracts", "screening", 54, `正在为 ${selected.length} 篇候选批量补全摘要证据`);
+        await setStage("enriching_screening_abstracts", "screening", 54,
+          work.screens.length
+            ? `已从长期候选池接续 ${work.screens.length} 篇既有筛选结果；正在补全本轮新候选证据`
+            : `正在为 ${selected.length} 篇候选批量补全摘要证据`);
       } else if (job.checkpoint === "enriching_screening_abstracts") {
         const candidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
         const enrichment = await enrichDeepReviewAbstracts(database, space.id, candidates);
@@ -4346,6 +4400,12 @@ export async function POST(request: Request) {
           }
           work.deepIds = chooseDeepCandidateIds(candidates, work.screens);
           if (!work.deepIds.length) work.deepIds = chooseRescueCandidateIds(candidates, work.screens, [], DEEP_REVIEW_RESCUE_LIMIT);
+          if (work.deepIds.length < Math.min(3, DEEP_REVIEW_LIMIT)) {
+            work.deepIds = Array.from(new Set([
+              ...work.deepIds,
+              ...chooseContinuityCandidateIds(candidates, work.screens, work.deepIds, Math.min(CONTINUITY_DEEP_REVIEW_LIMIT, DEEP_REVIEW_LIMIT - work.deepIds.length)),
+            ])).slice(0, DEEP_REVIEW_LIMIT);
+          }
           await saveScanWorkQueue(database, job.id, work);
           if (!work.deepIds.length) return finalizeMain([], []);
           await setStage("enriching_abstracts", "deep_reviewing", 76, `正在为 ${work.deepIds.length} 篇高潜力论文补全摘要证据`);
@@ -4414,7 +4474,10 @@ export async function POST(request: Request) {
         if (work.deepCompletedIds.length >= work.deepIds.length) {
           if (!recommended && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
-            const rescueIds = chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, DEEP_REVIEW_RESCUE_LIMIT);
+            const rescueIds = Array.from(new Set([
+              ...chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, DEEP_REVIEW_RESCUE_LIMIT),
+              ...chooseContinuityCandidateIds(allCandidates, work.screens, work.deepIds, CONTINUITY_DEEP_REVIEW_LIMIT),
+            ])).slice(0, DEEP_REVIEW_RESCUE_LIMIT);
             if (rescueIds.length) {
               work.deepIds = [...work.deepIds, ...rescueIds];
               await saveScanWorkQueue(database, job.id, work);
