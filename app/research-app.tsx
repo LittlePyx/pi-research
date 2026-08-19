@@ -182,6 +182,15 @@ type MonitorState = {
     candidateCount?: number;
     deepCandidateCount?: number;
     deepCompletedCount?: number;
+    horizonStats?: Array<{
+      horizon: "days" | "months" | "years";
+      status: "pending" | "searching" | "complete";
+      candidates: number | null;
+      rawCandidates: number | null;
+      newCandidates: number | null;
+      queued: number | null;
+      screened: number;
+    }>;
     pipelineVersion?: string;
     needsRefresh?: boolean;
     attempt?: number;
@@ -1474,6 +1483,15 @@ export default function ResearchApp({ user }: { user: User }) {
   const baseScanPhase = monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
   const healthyCoverageCount = monitor?.coverage?.filter((source) => source.healthy).length || 0;
+  const scanHorizonStats = (["days", "months", "years"] as const).map((horizon) => monitor?.scanJob?.horizonStats?.find((item) => item.horizon === horizon) || {
+    horizon,
+    status: monitor?.status === "ready" || monitor?.status === "error" ? "complete" as const : monitor?.scanJob?.currentHorizon === horizon ? "searching" as const : "pending" as const,
+    candidates: null,
+    rawCandidates: null,
+    newCandidates: null,
+    queued: null,
+    screened: 0,
+  });
   const mustReadCount = rankedMonitorPapers.filter((paper) => paper.recommendationTier === "must_read").length;
   const activeReadingCount = (monitor?.historyCounts?.reading?.queued || 0) + (monitor?.historyCounts?.reading?.reading || 0);
   const dailyBriefPapers = useMemo(() => {
@@ -2681,9 +2699,9 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-weekly-review-body"><p>{locale === "zh" ? monitor.weeklyReview.overviewZh : monitor.weeklyReview.overviewEn}</p><div><article><h3>{locale === "zh" ? "已经获得" : "What advanced"}</h3><ul>{(locale === "zh" ? monitor.weeklyReview.gainsZh : monitor.weeklyReview.gainsEn).map((item) => <li key={item}>{item}</li>)}</ul></article><article><h3>{locale === "zh" ? "仍有缺口" : "Remaining gaps"}</h3><ul>{(locale === "zh" ? monitor.weeklyReview.gapsZh : monitor.weeklyReview.gapsEn).map((item) => <li key={item}>{item}</li>)}</ul></article><article><h3>{locale === "zh" ? "下一步行动" : "Next moves"}</h3><ol>{(locale === "zh" ? monitor.weeklyReview.nextStepsZh : monitor.weeklyReview.nextStepsEn).map((item) => <li key={item}>{item}</li>)}</ol></article></div></div>
             </details>}
 
-            <section className="v2-monitor-panel">
+            <section className="v2-monitor-panel v2-monitor-compact">
               <div className="v2-monitor-head">
-                <div><p className="v2-kicker">{t.liveMonitor}</p><h2>{locale === "zh" ? "三层扫描，严格筛选" : "Three horizons, strictly screened"}</h2></div>
+                <div className="v2-monitor-intro"><p className="v2-kicker">{locale === "zh" ? "论文发现" : "PAPER DISCOVERY"}</p><h2>{locale === "zh" ? "三个时间窗，持续向前挖掘" : "Three horizons, continuously explored"}</h2><p>{locale === "zh" ? "14 天看新变化，6 个月看新且优质，5 年补核心成果。" : "14 days for change, 6 months for recent quality, and 5 years for durable core work."}</p></div>
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
@@ -2696,15 +2714,11 @@ export default function ResearchApp({ user }: { user: User }) {
                   <span>!</span>
                   <div>
                     <strong>{locale === "zh" ? "扫描已暂停，进度没有丢失" : "Scan paused; progress is safe"}</strong>
-                    <p>{monitorFailureMessage(failedScanError, locale)}</p>
-                    {failedScanJob && <small>{locale === "zh"
-                      ? `${failedScanJob.discoveredCount || 0} 条候选已找到 · ${failedScanJob.reviewedCount || 0} / ${failedScanJob.candidateCount || 0} 篇已筛选保存`
-                      : `${failedScanJob.discoveredCount || 0} candidates found · ${failedScanJob.reviewedCount || 0} / ${failedScanJob.candidateCount || 0} screened and saved`}</small>}
+                    <p>{monitorFailureMessage(failedScanError, locale)}{failedScanJob && (locale === "zh"
+                      ? ` · 已保存 ${failedScanJob.discoveredCount || 0} 条候选、${failedScanJob.reviewedCount || 0} / ${failedScanJob.candidateCount || 0} 篇筛选结果`
+                      : ` · Saved ${failedScanJob.discoveredCount || 0} candidates and ${failedScanJob.reviewedCount || 0} / ${failedScanJob.candidateCount || 0} screening results`)}</p>
                   </div>
-                  <div>
-                    {isModelCredentialFailure(failedScanError) && <button className="secondary" type="button" onClick={() => { setModelSettingsError(monitorFailureMessage(failedScanError, locale)); setModelSettingsOpen(true); }}>{locale === "zh" ? "检查 Key 与余额" : "Check key & balance"}</button>}
-                    <button type="button" onClick={runManualMonitor}>{resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume from checkpoint") : (locale === "zh" ? "重新扫描" : "Retry scan")}</button>
-                  </div>
+                  {isModelCredentialFailure(failedScanError) && <button className="secondary" type="button" onClick={() => { setModelSettingsError(monitorFailureMessage(failedScanError, locale)); setModelSettingsOpen(true); }}>{locale === "zh" ? "检查 Key" : "Check key"}</button>}
                 </div>
               )}
               {scanIsActive && (
@@ -2723,12 +2737,18 @@ export default function ResearchApp({ user }: { user: User }) {
                   {activeScanJob?.resumeOfJobId && <em className="v2-resume-note">↻ {locale === "zh" ? `正在从已保存检查点续跑 · 第 ${activeScanJob.attempt || 2} 次尝试` : `Resuming from a saved checkpoint · attempt ${activeScanJob.attempt || 2}`}</em>}
                 </div>
               )}
-              <button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); navigate("library"); }}>
-                <span>◎</span><div><strong>{monitor?.historyCounts?.inbox || 0} {t.inbox}</strong><small>{monitor?.historyCounts?.unseen || 0} {t.unseen} · {locale === "zh" ? "没有处理的论文不会消失" : "Unresolved papers will not disappear"}</small></div><b>→</b>
-              </button>
-              <div className="v2-horizon-strip">
-                {(["days", "months", "years"] as const).map((horizon) => <span key={horizon}><b>{monitor?.papers.filter((paper) => paper.horizon === horizon).length || 0}</b>{horizon === "days" ? t.daysHorizon : horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span>)}
+              <div className="v2-horizon-strip" aria-label={locale === "zh" ? "本轮三个时间窗的实际检索状态" : "Actual retrieval status for the three horizons"}>
+                {scanHorizonStats.map((item) => {
+                  const label = item.horizon === "days" ? t.daysHorizon : item.horizon === "months" ? t.monthsHorizon : t.yearsHorizon;
+                  const purpose = item.horizon === "days"
+                    ? (locale === "zh" ? "捕捉最新变化" : "Newest changes")
+                    : item.horizon === "months" ? (locale === "zh" ? "新且质量高" : "Recent and high quality")
+                      : (locale === "zh" ? "核心、代表性成果" : "Durable representative work");
+                  const statusLabel = item.status === "searching" ? (locale === "zh" ? "检索中" : "Searching") : item.status === "complete" ? (locale === "zh" ? "已检索" : "Searched") : (locale === "zh" ? "待检索" : "Pending");
+                  return <article className={item.status} key={item.horizon}><header><span><i />{label}</span><b>{statusLabel}</b></header><strong>{item.candidates === null ? purpose : `${item.candidates} ${locale === "zh" ? "篇候选" : "candidates"}`}</strong><small>{item.candidates === null ? (locale === "zh" ? "下次扫描会显示实际候选和入筛数量" : "The next scan will show retrieved and queued counts") : (locale === "zh" ? `${item.newCandidates || 0} 篇本轮新发现 · ${item.queued || 0} 篇进入筛选` : `${item.newCandidates || 0} new this run · ${item.queued || 0} queued`)}</small></article>;
+                })}
               </div>
+              <button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); navigate("library"); }}><span>{monitor?.historyCounts?.inbox || 0} {t.inbox}</span><small>{monitor?.historyCounts?.unseen || 0} {t.unseen} · {locale === "zh" ? "未处理内容会保留" : "Unresolved papers stay here"}</small><b>→</b></button>
               <details className="v2-scan-details">
                 <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
                 <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div>{Boolean(monitor?.preferences?.trackedAuthors?.length) && <div><span>{locale === "zh" ? "追踪作者" : "Tracked authors"}</span><p>{monitor?.preferences?.trackedAuthors.slice(0, 6).map((author) => <i key={author}>{author}</i>)}</p></div>}</div>

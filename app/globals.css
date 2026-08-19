@@ -3291,3 +3291,71 @@ main { min-width: 0; }
 }
 .v2-scan-upgrade-note strong { display: block; color: var(--ink); }
 .v2-scan-upgrade-note p { margin: 4px 0 0; color: var(--muted); line-height: 1.55; }
+
+/* Pi Research V48 — quiet discovery control with visible horizon work */
+.v2-today .v2-monitor-compact {
+  margin-top: 20px;
+  padding: 17px 19px 12px;
+  border-color: #d7ddd9;
+  border-radius: 12px;
+  background: rgba(248,250,248,.72);
+  box-shadow: none;
+}
+.v2-monitor-compact .v2-monitor-head { align-items: center; gap: 20px; }
+.v2-monitor-intro { min-width: 0; }
+.v2-monitor-compact .v2-monitor-intro .v2-kicker { margin: 0 0 4px; font-size: 9px; letter-spacing: .12em; }
+.v2-monitor-compact .v2-monitor-intro h2 { margin: 0; font: 500 17px/1.35 var(--font-serif); }
+.v2-monitor-intro > p:last-child { margin: 4px 0 0; color: #79837d; font-size: 10px; line-height: 1.45; }
+.v2-monitor-compact .v2-monitor-actions { gap: 8px; }
+.v2-monitor-compact .v2-monitor-actions > button { min-height: 34px; padding: 0 11px; font-size: 11px !important; }
+.v2-monitor-compact .v2-monitor-status { max-width: 330px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; }
+.v2-monitor-compact .v2-scan-failure {
+  margin-top: 11px;
+  padding: 9px 10px;
+  grid-template-columns: 22px minmax(0,1fr) auto;
+  gap: 9px;
+  border-radius: 7px;
+  background: rgba(251,244,241,.68);
+}
+.v2-monitor-compact .v2-scan-failure > span { width: 22px; height: 22px; font-size: 11px; }
+.v2-monitor-compact .v2-scan-failure strong { font-size: 11px; }
+.v2-monitor-compact .v2-scan-failure p { margin-top: 2px; font-size: 10px; line-height: 1.45; }
+.v2-monitor-compact .v2-scan-failure > button { min-height: 30px; padding: 0 9px; font-size: 10px; }
+.v2-monitor-compact .v2-scan-progress { margin-top: 11px; padding: 9px 11px; }
+.v2-monitor-compact .v2-scan-progress > div { font-size: 11px; }
+.v2-monitor-compact .v2-scan-progress > i { height: 5px; margin: 7px 0 6px; }
+.v2-monitor-compact .v2-scan-progress small,
+.v2-monitor-compact .v2-resume-note { font-size: 9px; }
+.v2-monitor-compact .v2-horizon-strip { margin-top: 12px; gap: 7px; }
+.v2-monitor-compact .v2-horizon-strip article { min-width: 0; padding: 9px 11px; border: 1px solid #d9dfdb; border-radius: 8px; background: rgba(255,255,255,.58); }
+.v2-monitor-compact .v2-horizon-strip article header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.v2-monitor-compact .v2-horizon-strip article header span { display: flex; align-items: center; gap: 6px; color: #66736c; font-size: 10px; font-weight: 750; }
+.v2-monitor-compact .v2-horizon-strip article header i { width: 6px; height: 6px; border-radius: 50%; background: #adb7b1; }
+.v2-monitor-compact .v2-horizon-strip article.searching header i { background: #4f7792; box-shadow: 0 0 0 3px rgba(79,119,146,.12); animation: monitor-pulse 1.2s ease-in-out infinite; }
+.v2-monitor-compact .v2-horizon-strip article.complete header i { background: #587862; }
+.v2-monitor-compact .v2-horizon-strip article header b { color: #89928d; font-size: 8px; font-weight: 700; }
+.v2-monitor-compact .v2-horizon-strip article > strong { overflow: hidden; display: block; margin-top: 7px; color: #3f5047; font: 500 14px/1.25 var(--font-serif); text-overflow: ellipsis; white-space: nowrap; }
+.v2-monitor-compact .v2-horizon-strip article > small { overflow: hidden; display: block; margin-top: 3px; color: #89928d; font-size: 8px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.v2-monitor-compact .v2-inbox-summary { margin-top: 8px; padding: 7px 3px 0; border: 0; border-top: 1px solid #e0e5e2; border-radius: 0; background: transparent; grid-template-columns: auto 1fr auto; gap: 8px; }
+.v2-monitor-compact .v2-inbox-summary:hover { border-color: #d5dcd8; background: transparent; }
+.v2-monitor-compact .v2-inbox-summary > span { width: auto; height: auto; border-radius: 0; background: transparent; color: #58675f; font-size: 10px; font-weight: 750; }
+.v2-monitor-compact .v2-inbox-summary > small { margin: 0; color: #8a938e; font-size: 9px; }
+.v2-monitor-compact .v2-inbox-summary > b { font-size: 10px; }
+.v2-monitor-compact .v2-scan-details { margin-top: 4px; }
+.v2-monitor-compact .v2-scan-details summary { padding-top: 8px; font-size: 10px; }
+
+@media (max-width: 900px) {
+  .v2-monitor-compact .v2-monitor-head { display: grid; }
+  .v2-monitor-compact .v2-monitor-actions { margin-top: 0; justify-content: flex-start; }
+  .v2-monitor-compact .v2-monitor-status { max-width: none; }
+}
+
+@media (max-width: 680px) {
+  .v2-today .v2-monitor-compact { padding: 14px 13px 10px; }
+  .v2-monitor-compact .v2-monitor-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .v2-monitor-compact .v2-monitor-actions .v2-monitor-status { grid-column: 1 / -1; }
+  .v2-monitor-compact .v2-monitor-actions > button { width: auto; }
+  .v2-monitor-compact .v2-horizon-strip { grid-template-columns: 1fr; }
+  .v2-monitor-compact .v2-scan-failure { grid-template-columns: 22px minmax(0,1fr); }
+  .v2-monitor-compact .v2-scan-failure > button { grid-column: 2; justify-self: start; }
+}

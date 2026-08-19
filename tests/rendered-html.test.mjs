@@ -22,9 +22,9 @@ test("server-renders the Pi Research application", async () => {
   const html = await response.text();
   assert.match(html, /<title>Pi Research — Your AI Research Agent<\/title>/i);
   assert.match(html, /Pi Research/);
-  assert.match(html, /DeepSeek Pro 审核后的真实论文/);
+  assert.match(html, /论文发现/);
   assert.match(html, /近 14 天/);
-  assert.match(html, /三层扫描，严格筛选/);
+  assert.match(html, /三个时间窗，持续向前挖掘/);
   assert.match(html, /设置重点来源/);
   assert.match(html, /先看今天最重要的变化/);
   assert.match(html, /匿名浏览器工作区/);
@@ -52,6 +52,8 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /AbortSignal\.timeout\(attempt === 0 \? 55_000 : 45_000\)/);
   assert.match(route, /llm_recommended = 1/);
   assert.match(route, /discovering_\$\{horizon\.key\}/);
+  assert.match(route, /horizonStats\[horizonKey\]/);
+  assert.match(route, /CANDIDATE_WORK_QUEUE_LIMIT/);
   assert.match(route, /updateRunPhase\(database, space\.id, jobId, lockToken, "reviewing"/);
   assert.match(route, /updateRunPhase\(database, space\.id, jobId, lockToken, "saving"/);
   assert.match(route, /paper_delivery_state/);
@@ -85,7 +87,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(client, /探索覆盖/);
   assert.match(client, /libraryFilter/);
   assert.match(client, /reportedImpressions/);
-  assert.match(client, /没有处理的论文不会消失/);
+  assert.match(client, /未处理内容会保留/);
   assert.match(client, /rankedMonitorPapers/);
   assert.match(client, /openMonitorPaper/);
   assert.match(client, /为什么适合读/);

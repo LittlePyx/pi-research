@@ -319,6 +319,14 @@ type QuickScreen = {
   relevanceScore: number;
   qualityScore: number;
   screeningReason: string;
+  horizon?: Horizon;
+};
+type HorizonScanStats = {
+  rawCandidates: number;
+  candidates: number;
+  newCandidates: number;
+  queued: number;
+  completed: boolean;
 };
 type ScanWorkQueue = {
   candidateIds: string[];
@@ -332,6 +340,7 @@ type ScanWorkQueue = {
   screenFailureCount: number;
   deepFailureCount: number;
   pipelineVersion: string;
+  horizonStats: Record<Horizon, HorizonScanStats>;
   resumeCheckpoint?: string;
 };
 type StagedJobRow = ScanJobRow & { work_queue_json: string };
@@ -354,6 +363,7 @@ const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
 const RESCUE_SCREEN_LIMIT = 8;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
 const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
+const CANDIDATE_WORK_QUEUE_LIMIT = Object.values(HORIZON_POOL_LIMITS).reduce((sum, value) => sum + value, 0);
 const HORIZONS = [
   { key: "days" as const, daysFrom: 14, daysUntil: 0, sort: "relevance" },
   { key: "months" as const, daysFrom: 180, daysUntil: 15, sort: "relevance" },
@@ -1602,6 +1612,7 @@ async function quickScreenBatch(
           relevanceScore,
           qualityScore,
           screeningReason,
+          horizon: candidate.horizon,
         } satisfies QuickScreen;
       });
       const usageDate = new Date().toISOString().slice(0, 10);
@@ -2528,7 +2539,7 @@ async function persistCandidatePool(database: D1Database, spaceId: string, candi
 }
 
 async function pendingCandidateQueue(database: D1Database, spaceId: string, canonicalIds?: string[]) {
-  const restrictedIds = Array.from(new Set(canonicalIds || [])).slice(0, 120);
+  const restrictedIds = Array.from(new Set(canonicalIds || [])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
   const candidateCondition = restrictedIds.length
     ? `p.canonical_id IN (${restrictedIds.map(() => "?").join(", ")})`
     : `(i.analysis_model = ''
@@ -3208,6 +3219,33 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     { id: "deduplication", status: pilotSucceeded < 1 ? "waiting" : "pass", value: operationsTotals.duplicatesAvoided, target: 0 },
   ];
   const scanWork = job ? parseScanWorkQueue(job.work_queue_json) : null;
+  const discoveryOrder: Horizon[] = ["days", "months", "years"];
+  const activeDiscoveryIndex = job?.checkpoint?.startsWith("discovering_")
+    ? discoveryOrder.indexOf(job.checkpoint.replace("discovering_", "") as Horizon)
+    : -1;
+  const discoveryFinished = Boolean(job && (
+    job.status === "ready"
+    || (scanWork?.screens.length || 0) > 0
+    || (scanWork?.deepIds.length || 0) > 0
+    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "main_complete", "complete"].includes(job.checkpoint)
+    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing"].includes(scanWork?.resumeCheckpoint || "")
+  ));
+  const scanHorizonStats = discoveryOrder.map((horizon, index) => {
+    const stored = scanWork?.horizonStats[horizon];
+    const hasMeasuredCounts = Boolean(stored?.completed);
+    const status = hasMeasuredCounts || discoveryFinished || (activeDiscoveryIndex >= 0 && index < activeDiscoveryIndex)
+      ? "complete"
+      : activeDiscoveryIndex === index ? "searching" : "pending";
+    return {
+      horizon,
+      status,
+      candidates: hasMeasuredCounts ? stored?.candidates || 0 : null,
+      rawCandidates: hasMeasuredCounts ? stored?.rawCandidates || 0 : null,
+      newCandidates: hasMeasuredCounts ? stored?.newCandidates || 0 : null,
+      queued: hasMeasuredCounts ? stored?.queued || 0 : null,
+      screened: scanWork?.screens.filter((screen) => screen.horizon === horizon).length || 0,
+    };
+  });
   return {
     monitor: {
       status: run?.status || "idle",
@@ -3244,6 +3282,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         candidateCount: scanWork?.candidateIds.length || 0,
         deepCandidateCount: scanWork?.deepIds.length || 0,
         deepCompletedCount: scanWork?.deepCompletedIds.length || 0,
+        horizonStats: scanHorizonStats,
         pipelineVersion: scanWork?.pipelineVersion || "",
         needsRefresh: job.status === "ready" && scanWork?.pipelineVersion !== MONITOR_PIPELINE_VERSION,
         attempt: job.attempt,
@@ -3459,18 +3498,41 @@ export async function PATCH(request: Request) {
   }
 }
 
+function emptyHorizonScanStats(): Record<Horizon, HorizonScanStats> {
+  return {
+    days: { rawCandidates: 0, candidates: 0, newCandidates: 0, queued: 0, completed: false },
+    months: { rawCandidates: 0, candidates: 0, newCandidates: 0, queued: 0, completed: false },
+    years: { rawCandidates: 0, candidates: 0, newCandidates: 0, queued: 0, completed: false },
+  };
+}
+
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
     rescueScreenIds: [], rescueScreened: false, screenFailureCount: 0, deepFailureCount: 0,
-    pipelineVersion: "", resumeCheckpoint: "",
+    pipelineVersion: "", horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
   };
   if (!value) return fallback;
   try {
     const parsed = JSON.parse(value) as Partial<ScanWorkQueue>;
+    const horizonStats = emptyHorizonScanStats();
+    for (const horizon of ["days", "months", "years"] as Horizon[]) {
+      const stored = parsed.horizonStats?.[horizon];
+      if (!stored) continue;
+      horizonStats[horizon] = {
+        rawCandidates: Math.max(0, Number(stored.rawCandidates) || 0),
+        candidates: Math.max(0, Number(stored.candidates) || 0),
+        newCandidates: Math.max(0, Number(stored.newCandidates) || 0),
+        queued: Math.max(0, Number(stored.queued) || 0),
+        completed: stored.completed === true,
+      };
+    }
     return {
-      candidateIds: Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, 120) : [],
-      screens: Array.isArray(parsed.screens) ? parsed.screens.filter((screen): screen is QuickScreen => Boolean(screen && typeof screen.canonicalId === "string")).slice(0, 120) : [],
+      candidateIds: Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
+      screens: Array.isArray(parsed.screens) ? parsed.screens.filter((screen): screen is QuickScreen => Boolean(screen && typeof screen.canonicalId === "string")).slice(0, CANDIDATE_WORK_QUEUE_LIMIT).map((screen) => ({
+        ...screen,
+        horizon: ["days", "months", "years"].includes(screen.horizon || "") ? screen.horizon : undefined,
+      })) : [],
       deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       rescueScreenIds: Array.isArray(parsed.rescueScreenIds) ? parsed.rescueScreenIds.filter((id): id is string => typeof id === "string").slice(0, RESCUE_SCREEN_LIMIT) : [],
@@ -3480,6 +3542,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       screenFailureCount: Math.max(0, Number(parsed.screenFailureCount) || 0),
       deepFailureCount: Math.max(0, Number(parsed.deepFailureCount) || 0),
       pipelineVersion: typeof parsed.pipelineVersion === "string" ? parsed.pipelineVersion : "",
+      horizonStats,
       resumeCheckpoint: typeof parsed.resumeCheckpoint === "string" ? parsed.resumeCheckpoint : "",
     };
   } catch {
@@ -3491,7 +3554,7 @@ function newScanWorkQueue(): ScanWorkQueue {
   return {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
     rawCandidateCount: 0, newCandidateCount: 0, screenFailureCount: 0, deepFailureCount: 0,
-    pipelineVersion: MONITOR_PIPELINE_VERSION, resumeCheckpoint: "",
+    pipelineVersion: MONITOR_PIPELINE_VERSION, horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
   };
 }
 
@@ -4011,6 +4074,13 @@ export async function POST(request: Request) {
         work.candidateIds = Array.from(new Set([...work.candidateIds, ...batch.candidates.map((candidate) => candidate.canonicalId)]));
         work.rawCandidateCount += batch.rawCount;
         work.newCandidateCount += newCandidates;
+        work.horizonStats[horizonKey] = {
+          rawCandidates: batch.rawCount,
+          candidates: batch.candidates.length,
+          newCandidates,
+          queued: work.horizonStats[horizonKey]?.queued || 0,
+          completed: true,
+        };
         await saveScanWorkQueue(database, job.id, work);
         const nextCheckpoint = horizonKey === "days" ? "discovering_months" : horizonKey === "months" ? "discovering_years" : "deduplicating";
         const nextStatus = nextCheckpoint === "deduplicating" ? "deduplicating" : nextCheckpoint;
@@ -4030,6 +4100,9 @@ export async function POST(request: Request) {
         work.rescueScreenIds = [];
         work.rescueScreened = false;
         work.pipelineVersion = MONITOR_PIPELINE_VERSION;
+        for (const horizon of ["days", "months", "years"] as Horizon[]) {
+          work.horizonStats[horizon].queued = selected.filter((candidate) => candidate.horizon === horizon).length;
+        }
         await saveScanWorkQueue(database, job.id, work);
         await database.prepare(
           "UPDATE monitor_scan_jobs SET duplicate_count = ?, reviewed_count = 0, recommended_count = 0, rejected_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
