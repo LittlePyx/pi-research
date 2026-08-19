@@ -177,6 +177,60 @@ export const monitorDailyBriefs = sqliteTable(
   ],
 );
 
+export const monitorWeeklyReviews = sqliteTable(
+  "monitor_weekly_reviews",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    weekKey: text("week_key").notNull(),
+    status: text("status").notNull().default("pending"),
+    titleZh: text("title_zh").notNull().default(""),
+    titleEn: text("title_en").notNull().default(""),
+    overviewZh: text("overview_zh").notNull().default(""),
+    overviewEn: text("overview_en").notNull().default(""),
+    gainsZh: text("gains_zh").notNull().default("[]"),
+    gainsEn: text("gains_en").notNull().default("[]"),
+    gapsZh: text("gaps_zh").notNull().default("[]"),
+    gapsEn: text("gaps_en").notNull().default("[]"),
+    nextStepsZh: text("next_steps_zh").notNull().default("[]"),
+    nextStepsEn: text("next_steps_en").notNull().default("[]"),
+    sourceDays: integer("source_days").notNull().default(0),
+    model: text("model").notNull().default(""),
+    error: text("error"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_monitor_weekly_reviews_space_week").on(table.spaceId, table.weekKey),
+    index("idx_monitor_weekly_reviews_space_updated").on(table.spaceId, table.updatedAt),
+  ],
+);
+
+export const researchNotifications = sqliteTable(
+  "research_notifications",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    dedupeKey: text("dedupe_key").notNull(),
+    kind: text("kind").notNull(),
+    priority: text("priority").notNull().default("normal"),
+    titleZh: text("title_zh").notNull(),
+    titleEn: text("title_en").notNull(),
+    bodyZh: text("body_zh").notNull().default(""),
+    bodyEn: text("body_en").notNull().default(""),
+    actionView: text("action_view").notNull().default("today"),
+    entityId: text("entity_id"),
+    readAt: text("read_at"),
+    expiresAt: text("expires_at"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_notifications_space_dedupe").on(table.spaceId, table.dedupeKey),
+    index("idx_research_notifications_space_read_created").on(table.spaceId, table.readAt, table.createdAt),
+  ],
+);
+
 export const monitorDiscoveryCoverage = sqliteTable(
   "monitor_discovery_coverage",
   {

@@ -115,12 +115,65 @@
 .v2-ai-daily-brief > footer button { border: 0; border-radius: 999px; padding: 10px 15px; background: #214f70; color: #fff; cursor: pointer; }
 .v2-resume-note { display: block; margin-top: 8px; color: #356a83; font-size: 12px; font-style: normal; }
 
+/* Pi Research V18 — catch-up inbox, weekly review, and seven-day pilot */
+.v2-notification-trigger { position: relative; width: 38px; height: 38px; border: 1px solid #d3d9d4; border-radius: 50%; background: rgba(255,255,255,.64); color: #315f88; display: grid; place-items: center; cursor: pointer; }
+.v2-notification-trigger > b { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 4px; border: 2px solid var(--paper); border-radius: 999px; background: #a65c3a; color: white; font-size: 9px; display: grid; place-items: center; }
+.v2-research-catchup { margin-top: 18px; padding: 20px; border: 1px solid #d6dcd7; border-radius: 16px; background: rgba(255,255,255,.52); }
+.v2-research-catchup > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.v2-research-catchup > header h2 { margin: 5px 0 0; font: 24px Georgia, serif; font-weight: 400; }
+.v2-research-catchup > header > div:last-child { display: flex; gap: 8px; }
+.v2-research-catchup > header button { border: 0; background: transparent; color: #315f88; font-size: 11px; font-weight: 700; cursor: pointer; }
+.v2-research-catchup > div { margin-top: 14px; display: grid; gap: 8px; }
+.v2-research-catchup > div > button { width: 100%; padding: 13px 14px; border: 1px solid #dde2dd; border-radius: 11px; background: rgba(249,250,247,.8); color: inherit; display: grid; grid-template-columns: 34px minmax(0,1fr) 16px; gap: 12px; align-items: center; text-align: left; cursor: pointer; }
+.v2-research-catchup > div > button.unread { border-color: #b9c9d2; background: #f7fbfd; }
+.v2-research-catchup > div > button.high > span { background: #315f88; color: white; }
+.v2-research-catchup > div > button > span { width: 32px; height: 32px; border-radius: 50%; background: #e8ece8; color: #58705f; display: grid; place-items: center; font: 12px Georgia, serif; }
+.v2-research-catchup strong,
+.v2-research-catchup p,
+.v2-research-catchup small { display: block; }
+.v2-research-catchup p { margin: 4px 0 0; color: #657169; font-size: 12px; line-height: 1.45; }
+.v2-research-catchup small { margin-top: 5px; color: #8a918b; font-size: 10px; }
+.v2-research-catchup > div > button.read { opacity: .66; }
+.v2-research-catchup > div > button > b { color: #718078; }
+.v2-weekly-review { margin-top: 18px; border: 1px solid #cfd8d1; border-radius: 18px; background: linear-gradient(135deg, rgba(247,248,243,.96), rgba(237,243,239,.92)); }
+.v2-weekly-review > summary { padding: 20px 22px; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 18px; cursor: pointer; }
+.v2-weekly-review > summary::-webkit-details-marker { display: none; }
+.v2-weekly-review > summary strong { margin: 5px 0; font: 24px/1.25 Georgia, serif; font-weight: 400; display: block; }
+.v2-weekly-review > summary small { color: #747e76; font-size: 11px; }
+.v2-weekly-review[open] > summary > b { transform: rotate(45deg); }
+.v2-weekly-review-body { padding: 0 22px 22px; }
+.v2-weekly-review-body > p { max-width: 920px; margin: 0 0 17px; color: #55645a; font: 15px/1.65 Georgia, serif; }
+.v2-weekly-review-body > div { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.v2-weekly-review-body article { padding: 15px 16px; border-radius: 11px; background: rgba(255,255,255,.58); }
+.v2-weekly-review-body h3 { margin: 0 0 9px; color: #3f5e49; font-size: 12px; }
+.v2-weekly-review-body ul,
+.v2-weekly-review-body ol { margin: 0; padding-left: 18px; color: #5e685f; font-size: 12px; line-height: 1.55; }
+.v2-pilot-evaluation { margin-top: 22px; padding: 22px; border: 1px solid #d3d9d4; border-radius: 17px; background: rgba(255,255,255,.55); }
+.v2-pilot-evaluation > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.v2-pilot-evaluation > header h2 { margin: 5px 0 0; font: 26px Georgia, serif; font-weight: 400; }
+.v2-pilot-evaluation > header > strong { color: #315f88; font: 27px Georgia, serif; text-align: right; }
+.v2-pilot-evaluation > header > strong small { margin-top: 3px; color: #7d857e; font: 10px Arial, sans-serif; display: block; }
+.v2-pilot-evaluation > div { margin-top: 18px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; }
+.v2-pilot-evaluation article { padding: 13px; border: 1px solid #dce1dd; border-radius: 10px; display: grid; grid-template-columns: 24px minmax(0,1fr) auto; gap: 9px; align-items: center; }
+.v2-pilot-evaluation article > span { width: 22px; height: 22px; border-radius: 50%; background: #ecefeb; display: grid; place-items: center; font-size: 10px; }
+.v2-pilot-evaluation article.pass > span { background: #dfeae2; color: #39704b; }
+.v2-pilot-evaluation article.watch > span { background: #f4e8de; color: #9a5837; }
+.v2-pilot-evaluation article strong,
+.v2-pilot-evaluation article small { display: block; }
+.v2-pilot-evaluation article strong { font-size: 12px; }
+.v2-pilot-evaluation article small { margin-top: 3px; color: #7a837b; font-size: 10px; }
+.v2-pilot-evaluation article > b { color: #78827a; font-size: 9px; }
+.v2-pilot-evaluation > footer { margin-top: 14px; color: #737c74; font-size: 11px; }
+
 @media (max-width: 720px) {
   .v2-ai-daily-brief { padding: 18px; }
   .v2-ai-daily-brief > header,
   .v2-ai-daily-brief > footer { display: grid; }
   .v2-daily-brief-grid { grid-template-columns: 1fr; }
   .v2-daily-brief-grid article.watch { grid-column: auto; }
+  .v2-research-catchup > header { display: grid; }
+  .v2-weekly-review-body > div,
+  .v2-pilot-evaluation > div { grid-template-columns: 1fr; }
 }
 
 /* Focused Today brief + real research map */

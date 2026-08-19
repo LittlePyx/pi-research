@@ -133,6 +133,19 @@ type ReadingMemory = {
   analyzedAt: string | null;
   updatedAt: string;
 };
+type ResearchNotification = {
+  id: string;
+  kind: string;
+  priority: string;
+  titleZh: string;
+  titleEn: string;
+  bodyZh: string;
+  bodyEn: string;
+  actionView: string;
+  entityId: string | null;
+  readAt: string | null;
+  createdAt: string;
+};
 type MonitorStatus = "idle" | "scanning" | "discovering_days" | "discovering_months" | "discovering_years" | "deduplicating" | "reviewing" | "saving" | "briefing" | "ready" | "error";
 type MonitorState = {
   status: MonitorStatus;
@@ -253,6 +266,38 @@ type MonitorState = {
     error: string | null;
     updatedAt: string;
   } | null;
+  weeklyReview?: {
+    weekKey: string;
+    status: string;
+    titleZh: string;
+    titleEn: string;
+    overviewZh: string;
+    overviewEn: string;
+    gainsZh: string[];
+    gainsEn: string[];
+    gapsZh: string[];
+    gapsEn: string[];
+    nextStepsZh: string[];
+    nextStepsEn: string[];
+    sourceDays: number;
+    model: string;
+    error: string | null;
+    updatedAt: string;
+  } | null;
+  notifications?: ResearchNotification[];
+  unreadNotificationCount?: number;
+  pilotEvaluation?: {
+    targetDays: number;
+    elapsedDays: number;
+    firstScanAt: string | null;
+    complete: boolean;
+    attempts: number;
+    succeeded: number;
+    failed: number;
+    activeDays: number;
+    criteria: Array<{ id: string; status: "pass" | "watch" | "waiting"; value: number; target: number }>;
+    summary: { reliability: number; acceptanceRate: number; wrongTypeReports: number; continuity: number; activeHorizons: number; duplicatesAvoided: number; tokensPerRecommendation: number };
+  };
   suggestedAuthors?: string[];
   cached?: boolean;
   throttled?: boolean;
@@ -919,6 +964,18 @@ function monitorPhaseLabel(status: MonitorStatus | undefined, locale: Locale) {
   return labels[status || "idle"][locale];
 }
 
+function pilotCriterionLabel(id: string, locale: Locale) {
+  const labels: Record<string, { zh: string; en: string }> = {
+    reliability: { zh: "扫描可靠性", en: "Scan reliability" },
+    paperQuality: { zh: "非论文误报", en: "Non-paper false positives" },
+    usefulness: { zh: "推荐有用性", en: "Recommendation usefulness" },
+    continuity: { zh: "每日持续运行", en: "Daily continuity" },
+    horizons: { zh: "三层时间覆盖", en: "Three-horizon coverage" },
+    deduplication: { zh: "重复分析保护", en: "Duplicate-analysis protection" },
+  };
+  return (labels[id] || { zh: id, en: id })[locale];
+}
+
 function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) => void) {
   let stopped = false;
   let polling = false;
@@ -1250,6 +1307,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [paperReturnView, setPaperReturnView] = useState<"today" | "library">("today");
   const [paperNoteDraft, setPaperNoteDraft] = useState("");
   const [readingMemoryAnalyzing, setReadingMemoryAnalyzing] = useState(false);
+  const [notificationsExpanded, setNotificationsExpanded] = useState(false);
   const [sharingSnapshot, setSharingSnapshot] = useState<string | null>(null);
   const [researchImports, setResearchImports] = useState<ResearchImportRecord[]>([]);
   const [importOpen, setImportOpen] = useState(false);
@@ -1311,6 +1369,7 @@ export default function ResearchApp({ user }: { user: User }) {
     const ids = new Set(monitor?.dailyBrief?.paperIds || []);
     return historyPapers.filter((paper) => ids.has(paper.id));
   }, [historyPapers, monitor?.dailyBrief?.paperIds]);
+  const unreadNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => !notification.readAt), [monitor?.notifications]);
   const operationsMaxCandidates = Math.max(1, ...(monitor?.operationsDashboard?.daily || []).map((day) => day.candidates));
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
   const confirmedProfile = latestConfirmedImport?.analysis || null;
@@ -1793,6 +1852,37 @@ export default function ResearchApp({ user }: { user: User }) {
       setMonitoring(false);
       setSavingPreferences(false);
     }
+  };
+
+  const markNotificationsRead = async (notification?: ResearchNotification) => {
+    if (!monitor || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    const readAt = new Date().toISOString();
+    setMonitor((current) => current ? {
+      ...current,
+      notifications: (current.notifications || []).map((item) => !notification || item.id === notification.id ? { ...item, readAt: item.readAt || readAt } : item),
+      unreadNotificationCount: notification ? Math.max(0, (current.unreadNotificationCount || 0) - (notification.readAt ? 0 : 1)) : 0,
+    } : current);
+    try {
+      const response = await fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, notificationId: notification?.id, readAll: !notification }),
+      });
+      const data = await response.json() as { notifications?: ResearchNotification[]; unreadCount?: number };
+      if (response.ok && data.notifications) setMonitor((current) => current ? {
+        ...current, notifications: data.notifications, unreadNotificationCount: data.unreadCount || 0,
+      } : current);
+    } catch {
+      // The next monitor refresh restores the authoritative notification state.
+    }
+  };
+
+  const openResearchNotification = (notification: ResearchNotification) => {
+    void markNotificationsRead(notification);
+    const target = (["today", "threads", "library", "memory"] as View[]).includes(notification.actionView as View)
+      ? notification.actionView as View : "today";
+    if (target === "library") { setLibraryFilter("inbox"); setInboxFilter("all"); }
+    navigate(target);
   };
 
   const saveFeedback = (paper: MonitorPaper, kind: "save" | "relevant" | "not_relevant" | "later", reasonCode?: string, note = "") => {
@@ -2301,6 +2391,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <div className="v2-breadcrumb"><span>{defaultSpaceName(activeSpace.name, locale)}</span><b>/</b><strong>{navItems.find((item) => item.id === activeNav)?.label}</strong></div>
           <button className="v2-ask-trigger" type="button" onClick={() => setAskOpen(true)}><span>⌕</span><span>{t.askPlaceholder}</span><kbd>⌘ K</kbd></button>
           <div className="v2-top-actions">
+            <button className="v2-notification-trigger" type="button" aria-label={locale === "zh" ? "研究提醒" : "Research alerts"} onClick={() => { navigate("today"); setNotificationsExpanded(true); }}><span>◌</span>{Boolean(monitor?.unreadNotificationCount) && <b>{Math.min(99, monitor?.unreadNotificationCount || 0)}</b>}</button>
             <div className="v2-language"><button className={locale === "zh" ? "active" : ""} type="button" onClick={() => setLocale("zh")}>中</button><button className={locale === "en" ? "active" : ""} type="button" onClick={() => setLocale("en")}>EN</button></div>
             <button className="v2-ask-button" type="button" onClick={() => setAskOpen(true)}><span>π</span>{t.askPi}</button>
           </div>
@@ -2312,6 +2403,11 @@ export default function ResearchApp({ user }: { user: User }) {
               <div><p className="v2-kicker">{t.todayDate}</p><h1>{t.goodMorning}，{activeSpace.memberName}。</h1></div>
               <div className="v2-attention-number"><strong>{rankedMonitorPapers.length || "—"}</strong><span>{locale === "zh" ? "篇待看" : "to review"}</span><button className="v2-share-action v2-today-share" type="button" onClick={() => shareSnapshot("daily", rankedMonitorPapers.slice(0, 6))} disabled={!rankedMonitorPapers.length || Boolean(sharingSnapshot)}>{sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily} ↗</button></div>
             </section>
+
+            {Boolean(monitor?.notifications?.length) && <section className="v2-research-catchup">
+              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究提醒" : "RESEARCH ALERTS"}</p><h2>{unreadNotifications.length ? (locale === "zh" ? `${unreadNotifications.length} 条更新等你处理` : `${unreadNotifications.length} updates to catch up on`) : (locale === "zh" ? "最近的研究活动" : "Recent research activity")}</h2></div><div>{unreadNotifications.length > 0 && <button type="button" onClick={() => void markNotificationsRead()}>{locale === "zh" ? "全部已读" : "Mark all read"}</button>}{(monitor?.notifications?.length || 0) > 3 && <button type="button" onClick={() => setNotificationsExpanded((value) => !value)}>{notificationsExpanded ? (locale === "zh" ? "收起" : "Show less") : (locale === "zh" ? "查看全部" : "View all")}</button>}</div></header>
+              <div>{monitor?.notifications?.slice(0, notificationsExpanded ? 12 : 3).map((notification) => <button className={`${notification.readAt ? "read" : "unread"} ${notification.priority}`} type="button" key={notification.id} onClick={() => openResearchNotification(notification)}><span>{notification.kind === "weekly_review" ? "7D" : notification.kind === "must_read" ? "!" : notification.kind === "scan_recovered" ? "↻" : "π"}</span><div><strong>{locale === "zh" ? notification.titleZh : notification.titleEn}</strong><p>{locale === "zh" ? notification.bodyZh : notification.bodyEn}</p><small>{formatMonitorDate(notification.createdAt, locale)}</small></div><b>→</b></button>)}</div>
+            </section>}
 
             <section className="v2-today-briefing" aria-label={locale === "zh" ? "今日科研简报" : "Today's research briefing"}>
               <button type="button" onClick={() => rankedMonitorPapers[0] && openMonitorPaper(rankedMonitorPapers[0])} disabled={!rankedMonitorPapers.length}><span>01</span><strong>{mustReadCount}</strong><div><b>{locale === "zh" ? "今日必读" : "Must read"}</b><small>{locale === "zh" ? "高相关且高质量，优先投入时间" : "High-fit, high-quality work worth your time"}</small></div><i>→</i></button>
@@ -2329,6 +2425,11 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
               <footer><span>{locale === "zh" ? `${monitor.dailyBrief.metrics.scanned || 0} 篇候选 · ${monitor.dailyBrief.metrics.recommended || 0} 篇入选 · ${monitor.dailyBrief.metrics.duplicates || 0} 次重复已避免` : `${monitor.dailyBrief.metrics.scanned || 0} candidates · ${monitor.dailyBrief.metrics.recommended || 0} selected · ${monitor.dailyBrief.metrics.duplicates || 0} duplicates avoided`}</span>{dailyBriefPapers[0] && <button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button>}</footer>
             </section>}
+
+            {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
+              <summary><span><p className="v2-kicker">7D {locale === "zh" ? "阶段研究回顾" : "RESEARCH REVIEW"}</p><strong>{locale === "zh" ? monitor.weeklyReview.titleZh : monitor.weeklyReview.titleEn}</strong><small>{locale === "zh" ? `来自 ${monitor.weeklyReview.sourceDays} 天真实记录` : `Based on ${monitor.weeklyReview.sourceDays} days of real activity`}</small></span><b>＋</b></summary>
+              <div className="v2-weekly-review-body"><p>{locale === "zh" ? monitor.weeklyReview.overviewZh : monitor.weeklyReview.overviewEn}</p><div><article><h3>{locale === "zh" ? "已经获得" : "What advanced"}</h3><ul>{(locale === "zh" ? monitor.weeklyReview.gainsZh : monitor.weeklyReview.gainsEn).map((item) => <li key={item}>{item}</li>)}</ul></article><article><h3>{locale === "zh" ? "仍有缺口" : "Remaining gaps"}</h3><ul>{(locale === "zh" ? monitor.weeklyReview.gapsZh : monitor.weeklyReview.gapsEn).map((item) => <li key={item}>{item}</li>)}</ul></article><article><h3>{locale === "zh" ? "下一步行动" : "Next moves"}</h3><ol>{(locale === "zh" ? monitor.weeklyReview.nextStepsZh : monitor.weeklyReview.nextStepsEn).map((item) => <li key={item}>{item}</li>)}</ol></article></div></div>
+            </details>}
 
             <section className="v2-monitor-panel">
               <div className="v2-monitor-head">
@@ -2370,6 +2471,8 @@ export default function ResearchApp({ user }: { user: User }) {
                 <p>{t.autoVisit}</p>
               </details>
             </section>
+
+            {monitor?.pilotEvaluation && <section className="v2-pilot-evaluation"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "7 天真实试运行" : "7-DAY LIVE PILOT"}</p><h2>{monitor.pilotEvaluation.complete ? (locale === "zh" ? "试运行周期已完成" : "Pilot period complete") : (locale === "zh" ? `第 ${monitor.pilotEvaluation.elapsedDays || 0} / 7 天` : `Day ${monitor.pilotEvaluation.elapsedDays || 0} of 7`)}</h2></div><strong>{monitor.pilotEvaluation.succeeded}/{monitor.pilotEvaluation.attempts}<small>{locale === "zh" ? "成功扫描" : "successful scans"}</small></strong></header><div>{monitor.pilotEvaluation.criteria.map((criterion) => <article className={criterion.status} key={criterion.id}><span>{criterion.status === "pass" ? "✓" : criterion.status === "watch" ? "!" : "·"}</span><div><strong>{pilotCriterionLabel(criterion.id, locale)}</strong><small>{criterion.id === "paperQuality" ? (locale === "zh" ? `${criterion.value} 次错误类型反馈` : `${criterion.value} wrong-type reports`) : criterion.id === "horizons" ? `${criterion.value}/3` : criterion.id === "deduplication" ? (locale === "zh" ? `${criterion.value} 次重复已避免` : `${criterion.value} duplicates avoided`) : `${criterion.value}%`}</small></div><b>{criterion.status === "pass" ? (locale === "zh" ? "达标" : "Pass") : criterion.status === "watch" ? (locale === "zh" ? "观察" : "Watch") : (locale === "zh" ? "等待数据" : "Waiting")}</b></article>)}</div><footer><span>{locale === "zh" ? `可靠性 ${monitor.pilotEvaluation.summary.reliability}% · 接受率 ${monitor.pilotEvaluation.summary.acceptanceRate}% · 每篇有效推荐约 ${monitor.pilotEvaluation.summary.tokensPerRecommendation || 0} token` : `${monitor.pilotEvaluation.summary.reliability}% reliability · ${monitor.pilotEvaluation.summary.acceptanceRate}% acceptance · ${monitor.pilotEvaluation.summary.tokensPerRecommendation || 0} tokens per useful recommendation`}</span></footer></section>}
 
             {monitor?.operationsDashboard && <section className="v2-operations-dashboard"><header><div><p className="v2-kicker">π {locale === "zh" ? "发现质量" : "DISCOVERY QUALITY"}</p><h2>{locale === "zh" ? "每次扫描是否真的带来新的、有用的论文" : "Whether each scan finds genuinely new, useful work"}</h2></div><small>{locale === "zh" ? `近 ${monitor.operationsDashboard.periodDays} 天真实运行数据` : `Last ${monitor.operationsDashboard.periodDays} days of real activity`}</small></header><div className="v2-operations-metrics"><article><span>{locale === "zh" ? "新候选" : "New candidates"}</span><strong>{monitor.operationsDashboard.totals.newCandidates}</strong><small>{monitor.operationsDashboard.totals.candidates} {locale === "zh" ? "篇独立候选" : "unique candidates"}</small></article><article><span>{locale === "zh" ? "去重节省" : "Duplicates avoided"}</span><strong>{monitor.operationsDashboard.totals.duplicatesAvoided}</strong><small>{monitor.operationsDashboard.totals.duplicateAvoidanceRate}% {locale === "zh" ? "无需重复交给 LLM" : "kept away from the LLM"}</small></article><article><span>{locale === "zh" ? "深审入选率" : "Review yield"}</span><strong>{monitor.operationsDashboard.totals.recommendationYield}%</strong><small>{monitor.operationsDashboard.totals.recommended} / {monitor.operationsDashboard.totals.reviewed} {locale === "zh" ? "篇入选" : "selected"}</small></article><article><span>{locale === "zh" ? "用户接受率" : "Acceptance"}</span><strong>{monitor.operationsDashboard.totals.acceptanceRate}%</strong><small>{monitor.operationsDashboard.totals.tokensPerRecommendation ? `${Math.round(monitor.operationsDashboard.totals.tokensPerRecommendation / 100) / 10}k token / ${locale === "zh" ? "推荐" : "recommendation"}` : (locale === "zh" ? "等待更多反馈" : "Awaiting feedback")}</small></article></div><div className="v2-operations-body"><div className="v2-scan-trend"><h3>{locale === "zh" ? "每日发现趋势" : "Daily discovery trend"}</h3>{monitor.operationsDashboard.daily.length ? monitor.operationsDashboard.daily.map((day) => <div key={day.date}><time>{day.date.slice(5)}</time><i><b style={{ width: `${Math.max(3, day.candidates / operationsMaxCandidates * 100)}%` }} /></i><span>+{day.newCandidates}</span><em>{day.recommended} {locale === "zh" ? "入选" : "selected"}</em></div>) : <p>{locale === "zh" ? "完成第一轮新版本扫描后，这里会开始记录趋势。" : "Trend data will appear after the first scan on this version."}</p>}</div><div className="v2-horizon-performance"><h3>{locale === "zh" ? "三层覆盖效率" : "Three-horizon efficiency"}</h3>{monitor.operationsDashboard.horizons.map((item) => <article key={item.horizon}><span>{item.horizon === "days" ? t.daysHorizon : item.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><strong>{item.discoveryYield}%</strong><small>{item.branches} {locale === "zh" ? "条分支" : "branches"} · {item.cooling} {locale === "zh" ? "条降频" : "cooling"}</small></article>)}</div></div>{Boolean(monitor.explorationLedger?.length) && <details className="v2-exploration-ledger"><summary><span><b>{locale === "zh" ? "持续探索账本" : "Continuous exploration ledger"}</b><small>{locale === "zh" ? "Pi 记录每条检索分支的位置；低收益分支自动降频，之后再回访。" : "Pi remembers each branch position, cools low-yield paths, and revisits them later."}</small></span><strong>{monitor.explorationLedger?.length} →</strong></summary><div>{monitor.explorationLedger?.slice(0, 16).map((branch) => <article className={branch.status} key={`${branch.horizon}:${branch.id}`}><header><span>{branch.horizon === "days" ? t.daysHorizon : branch.horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {branch.channel}</span><b>{explorationStatusLabel(branch.status, locale)}</b></header><p>{branch.queryText || branch.sourceKey.replace(/_/g, " ")}</p><footer><span>{locale === "zh" ? "游标" : "cursor"} {branch.nextCursor}</span><span>{branch.attempts} {locale === "zh" ? "轮" : "rounds"}</span><span>{branch.newCandidates}/{branch.candidates} {locale === "zh" ? "新发现" : "new"}</span><strong>{branch.discoveryYield}%</strong></footer></article>)}</div></details>}</section>}
 

@@ -123,6 +123,37 @@ type DailyBriefRow = {
   error: string | null;
   updated_at: string;
 };
+type WeeklyReviewRow = {
+  week_key: string;
+  status: string;
+  title_zh: string;
+  title_en: string;
+  overview_zh: string;
+  overview_en: string;
+  gains_zh: string;
+  gains_en: string;
+  gaps_zh: string;
+  gaps_en: string;
+  next_steps_zh: string;
+  next_steps_en: string;
+  source_days: number;
+  model: string;
+  error: string | null;
+  updated_at: string;
+};
+type NotificationRow = {
+  id: string;
+  kind: string;
+  priority: string;
+  title_zh: string;
+  title_en: string;
+  body_zh: string;
+  body_en: string;
+  action_view: string;
+  entity_id: string | null;
+  read_at: string | null;
+  created_at: string;
+};
 type CoverageRow = {
   source_key: string;
   channel: string;
@@ -1511,6 +1542,20 @@ function briefList(value: unknown, limit = 4, maxLength = 360) {
   return value.map((item) => cleanText(String(item)).slice(0, maxLength)).filter(Boolean).slice(0, limit);
 }
 
+function shanghaiDateKey(date: Date) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function mondayKey(dateKey: string) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - day + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 async function saveDailyBrief(
   database: D1Database,
   input: {
@@ -1569,10 +1614,7 @@ async function generateDailyBrief(
   metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; recommended: number; rejected: number },
   now: Date,
 ) {
-  const briefDateParts = Object.fromEntries(new Intl.DateTimeFormat("en", {
-    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(now).map((part) => [part.type, part.value]));
-  const briefDate = `${briefDateParts.year}-${briefDateParts.month}-${briefDateParts.day}`;
+  const briefDate = shanghaiDateKey(now);
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
   const selected = reviews.filter((review) => review.recommended).sort((left, right) => {
     const tier = { must_read: 3, browse: 2, reserve: 1 };
@@ -1688,6 +1730,231 @@ async function generateDailyBrief(
   } catch (error) {
     await fallback(error instanceof Error ? error.message.slice(0, 260) : "Daily brief generation failed");
   }
+}
+
+async function upsertResearchNotification(database: D1Database, input: {
+  spaceId: string;
+  dedupeKey: string;
+  kind: string;
+  priority?: "normal" | "high";
+  titleZh: string;
+  titleEn: string;
+  bodyZh: string;
+  bodyEn: string;
+  actionView: "today" | "library" | "threads" | "memory";
+  entityId?: string | null;
+}) {
+  await database.prepare(
+    `INSERT INTO research_notifications
+     (id, space_id, dedupe_key, kind, priority, title_zh, title_en, body_zh, body_en, action_view, entity_id, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+45 days'))
+     ON CONFLICT(space_id, dedupe_key) DO UPDATE SET priority = excluded.priority,
+      title_zh = excluded.title_zh, title_en = excluded.title_en, body_zh = excluded.body_zh,
+      body_en = excluded.body_en, action_view = excluded.action_view, entity_id = excluded.entity_id,
+      expires_at = excluded.expires_at, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(
+    crypto.randomUUID(), input.spaceId, input.dedupeKey, input.kind, input.priority || "normal",
+    cleanText(input.titleZh).slice(0, 240), cleanText(input.titleEn).slice(0, 320),
+    cleanText(input.bodyZh).slice(0, 700), cleanText(input.bodyEn).slice(0, 900),
+    input.actionView, input.entityId || null,
+  ).run();
+}
+
+async function createScanNotifications(
+  database: D1Database,
+  spaceId: string,
+  briefDate: string,
+  reviews: PaperReview[],
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; recommended: number; rejected: number },
+  resumed: boolean,
+) {
+  const brief = await database.prepare(
+    "SELECT headline_zh, headline_en, overview_zh, overview_en FROM monitor_daily_briefs WHERE space_id = ? AND brief_date = ? LIMIT 1",
+  ).bind(spaceId, briefDate).first<{ headline_zh: string; headline_en: string; overview_zh: string; overview_en: string }>();
+  await upsertResearchNotification(database, {
+    spaceId, dedupeKey: `daily:${briefDate}`, kind: "daily_brief", priority: metrics.recommended ? "high" : "normal",
+    titleZh: brief?.headline_zh || `今日扫描完成：${metrics.recommended} 篇入选`,
+    titleEn: brief?.headline_en || `Today's scan is complete: ${metrics.recommended} selected`,
+    bodyZh: brief?.overview_zh || `评审 ${metrics.reviewed} 篇，避免 ${metrics.duplicates} 次重复分析。`,
+    bodyEn: brief?.overview_en || `${metrics.reviewed} reviewed and ${metrics.duplicates} duplicate analyses avoided.`,
+    actionView: "today",
+  });
+  const mustRead = reviews.filter((review) => review.recommended && review.recommendationTier === "must_read");
+  if (mustRead.length) {
+    await upsertResearchNotification(database, {
+      spaceId, dedupeKey: `must-read:${briefDate}`, kind: "must_read", priority: "high",
+      titleZh: `${mustRead.length} 篇论文被列为今日必读`, titleEn: `${mustRead.length} papers are must-reads today`,
+      bodyZh: "这些论文与当前研究问题直接相关，Pi 已给出具体阅读重点和建议顺序。",
+      bodyEn: "These papers directly match the current research questions, with concrete reading priorities and order.",
+      actionView: "today",
+    });
+  }
+  if (resumed) {
+    await upsertResearchNotification(database, {
+      spaceId, dedupeKey: `recovered:${briefDate}`, kind: "scan_recovered",
+      titleZh: "中断的扫描已经自动续跑完成", titleEn: "The interrupted scan resumed successfully",
+      bodyZh: "已复用保存的探索游标和待评审池，没有重新分析已经处理过的论文。",
+      bodyEn: "Saved exploration cursors and the pending review pool were reused without re-analyzing processed papers.",
+      actionView: "today",
+    });
+  }
+}
+
+async function saveWeeklyReview(database: D1Database, input: {
+  spaceId: string;
+  weekKey: string;
+  status: "ready" | "degraded";
+  titleZh: string;
+  titleEn: string;
+  overviewZh: string;
+  overviewEn: string;
+  gainsZh: string[];
+  gainsEn: string[];
+  gapsZh: string[];
+  gapsEn: string[];
+  nextStepsZh: string[];
+  nextStepsEn: string[];
+  sourceDays: number;
+  model: string;
+  error?: string | null;
+}) {
+  await database.prepare(
+    `INSERT INTO monitor_weekly_reviews
+     (id, space_id, week_key, status, title_zh, title_en, overview_zh, overview_en, gains_zh, gains_en,
+      gaps_zh, gaps_en, next_steps_zh, next_steps_en, source_days, model, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(space_id, week_key) DO UPDATE SET status = excluded.status, title_zh = excluded.title_zh,
+      title_en = excluded.title_en, overview_zh = excluded.overview_zh, overview_en = excluded.overview_en,
+      gains_zh = excluded.gains_zh, gains_en = excluded.gains_en, gaps_zh = excluded.gaps_zh,
+      gaps_en = excluded.gaps_en, next_steps_zh = excluded.next_steps_zh, next_steps_en = excluded.next_steps_en,
+      source_days = excluded.source_days, model = excluded.model, error = excluded.error, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(
+    crypto.randomUUID(), input.spaceId, input.weekKey, input.status, input.titleZh, input.titleEn,
+    input.overviewZh, input.overviewEn, JSON.stringify(input.gainsZh), JSON.stringify(input.gainsEn),
+    JSON.stringify(input.gapsZh), JSON.stringify(input.gapsEn), JSON.stringify(input.nextStepsZh),
+    JSON.stringify(input.nextStepsEn), input.sourceDays, input.model, input.error || null,
+  ).run();
+}
+
+async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, userId: string, now: Date) {
+  const dateKey = shanghaiDateKey(now);
+  const weekKey = mondayKey(dateKey);
+  const briefs = await database.prepare(
+    `SELECT brief_date, headline_zh, headline_en, overview_zh, overview_en, signals_zh, signals_en,
+     reading_plan_zh, reading_plan_en, watchlist_zh, watchlist_en, metrics_json
+     FROM monitor_daily_briefs WHERE space_id = ? AND brief_date >= date(?, '-6 days')
+     ORDER BY brief_date ASC`,
+  ).bind(space.id, dateKey).all<{
+    brief_date: string; headline_zh: string; headline_en: string; overview_zh: string; overview_en: string;
+    signals_zh: string; signals_en: string; reading_plan_zh: string; reading_plan_en: string;
+    watchlist_zh: string; watchlist_en: string; metrics_json: string;
+  }>();
+  const sourceDays = new Set(briefs.results.map((brief) => brief.brief_date)).size;
+  if (sourceDays < 3) return null;
+  const existing = await database.prepare(
+    "SELECT source_days FROM monitor_weekly_reviews WHERE space_id = ? AND week_key = ? LIMIT 1",
+  ).bind(space.id, weekKey).first<{ source_days: number }>();
+  if (existing && (existing.source_days >= sourceDays || sourceDays < 7)) return null;
+
+  const [feedback, memories, changes] = await Promise.all([
+    database.prepare(
+      `SELECT COALESCE(reason_code, 'unspecified') AS reason_code, feedback, COUNT(*) AS count
+       FROM paper_feedback WHERE space_id = ? AND updated_at >= datetime('now', '-7 days') AND feedback IS NOT NULL
+       GROUP BY reason_code, feedback ORDER BY count DESC LIMIT 12`,
+    ).bind(space.id).all<{ reason_code: string; feedback: string; count: number }>(),
+    database.prepare(
+      `SELECT takeaway_zh, takeaway_en, questions_zh, questions_en FROM paper_reading_memories
+       WHERE space_id = ? AND analysis_status = 'ready' AND updated_at >= datetime('now', '-7 days')
+       ORDER BY updated_at DESC LIMIT 10`,
+    ).bind(space.id).all<{ takeaway_zh: string; takeaway_en: string; questions_zh: string; questions_en: string }>(),
+    database.prepare(
+      `SELECT title_zh, title_en, summary_zh, summary_en FROM research_map_changes
+       WHERE space_id = ? AND created_at >= datetime('now', '-7 days') ORDER BY created_at DESC LIMIT 12`,
+    ).bind(space.id).all<{ title_zh: string; title_en: string; summary_zh: string; summary_en: string }>(),
+  ]);
+  const fallback = async (error?: string) => {
+    const totalRecommended = briefs.results.reduce((sum, brief) => {
+      try { return sum + Number((JSON.parse(brief.metrics_json) as Record<string, number>).recommended || 0); } catch { return sum; }
+    }, 0);
+    const review = {
+      spaceId: space.id, weekKey, status: error ? "degraded" as const : "ready" as const,
+      titleZh: `${sourceDays} 天研究回顾：${totalRecommended} 篇论文进入推荐`,
+      titleEn: `${sourceDays}-day research review: ${totalRecommended} papers selected`,
+      overviewZh: `Pi 汇总了最近 ${sourceDays} 天的真实扫描、阅读与反馈记录。以下内容只来自已保存的每日简报和用户行为。`,
+      overviewEn: `Pi summarized ${sourceDays} days of real discovery, reading, and feedback records using only saved briefs and user activity.`,
+      gainsZh: briefs.results.flatMap((brief) => parseVenues(brief.signals_zh)).slice(-4),
+      gainsEn: briefs.results.flatMap((brief) => parseVenues(brief.signals_en)).slice(-4),
+      gapsZh: briefs.results.flatMap((brief) => parseVenues(brief.watchlist_zh)).slice(-4),
+      gapsEn: briefs.results.flatMap((brief) => parseVenues(brief.watchlist_en)).slice(-4),
+      nextStepsZh: briefs.results.flatMap((brief) => parseVenues(brief.reading_plan_zh)).slice(-4),
+      nextStepsEn: briefs.results.flatMap((brief) => parseVenues(brief.reading_plan_en)).slice(-4),
+      sourceDays, model: error ? "deterministic-fallback" : "evidence-summary", error: error || null,
+    };
+    await saveWeeklyReview(database, review);
+    return review;
+  };
+  const runtime = getRuntimeEnv();
+  const usageDate = now.toISOString().slice(0, 10);
+  const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
+  const [globalCount, workspaceCount] = await Promise.all([
+    usageCount(database, "monitor:global", usageDate), usageCount(database, workspaceScope, usageDate),
+  ]);
+  let review: Awaited<ReturnType<typeof fallback>>;
+  if (!runtime.DEEPSEEK_API_KEY || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT) {
+    review = await fallback(!runtime.DEEPSEEK_API_KEY ? "DeepSeek Pro is not configured" : "Weekly review analysis budget reached");
+  } else {
+    try {
+      const response = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + runtime.DEEPSEEK_API_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: MONITOR_MODEL,
+          messages: [
+            { role: "system", content: "You are Pi Research's weekly research-review editor. Return strict bilingual JSON and infer only from supplied evidence." },
+            { role: "user", content: [
+              "Return {titleZh,titleEn,overviewZh,overviewEn,gainsZh,gainsEn,gapsZh,gapsEn,nextStepsZh,nextStepsEn}.",
+              "Each list must contain 2-5 concrete items. Separate demonstrated gains from unresolved gaps. Next steps must be actionable reading or research moves.",
+              "Never claim that a paper was read unless reading memory is supplied. Do not invent paper findings or progress.",
+              `Research space: ${space.name} — ${space.description}`,
+              `Daily briefs: ${JSON.stringify(briefs.results)}`,
+              `Explicit feedback summary: ${JSON.stringify(feedback.results)}`,
+              `Reading memories: ${JSON.stringify(memories.results)}`,
+              `Research-map changes: ${JSON.stringify(changes.results)}`,
+            ].join("\n") },
+          ],
+          thinking: { type: "enabled" }, reasoning_effort: "high", response_format: { type: "json_object" },
+          max_tokens: 6500, stream: false,
+        }),
+        signal: AbortSignal.timeout(75_000),
+      });
+      const data = await response.json() as DeepSeekResponse;
+      if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro weekly review failed");
+      const parsed = parseJsonObject(data.choices?.[0]?.message?.content || "");
+      await Promise.all([
+        recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+        recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+        recordUsage(database, "monitor-space:" + space.id, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+      ]);
+      review = {
+        spaceId: space.id, weekKey, status: "ready", sourceDays, model: MONITOR_MODEL,
+        titleZh: cleanText(String(parsed.titleZh || "")).slice(0, 220), titleEn: cleanText(String(parsed.titleEn || "")).slice(0, 300),
+        overviewZh: cleanText(String(parsed.overviewZh || "")).slice(0, 1100), overviewEn: cleanText(String(parsed.overviewEn || "")).slice(0, 1500),
+        gainsZh: briefList(parsed.gainsZh, 5), gainsEn: briefList(parsed.gainsEn, 5),
+        gapsZh: briefList(parsed.gapsZh, 5), gapsEn: briefList(parsed.gapsEn, 5),
+        nextStepsZh: briefList(parsed.nextStepsZh, 5), nextStepsEn: briefList(parsed.nextStepsEn, 5), error: null,
+      };
+      if (!review.titleZh || !review.titleEn || !review.overviewZh || !review.overviewEn) throw new Error("DeepSeek Pro returned an incomplete weekly review");
+      await saveWeeklyReview(database, review);
+    } catch (error) {
+      review = await fallback(error instanceof Error ? error.message.slice(0, 260) : "Weekly review generation failed");
+    }
+  }
+  await upsertResearchNotification(database, {
+    spaceId: space.id, dedupeKey: `weekly:${weekKey}`, kind: "weekly_review", priority: "high",
+    titleZh: review.titleZh, titleEn: review.titleEn, bodyZh: review.overviewZh, bodyEn: review.overviewEn,
+    actionView: "today", entityId: weekKey,
+  });
+  return review;
 }
 
 async function persistCandidatePool(database: D1Database, spaceId: string, candidates: Candidate[]) {
@@ -1867,7 +2134,7 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow] = await Promise.all([
+  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -2018,6 +2285,31 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        reading_plan_zh, reading_plan_en, watchlist_zh, watchlist_en, paper_ids, metrics_json, model, error, updated_at
        FROM monitor_daily_briefs WHERE space_id = ? ORDER BY brief_date DESC, updated_at DESC LIMIT 1`,
     ).bind(space.id).first<DailyBriefRow>(),
+    database.prepare(
+      `SELECT week_key, status, title_zh, title_en, overview_zh, overview_en, gains_zh, gains_en,
+       gaps_zh, gaps_en, next_steps_zh, next_steps_en, source_days, model, error, updated_at
+       FROM monitor_weekly_reviews WHERE space_id = ? ORDER BY week_key DESC, updated_at DESC LIMIT 1`,
+    ).bind(space.id).first<WeeklyReviewRow>(),
+    database.prepare(
+      `SELECT id, kind, priority, title_zh, title_en, body_zh, body_en, action_view, entity_id, read_at, created_at
+       FROM research_notifications WHERE space_id = ? AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+       ORDER BY CASE WHEN read_at IS NULL THEN 0 ELSE 1 END, created_at DESC LIMIT 30`,
+    ).bind(space.id).all<NotificationRow>(),
+    database.prepare(
+      `SELECT COUNT(*) AS attempts,
+       SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) AS succeeded,
+       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS failed,
+       COUNT(DISTINCT CASE WHEN status = 'ready' THEN date(started_at) END) AS active_days,
+       (SELECT MIN(started_at) FROM monitor_scan_jobs first_job WHERE first_job.space_id = ?) AS first_started_at
+       FROM monitor_scan_jobs WHERE space_id = ? AND started_at >= datetime('now', '-6 days')`,
+    ).bind(space.id, space.id).first<{ attempts: number; succeeded: number; failed: number; active_days: number; first_started_at: string | null }>(),
+    database.prepare(
+      `SELECT COUNT(*) AS decisions,
+       SUM(CASE WHEN saved = 1 OR feedback = 'relevant' THEN 1 ELSE 0 END) AS accepted,
+       SUM(CASE WHEN reason_code = 'wrong_type' AND feedback = 'not_relevant' THEN 1 ELSE 0 END) AS wrong_type
+       FROM paper_feedback WHERE space_id = ? AND updated_at >= datetime('now', '-6 days')
+       AND (saved = 1 OR feedback IS NOT NULL)`,
+    ).bind(space.id).first<{ decisions: number; accepted: number; wrong_type: number }>(),
   ]);
   const now = Date.now();
   const duePapers = papers.results
@@ -2104,6 +2396,56 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     error: dailyBriefRow.error,
     updatedAt: dailyBriefRow.updated_at,
   } : null;
+  const weeklyReview = weeklyReviewRow ? {
+    weekKey: weeklyReviewRow.week_key,
+    status: weeklyReviewRow.status,
+    titleZh: weeklyReviewRow.title_zh,
+    titleEn: weeklyReviewRow.title_en,
+    overviewZh: weeklyReviewRow.overview_zh,
+    overviewEn: weeklyReviewRow.overview_en,
+    gainsZh: parseVenues(weeklyReviewRow.gains_zh),
+    gainsEn: parseVenues(weeklyReviewRow.gains_en),
+    gapsZh: parseVenues(weeklyReviewRow.gaps_zh),
+    gapsEn: parseVenues(weeklyReviewRow.gaps_en),
+    nextStepsZh: parseVenues(weeklyReviewRow.next_steps_zh),
+    nextStepsEn: parseVenues(weeklyReviewRow.next_steps_en),
+    sourceDays: weeklyReviewRow.source_days,
+    model: weeklyReviewRow.model,
+    error: weeklyReviewRow.error,
+    updatedAt: weeklyReviewRow.updated_at,
+  } : null;
+  const notifications = notificationRows.results.map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    priority: row.priority,
+    titleZh: row.title_zh,
+    titleEn: row.title_en,
+    bodyZh: row.body_zh,
+    bodyEn: row.body_en,
+    actionView: row.action_view,
+    entityId: row.entity_id,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+  }));
+  const pilotFirstScanAt = pilotJobMetrics?.first_started_at || null;
+  const pilotElapsedDays = pilotFirstScanAt ? Math.min(7, Math.max(1, Math.floor((Date.now() - databaseTime(pilotFirstScanAt)) / 86_400_000) + 1)) : 0;
+  const pilotAttempts = pilotJobMetrics?.attempts || 0;
+  const pilotSucceeded = pilotJobMetrics?.succeeded || 0;
+  const pilotReliability = pilotAttempts ? Math.round(pilotSucceeded / pilotAttempts * 100) : 0;
+  const pilotDecisions = pilotWrongType?.decisions || 0;
+  const pilotAccepted = pilotWrongType?.accepted || 0;
+  const pilotAcceptance = pilotDecisions ? Math.round(pilotAccepted / pilotDecisions * 100) : 0;
+  const activeDays = pilotJobMetrics?.active_days || 0;
+  const continuity = pilotElapsedDays ? Math.round(activeDays / pilotElapsedDays * 100) : 0;
+  const activeHorizons = horizonRows.results.filter((row) => row.branches > 0 && row.attempts > 0).length;
+  const pilotCriteria = [
+    { id: "reliability", status: pilotAttempts < 2 ? "waiting" : pilotReliability >= 95 ? "pass" : "watch", value: pilotReliability, target: 95 },
+    { id: "paperQuality", status: pilotDecisions < 3 ? "waiting" : (pilotWrongType?.wrong_type || 0) === 0 ? "pass" : "watch", value: pilotWrongType?.wrong_type || 0, target: 0 },
+    { id: "usefulness", status: pilotDecisions < 3 ? "waiting" : pilotAcceptance >= 60 ? "pass" : "watch", value: pilotAcceptance, target: 60 },
+    { id: "continuity", status: pilotElapsedDays < 3 ? "waiting" : continuity >= 70 ? "pass" : "watch", value: continuity, target: 70 },
+    { id: "horizons", status: activeHorizons < 3 ? "waiting" : "pass", value: activeHorizons, target: 3 },
+    { id: "deduplication", status: pilotSucceeded < 1 ? "waiting" : "pass", value: operationsTotals.duplicatesAvoided, target: 0 },
+  ];
   return {
     monitor: {
       status: run?.status || "idle",
@@ -2253,6 +2595,29 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       })),
       readingMemories,
       dailyBrief,
+      weeklyReview,
+      notifications,
+      unreadNotificationCount: notifications.filter((notification) => !notification.readAt).length,
+      pilotEvaluation: {
+        targetDays: 7,
+        elapsedDays: pilotElapsedDays,
+        firstScanAt: pilotFirstScanAt,
+        complete: pilotElapsedDays >= 7,
+        attempts: pilotAttempts,
+        succeeded: pilotSucceeded,
+        failed: pilotJobMetrics?.failed || 0,
+        activeDays,
+        criteria: pilotCriteria,
+        summary: {
+          reliability: pilotReliability,
+          acceptanceRate: pilotAcceptance,
+          wrongTypeReports: pilotWrongType?.wrong_type || 0,
+          continuity,
+          activeHorizons,
+          duplicatesAvoided: operationsTotals.duplicatesAvoided,
+          tokensPerRecommendation: operationsTotals.recommended ? Math.round(operationsTotals.tokens / operationsTotals.recommended) : 0,
+        },
+      },
       suggestedAuthors,
       papers: selected.map((paper) => toPaper(paper, now)),
       historyPapers,
@@ -2423,6 +2788,21 @@ export async function POST(request: Request) {
         recommended: newCount,
         rejected: rejectedCount,
       }, completedAt);
+      try {
+        await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), reviews, {
+          scanned: scannedCount,
+          newCandidates: newCandidateCount,
+          duplicates: duplicateCount,
+          reviewed: reviews.length,
+          recommended: newCount,
+          rejected: rejectedCount,
+        }, resumable);
+        await maybeGenerateWeeklyReview(database, enrichedSpace, user.userId, completedAt);
+      } catch (supplementalError) {
+        // Catch-up notifications and weekly synthesis enrich a completed scan, but must never
+        // turn successfully discovered and reviewed papers into a failed monitoring run.
+        console.error("Failed to build supplemental research review", supplementalError);
+      }
       await database.batch([
         database.prepare(
           "UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?, discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
