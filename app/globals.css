@@ -1915,6 +1915,25 @@ main { min-width: 0; }
 .v2-monitor-status.ready i { background: #5a7a63; box-shadow: 0 0 0 3px rgba(90,122,99,.14); }
 .v2-monitor-status.scanning i { background: #3d6f94; animation: monitor-pulse 1.2s ease-in-out infinite; }
 .v2-monitor-status.error i { background: #9b5648; }
+.v2-scan-failure {
+  margin: 18px 0 0;
+  padding: 15px 16px;
+  border: 1px solid rgba(155, 86, 72, .24);
+  border-radius: 9px;
+  background: rgba(252, 243, 239, .82);
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 13px;
+  align-items: center;
+}
+.v2-scan-failure > span { width: 27px; height: 27px; border-radius: 50%; background: #9b5648; color: #fff; display: grid; place-items: center; font-weight: 800; }
+.v2-scan-failure strong, .v2-scan-failure p, .v2-scan-failure small { display: block; }
+.v2-scan-failure strong { color: #714337; font-size: 14px; }
+.v2-scan-failure p { margin: 4px 0 0; color: #704f47; font-size: 13px; line-height: 1.55; }
+.v2-scan-failure small { margin-top: 5px; color: #886b63; font-size: 12px; }
+.v2-scan-failure > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.v2-scan-failure button { min-height: 36px; padding: 0 12px; border: 1px solid #875448; border-radius: 6px; background: #875448; color: #fff; font-size: 12px; font-weight: 750; }
+.v2-scan-failure button.secondary { border-color: #c5aaa2; background: rgba(255,255,255,.72); color: #754b41; }
 .v2-scan-progress {
   margin: 18px 0 0;
   padding: 14px 16px;
@@ -1968,6 +1987,9 @@ main { min-width: 0; }
   .v2-monitor-panel { padding: 19px; }
   .v2-monitor-actions { align-items: flex-start; flex-direction: column; }
   .v2-monitor-actions > button { width: 100%; }
+  .v2-scan-failure { grid-template-columns: 28px minmax(0, 1fr); }
+  .v2-scan-failure > div:last-child { grid-column: 1 / -1; justify-content: stretch; }
+  .v2-scan-failure > div:last-child button { flex: 1 1 150px; }
   .v2-monitor-metrics { grid-template-columns: 1fr; }
   .v2-monitor-metrics > div:last-child { grid-column: 1; }
 }

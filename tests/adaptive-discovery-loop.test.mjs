@@ -44,7 +44,8 @@ test("legacy local databases self-heal before route coverage indexes are created
   assert.equal((repository.match(/CREATE INDEX IF NOT EXISTS idx_monitor_coverage_space_route/g) || []).length, 1);
   assert.match(client, /研究空间尚未连接，请刷新页面后再试/);
   assert.match(client, /if \(!response\.ok \|\| !data\.monitor\) throw new Error/);
-  assert.match(client, /扫描未能启动，请稍后重试/);
+  assert.match(client, /扫描已暂停，进度没有丢失/);
+  assert.match(client, /monitorFailureMessage/);
 });
 
 test("monitoring starts immediately and advances through resumable two-pass AI stages", async () => {
@@ -65,9 +66,13 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /runConcurrentDeepReview/);
   assert.match(monitor, /deferLlm/);
   assert.match(monitor, /checkpoint = 'main_complete'/);
+  assert.match(monitor, /inferResumeCheckpoint/);
+  assert.match(monitor, /resumeCheckpoint/);
+  assert.match(monitor, /isNonRetryableDeepSeekError/);
   assert.match(client, /advanceMonitorPipeline/);
   assert.match(client, /action: "enhance"/);
   assert.match(client, /每完成一批就会立即保存/);
+  assert.match(client, /从断点继续/);
   assert.match(worker, /action: "advance"/);
   assert.match(schema, /workQueueJson/);
   assert.match(migration, /work_queue_json/);
@@ -129,6 +134,8 @@ test("the pending model state opens a secure browser API key setup", async () =>
   assert.match(credentials, /Path=\/api/);
   assert.match(credentials, /Max-Age=/);
   assert.match(settingsRoute, /https:\/\/api\.deepseek\.com\/models/);
+  assert.match(settingsRoute, /https:\/\/api\.deepseek\.com\/chat\/completions/);
+  assert.match(settingsRoute, /deepseek_insufficient_balance/);
   assert.match(settingsRoute, /"Set-Cookie"/);
   assert.doesNotMatch(settingsRoute, /apiKey:/);
 });

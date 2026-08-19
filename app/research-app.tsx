@@ -178,6 +178,9 @@ type MonitorState = {
     newCandidateCount?: number;
     duplicateCount?: number;
     rejectedCount?: number;
+    candidateCount?: number;
+    deepCandidateCount?: number;
+    deepCompletedCount?: number;
     attempt?: number;
     triggerSource?: string;
     resumeOfJobId?: string | null;
@@ -969,6 +972,36 @@ function monitorPhaseLabel(status: MonitorStatus | undefined, locale: Locale) {
   return labels[status || "idle"][locale];
 }
 
+function monitorErrorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error || "");
+}
+
+function isModelCredentialFailure(error: unknown) {
+  const message = monitorErrorText(error);
+  return /deepseek_insufficient_balance|deepseek_credential_invalid|insufficient\s+balance|invalid\s+(?:api\s*)?key|authentication|unauthorized/i.test(message);
+}
+
+function monitorFailureMessage(error: unknown, locale: Locale) {
+  const message = monitorErrorText(error);
+  if (/deepseek_insufficient_balance|insufficient\s+balance|余额不足/i.test(message)) {
+    return locale === "zh"
+      ? "DeepSeek 账户余额不足。候选论文和已完成的筛选进度都已保存；充值或更换可用 Key 后可以从断点继续。"
+      : "The DeepSeek account has insufficient balance. Candidates and completed screening progress are saved; top up or use another key to resume.";
+  }
+  if (/deepseek_credential_invalid|invalid\s+(?:api\s*)?key|authentication|unauthorized/i.test(message)) {
+    return locale === "zh"
+      ? "当前 DeepSeek API Key 已失效。更换可用 Key 后可以从已保存的断点继续。"
+      : "The current DeepSeek API key is no longer valid. Replace it to resume from the saved checkpoint.";
+  }
+  if (/budget reached/i.test(message)) {
+    return locale === "zh" ? "今日智能筛选额度已达到上限，当前进度已保存，稍后可从断点继续。" : "Today's AI screening budget has been reached. Progress is saved and can be resumed later.";
+  }
+  if (/timeout|aborted|temporarily unavailable|status\s*5\d\d/i.test(message)) {
+    return locale === "zh" ? "DeepSeek 或论文来源暂时响应超时，当前进度已保存，可以稍后从断点继续。" : "DeepSeek or a paper source timed out. Progress is saved and can be resumed later.";
+  }
+  return locale === "zh" ? "本轮扫描暂停了，当前进度已经保存。可以点击“从断点继续”重试。" : "This scan paused, but its progress is saved. Select “Resume from checkpoint” to try again.";
+}
+
 function pilotCriterionLabel(id: string, locale: Locale) {
   const labels: Record<string, { zh: string; en: string }> = {
     reliability: { zh: "扫描可靠性", en: "Scan reliability" },
@@ -1020,9 +1053,11 @@ async function advanceMonitorPipeline(
       body: JSON.stringify({ spaceId, action: "advance", jobId: current.scanJob?.id }),
     });
     const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
-    if (!response.ok || !data.monitor) throw new Error(data.error || "scan stage unavailable");
-    current = data.monitor;
-    if (!isCancelled()) onUpdate(current);
+    if (data.monitor) {
+      current = data.monitor;
+      if (!isCancelled()) onUpdate(current);
+    }
+    if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan stage unavailable");
   }
   if (!isCancelled() && current.status === "ready" && current.scanJob?.checkpoint === "main_complete") {
     void fetch("/api/monitor", {
@@ -1401,6 +1436,9 @@ export default function ResearchApp({ user }: { user: User }) {
   const scanIsActive = monitoring || isMonitorScanning(monitor?.status);
   const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
   const activeScanJob = monitor?.scanJob && !["ready", "error"].includes(monitor.scanJob.status) ? monitor.scanJob : null;
+  const failedScanJob = monitor?.status === "error" ? monitor.scanJob || null : null;
+  const failedScanError = failedScanJob?.error || monitor?.error || "";
+  const resumeAvailable = Boolean(failedScanJob && (failedScanJob.candidateCount || failedScanJob.reviewedCount || failedScanJob.checkpoint === "retry_pending"));
   const scanProgress = scanIsActive
     ? Math.max(monitorProgressByStatus[effectiveScanStatus], activeScanJob?.progress || 0)
     : monitor?.status === "ready" ? 100 : 0;
@@ -1505,16 +1543,16 @@ export default function ResearchApp({ user }: { user: User }) {
       })
         .then(async (response) => {
           const data = await response.json() as { monitor?: MonitorState; error?: string };
-          if (!response.ok || !data.monitor) throw new Error(data.error || "monitor unavailable");
-          if (!cancelled) setMonitor(data.monitor);
+          if (data.monitor && !cancelled) setMonitor(data.monitor);
+          if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "monitor unavailable");
           if (!data.monitor.throttled && !["ready", "error"].includes(data.monitor.status)) {
             await advanceMonitorPipeline(activeSpace.id, data.monitor, (nextMonitor) => { if (!cancelled) setMonitor(nextMonitor); }, () => cancelled);
           }
         })
-        .catch(() => {
-          if (!cancelled) setMonitor({
+        .catch((error) => {
+          if (!cancelled) setMonitor((current) => current?.status === "error" ? current : {
             status: "error", lastRunAt: null, nextRunAt: null, newCount: 0, scannedCount: 0,
-            knownCount: 0, error: "unavailable", cadenceHours: 24, source: "Crossref · priority journals · arXiv · OpenAlex · Semantic Scholar · citation frontier",
+            knownCount: 0, error: monitorErrorText(error) || "unavailable", cadenceHours: 24, source: "Crossref · priority journals · arXiv · OpenAlex · Semantic Scholar · citation frontier",
             horizons: ["days", "months", "years"], papers: [],
           });
         })
@@ -1867,12 +1905,18 @@ export default function ResearchApp({ user }: { user: User }) {
         body: JSON.stringify({ spaceId: activeSpace.id, force: true, trigger: "manual", action: "start" }),
       });
       const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
-      if (!response.ok || !data.monitor) throw new Error(data.error || "scan unavailable");
-      setMonitor(data.monitor);
+      if (data.monitor) setMonitor(data.monitor);
+      if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan unavailable");
       if (data.monitor.throttled) setToast(t.manualCooling);
       else if (!["ready", "error"].includes(data.monitor.status)) await advanceMonitorPipeline(activeSpace.id, data.monitor, setMonitor);
-    } catch {
-      setToast(locale === "zh" ? "扫描未能启动，请稍后重试" : "The scan could not start. Please try again shortly.");
+    } catch (error) {
+      const message = monitorFailureMessage(error, locale);
+      setToast(message);
+      if (isModelCredentialFailure(error)) {
+        setModelConfigured(false);
+        setModelSettingsError(message);
+        setModelSettingsOpen(true);
+      }
     } finally {
       stopPolling();
       setMonitoring(false);
@@ -2429,7 +2473,7 @@ export default function ResearchApp({ user }: { user: User }) {
     setCheckingModel(true);
     setModelSettingsError("");
     try {
-      const response = await fetch("/api/model-settings", { cache: "no-store" });
+      const response = await fetch("/api/model-settings?verify=1", { cache: "no-store" });
       const data = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
       if (!response.ok) throw new Error(data.error || "model status unavailable");
       setModelConfigured(Boolean(data.configured));
@@ -2439,7 +2483,8 @@ export default function ResearchApp({ user }: { user: User }) {
         ? (locale === "zh" ? "DeepSeek Pro 已连接" : "DeepSeek Pro is connected")
         : (locale === "zh" ? "当前浏览器还没有可用的 API Key" : "This browser does not have a usable API key yet"));
     } catch (error) {
-      const message = error instanceof Error ? error.message : (locale === "zh" ? "暂时无法检测模型状态" : "Could not check the model status");
+      const message = monitorFailureMessage(error, locale);
+      if (isModelCredentialFailure(error)) setModelConfigured(false);
       setModelSettingsError(message);
     } finally {
       setCheckingModel(false);
@@ -2466,7 +2511,7 @@ export default function ResearchApp({ user }: { user: User }) {
       setShowModelApiKey(false);
       setToast(locale === "zh" ? "API Key 已验证并保存到当前浏览器" : "The API key was verified and saved in this browser");
     } catch (error) {
-      setModelSettingsError(error instanceof Error ? error.message : (locale === "zh" ? "API Key 无法连接 DeepSeek" : "The API key could not connect to DeepSeek"));
+      setModelSettingsError(monitorFailureMessage(error, locale));
     } finally {
       setCheckingModel(false);
     }
@@ -2579,16 +2624,32 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
-                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : t.scanNow}</button>
+                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : t.scanNow}</button>
                 </div>
               </div>
+              {monitor?.status === "error" && (
+                <div className={`v2-scan-failure ${isModelCredentialFailure(failedScanError) ? "credential" : ""}`} role="alert">
+                  <span>!</span>
+                  <div>
+                    <strong>{locale === "zh" ? "扫描已暂停，进度没有丢失" : "Scan paused; progress is safe"}</strong>
+                    <p>{monitorFailureMessage(failedScanError, locale)}</p>
+                    {failedScanJob && <small>{locale === "zh"
+                      ? `${failedScanJob.discoveredCount || 0} 条候选已找到 · ${failedScanJob.reviewedCount || 0} / ${failedScanJob.candidateCount || 0} 篇已筛选保存`
+                      : `${failedScanJob.discoveredCount || 0} candidates found · ${failedScanJob.reviewedCount || 0} / ${failedScanJob.candidateCount || 0} screened and saved`}</small>}
+                  </div>
+                  <div>
+                    {isModelCredentialFailure(failedScanError) && <button className="secondary" type="button" onClick={() => { setModelSettingsError(monitorFailureMessage(failedScanError, locale)); setModelSettingsOpen(true); }}>{locale === "zh" ? "检查 Key 与余额" : "Check key & balance"}</button>}
+                    <button type="button" onClick={runManualMonitor}>{resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume from checkpoint") : (locale === "zh" ? "重新扫描" : "Retry scan")}</button>
+                  </div>
+                </div>
+              )}
               {scanIsActive && (
                 <div className="v2-scan-progress" role="status" aria-live="polite" aria-label={`${scanPhase} ${scanProgress}%`}>
                   <div><span>{scanPhase}</span><strong>{scanProgress}%</strong></div>
                   <i><b style={{ width: `${scanProgress}%` }} /></i>
                   <small>
                     {activeScanJob?.discoveredCount || monitor?.scannedCount || 0} {locale === "zh" ? "条候选" : "candidates"}
-                    {["screening", "deep_reviewing", "reviewing"].includes(effectiveScanStatus) && <> · {activeScanJob?.reviewedCount || 0} {locale === "zh" ? "篇已筛选" : "screened"}</>}
+                    {["screening", "deep_reviewing", "reviewing"].includes(effectiveScanStatus) && <> · {activeScanJob?.reviewedCount || 0}{activeScanJob?.candidateCount ? ` / ${activeScanJob.candidateCount}` : ""} {locale === "zh" ? "篇已筛选保存" : "screened and saved"}</>}
                     {effectiveScanStatus === "deep_reviewing" && <> · {activeScanJob?.recommendedCount || 0} {locale === "zh" ? "篇已可阅读" : "ready to read"}</>}
                     {healthyCoverageCount > 0 && <> · {healthyCoverageCount} {locale === "zh" ? "类来源正常" : "source groups healthy"}</>}
                     {scanElapsedSeconds > 0 && <> · {scanElapsedSeconds < 60 ? `${scanElapsedSeconds}s` : `${Math.floor(scanElapsedSeconds / 60)}m ${scanElapsedSeconds % 60}s`}</>}

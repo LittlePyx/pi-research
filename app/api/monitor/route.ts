@@ -105,6 +105,7 @@ type ScanJobRow = {
   started_at: string;
   completed_at: string | null;
   error: string | null;
+  work_queue_json?: string;
 };
 type DailyBriefRow = {
   brief_date: string;
@@ -321,6 +322,7 @@ type ScanWorkQueue = {
   newCandidateCount: number;
   screenFailureCount: number;
   deepFailureCount: number;
+  resumeCheckpoint?: string;
 };
 type StagedJobRow = ScanJobRow & { work_queue_json: string };
 type MapTrackContext = { id: string; title_zh: string; title_en: string; summary_en: string; search_queries: string };
@@ -349,6 +351,8 @@ const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 200;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 20;
 const MONITOR_MODEL = "deepseek-v4-pro";
 const RECOMMENDATION_THRESHOLD = 75;
+const DEEPSEEK_BALANCE_ERROR = "deepseek_insufficient_balance";
+const DEEPSEEK_CREDENTIAL_ERROR = "deepseek_credential_invalid";
 const PAPER_TYPES = new Set(["journal-article", "proceedings-article", "posted-content"]);
 const GENERIC_TERMS = new Set([
   "about", "after", "against", "analysis", "and", "applied", "are", "based", "between", "current", "for", "from", "into", "its", "modern",
@@ -1261,6 +1265,21 @@ function parseJsonObject(content: string) {
   }
 }
 
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error || "");
+}
+
+function normalizedMonitorError(error: unknown) {
+  const message = errorText(error).trim();
+  if (/insufficient\s+balance|balance\s+insufficient|余额不足/i.test(message)) return DEEPSEEK_BALANCE_ERROR;
+  if (/invalid\s+(?:api\s*)?key|authentication|unauthorized|status\s*401|returned\s*401/i.test(message)) return DEEPSEEK_CREDENTIAL_ERROR;
+  return message || "Monitoring stage failed";
+}
+
+function isNonRetryableDeepSeekError(error: unknown) {
+  return [DEEPSEEK_BALANCE_ERROR, DEEPSEEK_CREDENTIAL_ERROR].includes(normalizedMonitorError(error));
+}
+
 function normalizePlannedQueries(value: unknown, limit: number) {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(value.map((item) => cleanText(String(item))).filter((item) => item.length >= 4 && item.length <= 220)))
@@ -1552,6 +1571,7 @@ async function quickScreenBatch(
       return screens;
     } catch (error) {
       lastError = error;
+      if (isNonRetryableDeepSeekError(error)) throw error;
       if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 700));
     }
   }
@@ -1579,6 +1599,8 @@ async function quickScreenCandidates(
   const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey)));
   const screens = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
   const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+  const fatalError = errors.find((error) => isNonRetryableDeepSeekError(error));
+  if (fatalError && !screens.length) throw fatalError;
   return { screens, errors };
 }
 
@@ -1846,6 +1868,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         parsed = parseReviewPayload(content);
       } catch (error) {
         lastError = error;
+        if (isNonRetryableDeepSeekError(error)) throw error;
         if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800));
       }
     }
@@ -2748,7 +2771,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     database.prepare(
       `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
        duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-       resume_of_job_id, checkpoint, started_at, completed_at, error
+       resume_of_job_id, checkpoint, started_at, completed_at, error, work_queue_json
        FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
     ).bind(space.id).first<ScanJobRow>(),
     database.prepare(
@@ -3059,6 +3082,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     { id: "horizons", status: activeHorizons < 3 ? "waiting" : "pass", value: activeHorizons, target: 3 },
     { id: "deduplication", status: pilotSucceeded < 1 ? "waiting" : "pass", value: operationsTotals.duplicatesAvoided, target: 0 },
   ];
+  const scanWork = job ? parseScanWorkQueue(job.work_queue_json) : null;
   return {
     monitor: {
       status: run?.status || "idle",
@@ -3092,6 +3116,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         reviewedCount: job.reviewed_count,
         recommendedCount: job.recommended_count,
         rejectedCount: job.rejected_count,
+        candidateCount: scanWork?.candidateIds.length || 0,
+        deepCandidateCount: scanWork?.deepIds.length || 0,
+        deepCompletedCount: scanWork?.deepCompletedIds.length || 0,
         attempt: job.attempt,
         triggerSource: job.trigger_source,
         resumeOfJobId: job.resume_of_job_id,
@@ -3308,7 +3335,7 @@ export async function PATCH(request: Request) {
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
-    screenFailureCount: 0, deepFailureCount: 0,
+    screenFailureCount: 0, deepFailureCount: 0, resumeCheckpoint: "",
   };
   if (!value) return fallback;
   try {
@@ -3322,10 +3349,47 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       newCandidateCount: Math.max(0, Number(parsed.newCandidateCount) || 0),
       screenFailureCount: Math.max(0, Number(parsed.screenFailureCount) || 0),
       deepFailureCount: Math.max(0, Number(parsed.deepFailureCount) || 0),
+      resumeCheckpoint: typeof parsed.resumeCheckpoint === "string" ? parsed.resumeCheckpoint : "",
     };
   } catch {
     return fallback;
   }
+}
+
+const RESUMABLE_SCAN_CHECKPOINTS = new Set([
+  "planning", "discovering_days", "discovering_months", "discovering_years", "deduplicating",
+  "screening", "enriching_abstracts", "deep_reviewing",
+]);
+
+function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_source">, work: ScanWorkQueue) {
+  if (work.resumeCheckpoint && RESUMABLE_SCAN_CHECKPOINTS.has(work.resumeCheckpoint)) return work.resumeCheckpoint;
+  if (RESUMABLE_SCAN_CHECKPOINTS.has(job.checkpoint)) return job.checkpoint;
+  if (work.deepIds.length) {
+    return work.deepCompletedIds.length ? "deep_reviewing" : "enriching_abstracts";
+  }
+  if (work.screens.length || /筛选|screen/i.test(job.current_source)) return "screening";
+  if (work.candidateIds.length) return work.candidateIds.length <= Object.values(HORIZON_REVIEW_LIMITS).reduce((sum, value) => sum + value, 0)
+    ? "screening" : "deduplicating";
+  return "planning";
+}
+
+function statusForCheckpoint(checkpoint: string) {
+  if (checkpoint === "screening") return "screening";
+  if (["enriching_abstracts", "deep_reviewing"].includes(checkpoint)) return "deep_reviewing";
+  if (checkpoint === "deduplicating") return "deduplicating";
+  if (checkpoint.startsWith("discovering_")) return checkpoint;
+  return "scanning";
+}
+
+function monitorProgressByCheckpoint(checkpoint: string) {
+  if (checkpoint === "screening") return 56;
+  if (checkpoint === "enriching_abstracts") return 76;
+  if (checkpoint === "deep_reviewing") return 80;
+  if (checkpoint === "deduplicating") return 50;
+  if (checkpoint === "discovering_years") return 36;
+  if (checkpoint === "discovering_months") return 22;
+  if (checkpoint === "discovering_days") return 10;
+  return 3;
 }
 
 async function saveScanWorkQueue(database: D1Database, jobId: string, work: ScanWorkQueue) {
@@ -3395,10 +3459,11 @@ async function runConcurrentDeepReview(
 ) {
   const groups = [candidates.slice(0, DEEP_REVIEW_BATCH_SIZE), candidates.slice(DEEP_REVIEW_BATCH_SIZE, DEEP_REVIEW_BATCH_SIZE * 2)].filter((group) => group.length);
   const settled = await Promise.allSettled(groups.map((group) => reviewCandidates(database, space, userId, priorityVenues, group, jobId, lockToken, apiKey)));
-  return {
-    reviews: settled.flatMap((result) => result.status === "fulfilled" ? result.value : []),
-    errors: settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []),
-  };
+  const reviews = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+  const fatalError = errors.find((error) => isNonRetryableDeepSeekError(error));
+  if (fatalError && !reviews.length) throw fatalError;
+  return { reviews, errors };
 }
 
 async function runLegacyMonitor(request: Request) {
@@ -3583,30 +3648,60 @@ export async function POST(request: Request) {
         }
         return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }), { status: 202 });
       }
+      const previousJob = await database.prepare(
+        `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
+         duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
+         resume_of_job_id, checkpoint, work_queue_json, started_at, completed_at, error
+         FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
+      ).bind(space.id).first<StagedJobRow>();
+      if (trigger !== "manual" && previousJob?.status === "error" && isNonRetryableDeepSeekError(previousJob.error)) {
+        return Response.json(await readState(database, space, { cached: true, credentialActionRequired: true }));
+      }
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
       const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
-      if (previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
+      if (previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
         return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
       }
       const lockToken = crypto.randomUUID();
       const jobId = crypto.randomUUID();
-      const previousJob = await database.prepare(
-        "SELECT id, status, attempt FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1",
-      ).bind(space.id).first<{ id: string; status: string; attempt: number }>();
-      const resumable = Boolean(previousJob && previousJob.status !== "ready");
+      const previousWork = parseScanWorkQueue(previousJob?.work_queue_json);
+      const resumeCheckpoint = previousJob?.status === "error" ? inferResumeCheckpoint(previousJob, previousWork) : "planning";
+      const resumable = Boolean(previousJob?.status === "error" && resumeCheckpoint !== "planning");
+      if (resumable) {
+        previousWork.resumeCheckpoint = "";
+        previousWork.screenFailureCount = 0;
+        previousWork.deepFailureCount = 0;
+      }
+      const initialCheckpoint = resumable ? resumeCheckpoint : "planning";
+      const initialStatus = statusForCheckpoint(initialCheckpoint);
+      const initialProgress = resumable ? Math.max(previousJob?.progress || 3, monitorProgressByCheckpoint(initialCheckpoint)) : 3;
+      const initialSource = resumable
+        ? initialCheckpoint === "screening"
+          ? `从已保存进度继续 · ${previousWork.screens.length} / ${previousWork.candidateIds.length} 篇已筛选`
+          : initialCheckpoint === "deep_reviewing" || initialCheckpoint === "enriching_abstracts"
+            ? `从已保存进度继续 · ${previousWork.deepCompletedIds.length} / ${previousWork.deepIds.length} 篇已深度解读`
+            : "从已保存检查点继续本轮扫描"
+        : "Pi 正在制定本轮检索计划";
       await database.prepare(
         "INSERT OR IGNORE INTO monitor_runs (id, space_id, status, last_trigger, updated_at) VALUES (?, ?, 'idle', ?, CURRENT_TIMESTAMP)",
       ).bind(crypto.randomUUID(), space.id, trigger).run();
       await database.prepare(
-        `UPDATE monitor_runs SET status = 'scanning', lock_token = ?, lock_expires_at = ?, last_trigger = ?, error = NULL,
-         new_count = 0, scanned_count = 0, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
-      ).bind(lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), trigger, space.id).run();
+        `UPDATE monitor_runs SET status = ?, lock_token = ?, lock_expires_at = ?, last_trigger = ?, error = NULL,
+         new_count = ?, scanned_count = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
+      ).bind(initialStatus, lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), trigger,
+        resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.discovered_count || 0 : 0, space.id).run();
       await database.prepare(
         `INSERT INTO monitor_scan_jobs
-         (id, space_id, status, current_source, progress, discovered_count, reviewed_count, recommended_count,
-          attempt, trigger_source, resume_of_job_id, checkpoint, work_queue_json)
-         VALUES (?, ?, 'scanning', 'Pi 正在制定本轮检索计划', 3, 0, 0, 0, ?, ?, ?, 'planning', '{}')`,
-      ).bind(jobId, space.id, resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null).run();
+         (id, space_id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
+          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
+          resume_of_job_id, checkpoint, work_queue_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(jobId, space.id, initialStatus, resumable ? previousJob?.current_horizon || "" : "", initialSource, initialProgress,
+        resumable ? previousJob?.discovered_count || 0 : 0, resumable ? previousJob?.new_candidate_count || 0 : 0,
+        resumable ? previousJob?.duplicate_count || 0 : 0, resumable ? previousJob?.reviewed_count || 0 : 0,
+        resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.rejected_count || 0 : 0,
+        resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null,
+        initialCheckpoint, resumable ? JSON.stringify(previousWork) : "{}").run();
       return Response.json(await readState(database, space, { accepted: true }), { status: 202 });
     }
 
@@ -3756,6 +3851,11 @@ export async function POST(request: Request) {
         if (remainingIds.length) {
           const ids = remainingIds.slice(0, QUICK_SCREEN_BATCH_SIZE * QUICK_SCREEN_CONCURRENCY);
           const candidates = await pendingCandidateQueue(database, space.id, ids);
+          const batchStart = work.screens.length + 1;
+          const batchEnd = Math.min(work.screens.length + ids.length, work.candidateIds.length);
+          await database.prepare(
+            "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          ).bind(`DeepSeek Pro 正在筛选第 ${batchStart}–${batchEnd} / ${work.candidateIds.length} 篇；本批完成后自动保存`, job.id).run();
           const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey);
           await persistQuickScreens(database, space.id, result.screens);
           const byId = new Map(work.screens.map((screen) => [screen.canonicalId, screen]));
@@ -3763,6 +3863,8 @@ export async function POST(request: Request) {
           work.screens = Array.from(byId.values());
           work.screenFailureCount = result.errors.length && !result.screens.length ? work.screenFailureCount + 1 : 0;
           await saveScanWorkQueue(database, job.id, work);
+          const fatalError = result.errors.find((error) => isNonRetryableDeepSeekError(error));
+          if (fatalError) throw fatalError;
           if (work.screenFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Quick screening failed twice");
         }
         const screenRemaining = work.candidateIds.filter((id) => !new Set(work.screens.map((screen) => screen.canonicalId)).has(id));
@@ -3791,10 +3893,17 @@ export async function POST(request: Request) {
         if (remainingIds.length) {
           const ids = remainingIds.slice(0, DEEP_REVIEW_BATCH_SIZE * 2);
           const candidates = await pendingCandidateQueue(database, space.id, ids);
+          const batchStart = work.deepCompletedIds.length + 1;
+          const batchEnd = Math.min(work.deepCompletedIds.length + ids.length, work.deepIds.length);
+          await database.prepare(
+            "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          ).bind(`DeepSeek Pro 正在深度解读第 ${batchStart}–${batchEnd} / ${work.deepIds.length} 篇；本批完成后自动保存`, job.id).run();
           const result = await runConcurrentDeepReview(database, enrichedSpace, user.userId, preference.priorityVenues, candidates, job.id, lockToken, apiKey);
           work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...result.reviews.map((review) => review.canonicalId)]));
           work.deepFailureCount = result.errors.length && !result.reviews.length ? work.deepFailureCount + 1 : 0;
           await saveScanWorkQueue(database, job.id, work);
+          const fatalError = result.errors.find((error) => isNonRetryableDeepSeekError(error));
+          if (fatalError) throw fatalError;
           if (work.deepFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Deep review failed twice");
         }
         const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
@@ -3811,15 +3920,16 @@ export async function POST(request: Request) {
       }
       return Response.json(await readState(database, space, { advanced: true }), { status: 202 });
     } catch (error) {
-      const message = error instanceof Error ? error.message.slice(0, 300) : "Monitoring stage failed";
+      const message = normalizedMonitorError(error).slice(0, 300);
       const failedAt = new Date();
+      work.resumeCheckpoint = job.checkpoint;
       await database.batch([
         database.prepare(
           "UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
         ).bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id),
         database.prepare(
-          "UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        ).bind(message, failedAt.toISOString(), job.id),
+          "UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', current_source = '扫描已暂停，已保存当前进度', work_queue_json = ?, error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(JSON.stringify(work), message, failedAt.toISOString(), job.id),
       ]);
       return Response.json(await readState(database, space), { status: 502 });
     }
