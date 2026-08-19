@@ -143,7 +143,9 @@ export async function POST(request: Request) {
   if (body.value) {
     await DB.prepare("UPDATE paper_delivery_state SET snoozed_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
       .bind(spaceId, paperId).run();
-    if (kind === "save" || kind === "relevant") await addResearchTrackSignal(DB, spaceId, paperId, kind === "relevant" ? 5 : 3);
+    if (kind === "save" || kind === "relevant" || reasonCode === "duplicate_known") {
+      await addResearchTrackSignal(DB, spaceId, paperId, kind === "relevant" ? 5 : kind === "save" ? 3 : 2);
+    }
   }
 
   if ((kind === "relevant" || kind === "not_relevant") && !body.value) {

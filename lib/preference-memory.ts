@@ -37,7 +37,7 @@ export const FEEDBACK_REASONS = {
   topic_drift: { kind: "exclusion", zh: "偏离我的研究范围", en: "Outside my scope", polarity: "negative" },
   too_shallow: { kind: "exclusion", zh: "内容太浅或增量太小", en: "Too shallow or incremental", polarity: "negative" },
   weak_evidence: { kind: "exclusion", zh: "证据或方法不够可靠", en: "Weak evidence or method", polarity: "negative" },
-  duplicate_known: { kind: "exclusion", zh: "与已掌握内容重复", en: "Duplicates known work", polarity: "negative" },
+  duplicate_known: { kind: "mastery", zh: "内容有价值，但我已经掌握", en: "Valuable, but already mastered", polarity: "negative" },
   wrong_type: { kind: "exclusion", zh: "不是我需要的论文类型", en: "Wrong kind of paper", polarity: "negative" },
 } as const;
 
@@ -107,15 +107,16 @@ export async function recordPaperFeedbackSignal(
 ) {
   const reason = FEEDBACK_REASONS[reasonCode];
   const positive = reason.polarity === "positive";
+  const mastered = reasonCode === "duplicate_known";
   await upsertPreferenceSignal(database, {
     spaceId,
     layer: "explicit",
     kind: reason.kind,
-    labelZh: `${positive ? "偏好" : "排除"}：${paperTitle}`,
-    labelEn: `${positive ? "Prefer" : "Exclude"}: ${paperTitle}`,
+    labelZh: `${positive ? "偏好" : mastered ? "已掌握" : "排除"}：${paperTitle}`,
+    labelEn: `${positive ? "Prefer" : mastered ? "Mastered" : "Exclude"}: ${paperTitle}`,
     evidence: `${reason.zh} / ${reason.en}${note.trim() ? ` · ${note.trim()}` : ""}`,
     confidence: 96,
-    weight: positive ? 92 : 100,
+    weight: positive ? 92 : mastered ? 76 : 100,
     sourceType: "paper_feedback",
     sourceId: `${paperId}:${reasonCode}`,
     expiresAt: new Date(Date.now() + 730 * 86_400_000).toISOString(),

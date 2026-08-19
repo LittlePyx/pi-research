@@ -1283,6 +1283,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const [learningAction, setLearningAction] = useState<string | null>(null);
   const [modelConfigured, setModelConfigured] = useState(false);
   const [connectedModel, setConnectedModel] = useState<string | null>(null);
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
+  const [checkingModel, setCheckingModel] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
@@ -2354,6 +2356,25 @@ export default function ResearchApp({ user }: { user: User }) {
   const currentBuildTrack = researchMap.tracks.find((track) => track.id === mapBuildTrackId) || null;
   const currentIntelligenceTrack = researchMap.tracks.find((track) => track.id === mapIntelligenceTrackId) || null;
 
+  const refreshModelStatus = async () => {
+    if (checkingModel) return;
+    setCheckingModel(true);
+    try {
+      const response = await fetch("/api/spaces", { cache: "no-store" });
+      const data = await response.json() as { modelConfigured?: boolean; model?: string | null; error?: string };
+      if (!response.ok) throw new Error(data.error || "model status unavailable");
+      setModelConfigured(Boolean(data.modelConfigured));
+      setConnectedModel(data.model || null);
+      setToast(data.modelConfigured
+        ? (locale === "zh" ? "DeepSeek Pro 已连接" : "DeepSeek Pro is connected")
+        : (locale === "zh" ? "仍未检测到服务端密钥" : "No server-side key was detected"));
+    } catch {
+      setToast(locale === "zh" ? "暂时无法检测模型状态" : "Could not check the model status");
+    } finally {
+      setCheckingModel(false);
+    }
+  };
+
   return (
     <div className="v2-app">
       <aside className={"v2-sidebar " + (mobileNav ? "open" : "")}>
@@ -2381,7 +2402,7 @@ export default function ResearchApp({ user }: { user: User }) {
         </nav>
 
         <div className="v2-sidebar-bottom">
-          <div className={"v2-openai-state " + (modelConfigured ? "live" : "pending")}><i /><span><strong>{modelConfigured ? t.connected : t.setupRequired}</strong><small>{modelConfigured ? modelDisplayName(connectedModel) : "Safe preview mode"}</small></span></div>
+          <button className={"v2-openai-state " + (modelConfigured ? "live" : "pending")} type="button" onClick={() => setModelSettingsOpen(true)} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{modelConfigured ? t.connected : t.setupRequired}</strong><small>{modelConfigured ? modelDisplayName(connectedModel) : (locale === "zh" ? "打开配置" : "Open setup")}</small></span><b>›</b></button>
           <button className="v2-account" type="button" onClick={() => navigate("memory")}><span>◎</span><span><strong>Pi Workspace</strong><small>{t.workspaceLabel}</small></span><b>•••</b></button>
         </div>
       </aside>
@@ -2755,6 +2776,22 @@ export default function ResearchApp({ user }: { user: User }) {
         </div>
       )}
 
+      {modelSettingsOpen && (
+        <div className="v2-modal" role="dialog" aria-modal="true" aria-label={locale === "zh" ? "AI 模型设置" : "AI model settings"}>
+          <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setModelSettingsOpen(false)} />
+          <div className="v2-model-settings">
+            <div className="v2-modal-head"><div><p className="v2-kicker">π {locale === "zh" ? "服务端模型" : "SERVER-SIDE MODEL"}</p><h2>{locale === "zh" ? "AI 模型设置" : "AI model settings"}</h2><p>{locale === "zh" ? "密钥只保存在服务端，不写入浏览器、本地存储或研究数据库。" : "The key stays server-side and is never written to the browser, local storage, or research database."}</p></div><button type="button" onClick={() => setModelSettingsOpen(false)}>×</button></div>
+            <section className={"v2-model-status-card " + (modelConfigured ? "live" : "pending")}><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConfigured ? (locale === "zh" ? "已连接" : "Connected") : (locale === "zh" ? "等待服务端配置" : "Waiting for server setup")}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-v4-pro")}</p></div></section>
+            {!modelConfigured && <div className="v2-model-setup-steps">
+              <article><b>1</b><div><strong>{locale === "zh" ? "本地开发" : "Local development"}</strong><p>{locale === "zh" ? "在项目根目录创建仅本机可见的 .dev.vars，并设置 DEEPSEEK_API_KEY。不要提交到 Git。" : "Create a local-only .dev.vars in the project root and set DEEPSEEK_API_KEY. Never commit it to Git."}</p><code>.dev.vars · DEEPSEEK_API_KEY</code></div></article>
+              <article><b>2</b><div><strong>{locale === "zh" ? "托管版本" : "Hosted version"}</strong><p>{locale === "zh" ? "在 Sites 项目的 Secret 设置中添加同名密钥；数据库里不保存明文 Key。" : "Add the same key in the Sites project Secret settings; the plaintext key is not stored in the database."}</p><code>Sites Secret · DEEPSEEK_API_KEY</code></div></article>
+              <article><b>3</b><div><strong>{locale === "zh" ? "让配置生效" : "Apply the setting"}</strong><p>{locale === "zh" ? "本地修改后重启开发服务；托管 Secret 更新后重新发布，再回到这里检测。" : "Restart the local dev server, or republish after updating the hosted Secret, then check again here."}</p></div></article>
+            </div>}
+            <footer className="v2-model-settings-actions"><small>{locale === "zh" ? "Pi 不提供会把密钥留在浏览器里的输入框。" : "Pi deliberately avoids a key input that would leave the secret in the browser."}</small><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{checkingModel ? (locale === "zh" ? "检测中…" : "Checking…") : (locale === "zh" ? "重新检测连接" : "Check connection")}</button></footer>
+          </div>
+        </div>
+      )}
+
       {feedbackPrompt && (
         <div className="v2-modal" role="dialog" aria-modal="true" aria-label={locale === "zh" ? "反馈原因" : "Feedback reason"}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setFeedbackPrompt(null)} />
@@ -2763,7 +2800,7 @@ export default function ResearchApp({ user }: { user: User }) {
             <div className="v2-feedback-options">{(feedbackPrompt.kind === "relevant" ? [
               ["topic_fit", "主题正好相关", "Strong topic fit"], ["method_fit", "方法值得借鉴", "Useful method"], ["solves_question", "回应了我的问题", "Addresses my question"], ["foundational", "是重要基础工作", "Important foundation"], ["surprising", "带来新方向或反直觉结果", "Surprising new direction"],
             ] : [
-              ["topic_drift", "偏离我的研究范围", "Outside my scope"], ["too_shallow", "内容太浅或增量太小", "Too shallow or incremental"], ["weak_evidence", "证据或方法不够可靠", "Weak evidence or method"], ["duplicate_known", "与已掌握内容重复", "Duplicates known work"], ["wrong_type", "不是我需要的论文类型", "Wrong kind of paper"],
+              ["topic_drift", "偏离我的研究范围", "Outside my scope"], ["too_shallow", "内容太浅或增量太小", "Too shallow or incremental"], ["weak_evidence", "证据或方法不够可靠", "Weak evidence or method"], ["duplicate_known", "内容很好，但我已掌握", "Valuable, but already mastered"], ["wrong_type", "不是我需要的论文类型", "Wrong kind of paper"],
             ]).map(([code, zh, en]) => <button type="button" key={code} onClick={() => chooseFeedbackReason(code)}><span>{feedbackPrompt.kind === "relevant" ? "＋" : "—"}</span><strong>{locale === "zh" ? zh : en}</strong><b>→</b></button>)}</div>
             <label><span>{locale === "zh" ? "可选：补充一句具体原因" : "Optional: add a specific note"}</span><textarea value={feedbackNote} maxLength={500} onChange={(event) => setFeedbackNote(event.target.value)} placeholder={locale === "zh" ? "例如：这个证明策略正好可用于我正在处理的边界情形。" : "For example: this proof strategy fits the boundary case I am working on."} /></label>
             <small>{locale === "zh" ? "选择后会写入当前研究空间；明确反馈不会与其他研究方向混用。" : "Your choice is stored only in this research space."}</small>

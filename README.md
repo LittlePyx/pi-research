@@ -25,7 +25,7 @@ npm install
 npm run dev
 ```
 
-The application needs a D1 binding named `DB`. AI screening requires `DEEPSEEK_API_KEY`; keep it in a local ignored environment file or the hosted secret store and never commit it.
+The application needs a D1 binding named `DB`. AI screening requires `DEEPSEEK_API_KEY`; put it in an ignored `.dev.vars` file for local development or in the hosted Sites secret store, then restart or republish. Never commit the key. The in-product model status opens these instructions and can re-check the server connection, but deliberately never stores a key in the browser.
 
 ## Validation
 

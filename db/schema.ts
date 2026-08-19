@@ -241,6 +241,9 @@ export const monitorDiscoveryCoverage = sqliteTable(
     channel: text("channel").notNull(),
     queryKey: text("query_key").notNull(),
     queryText: text("query_text").notNull().default(""),
+    routeId: text("route_id"),
+    explorationRole: text("exploration_role").notNull().default("core"),
+    adaptiveScore: integer("adaptive_score").notNull().default(55),
     nextCursor: integer("next_cursor").notNull().default(0),
     attemptCount: integer("attempt_count").notNull().default(0),
     candidateCount: integer("candidate_count").notNull().default(0),
@@ -257,6 +260,7 @@ export const monitorDiscoveryCoverage = sqliteTable(
   (table) => [
     uniqueIndex("idx_monitor_coverage_scope").on(table.spaceId, table.horizon, table.sourceKey, table.queryKey),
     index("idx_monitor_coverage_space_scanned").on(table.spaceId, table.lastScannedAt),
+    index("idx_monitor_coverage_space_route").on(table.spaceId, table.routeId, table.lastScannedAt),
   ],
 );
 

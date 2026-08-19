@@ -218,6 +218,7 @@ type PaperRow = {
   reading_focus_en: string;
   research_questions_zh: string;
   research_questions_en: string;
+  track_id: string;
 };
 type Candidate = {
   canonicalId: string;
@@ -254,6 +255,22 @@ type DiscoveryQuery = {
   venue?: string;
   issn?: string;
   author?: string;
+  routeId?: string;
+  explorationRole?: "core" | "adjacent";
+  adaptiveScore?: number;
+};
+type DiscoveryBranchScore = {
+  sourceKey: string;
+  queryKey: string;
+  papers: number;
+  accepted: number;
+  dismissed: number;
+  known: number;
+  wrongType: number;
+  attempts: number;
+  candidates: number;
+  newCandidates: number;
+  score: number;
 };
 type PaperReview = {
   canonicalId: string;
@@ -566,6 +583,7 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
     { key: "profile-cluster", sourceKey: "crossref:profile", query: `${space.description} ${profileWindow.join(" ")}`, sort: "relevance", rotating: true, channel: "topic" },
   ];
   for (const [index, query] of (queryPlan?.queries[horizon.key] || []).entries()) {
+    const isAdjacentBridge = queryPlan?.explorationMode !== "focused" && index === (queryPlan?.queries[horizon.key]?.length || 0) - 1;
     queries.push({
       key: `ai-plan-${index + 1}`,
       sourceKey: `crossref:ai-plan:${index + 1}`,
@@ -573,6 +591,7 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
       sort: horizon.key === "days" ? "published" : horizon.sort,
       rotating: true,
       channel: "topic",
+      explorationRole: isAdjacentBridge ? "adjacent" : "core",
     });
   }
   if (memoryWindow.length) {
@@ -611,14 +630,141 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
       channel: "topic",
     });
   }
-  return queries.map((item) => ({ ...item, query: cleanText(item.query).slice(0, 480) })).filter((item) => item.query.length >= 4);
+  return queries.map((item) => ({ ...item, explorationRole: item.explorationRole || "core", query: cleanText(item.query).slice(0, 480) })).filter((item) => item.query.length >= 4);
 }
 
 async function discoveryQueryKey(query: DiscoveryQuery) {
-  const identity = [query.key, query.sourceKey, query.channel, query.query.toLocaleLowerCase(), query.venue?.toLocaleLowerCase() || "", query.issn || "", query.sort].join("|");
+  const identity = [query.key, query.sourceKey, query.channel, query.routeId || "", query.query.toLocaleLowerCase(), query.venue?.toLocaleLowerCase() || "", query.issn || "", query.sort].join("|");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
   const suffix = Array.from(new Uint8Array(digest)).slice(0, 10).map((value) => value.toString(16).padStart(2, "0")).join("");
   return `${query.key}:${suffix}`;
+}
+
+function adaptiveBranchScore(input: Omit<DiscoveryBranchScore, "score">) {
+  const decisions = input.accepted + input.dismissed;
+  const acceptanceRate = decisions ? input.accepted / decisions : 0;
+  const dismissalRate = decisions ? input.dismissed / decisions : 0;
+  const wrongTypeRate = decisions ? input.wrongType / decisions : 0;
+  const discoveryYield = input.candidates ? input.newCandidates / input.candidates : 0;
+  let score = 55;
+  if (decisions) score += acceptanceRate * 30 - dismissalRate * 28 - wrongTypeRate * 16;
+  if (input.known) score += Math.min(6, input.known * 2);
+  if (input.candidates) score += Math.min(15, discoveryYield * 15);
+  if (input.attempts >= 2 && input.newCandidates === 0) score -= Math.min(20, input.attempts * 4);
+  return Math.max(5, Math.min(95, Math.round(score)));
+}
+
+async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) {
+  const [feedbackRows, coverageRows] = await Promise.all([
+    database.prepare(
+      `SELECT cs.source_key, cs.query_key, COUNT(DISTINCT cs.paper_id) AS papers,
+       SUM(CASE WHEN f.saved = 1 OR f.feedback = 'relevant' OR r.status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS accepted,
+       SUM(CASE WHEN f.feedback = 'not_relevant' AND COALESCE(f.reason_code, '') <> 'duplicate_known' THEN 1 ELSE 0 END) AS dismissed,
+       SUM(CASE WHEN f.feedback = 'not_relevant' AND f.reason_code = 'wrong_type' THEN 1 ELSE 0 END) AS wrong_type,
+       SUM(CASE WHEN f.reason_code = 'duplicate_known' OR r.status = 'mastered' THEN 1 ELSE 0 END) AS known
+       FROM monitor_candidate_sources cs
+       LEFT JOIN paper_feedback f ON f.paper_id = cs.paper_id AND f.space_id = cs.space_id
+       LEFT JOIN paper_reading_progress r ON r.paper_id = cs.paper_id AND r.space_id = cs.space_id
+       WHERE cs.space_id = ? GROUP BY cs.source_key, cs.query_key`,
+    ).bind(spaceId).all<{ source_key: string; query_key: string; papers: number; accepted: number; dismissed: number; wrong_type: number; known: number }>(),
+    database.prepare(
+      `SELECT source_key, query_key, SUM(attempt_count) AS attempts,
+       SUM(CASE WHEN total_candidate_count = 0 THEN candidate_count ELSE total_candidate_count END) AS candidates,
+       SUM(new_candidate_count) AS new_candidates
+       FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY source_key, query_key`,
+    ).bind(spaceId).all<{ source_key: string; query_key: string; attempts: number; candidates: number; new_candidates: number }>(),
+  ]);
+  const rows = new Map<string, Omit<DiscoveryBranchScore, "score">>();
+  const ensure = (sourceKey: string, queryKey: string) => {
+    const key = `${sourceKey}|${queryKey}`;
+    const existing = rows.get(key);
+    if (existing) return existing;
+    const created = { sourceKey, queryKey, papers: 0, accepted: 0, dismissed: 0, known: 0, wrongType: 0, attempts: 0, candidates: 0, newCandidates: 0 };
+    rows.set(key, created);
+    return created;
+  };
+  for (const row of feedbackRows.results) Object.assign(ensure(row.source_key, row.query_key), {
+    papers: Number(row.papers || 0), accepted: Number(row.accepted || 0), dismissed: Number(row.dismissed || 0),
+    known: Number(row.known || 0), wrongType: Number(row.wrong_type || 0),
+  });
+  for (const row of coverageRows.results) Object.assign(ensure(row.source_key, row.query_key), {
+    attempts: Number(row.attempts || 0), candidates: Number(row.candidates || 0), newCandidates: Number(row.new_candidates || 0),
+  });
+  const exact = new Map<string, DiscoveryBranchScore>();
+  const sourceBuckets = new Map<string, Array<{ score: number; weight: number }>>();
+  for (const [key, row] of rows) {
+    const scored = { ...row, score: adaptiveBranchScore(row) };
+    exact.set(key, scored);
+    const bucket = sourceBuckets.get(row.sourceKey) || [];
+    bucket.push({ score: scored.score, weight: Math.max(1, row.papers + row.attempts) });
+    sourceBuckets.set(row.sourceKey, bucket);
+  }
+  const sources = new Map<string, number>();
+  for (const [sourceKey, bucket] of sourceBuckets) {
+    const weight = bucket.reduce((sum, item) => sum + item.weight, 0);
+    sources.set(sourceKey, Math.round(bucket.reduce((sum, item) => sum + item.score * item.weight, 0) / Math.max(1, weight)));
+  }
+  const ranked = [...exact.values()].sort((left, right) => right.score - left.score);
+  return { exact, sources, ranked };
+}
+
+async function routeDiscoveryQueries(
+  database: D1Database,
+  spaceId: string,
+  horizon: typeof HORIZONS[number],
+  round: number,
+  mode: ExplorationMode,
+) {
+  const rows = await database.prepare(
+    `SELECT t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score, t.interaction_score,
+     MAX(c.last_scanned_at) AS last_scanned_at
+     FROM research_tracks t
+     LEFT JOIN monitor_discovery_coverage c ON c.space_id = t.space_id AND c.route_id = t.id
+     WHERE t.space_id = ? GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score, t.interaction_score
+     ORDER BY CASE WHEN MAX(c.last_scanned_at) IS NULL THEN 0 ELSE 1 END, MAX(c.last_scanned_at),
+     CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, t.interaction_score DESC, t.depth_score DESC`,
+  ).bind(spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; last_scanned_at: string | null }>();
+  const coreBudget = mode === "focused" ? 2 : 2;
+  const adjacentBudget = mode === "focused" ? 0 : mode === "open" ? 2 : 1;
+  const coreRows = rows.results.filter((row) => row.user_role !== "explore").slice(0, coreBudget);
+  const adjacentRows = rows.results.filter((row) => row.user_role === "explore").slice(0, adjacentBudget);
+  return [...coreRows.map((row) => ({ row, role: "core" as const })), ...adjacentRows.map((row) => ({ row, role: "adjacent" as const }))]
+    .map(({ row, role }) => {
+      const queries = parseVenues(row.search_queries).filter(asciiOnly);
+      const routeQuery = queries.length ? queries[round % queries.length] : `${row.title_en} ${row.summary_en}`;
+      return {
+        key: `research-route-${row.id}`,
+        sourceKey: `crossref:route:${row.id}`,
+        query: cleanText(routeQuery).slice(0, 480),
+        sort: horizon.key === "days" ? "published" as const : horizon.sort,
+        rotating: true,
+        channel: "topic" as const,
+        routeId: row.id,
+        explorationRole: role,
+      };
+    }).filter((plan) => plan.query.length >= 4);
+}
+
+async function prioritizeDiscoveryPlans(database: D1Database, spaceId: string, plans: DiscoveryQuery[], mode: ExplorationMode) {
+  const performance = await loadDiscoveryBranchScores(database, spaceId);
+  const enriched = await Promise.all(plans.map(async (plan) => {
+    const queryKey = await discoveryQueryKey(plan);
+    const exact = performance.exact.get(`${plan.sourceKey}|${queryKey}`)?.score;
+    const source = performance.sources.get(plan.sourceKey);
+    const score = Math.max(5, Math.min(100, (exact ?? source ?? 55) + (plan.key === "topic-anchor" ? 8 : 0)));
+    return { ...plan, explorationRole: plan.explorationRole || "core", adaptiveScore: score };
+  }));
+  const maxPlans = mode === "focused" ? 8 : mode === "open" ? 12 : 10;
+  const adjacentSlots = mode === "focused" ? 0 : Math.max(1, Math.round(maxPlans * 0.18));
+  const rank = (items: DiscoveryQuery[]) => items.sort((left, right) => (right.adaptiveScore || 55) - (left.adaptiveScore || 55));
+  const adjacent = rank(enriched.filter((plan) => plan.explorationRole === "adjacent")).slice(0, adjacentSlots);
+  const core = rank(enriched.filter((plan) => plan.explorationRole !== "adjacent")).slice(0, maxPlans - adjacent.length);
+  const selected = [...core, ...adjacent];
+  if (selected.length < maxPlans) {
+    const selectedKeys = new Set(selected.map((plan) => `${plan.sourceKey}|${plan.query}`));
+    selected.push(...rank(enriched.filter((plan) => !selectedKeys.has(`${plan.sourceKey}|${plan.query}`))).slice(0, maxPlans - selected.length));
+  }
+  return selected;
 }
 
 async function discoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery) {
@@ -687,12 +833,15 @@ async function recordDiscoveryCoverage(
   const queryText = cleanText(plan.author ? `Author: ${plan.author}` : plan.venue ? `Journal: ${plan.venue}` : plan.query).slice(0, 500);
   await database.prepare(
     `INSERT INTO monitor_discovery_coverage
-     (id, space_id, horizon, source_key, channel, query_key, query_text, next_cursor, attempt_count, candidate_count,
+     (id, space_id, horizon, source_key, channel, query_key, query_text, route_id, exploration_role, adaptive_score,
+      next_cursor, attempt_count, candidate_count,
       total_candidate_count, new_candidate_count, zero_yield_streak, branch_status, cooldown_until,
       first_scanned_at, last_scanned_at, last_error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
      ON CONFLICT(space_id, horizon, source_key, query_key) DO UPDATE SET
-       query_text = excluded.query_text, next_cursor = excluded.next_cursor,
+       query_text = excluded.query_text, route_id = excluded.route_id,
+       exploration_role = excluded.exploration_role, adaptive_score = excluded.adaptive_score,
+       next_cursor = excluded.next_cursor,
        attempt_count = monitor_discovery_coverage.attempt_count + 1,
        candidate_count = excluded.candidate_count,
        total_candidate_count = monitor_discovery_coverage.total_candidate_count + excluded.total_candidate_count,
@@ -701,7 +850,8 @@ async function recordDiscoveryCoverage(
        cooldown_until = excluded.cooldown_until,
        first_scanned_at = COALESCE(monitor_discovery_coverage.first_scanned_at, CURRENT_TIMESTAMP),
        last_scanned_at = CURRENT_TIMESTAMP, last_error = excluded.last_error, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(crypto.randomUUID(), spaceId, horizon, plan.sourceKey, plan.channel, queryKey, queryText, nextCursor,
+  ).bind(crypto.randomUUID(), spaceId, horizon, plan.sourceKey, plan.channel, queryKey, queryText,
+    plan.routeId || null, plan.explorationRole || "core", plan.adaptiveScore || 55, nextCursor,
     candidates.length, candidates.length, newCount, zeroYieldStreak, branchStatus, cooldownUntil, error).run();
 }
 
@@ -725,9 +875,11 @@ async function fetchHorizon(
   queryPlan?: QueryPlan,
 ) {
   const rows = horizon.key === "years" ? 36 : 30;
-  const plans = discoveryQueries(space, horizon, profileKey, round, priorityVenues, trackedAuthors, queryPlan);
-  const eligiblePlans = (await Promise.all(plans.map(async (plan) => ({ plan, eligible: await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan) }))))
+  const routePlans = await routeDiscoveryQueries(database, space.id, horizon, round, queryPlan?.explorationMode || "balanced");
+  const plans = [...discoveryQueries(space, horizon, profileKey, round, priorityVenues, trackedAuthors, queryPlan), ...routePlans];
+  const runnablePlans = (await Promise.all(plans.map(async (plan) => ({ plan, eligible: await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan) }))))
     .filter((entry) => entry.eligible).map((entry) => entry.plan);
+  const eligiblePlans = await prioritizeDiscoveryPlans(database, space.id, runnablePlans, queryPlan?.explorationMode || "balanced");
   const requestOptions: RequestInit = {
     headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
     signal: AbortSignal.timeout(20_000),
@@ -761,7 +913,7 @@ async function fetchHorizon(
         return candidate ? {
           ...candidate,
           discoveryChannel: plan.channel,
-          provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey }],
+          provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, queryText: cleanText(plan.query).slice(0, 500) }],
         } : null;
       }))).filter((candidate): candidate is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(candidate));
       const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, rows);
@@ -1120,7 +1272,7 @@ async function ensureDailyQueryPlan(
   }
 
   const queryLimit = preference.explorationMode === "focused" ? 1 : preference.explorationMode === "open" ? 3 : 2;
-  const [signals, tracks, recentCoverage] = await Promise.all([
+  const [signals, tracks, recentCoverage, branchPerformance] = await Promise.all([
     readPreferenceSignals(database, space.id, 28),
     database.prepare(
       "SELECT title_en, summary_en, search_queries, user_role, depth_score, interaction_score FROM research_tracks WHERE space_id = ? ORDER BY CASE user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, interaction_score DESC, depth_score DESC LIMIT 10",
@@ -1128,6 +1280,7 @@ async function ensureDailyQueryPlan(
     database.prepare(
       "SELECT source_key, channel, SUM(attempt_count) AS attempts, SUM(new_candidate_count) AS new_candidates FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY source_key, channel ORDER BY SUM(new_candidate_count) ASC, SUM(attempt_count) DESC LIMIT 12",
     ).bind(space.id).all<{ source_key: string; channel: string; attempts: number; new_candidates: number }>(),
+    loadDiscoveryBranchScores(database, space.id),
   ]);
   const runtime = getRuntimeEnv();
   let queries: Record<Horizon, string[]> = { days: [], months: [], years: [] };
@@ -1159,6 +1312,7 @@ async function ensureDailyQueryPlan(
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
               `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,
               `Low-yield or repeatedly covered channels: ${JSON.stringify(recentCoverage.results)}`,
+              `Retrieval branches learned from explicit feedback (higher scores should be deepened; lower scores should be reworded or deprioritized): ${JSON.stringify([...branchPerformance.ranked.slice(0, 4), ...branchPerformance.ranked.slice(-4)].map((branch) => ({ source: branch.sourceKey, score: branch.score, accepted: branch.accepted, dismissed: branch.dismissed, known: branch.known, yield: branch.candidates ? Math.round(branch.newCandidates / branch.candidates * 100) : 0 })))}`,
             ].join("\n") },
           ],
           thinking: { type: "enabled" },
@@ -1674,6 +1828,33 @@ async function saveDailyBrief(
   ).run();
 }
 
+function selectDiverseItems<T>(
+  rankedItems: T[],
+  groupKey: (item: T) => string,
+  horizonKey: (item: T) => Horizon,
+  limit = 6,
+) {
+  const selected: T[] = [];
+  const selectedSet = new Set<T>();
+  const groupCounts = new Map<string, number>();
+  const add = (item: T) => {
+    if (selected.length >= limit || selectedSet.has(item)) return false;
+    selected.push(item);
+    selectedSet.add(item);
+    const group = groupKey(item);
+    groupCounts.set(group, (groupCounts.get(group) || 0) + 1);
+    return true;
+  };
+  for (const horizon of ["days", "months", "years"] as Horizon[]) {
+    const item = rankedItems.find((candidate) => !selectedSet.has(candidate) && horizonKey(candidate) === horizon && !(groupCounts.get(groupKey(candidate)) || 0));
+    if (item) add(item);
+  }
+  for (const item of rankedItems) if (!(groupCounts.get(groupKey(item)) || 0)) add(item);
+  for (const item of rankedItems) if ((groupCounts.get(groupKey(item)) || 0) < 2) add(item);
+  for (const item of rankedItems) add(item);
+  return selected;
+}
+
 async function generateDailyBrief(
   database: D1Database,
   space: SpaceRow,
@@ -1686,10 +1867,16 @@ async function generateDailyBrief(
 ) {
   const briefDate = shanghaiDateKey(now);
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
-  const selected = reviews.filter((review) => review.recommended).sort((left, right) => {
+  const rankedReviews = reviews.filter((review) => review.recommended).sort((left, right) => {
     const tier = { must_read: 3, browse: 2, reserve: 1 };
     return tier[right.recommendationTier] - tier[left.recommendationTier] || right.relevanceScore - left.relevanceScore;
-  }).slice(0, 8);
+  });
+  const selected = selectDiverseItems(
+    rankedReviews,
+    (review) => review.trackId || `horizon:${candidateById.get(review.canonicalId)?.horizon || "days"}`,
+    (review) => candidateById.get(review.canonicalId)?.horizon || "days",
+    6,
+  );
   const selectedCanonicalIds = selected.map((review) => review.canonicalId);
   let paperIds: string[] = [];
   if (selectedCanonicalIds.length) {
@@ -2231,12 +2418,13 @@ function toPaper(paper: PaperRow, now: number) {
     readingFocusEn: paper.reading_focus_en,
     researchQuestionsZh: parseVenues(paper.research_questions_zh),
     researchQuestionsEn: parseVenues(paper.research_questions_en),
+    trackId: paper.track_id || null,
   };
 }
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType] = await Promise.all([
+  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -2255,6 +2443,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.limitations_en, '') AS limitations_en, COALESCE(i.reading_focus_zh, '') AS reading_focus_zh,
        COALESCE(i.reading_focus_en, '') AS reading_focus_en, COALESCE(i.research_questions_zh, '[]') AS research_questions_zh,
        COALESCE(i.research_questions_en, '[]') AS research_questions_en,
+       COALESCE((SELECT tp.track_id FROM research_track_papers tp
+         WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
+         ORDER BY tp.position LIMIT 1), '') AS track_id,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
        COALESCE(f.saved, 0) AS saved, f.feedback, COALESCE(r.status, 'unread') AS reading_status,
        COALESCE(r.note, '') AS reading_note
@@ -2412,15 +2603,39 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        FROM paper_feedback WHERE space_id = ? AND updated_at >= datetime('now', '-6 days')
        AND (saved = 1 OR feedback IS NOT NULL)`,
     ).bind(space.id).first<{ decisions: number; accepted: number; wrong_type: number }>(),
+    database.prepare(
+      `WITH accepted_events AS (
+         SELECT a.paper_id, a.reviewed_at, a.allocated_input_tokens + a.allocated_output_tokens AS review_tokens
+         FROM recommendation_audit_events a
+         LEFT JOIN paper_feedback f ON f.paper_id = a.paper_id AND f.space_id = a.space_id
+         LEFT JOIN paper_reading_progress r ON r.paper_id = a.paper_id AND r.space_id = a.space_id
+         WHERE a.space_id = ? AND a.recommended = 1
+           AND (f.saved = 1 OR f.feedback = 'relevant' OR r.status IN ('read','mastered','cited'))
+           AND a.reviewed_at >= datetime('now', '-13 days')
+       ), paper_costs AS (
+         SELECT paper_id,
+           SUM(review_tokens) AS review_tokens_14,
+           SUM(CASE WHEN reviewed_at >= datetime('now', '-6 days') THEN review_tokens ELSE 0 END) AS review_tokens_7,
+           MAX(reviewed_at) AS latest_reviewed_at
+         FROM accepted_events GROUP BY paper_id
+       )
+       SELECT COUNT(*) AS accepted_papers_14,
+         COALESCE(SUM(review_tokens_14), 0) AS review_tokens_14,
+         COALESCE(SUM(CASE WHEN latest_reviewed_at >= datetime('now', '-6 days') THEN 1 ELSE 0 END), 0) AS accepted_papers_7,
+         COALESCE(SUM(review_tokens_7), 0) AS review_tokens_7
+       FROM paper_costs`,
+    ).bind(space.id).first<{ accepted_papers_14: number; review_tokens_14: number; accepted_papers_7: number; review_tokens_7: number }>(),
   ]);
   const now = Date.now();
   const duePapers = papers.results
     .filter((paper) => paper.analysis_model === MONITOR_MODEL && isPaperDue(paper, now))
     .sort((left, right) => left.show_count - right.show_count || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at));
-  const selected: PaperRow[] = [];
-  for (const horizon of ["days", "months", "years"] as Horizon[]) {
-    selected.push(...duePapers.filter((paper) => paper.horizon === horizon).slice(0, 2));
-  }
+  const selected = selectDiverseItems(
+    duePapers,
+    (paper) => paper.track_id || `horizon:${paper.horizon}`,
+    (paper) => paper.horizon,
+    6,
+  );
   const historyPapers = papers.results
     .filter((paper) => paper.analysis_model === MONITOR_MODEL || Boolean(paper.saved || paper.feedback) || paper.reading_status !== "unread")
     .map((paper) => toPaper(paper, now));
@@ -2455,6 +2670,14 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     rejected: totals.rejected + day.rejected,
     tokens: totals.tokens + day.tokens,
   }), { scans: 0, candidates: 0, newCandidates: 0, duplicatesAvoided: 0, reviewed: 0, recommended: 0, rejected: 0, tokens: 0 });
+  const acceptedPapers14 = acceptedCostMetrics?.accepted_papers_14 || 0;
+  const acceptedPapers7 = acceptedCostMetrics?.accepted_papers_7 || 0;
+  const reviewTokensPerAcceptedPaper = acceptedPapers14 ? Math.round((acceptedCostMetrics?.review_tokens_14 || 0) / acceptedPapers14) : 0;
+  const totalTokensPerAcceptedPaper = acceptedPapers14 ? Math.round(operationsTotals.tokens / acceptedPapers14) : 0;
+  const pilotTokenCutoff = Date.now() - 6 * 86_400_000;
+  const pilotTotalTokens = dailyUsageRows.results
+    .filter((row) => Date.parse(`${row.usage_date}T00:00:00Z`) >= pilotTokenCutoff)
+    .reduce((sum, row) => sum + (row.input_tokens || 0) + (row.output_tokens || 0), 0);
   const readingMemories = readingMemoryRows.results.map((row) => ({
     paperId: row.paper_id,
     title: row.title,
@@ -2664,6 +2887,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
           duplicateAvoidanceRate: operationsTotals.newCandidates + operationsTotals.duplicatesAvoided
             ? Math.round(operationsTotals.duplicatesAvoided / (operationsTotals.newCandidates + operationsTotals.duplicatesAvoided) * 100) : 0,
           tokensPerRecommendation: operationsTotals.recommended ? Math.round(operationsTotals.tokens / operationsTotals.recommended) : 0,
+          acceptedPapers: acceptedPapers14,
+          reviewTokensPerAcceptedPaper,
+          totalTokensPerAcceptedPaper,
           acceptanceRate: decisions ? Math.round(accepted / decisions * 100) : 0,
         },
         daily: operationsDays,
@@ -2718,6 +2944,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
           activeHorizons,
           duplicatesAvoided: operationsTotals.duplicatesAvoided,
           tokensPerRecommendation: operationsTotals.recommended ? Math.round(operationsTotals.tokens / operationsTotals.recommended) : 0,
+          acceptedPapers: acceptedPapers7,
+          reviewTokensPerAcceptedPaper: acceptedPapers7 ? Math.round((acceptedCostMetrics?.review_tokens_7 || 0) / acceptedPapers7) : 0,
+          totalTokensPerAcceptedPaper: acceptedPapers7 ? Math.round(pilotTotalTokens / acceptedPapers7) : 0,
         },
       },
       suggestedAuthors,
