@@ -44,7 +44,7 @@ test("the daily workbench exposes research catch-up while keeping quality teleme
   assert.match(client, /v2-action-inbox/);
   assert.match(client, /ACTION_NOTIFICATION_KINDS/);
   assert.match(client, /Pi 运行记录/);
-  assert.match(client, /不占用你的待处理数量/);
+  assert.match(client, /不计入待处理/);
   assert.match(client, /notificationActionLabel/);
   assert.match(client, /v2-command-trigger/);
   assert.match(client, /pendingActionNotifications\.length > 0 && <button className="v2-alert-link"/);

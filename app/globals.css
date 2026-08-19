@@ -3359,3 +3359,97 @@ main { min-width: 0; }
   .v2-monitor-compact .v2-scan-failure { grid-template-columns: 22px minmax(0,1fr); }
   .v2-monitor-compact .v2-scan-failure > button { grid-column: 2; justify-self: start; }
 }
+
+/* Pi Research V49 — one quiet status band instead of two dashboard cards */
+.v2-research-utilities {
+  margin-top: 18px;
+  border-top: 1px solid #dce2de;
+  border-bottom: 1px solid #dce2de;
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(310px, .72fr);
+  align-items: stretch;
+}
+.v2-research-utilities > .v2-monitor-compact:only-child { grid-column: 1 / -1; }
+.v2-today .v2-research-utilities .v2-monitor-compact {
+  margin: 0;
+  padding: 16px 20px 11px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.v2-research-utilities .v2-monitor-intro > p:last-child { max-width: 560px; }
+.v2-research-utilities .v2-monitor-compact .v2-horizon-strip {
+  margin-top: 11px;
+  border-top: 1px solid #e5e9e6;
+  border-bottom: 1px solid #e5e9e6;
+  gap: 0;
+}
+.v2-research-utilities .v2-monitor-compact .v2-horizon-strip article {
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.v2-research-utilities .v2-monitor-compact .v2-horizon-strip article + article { border-left: 1px solid #e5e9e6; }
+.v2-monitor-meta { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: start; }
+.v2-research-utilities .v2-monitor-meta .v2-inbox-summary { margin: 0; padding: 8px 2px 0; border: 0; }
+.v2-research-utilities .v2-monitor-meta .v2-scan-details { min-width: 126px; margin: 0; border: 0; }
+.v2-research-utilities .v2-monitor-meta .v2-scan-details summary { justify-content: flex-end; gap: 10px; padding: 8px 2px 0; }
+.v2-research-utilities .v2-monitor-meta .v2-scan-details[open] { grid-column: 1 / -1; }
+.v2-research-utilities .v2-monitor-meta .v2-scan-details[open] summary { justify-content: space-between; }
+
+.v2-today .v2-research-utilities .v2-action-inbox {
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid #dce2de;
+  border-radius: 0;
+  background: rgba(248,250,248,.42);
+}
+.v2-research-utilities .v2-action-inbox > header {
+  min-height: 67px;
+  padding: 15px 16px 10px;
+  border: 0;
+  display: flex;
+  align-items: flex-start;
+}
+.v2-research-utilities .v2-action-inbox > header .v2-kicker { margin: 0 0 4px; font-size: 9px; }
+.v2-research-utilities .v2-action-inbox > header h2 { margin: 0; font: 500 15px/1.35 var(--font-serif); }
+.v2-research-utilities .v2-action-inbox > header > button { min-height: 28px; padding: 0 8px; border: 0; background: transparent; color: #60776c; font-size: 9px; }
+.v2-research-utilities .v2-action-inbox > .v2-action-inbox-list { padding: 0 12px 11px; grid-template-columns: 1fr; gap: 6px; }
+.v2-research-utilities .v2-action-inbox-list > article { min-height: 76px; padding: 10px; grid-template-columns: 27px minmax(0,1fr); gap: 9px; border: 0; border-top: 1px solid #e0e5e2; border-radius: 0; background: transparent; }
+.v2-research-utilities .v2-action-inbox-list > article > span { width: 27px; height: 27px; font-size: 9px; }
+.v2-research-utilities .v2-action-inbox-list > article strong { margin-top: 3px; font-size: 11px; }
+.v2-research-utilities .v2-action-inbox-list > article p { margin-top: 3px; font-size: 9px; -webkit-line-clamp: 1; }
+.v2-research-utilities .v2-action-inbox-list > article > button { grid-column: 2; justify-self: start; min-height: 24px; padding: 0; border: 0; background: transparent; font-size: 8px; }
+.v2-research-utilities .v2-action-inbox-empty { min-height: 48px; padding: 7px 2px 10px; border-top: 1px solid #e2e7e4; border-radius: 0; background: transparent; align-items: center; }
+.v2-research-utilities .v2-action-inbox-empty > span { width: 23px; height: 23px; font-size: 9px; }
+.v2-research-utilities .v2-action-inbox-empty p { font-size: 9px; line-height: 1.45; }
+.v2-research-utilities .v2-action-inbox > .v2-activity-log { margin: 0; padding: 0 12px 10px; border-top: 1px solid #e0e5e2; background: transparent; }
+.v2-research-utilities .v2-activity-log > summary { min-height: 44px; padding: 8px 1px 0; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.v2-research-utilities .v2-activity-log > summary::-webkit-details-marker { display: none; }
+.v2-research-utilities .v2-activity-log > summary strong,
+.v2-research-utilities .v2-activity-log > summary small { display: block; }
+.v2-research-utilities .v2-activity-log > summary strong { color: #58665f; font-size: 9px; }
+.v2-research-utilities .v2-activity-log > summary small { margin-top: 2px; color: #929a95; font-size: 8px; }
+.v2-research-utilities .v2-activity-log > summary b { color: #667d72; font-size: 8px; font-weight: 750; }
+.v2-research-utilities .v2-activity-log[open] > summary b { color: #88928d; }
+.v2-research-utilities .v2-activity-log > div { padding-top: 7px; }
+.v2-research-utilities .v2-activity-log > div > article { min-height: 55px; padding: 8px; grid-template-columns: 24px minmax(0,1fr); border: 0; border-top: 1px solid #e3e7e4; border-radius: 0; background: transparent; }
+.v2-research-utilities .v2-activity-log article > span { width: 23px; height: 23px; }
+.v2-research-utilities .v2-activity-log article > button { grid-column: 2; justify-self: start; min-height: 20px; padding: 0; }
+
+@media (max-width: 1180px) {
+  .v2-research-utilities { grid-template-columns: 1fr; }
+  .v2-today .v2-research-utilities .v2-action-inbox { border-top: 1px solid #dce2de; border-left: 0; }
+}
+
+@media (max-width: 680px) {
+  .v2-today .v2-research-utilities .v2-monitor-compact { padding: 14px 4px 10px; }
+  .v2-research-utilities .v2-monitor-compact .v2-horizon-strip { grid-template-columns: 1fr; }
+  .v2-research-utilities .v2-monitor-compact .v2-horizon-strip article + article { border-top: 1px solid #e5e9e6; border-left: 0; }
+  .v2-monitor-meta { grid-template-columns: 1fr; gap: 0; }
+  .v2-research-utilities .v2-monitor-meta .v2-scan-details summary { justify-content: space-between; }
+  .v2-research-utilities .v2-action-inbox > header { flex-direction: row; align-items: flex-start; }
+}
