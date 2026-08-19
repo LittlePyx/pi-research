@@ -1,5 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
+import { hasStrongFitScoreContradiction, inferModelScoreScale, normalizeModelScore } from "../../../lib/discovery/model-score";
 import { passesRecommendationGate } from "../../../lib/discovery/review-gate";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
@@ -342,7 +343,8 @@ const HORIZONS = [
   { key: "months" as const, daysFrom: 180, daysUntil: 15, sort: "relevance" },
   { key: "years" as const, daysFrom: 365 * 5, daysUntil: 181, sort: "is-referenced-by-count" },
 ] as const;
-const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse("2026-08-18T09:03:00.000Z");
+const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T06:39:00.000Z";
+const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 200;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 20;
 const MONITOR_MODEL = "deepseek-v4-pro";
@@ -1278,7 +1280,8 @@ async function ensureDailyQueryPlan(
   ).bind(space.id, planDate).first<{
     plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null;
   }>();
-  if (existing) {
+  const staleFallback = Boolean(existing && apiKey && existing.model === "deterministic-fallback");
+  if (existing && !staleFallback) {
     let parsed: Partial<Record<Horizon, string[]>> = {};
     try { parsed = JSON.parse(existing.queries_json) as Partial<Record<Horizon, string[]>>; } catch { parsed = {}; }
     return {
@@ -1294,6 +1297,10 @@ async function ensureDailyQueryPlan(
       model: existing.model,
       error: existing.error,
     };
+  }
+  if (staleFallback) {
+    await database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = ?")
+      .bind(space.id, planDate).run();
   }
 
   const queryLimit = preference.explorationMode === "focused" ? 1 : preference.explorationMode === "open" ? 3 : 2;
@@ -1369,16 +1376,15 @@ async function ensureDailyQueryPlan(
     }
   }
   await database.prepare(
-    `INSERT OR IGNORE INTO monitor_query_plans
+    `INSERT INTO monitor_query_plans
      (id, space_id, plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(space_id, plan_date) DO UPDATE SET exploration_mode = excluded.exploration_mode,
+     queries_json = excluded.queries_json, rationale_zh = excluded.rationale_zh,
+     rationale_en = excluded.rationale_en, model = excluded.model, error = excluded.error,
+     created_at = CURRENT_TIMESTAMP`,
   ).bind(crypto.randomUUID(), space.id, planDate, preference.explorationMode, JSON.stringify(queries), rationaleZh, rationaleEn, model, error).run();
   return { planDate, explorationMode: preference.explorationMode, queries, rationaleZh, rationaleEn, model, error };
-}
-
-function boundedScore(value: unknown) {
-  const numeric = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : 0;
 }
 
 async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceRow): Promise<SpaceRow> {
@@ -1472,6 +1478,7 @@ async function quickScreenBatch(
   const prompt = [
     "Return one JSON object only with shape {\"screens\":[...]}. Screen every supplied record.",
     "Each screen must contain canonicalId, isPaper, relevanceScore, qualityScore, and screeningReason.",
+    "relevanceScore and qualityScore must be integer scores on a 0-100 scale, never decimals on a 0-1 scale. 0 means no fit/evidence and 100 means exceptional fit/evidence.",
     "This is a fast but rigorous academic triage pass. Reject mastheads, publication information, author instructions, contents, corrections, calls for papers, and non-research records.",
     "Judge direct fit to the research space, evidence quality, durable usefulness, and the different standards for 14 days, 6 months, and 5 years.",
     "Do not write summaries or reading advice in this pass. Keep screeningReason under 35 words and use only supplied metadata.",
@@ -1515,16 +1522,24 @@ async function quickScreenBatch(
       if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro quick screening failed");
       const content = data.choices?.[0]?.message?.content || "";
       if (!content.trim()) throw new Error("DeepSeek Pro returned an empty screening result");
-      const byId = new Map(parseQuickScreenPayload(content).map((item) => [cleanText(item.canonicalId || ""), item]));
+      const parsedScreens = parseQuickScreenPayload(content);
+      const scoreScale = inferModelScoreScale(parsedScreens);
+      const byId = new Map(parsedScreens.map((item) => [cleanText(item.canonicalId || ""), item]));
       const screens = candidates.map((candidate) => {
         const item = byId.get(candidate.canonicalId);
         if (!item) throw new Error("DeepSeek Pro did not screen every candidate");
+        const relevanceScore = normalizeModelScore(item.relevanceScore, scoreScale);
+        const qualityScore = normalizeModelScore(item.qualityScore, scoreScale);
+        const screeningReason = cleanText(item.screeningReason || "Fast screening completed").slice(0, 300);
+        if (hasStrongFitScoreContradiction(relevanceScore, screeningReason)) {
+          throw new Error("DeepSeek Pro returned a screening score that contradicted its fit judgment");
+        }
         return {
           canonicalId: candidate.canonicalId,
           isPaper: item.isPaper === true,
-          relevanceScore: boundedScore(item.relevanceScore),
-          qualityScore: boundedScore(item.qualityScore),
-          screeningReason: cleanText(item.screeningReason || "Fast screening completed").slice(0, 300),
+          relevanceScore,
+          qualityScore,
+          screeningReason,
         } satisfies QuickScreen;
       });
       const usageDate = new Date().toISOString().slice(0, 10);
@@ -1758,6 +1773,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     const prompt = [
       "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
       "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, recommendationTier, readMinutes, readDepth, summaryZh, summaryEn, whyReadZh, whyReadEn, problemZh/En, methodZh/En, contributionZh/En, limitationsZh/En, readingFocusZh/En, researchQuestionsZh/En, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
+      "relevanceScore and qualityScore must be integer scores on a 0-100 scale, never decimals on a 0-1 scale.",
       "Act as a strict academic editor, not a search-result summarizer. A real paper can still be irrelevant and must then be rejected.",
       "Set isPaper=false for mastheads, publication information, author instructions, contents, editorials without research content, corrections, calls for papers, or other non-paper records.",
       `Set recommended=true only when relevanceScore >= ${RECOMMENDATION_THRESHOLD}, the work directly advances the research-space scope, and it satisfies its horizon standard. Recency, citations, or a priority venue alone never justify recommendation.`,
@@ -1834,12 +1850,14 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       }
     }
     if (!parsed) throw lastError instanceof Error ? lastError : new Error("DeepSeek Pro review failed twice");
-    const byId = new Map((parsed.reviews || []).map((item) => [item.canonicalId, item]));
+    const parsedReviews = parsed.reviews || [];
+    const scoreScale = inferModelScoreScale(parsedReviews);
+    const byId = new Map(parsedReviews.map((item) => [item.canonicalId, item]));
     for (const candidate of batch) {
       const item = byId.get(candidate.canonicalId);
       if (!item) throw new Error("DeepSeek Pro did not review every candidate");
-      const relevanceScore = boundedScore(item.relevanceScore);
-      const qualityScore = boundedScore(item.qualityScore);
+      const relevanceScore = normalizeModelScore(item.relevanceScore, scoreScale);
+      const qualityScore = normalizeModelScore(item.qualityScore, scoreScale);
       const summaryZh = cleanText(item.summaryZh || "").slice(0, 900);
       const summaryEn = cleanText(item.summaryEn || "").slice(0, 1200);
       const whyReadZh = cleanText(item.whyReadZh || "").slice(0, 800);
@@ -2423,14 +2441,26 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
   const restrictedIds = Array.from(new Set(canonicalIds || [])).slice(0, 120);
   const candidateCondition = restrictedIds.length
     ? `p.canonical_id IN (${restrictedIds.map(() => "?").join(", ")})`
-    : `(i.analysis_model = '' OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days')))`;
+    : `(i.analysis_model = ''
+       OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days'))
+       OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime(?) AND (
+         (i.llm_relevance_score <= 1 AND (
+           lower(i.screening_reason) LIKE '%directly relevant%' OR lower(i.screening_reason) LIKE '%direct fit%'
+           OR lower(i.screening_reason) LIKE '%moderate relevance%' OR lower(i.screening_reason) LIKE '%directly addresses%'
+           OR i.screening_reason LIKE '%直接相关%' OR i.screening_reason LIKE '%高度相关%'
+         ))
+         OR (length(trim(i.abstract_text)) = 0 AND lower(i.screening_reason) LIKE '%abstract missing%')
+       )))`;
+  const candidateParameters = restrictedIds.length ? restrictedIds : [MONITOR_REVIEW_PIPELINE_RELEASED_AT];
   const rows = await database.prepare(
     `SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
      p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
      WHERE p.space_id = ? AND ${candidateCondition}
-     ORDER BY i.quality_score DESC, p.citation_count DESC, p.discovered_at DESC LIMIT 360`,
-  ).bind(spaceId, ...restrictedIds).all<{
+     ORDER BY p.relevance_score DESC,
+       CASE WHEN length(trim(i.abstract_text)) >= 120 THEN 1 ELSE 0 END DESC,
+       i.quality_score DESC, p.citation_count DESC, p.discovered_at DESC LIMIT 360`,
+  ).bind(spaceId, ...candidateParameters).all<{
     paper_id: string; canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
     published_at: string | null; source: string; horizon: Horizon; citation_count: number; relevance_score: number;
     abstract_text: string; quality_score: number; priority_venue: number;
@@ -2494,12 +2524,109 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
   return candidates.sort((left, right) => (order.get(left.canonicalId) ?? 999) - (order.get(right.canonicalId) ?? 999));
 }
 
+function candidateScreeningPriority(candidate: Candidate) {
+  const deterministicFit = Math.min(105, Math.log1p(Math.max(0, candidate.relevanceScore)) * 19);
+  const abstractEvidence = Math.min(26, candidate.abstractText.length / 60);
+  const metadataQuality = Math.min(100, Math.max(0, candidate.qualityScore)) * 0.2;
+  const citationEvidence = Math.min(12, Math.log1p(Math.max(0, candidate.citationCount)) * 2.5);
+  const sourceDiversity = Math.min(8, new Set(candidate.provenance.map((entry) => entry.channel)).size * 2);
+  return deterministicFit + abstractEvidence + metadataQuality + citationEvidence + sourceDiversity;
+}
+
 function selectUnseenReviewBatch(candidates: Candidate[]) {
   const selected: Candidate[] = [];
   for (const horizon of ["days", "months", "years"] as Horizon[]) {
-    selected.push(...candidates.filter((candidate) => candidate.horizon === horizon).slice(0, HORIZON_REVIEW_LIMITS[horizon]));
+    selected.push(...candidates
+      .filter((candidate) => candidate.horizon === horizon)
+      .sort((left, right) => candidateScreeningPriority(right) - candidateScreeningPriority(left))
+      .slice(0, HORIZON_REVIEW_LIMITS[horizon]));
   }
   return selected;
+}
+
+function semanticScholarIdentifier(candidate: Candidate) {
+  if (candidate.doi) return `DOI:${candidate.doi}`;
+  const arxivId = candidate.canonicalId.startsWith("arxiv:")
+    ? candidate.canonicalId.slice("arxiv:".length)
+    : arxivIdFromUrl(candidate.url);
+  return arxivId ? `ARXIV:${arxivId}` : "";
+}
+
+async function fetchSemanticScholarAbstracts(candidates: Candidate[]) {
+  const identified = candidates.map((candidate) => ({ candidate, identifier: semanticScholarIdentifier(candidate) }))
+    .filter((entry) => Boolean(entry.identifier));
+  const abstracts = new Map<string, string>();
+  if (!identified.length) return abstracts;
+  try {
+    const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/batch");
+    endpoint.searchParams.set("fields", "paperId,externalIds,abstract");
+    let response = await fetch(endpoint, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+      body: JSON.stringify({ ids: identified.map((entry) => entry.identifier) }),
+      signal: AbortSignal.timeout(18_000),
+    });
+    if (response.status === 429) {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+        body: JSON.stringify({ ids: identified.map((entry) => entry.identifier) }),
+        signal: AbortSignal.timeout(18_000),
+      });
+    }
+    if (!response.ok) return abstracts;
+    const records = await response.json() as Array<SemanticScholarPaper | null>;
+    records.forEach((record, index) => {
+      const abstractText = cleanText(record?.abstract || "").slice(0, 2200);
+      if (abstractText && identified[index]) abstracts.set(identified[index].candidate.canonicalId, abstractText);
+    });
+  } catch {
+    // OpenAlex is attempted below for unresolved DOI records.
+  }
+  return abstracts;
+}
+
+async function fetchOpenAlexAbstract(candidate: Candidate) {
+  if (!candidate.doi) return "";
+  try {
+    const endpoint = new URL("https://api.openalex.org/works");
+    endpoint.searchParams.set("filter", `doi:https://doi.org/${candidate.doi}`);
+    endpoint.searchParams.set("select", "doi,abstract_inverted_index");
+    endpoint.searchParams.set("per-page", "1");
+    endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
+    const response = await fetch(endpoint, {
+      headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) return "";
+    const data = await response.json() as OpenAlexResponse;
+    return openAlexAbstract(data.results?.[0]?.abstract_inverted_index);
+  } catch {
+    return "";
+  }
+}
+
+async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, candidates: Candidate[]) {
+  const missing = candidates.filter((candidate) => candidate.abstractText.trim().length < 120);
+  if (!missing.length) return { requested: 0, enriched: 0 };
+  const abstracts = await fetchSemanticScholarAbstracts(missing);
+  const unresolved = missing.filter((candidate) => !abstracts.has(candidate.canonicalId) && candidate.doi);
+  for (let start = 0; start < unresolved.length; start += 4) {
+    const batch = unresolved.slice(start, start + 4);
+    const results = await Promise.all(batch.map((candidate) => fetchOpenAlexAbstract(candidate)));
+    results.forEach((abstractText, index) => {
+      if (abstractText) abstracts.set(batch[index].canonicalId, abstractText);
+    });
+  }
+  const statements = Array.from(abstracts.entries()).map(([canonicalId, abstractText]) => database.prepare(
+    `UPDATE paper_insights SET abstract_text = CASE WHEN length(?) > length(abstract_text) THEN ? ELSE abstract_text END,
+     updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = (
+       SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id = ? LIMIT 1
+     )`,
+  ).bind(abstractText, abstractText, spaceId, spaceId, canonicalId));
+  for (let start = 0; start < statements.length; start += 70) await database.batch(statements.slice(start, start + 70));
+  return { requested: missing.length, enriched: abstracts.size };
 }
 
 async function updateRunPhase(database: D1Database, spaceId: string, jobId: string, lockToken: string, status: string, scannedCount: number, newCount = 0) {
@@ -3649,8 +3776,15 @@ export async function POST(request: Request) {
           work.deepIds = chooseDeepCandidateIds(candidates, work.screens);
           await saveScanWorkQueue(database, job.id, work);
           if (!work.deepIds.length) return finalizeMain([], []);
-          await setStage("deep_reviewing", "deep_reviewing", 76, `正在深度解读 0 / ${work.deepIds.length}`);
+          await setStage("enriching_abstracts", "deep_reviewing", 76, `正在为 ${work.deepIds.length} 篇高潜力论文补全摘要证据`);
         }
+      } else if (job.checkpoint === "enriching_abstracts") {
+        const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
+        const enrichment = await enrichDeepReviewAbstracts(database, space.id, candidates);
+        const source = enrichment.requested
+          ? `已补全 ${enrichment.enriched} / ${enrichment.requested} 篇缺失摘要，准备深度解读`
+          : "候选摘要证据完整，准备深度解读";
+        await setStage("deep_reviewing", "deep_reviewing", 80, source);
       } else if (job.checkpoint === "deep_reviewing") {
         const completedIds = new Set(work.deepCompletedIds);
         const remainingIds = work.deepIds.filter((id) => !completedIds.has(id));

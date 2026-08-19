@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../lib/discovery/arxiv.ts";
+import { hasStrongFitScoreContradiction, inferModelScoreScale, normalizeModelScore } from "../lib/discovery/model-score.ts";
 import { passesRecommendationGate } from "../lib/discovery/review-gate.ts";
 
 const atomFixture = `<?xml version="1.0" encoding="utf-8"?>
@@ -52,4 +53,26 @@ test("keeps the deterministic post-LLM recommendation gate strict", () => {
   assert.equal(passesRecommendationGate({ ...complete, isPaper: false }), false);
   assert.equal(passesRecommendationGate({ ...complete, relevanceScore: 74 }), false);
   assert.equal(passesRecommendationGate({ ...complete, whyReadZh: "" }), false);
+});
+
+test("normalizes accidental 0-1 model scores without corrupting genuine 0-100 scores", () => {
+  const unitRecords = [
+    { relevanceScore: 0.95, qualityScore: 0.78 },
+    { relevanceScore: 0.4, qualityScore: 0.65 },
+  ];
+  const unitScale = inferModelScoreScale(unitRecords);
+  assert.equal(unitScale, "unit");
+  assert.equal(normalizeModelScore(unitRecords[0].relevanceScore, unitScale), 95);
+  assert.equal(normalizeModelScore(unitRecords[0].qualityScore, unitScale), 78);
+  assert.equal(inferModelScoreScale([{ relevanceScore: 1, qualityScore: 1, screeningReason: "Directly relevant to the core problem" }]), "unit");
+
+  const percentRecords = [
+    { relevanceScore: 88, qualityScore: 82 },
+    { relevanceScore: 1, qualityScore: 0 },
+  ];
+  const percentScale = inferModelScoreScale(percentRecords);
+  assert.equal(percentScale, "percent");
+  assert.equal(normalizeModelScore(1, percentScale), 1);
+  assert.equal(hasStrongFitScoreContradiction(1, "Directly relevant to the core problem"), true);
+  assert.equal(hasStrongFitScoreContradiction(20, "Only an adjacent topic"), false);
 });

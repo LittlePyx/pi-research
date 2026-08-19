@@ -73,6 +73,20 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(migration, /work_queue_json/);
 });
 
+test("screening refreshes stale fallback plans and enriches evidence before deep review", async () => {
+  const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
+
+  assert.match(monitor, /existing\.model === "deterministic-fallback"/);
+  assert.match(monitor, /ON CONFLICT\(space_id, plan_date\) DO UPDATE/);
+  assert.match(monitor, /0-100 scale, never decimals on a 0-1 scale/);
+  assert.match(monitor, /inferModelScoreScale/);
+  assert.match(monitor, /candidateScreeningPriority/);
+  assert.match(monitor, /fetchSemanticScholarAbstracts/);
+  assert.match(monitor, /fetchOpenAlexAbstract/);
+  assert.match(monitor, /checkpoint === "enriching_abstracts"/);
+  assert.match(monitor, /MONITOR_REVIEW_PIPELINE_RELEASED_AT/);
+});
+
 test("today and its daily brief are capped at six and reranked across directions", async () => {
   const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
 
