@@ -3198,3 +3198,6 @@ main { min-width: 0; }
   .v2-activity-log > div > article { grid-template-columns: 27px minmax(0,1fr); }
   .v2-activity-log article > button { grid-column: 2; justify-self: start; padding: 0; }
 }
+
+/* Pi Research V43 — reminders follow the primary research workflow */
+.v2-today .v2-action-inbox { scroll-margin-top: 82px; }
