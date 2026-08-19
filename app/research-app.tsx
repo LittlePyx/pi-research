@@ -147,6 +147,7 @@ type ResearchNotification = {
   readAt: string | null;
   createdAt: string;
 };
+const ACTION_NOTIFICATION_KINDS = new Set(["must_read", "route_change", "weekly_review", "reading_reminder"]);
 type MonitorStatus = "idle" | "scanning" | "discovering_days" | "discovering_months" | "discovering_years" | "deduplicating" | "screening" | "deep_reviewing" | "reviewing" | "saving" | "briefing" | "ready" | "error";
 type MonitorState = {
   status: MonitorStatus;
@@ -815,6 +816,22 @@ function formatTodayDate(locale: Locale) {
   }).format(new Date());
 }
 
+function formatNotificationTime(value: string, locale: Locale) {
+  const timestamp = new Date(value).getTime();
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+  if (elapsedMinutes < 1) return locale === "zh" ? "刚刚" : "Just now";
+  if (elapsedMinutes < 60) return locale === "zh" ? `${elapsedMinutes} 分钟前` : `${elapsedMinutes}m ago`;
+  if (elapsedMinutes < 24 * 60) return locale === "zh" ? `${Math.floor(elapsedMinutes / 60)} 小时前` : `${Math.floor(elapsedMinutes / 60)}h ago`;
+  return formatMonitorDate(value, locale);
+}
+
+function notificationActionLabel(kind: string, locale: Locale) {
+  if (kind === "must_read") return locale === "zh" ? "开始阅读" : "Start reading";
+  if (kind === "route_change") return locale === "zh" ? "查看地图" : "Open map";
+  if (kind === "weekly_review") return locale === "zh" ? "查看回顾" : "Open review";
+  return locale === "zh" ? "立即处理" : "Open";
+}
+
 function researchRoleLabel(role: ResearchTrackRole, locale: Locale) {
   const labels: Record<ResearchTrackRole, Localized> = {
     foundation: { zh: "奠基", en: "Foundation" },
@@ -1470,7 +1487,22 @@ export default function ResearchApp({ user }: { user: User }) {
   const dailyBriefEntryCount = Math.min(6, Math.max(dailyBriefPapers.length, dailySignals.length, dailyReadingPlan.length));
   const dailyBriefPaperIds = new Set(monitor?.dailyBrief?.paperIds || []);
   const additionalTodayPapers = rankedMonitorPapers.filter((paper) => !dailyBriefPaperIds.has(paper.id)).slice(0, 6);
-  const unreadNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => !notification.readAt), [monitor?.notifications]);
+  const pendingActionNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => ACTION_NOTIFICATION_KINDS.has(notification.kind) && !notification.readAt), [monitor?.notifications]);
+  const activityGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; primary: ResearchNotification; recovered: boolean }>();
+    for (const notification of monitor?.notifications || []) {
+      if (ACTION_NOTIFICATION_KINDS.has(notification.kind)) continue;
+      const key = notification.createdAt.slice(0, 10);
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, { key, primary: notification, recovered: notification.kind === "scan_recovered" });
+        continue;
+      }
+      if (notification.kind === "daily_brief" || existing.primary.kind !== "daily_brief") existing.primary = notification;
+      if (notification.kind === "scan_recovered") existing.recovered = true;
+    }
+    return Array.from(groups.values()).sort((left, right) => right.primary.createdAt.localeCompare(left.primary.createdAt));
+  }, [monitor?.notifications]);
   const operationsMaxCandidates = Math.max(1, ...(monitor?.operationsDashboard?.daily || []).map((day) => day.candidates));
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
   const confirmedProfile = latestConfirmedImport?.analysis || null;
@@ -2597,7 +2629,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <div className="v2-breadcrumb"><span>{defaultSpaceName(activeSpace.name, locale)}</span><b>/</b><strong>{navItems.find((item) => item.id === activeNav)?.label}</strong></div>
           <button className="v2-ask-trigger" type="button" onClick={() => setAskOpen(true)}><span>⌕</span><span>{t.askPlaceholder}</span><kbd>⌘ K</kbd></button>
           <div className="v2-top-actions">
-            <button className="v2-notification-trigger" type="button" aria-label={locale === "zh" ? "研究提醒" : "Research alerts"} onClick={() => { navigate("today"); setNotificationsExpanded(true); }}><span>◌</span>{Boolean(monitor?.unreadNotificationCount) && <b>{Math.min(99, monitor?.unreadNotificationCount || 0)}</b>}</button>
+            <button className="v2-notification-trigger" type="button" aria-label={locale === "zh" ? "研究提醒" : "Research alerts"} onClick={() => { navigate("today"); setNotificationsExpanded(true); }}><span>◌</span>{Boolean(pendingActionNotifications.length) && <b>{Math.min(99, pendingActionNotifications.length)}</b>}</button>
             <div className="v2-language"><button className={locale === "zh" ? "active" : ""} type="button" onClick={() => setLocale("zh")}>中</button><button className={locale === "en" ? "active" : ""} type="button" onClick={() => setLocale("en")}>EN</button></div>
             <button className="v2-ask-button" type="button" onClick={() => setAskOpen(true)}><span>π</span>{t.askPi}</button>
           </div>
@@ -2615,9 +2647,13 @@ export default function ResearchApp({ user }: { user: User }) {
               </section>
             </section>
 
-            {Boolean(monitor?.notifications?.length) && <section className="v2-research-catchup">
-              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究提醒" : "RESEARCH ALERTS"}</p><h2>{unreadNotifications.length ? (locale === "zh" ? `${unreadNotifications.length} 条更新等你处理` : `${unreadNotifications.length} updates to catch up on`) : (locale === "zh" ? "最近的研究活动" : "Recent research activity")}</h2></div><div>{unreadNotifications.length > 0 && <button type="button" onClick={() => void markNotificationsRead()}>{locale === "zh" ? "全部已读" : "Mark all read"}</button>}{(monitor?.notifications?.length || 0) > 3 && <button type="button" onClick={() => setNotificationsExpanded((value) => !value)}>{notificationsExpanded ? (locale === "zh" ? "收起" : "Show less") : (locale === "zh" ? "查看全部" : "View all")}</button>}</div></header>
-              <div>{monitor?.notifications?.slice(0, notificationsExpanded ? 12 : 3).map((notification) => <button className={`${notification.readAt ? "read" : "unread"} ${notification.priority}`} type="button" key={notification.id} onClick={() => openResearchNotification(notification)}><span>{notification.kind === "weekly_review" ? "7D" : notification.kind === "must_read" ? "!" : notification.kind === "scan_recovered" ? "↻" : "π"}</span><div><strong>{locale === "zh" ? notification.titleZh : notification.titleEn}</strong><p>{locale === "zh" ? notification.bodyZh : notification.bodyEn}</p><small>{formatMonitorDate(notification.createdAt, locale)}</small></div><b>→</b></button>)}</div>
+            {Boolean(monitor?.notifications?.length) && <section className="v2-research-catchup v2-action-inbox">
+              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究提醒" : "RESEARCH ALERTS"}</p><h2>{pendingActionNotifications.length ? (locale === "zh" ? `${pendingActionNotifications.length} 项需要你处理` : `${pendingActionNotifications.length} items need your attention`) : (locale === "zh" ? "当前没有待处理事项" : "You're all caught up")}</h2></div>{pendingActionNotifications.length > 0 && <button type="button" onClick={() => void markNotificationsRead()}>{locale === "zh" ? "全部标为已处理" : "Mark all handled"}</button>}</header>
+              <div className="v2-action-inbox-list">
+                {pendingActionNotifications.slice(0, 4).map((notification) => <article className={notification.kind} key={notification.id}><span>{notification.kind === "weekly_review" ? "7D" : notification.kind === "route_change" ? "↗" : notification.kind === "must_read" ? "!" : "◷"}</span><div><small>{notification.kind === "must_read" ? (locale === "zh" ? "优先阅读" : "Priority reading") : notification.kind === "route_change" ? (locale === "zh" ? "路线变化" : "Route change") : notification.kind === "weekly_review" ? (locale === "zh" ? "阶段回顾" : "Research review") : (locale === "zh" ? "阅读提醒" : "Reading reminder")} · {formatNotificationTime(notification.createdAt, locale)}</small><strong>{locale === "zh" ? notification.titleZh : notification.titleEn}</strong><p>{locale === "zh" ? notification.bodyZh : notification.bodyEn}</p></div><button type="button" onClick={() => openResearchNotification(notification)}>{notificationActionLabel(notification.kind, locale)} →</button></article>)}
+                {!pendingActionNotifications.length && <div className="v2-action-inbox-empty"><span>✓</span><p>{locale === "zh" ? "新的必读论文、路线变化或阅读提醒会出现在这里。" : "New must-reads, route changes, and reading reminders will appear here."}</p></div>}
+              </div>
+              {Boolean(activityGroups.length) && <div className="v2-activity-log"><header><div><strong>{locale === "zh" ? "Pi 运行记录" : "Pi activity log"}</strong><small>{locale === "zh" ? "扫描与恢复状态，不占用你的待处理数量" : "Scan and recovery status without adding to your task count"}</small></div><button type="button" onClick={() => setNotificationsExpanded((value) => !value)}>{notificationsExpanded ? (locale === "zh" ? "收起记录" : "Show less") : activityGroups.length > 1 ? (locale === "zh" ? "查看全部记录" : "View all activity") : (locale === "zh" ? "查看记录" : "View activity")}</button></header><div>{activityGroups.slice(0, notificationsExpanded ? 7 : 1).map((activity, index) => <article key={activity.key}><span>✓</span><div><strong>{locale === "zh" ? "扫描完成" : "Scan complete"}{activity.recovered ? (locale === "zh" ? " · 已从断点续跑" : " · resumed from checkpoint") : ""}</strong><p>{index === 0 && monitor?.dailyBrief ? (locale === "zh" ? `${monitor.dailyBrief.metrics.scanned || 0} 篇候选 → ${monitor.dailyBrief.metrics.reviewed || 0} 篇深审 → ${monitor.dailyBrief.metrics.recommended || 0} 篇入选` : `${monitor.dailyBrief.metrics.scanned || 0} candidates → ${monitor.dailyBrief.metrics.reviewed || 0} deeply reviewed → ${monitor.dailyBrief.metrics.recommended || 0} selected`) : (locale === "zh" ? activity.primary.bodyZh : activity.primary.bodyEn)}</p><small>{formatNotificationTime(activity.primary.createdAt, locale)}</small></div><button type="button" onClick={() => document.querySelector(".v2-monitor-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{locale === "zh" ? "查看扫描详情" : "Scan details"} →</button></article>)}</div></div>}
             </section>}
 
             {monitor?.dailyBrief && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>

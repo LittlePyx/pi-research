@@ -2257,6 +2257,16 @@ async function createScanNotifications(
       actionView: "today",
     });
   }
+  const changedTracks = new Set(reviews.filter((review) => review.recommended && review.trackId && review.mapRationaleZh && review.mapRationaleEn).map((review) => review.trackId));
+  if (changedTracks.size) {
+    await upsertResearchNotification(database, {
+      spaceId, dedupeKey: `route-change:${briefDate}`, kind: "route_change", priority: "high",
+      titleZh: `${changedTracks.size} 条研究路线获得了新证据`, titleEn: `${changedTracks.size} research routes gained new evidence`,
+      bodyZh: "新入选论文已经补充到研究地图，可查看它们改变了哪些方向、节点和后续问题。",
+      bodyEn: "Newly selected papers have been added to the research map. See which directions, milestones, and next questions changed.",
+      actionView: "threads",
+    });
+  }
   if (resumed) {
     await upsertResearchNotification(database, {
       spaceId, dedupeKey: `recovered:${briefDate}`, kind: "scan_recovered",

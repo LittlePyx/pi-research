@@ -21,6 +21,8 @@ test("completed scans create non-blocking catch-up notifications and evidence-gr
   const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
 
   assert.match(monitor, /createScanNotifications/);
+  assert.match(monitor, /kind: "route_change"/);
+  assert.match(monitor, /changedTracks\.size/);
   assert.match(monitor, /maybeGenerateWeeklyReview/);
   assert.match(monitor, /sourceDays < 3/);
   assert.match(monitor, /sourceDays < 7/);
@@ -39,10 +41,17 @@ test("the daily workbench exposes research catch-up while keeping quality teleme
   assert.match(monitor, /wrongTypeReports/);
   assert.match(monitor, /tokensPerRecommendation/);
   assert.match(client, /v2-research-catchup/);
+  assert.match(client, /v2-action-inbox/);
+  assert.match(client, /ACTION_NOTIFICATION_KINDS/);
+  assert.match(client, /Pi 运行记录/);
+  assert.match(client, /不占用你的待处理数量/);
+  assert.match(client, /notificationActionLabel/);
   assert.match(client, /v2-weekly-review/);
   assert.match(client, /const SHOW_INTERNAL_QUALITY_UI = false/);
   assert.match(client, /SHOW_INTERNAL_QUALITY_UI && monitor\?\.pilotEvaluation/);
   assert.match(client, /markNotificationsRead/);
   assert.doesNotMatch(client, /type View = [^\n]*"audit"/);
   assert.match(styles, /\.v2-research-catchup/);
+  assert.match(styles, /actionable alerts separated from system activity/);
+  assert.match(styles, /\.v2-activity-log/);
 });
