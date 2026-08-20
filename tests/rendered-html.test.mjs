@@ -31,8 +31,9 @@ test("server-renders the Pi Research application", async () => {
 });
 
 test("ships live monitoring, deduplication, and readable type", async () => {
-  const [route, feedback, profiles, repository, css, client] = await Promise.all([
+  const [route, queue, feedback, profiles, repository, css, client] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/monitor-candidate-queue.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/feedback/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/monitor/domain-profiles.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
@@ -42,7 +43,8 @@ test("ships live monitoring, deduplication, and readable type", async () => {
 
   assert.match(route, /api\.crossref\.org\/works/);
   assert.match(route, /CADENCE_MS = 24 \* 60 \* 60 \* 1000/);
-  assert.match(route, /INSERT INTO monitored_papers/);
+  assert.match(route, /enqueueMonitorCandidates/);
+  assert.match(queue, /INSERT INTO monitored_papers/);
   assert.match(route, /titleFingerprint/);
   assert.match(route, /reviewCandidates/);
   assert.match(route, /MONITOR_MODEL = "deepseek-v4-pro"/);
@@ -368,6 +370,13 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /calm, evidence-first research route workbench/);
   assert.match(css, /\.v2-route-workspace-tabs/);
   assert.match(css, /\.v2-route-evidence-chain/);
+  assert.match(client, /v2-route-discovery-origin/);
+  assert.match(client, /研究路线深挖/);
+  assert.match(client, /历史奠基文献/);
+  assert.match(client, /monitorPaperHorizonLabel/);
+  assert.match(client, /今日质量评估/);
+  assert.match(css, /traceable route discovery and quality-review handoff/);
+  assert.match(css, /\.v2-route-quality-flow/);
   assert.match(worker, /runScheduledMonitorSweep/);
   assert.match(worker, /async scheduled/);
   assert.match(worker, /LIMIT 2/);

@@ -4063,3 +4063,94 @@ main { min-width: 0; }
   .v2-route-panel-empty { align-items: flex-start; flex-direction: column; }
   .v2-route-panel-empty button { margin-left: 0; }
 }
+
+/* Pi Research V59 — traceable route discovery and quality-review handoff */
+.v2-route-discovery-origin {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 1px solid #cbdad0;
+  border-radius: 6px;
+  background: #f0f5f1;
+  color: #50665a;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 680;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-transform: none;
+  vertical-align: middle;
+}
+.v2-route-discovery-origin > b { padding: 2px 6px; border-radius: 4px; background: #315d48; color: #fff; flex: none; font-size: 10px; font-weight: 820; }
+.v2-route-discovery-origin > span { min-width: 0; max-width: 220px; padding: 0 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2-route-discovery-origin > i { padding: 0 5px 0 7px; border-left: 1px solid #cfdbd3; color: #765d49; flex: none; font-size: 10px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.v2-library-paper-flags > .v2-route-discovery-origin,.v2-paper-top > .v2-route-discovery-origin { padding: 4px 6px; background: #f0f5f1; color: #50665a; font-size: 11px; }
+.v2-paper-top > .v2-route-discovery-origin { border-left: 1px solid #cbdad0; text-transform: none; }
+.v2-compact-list .v2-route-discovery-origin { margin-top: 7px; }
+
+.v2-route-review-policy {
+  margin: -2px 0 17px;
+  padding: 9px 12px;
+  border: 1px solid #d5ded7;
+  border-radius: 9px;
+  background: rgba(244,247,244,.78);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #5f7066;
+  font-size: 10px;
+}
+.v2-route-review-policy > span { display: flex; align-items: center; gap: 6px; font-weight: 760; white-space: nowrap; }
+.v2-route-review-policy > span b { width: 20px; height: 20px; border-radius: 50%; background: #e2ebe5; color: #436451; display: grid; place-items: center; font: 8px Georgia,serif; }
+.v2-route-review-policy > i { color: #97a39b; font-style: normal; }
+.v2-route-review-policy > small { margin-left: auto; color: #7d8780; font-size: 9px; }
+
+.v2-route-quality-status {
+  margin: 10px 0 0;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: #eef4f0;
+  color: #5b6e62;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 9px;
+}
+.v2-route-quality-status > span { width: 19px; height: 19px; border-radius: 50%; background: #dbe9df; color: #315d48; display: grid; place-items: center; flex: none; font: 10px Georgia,serif; }
+.v2-route-quality-status > strong { font-size: 9px; }
+.v2-route-quality-status > small { color: #718078; font-size: 8px; }
+.v2-route-quality-status > time { margin-left: auto; color: #8b958f; flex: none; font-size: 8px; }
+
+.v2-route-quality-flow {
+  padding: 12px 20px;
+  border-bottom: 1px solid #dce3de;
+  background: #f6f8f5;
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr);
+  align-items: center;
+  gap: 10px;
+}
+.v2-route-quality-flow > span { min-width: 0; display: grid; grid-template-columns: 25px minmax(0,1fr); gap: 2px 8px; }
+.v2-route-quality-flow > span > b { grid-row: 1 / span 2; width: 24px; height: 24px; border-radius: 50%; background: #e1e9e3; color: #5f7467; display: grid; place-items: center; font: 8px Georgia,serif; }
+.v2-route-quality-flow > span > strong { color: #4d6055; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.v2-route-quality-flow > span > small { color: #828c86; overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.v2-route-quality-flow > span.active > b { background: #dcece2; color: #255c40; box-shadow: inset 0 0 0 1px #bad1c1; }
+.v2-route-quality-flow > span.complete > b { background: #315d48; color: #fff; }
+.v2-route-quality-flow > i { color: #9ca69f; font-style: normal; }
+
+@media (max-width: 760px) {
+  .v2-route-discovery-origin { align-items: flex-start; flex-wrap: wrap; }
+  .v2-route-discovery-origin > span { max-width: min(220px,55vw); }
+  .v2-route-review-policy { align-items: flex-start; flex-wrap: wrap; }
+  .v2-route-review-policy > small { width: 100%; margin-left: 0; }
+  .v2-route-quality-status { align-items: flex-start; flex-wrap: wrap; }
+  .v2-route-quality-status > time { margin-left: 26px; }
+  .v2-route-quality-flow { grid-template-columns: 1fr; gap: 7px; }
+  .v2-route-quality-flow > i { padding-left: 8px; transform: rotate(90deg); transform-origin: left center; }
+  .v2-route-quality-flow > span > strong,.v2-route-quality-flow > span > small { white-space: normal; }
+}

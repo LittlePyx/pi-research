@@ -52,13 +52,16 @@ test("research-network expansion uses verified external relations, cache, and co
 test("candidate acceptance uses stable conflict-safe identities and one atomic write batch", async () => {
   const route = await readFile(routePath, "utf8");
   const patchBlock = route.slice(route.indexOf("export async function PATCH"));
-  assert.match(patchBlock, /`network-monitored:\$\{candidateId\}`/);
+  assert.match(patchBlock, /const monitoredPaperId = queuedPaper\.id/);
   assert.match(patchBlock, /`network-paper:\$\{trackId\}:\$\{candidateId\}`/);
   assert.match(patchBlock, /`network-accept:\$\{trackId\}:\$\{candidateId\}`/);
+  assert.match(patchBlock, /const acceptedCanonicalId = acceptanceQueue\.canonicalIds\[0\] \|\| candidate\.canonicalId/);
   assert.match(patchBlock, /SELECT COALESCE\(MAX\(position\), -1\) \+ 1 FROM research_track_papers/);
   assert.match(patchBlock, /ON CONFLICT DO UPDATE SET/);
   assert.doesNotMatch(patchBlock, /existingFormal|existingMonitoredPaper|position = await|crypto\.randomUUID\(\)/);
-  assert.match(patchBlock, /paperCanonicalId: candidate\.canonicalId/);
+  assert.match(patchBlock, /paperCanonicalId: acceptedCanonicalId/);
+  assert.match(patchBlock, /formalized: true/);
+  assert.doesNotMatch(patchBlock, /formalized: false/);
   assert.match(patchBlock, /await database\.batch\(statements\)/);
 });
 

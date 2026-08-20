@@ -26,7 +26,13 @@ import {
   verifiedRelationFallbackEdge,
   verifiedSeedCoverage,
 } from "../../../lib/research-network";
-import { confirmedExternalResearchMapEvidenceStatements } from "../../../lib/research-map-evidence";
+import {
+  compatibleResearchWorkMetadata,
+  enqueueMonitorCandidates,
+  researchWorkIdentitySignature,
+  type MonitorCandidateQueueResult,
+} from "../../../lib/monitor-candidate-queue";
+import { confirmedExternalResearchMapEvidenceStatements, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar, SemanticScholarQuotaError, SemanticScholarRateLimitError } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string };
@@ -41,6 +47,8 @@ type SeedRow = {
   url: string;
   published_at: string | null;
   citation_count: number;
+  role: string;
+  confirmed: number;
 };
 type CandidateRow = {
   id: string;
@@ -525,11 +533,103 @@ async function ownedSpace(request: Request, spaceId: string) {
 
 async function resolveSeeds(database: D1Database, spaceId: string, originCanonicalIds: string[]) {
   const all = await database.prepare(
-    "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count FROM research_track_papers WHERE space_id = ? ORDER BY citation_count DESC, created_at ASC",
+    `SELECT tp.id, tp.track_id, tp.canonical_id, tp.doi, tp.title, tp.authors, tp.venue, tp.url,
+     tp.published_at, tp.citation_count, tp.role,
+     CASE WHEN EXISTS (
+      SELECT 1 FROM research_map_evidence_proposals ep
+      JOIN monitored_papers mp ON mp.id = ep.paper_id AND mp.space_id = ep.space_id
+      WHERE ep.space_id = tp.space_id AND ep.track_id = tp.track_id
+       AND mp.canonical_id = tp.canonical_id AND ep.status = 'confirmed'
+     ) THEN 1 ELSE 0 END AS confirmed
+     FROM research_track_papers tp WHERE tp.space_id = ?
+     ORDER BY confirmed DESC, CASE tp.role WHEN 'frontier' THEN 0 WHEN 'milestone' THEN 1 ELSE 2 END,
+      tp.citation_count DESC, tp.created_at ASC`,
   ).bind(spaceId).all<SeedRow>();
   const byCanonical = new Map<string, SeedRow>();
   for (const row of all.results) if (!byCanonical.has(row.canonical_id)) byCanonical.set(row.canonical_id, row);
   return originCanonicalIds.map((canonical) => byCanonical.get(canonical)).filter((row): row is SeedRow => Boolean(row)).slice(0, MAX_SEEDS);
+}
+
+function networkCandidateIdentity(candidate: Pick<InternalCandidate, "canonicalId" | "doi" | "title" | "authors" | "publishedAt">) {
+  if (candidate.doi) return `doi:${candidate.doi.toLocaleLowerCase()}`;
+  const signature = researchWorkIdentitySignature(candidate);
+  return cleanText(candidate.title) ? `work:${signature}` : candidate.canonicalId;
+}
+
+function primaryNetworkRoutes(candidate: ResearchNetworkCandidate, seedRows: SeedRow[]) {
+  const seedByCanonicalId = new Map(seedRows.map((seed) => [seed.canonical_id, seed]));
+  const stats = new Map<string, { trackId: string; seedIds: Set<string>; direct: number; confirmed: number; confirmedFrontier: number }>();
+  for (const relation of candidate.relations) {
+    const relatedCanonicalIds = relation.seedCanonicalIds.length ? relation.seedCanonicalIds : [relation.seedCanonicalId];
+    for (const canonicalId of relatedCanonicalIds) {
+      const seed = seedByCanonicalId.get(canonicalId);
+      if (!seed) continue;
+      const current = stats.get(seed.track_id) || {
+        trackId: seed.track_id, seedIds: new Set<string>(), direct: 0, confirmed: 0, confirmedFrontier: 0,
+      };
+      if (!current.seedIds.has(seed.id)) {
+        current.seedIds.add(seed.id);
+        if (seed.confirmed) current.confirmed += 1;
+        if (seed.confirmed && seed.role === "frontier") current.confirmedFrontier += 1;
+      }
+      if (relation.kind !== "recommendation") current.direct += 1;
+      stats.set(seed.track_id, current);
+    }
+  }
+  const ranked = Array.from(stats.values()).sort((left, right) =>
+    right.seedIds.size - left.seedIds.size
+      || right.direct - left.direct
+      || right.confirmedFrontier - left.confirmedFrontier
+      || right.confirmed - left.confirmed);
+  if (!ranked.length) return [];
+  const first = ranked[0];
+  // A bridge can be equally supported by multiple routes. Preserve every
+  // strongest route as provenance while still queueing one deduplicated paper.
+  return ranked.filter((entry) => entry.seedIds.size === first.seedIds.size
+    && entry.direct === first.direct
+    && entry.confirmedFrontier === first.confirmedFrontier
+    && entry.confirmed === first.confirmed).map((entry) => entry.trackId);
+}
+
+async function enqueueNetworkReviewCandidates(
+  database: D1Database,
+  spaceId: string,
+  seedRows: SeedRow[],
+  candidates: ResearchNetworkCandidate[],
+  expansionKey: string,
+): Promise<MonitorCandidateQueueResult> {
+  const seedTitles = seedRows.map((seed) => seed.title).filter(Boolean).slice(0, 3).join(" | ");
+  const routed = candidates.flatMap((candidate) => {
+    const trackIds = primaryNetworkRoutes(candidate, seedRows);
+    if (!trackIds.length) return [];
+    const direct = candidate.relations.some((relation) => relation.kind !== "recommendation");
+    return [{
+      canonicalId: candidate.canonicalId,
+      doi: candidate.doi || null,
+      title: candidate.title,
+      authors: candidate.authors,
+      venue: candidate.venue,
+      url: candidate.url,
+      publishedAt: candidate.publishedAt,
+      abstractText: candidate.abstractText,
+      horizon: researchEvidenceHorizon(candidate.publishedAt),
+      citationCount: candidate.citationCount,
+      relevanceScore: Math.min(68, 46 + (direct ? 6 : 0) + (candidate.bridge ? 5 : 0)
+        + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 3)),
+      qualityScore: Math.min(74, 48 + (direct ? 5 : 0)
+        + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 4)),
+      priorityVenue: false,
+      source: "research-network",
+      provenance: trackIds.map((trackId) => ({
+        sourceKey: "research-route:network",
+        channel: direct ? "citation" as const : "semantic" as const,
+        queryKey: `${trackId}:network:${expansionKey}`,
+        queryText: seedTitles,
+        routeId: trackId,
+      })),
+    }];
+  });
+  return enqueueMonitorCandidates(database, spaceId, routed, { recordDiscoveryCoverage: true });
 }
 
 async function resolveSemanticScholarSeeds(rows: SeedRow[], budget: ExternalCallBudget) {
@@ -1179,6 +1279,7 @@ export async function POST(request: Request) {
   const shouldExpandRecommendation = force || !recommendationFresh;
   const cached = await loadCandidates(database, spaceId, seedRows, expansionKey, false, limit);
   if (partition.fullyCached) {
+    await enqueueNetworkReviewCandidates(database, spaceId, seedRows, cached, expansionKey);
     const storedSimilarity = cachedSimilarityEdges(expansionState);
     const cachedStatuses = [...seedRows.map((seed) => seedStates.get(seed.id)?.status), expansionState?.status].filter(Boolean);
     const cachedCoverageStatus = classifyCoverageStatuses(cachedStatuses);
@@ -1215,6 +1316,7 @@ export async function POST(request: Request) {
   const expansionLockToken = await tryAcquireExpansionLock(database, spaceId, expansionKey, seedRows.map((seed) => seed.canonical_id));
   if (!expansionLockToken) {
     const inProgress = await loadCandidates(database, spaceId, seedRows, expansionKey, true, limit);
+    await enqueueNetworkReviewCandidates(database, spaceId, seedRows, inProgress, expansionKey);
     const message = "This academic-graph expansion is already running; current verified results are shown while it finishes.";
     return Response.json(expandResponse({
       seeds: localSeeds(seedRows), candidates: inProgress, similarityEdges: directRelationEdges(inProgress), cached: Boolean(inProgress.length), stale: true,
@@ -1325,7 +1427,17 @@ export async function POST(request: Request) {
   const aggregated = new Map<string, InternalCandidate>();
   const mergeCandidate = (normalized: InternalCandidate, relation: InternalRelation) => {
     if (excluded.has(normalized.canonicalId)) return;
-    const current = aggregated.get(normalized.canonicalId) || normalized;
+    // Semantic Scholar and OpenAlex use different IDs for DOI-less works. Merge
+    // only when title, non-conflicting year, and available author metadata are
+    // compatible. Ambiguous same-title records remain separate.
+    let identity = networkCandidateIdentity(normalized);
+    if (!normalized.doi) {
+      const compatibleKeys = Array.from(aggregated.entries())
+        .filter(([, current]) => compatibleResearchWorkMetadata(normalized, current))
+        .map(([key]) => key);
+      if (compatibleKeys.length === 1) identity = compatibleKeys[0];
+    }
+    const current = aggregated.get(identity) || normalized;
     current.s2PaperId ||= normalized.s2PaperId;
     current.openAlexId ||= normalized.openAlexId;
     current.doi ||= normalized.doi;
@@ -1334,7 +1446,7 @@ export async function POST(request: Request) {
     if (!existingRelation || existingRelation.evidenceSource !== "semantic-scholar") current.relations.set(relationKey, relation);
     if (!current.abstractText && normalized.abstractText) current.abstractText = normalized.abstractText;
     current.citationCount = Math.max(current.citationCount, normalized.citationCount);
-    aggregated.set(normalized.canonicalId, current);
+    aggregated.set(identity, current);
   };
   for (const entry of relationResults.flatMap((result) => result.results)) {
     const normalized = normalizePaper(entry.paper);
@@ -1361,6 +1473,7 @@ export async function POST(request: Request) {
   }
   if (selected.length) await persistCandidates(database, spaceId, selected, expiresAt);
   const candidates = await loadCandidates(database, spaceId, seedRows, expansionKey, false, limit);
+  await enqueueNetworkReviewCandidates(database, spaceId, seedRows, candidates, expansionKey);
   const visibleCandidateIds = new Set(candidates.map((candidate) => candidate.canonicalId));
   const visibleSelected = selected.filter((candidate) => !existingGhostCanonicalIds.has(candidate.canonicalId) && visibleCandidateIds.has(candidate.canonicalId));
   const visibleDirectSeedIds = new Set<string>();
@@ -1552,6 +1665,7 @@ export async function POST(request: Request) {
     let stale: ResearchNetworkCandidate[] = [];
     try {
       stale = await loadCandidates(database, spaceId, seedRows, expansionKey, true, limit);
+      if (stale.length) await enqueueNetworkReviewCandidates(database, spaceId, seedRows, stale, expansionKey);
     } catch (cacheError) {
       const correlationId = crypto.randomUUID();
       console.error(`[research-network:${correlationId}] recovery-cache`, cacheError);
@@ -1664,18 +1778,41 @@ export async function PATCH(request: Request) {
   const rationaleEn = verifiedDirect
     ? `The paper was expanded from the current seeds through a citation relation verified by ${relationSourceEn} and then accepted by the user.`
     : "The paper was recommended by an external academic graph from the current seeds and accepted by the user; direct citation evidence remains to be verified.";
-  const monitoredPaperId = `network-monitored:${candidateId}`;
+  const acceptanceQueue = await enqueueMonitorCandidates(database, spaceId, [{
+    canonicalId: candidate.canonicalId,
+    doi: candidate.doi || null,
+    title: candidate.title,
+    authors: candidate.authors,
+    venue: candidate.venue,
+    url: candidate.url,
+    publishedAt: candidate.publishedAt,
+    abstractText: candidate.abstractText,
+    horizon: researchEvidenceHorizon(candidate.publishedAt),
+    citationCount: candidate.citationCount,
+    relevanceScore: Math.min(68, 48 + (verifiedDirect ? 7 : 0)
+      + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 3)),
+    qualityScore: Math.min(74, 50 + (verifiedDirect ? 5 : 0)
+      + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 4)),
+    priorityVenue: false,
+    source: "research-network",
+    provenance: [{
+      sourceKey: "research-route:network",
+      channel: verifiedDirect ? "citation" : "semantic",
+      queryKey: `${trackId}:network:accepted`,
+      queryText: candidate.title,
+      routeId: trackId,
+    }],
+  }], { recordDiscoveryCoverage: true });
+  const queuedPaper = await database.prepare(
+    `SELECT p.id, i.analysis_source, i.llm_recommended FROM monitored_papers p
+     JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+     WHERE p.space_id = ? AND p.canonical_id = ? LIMIT 1`,
+  ).bind(spaceId, acceptanceQueue.canonicalIds[0] || candidate.canonicalId)
+    .first<{ id: string; analysis_source: string; llm_recommended: number }>();
+  if (!queuedPaper) return Response.json({ error: "Accepted paper could not be queued for quality review" }, { status: 500 });
+  const acceptedCanonicalId = acceptanceQueue.canonicalIds[0] || candidate.canonicalId;
+  const monitoredPaperId = queuedPaper.id;
   const statements: D1PreparedStatement[] = [];
-  statements.push(database.prepare(
-    `INSERT INTO monitored_papers
-     (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon, citation_count, relevance_score)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'research-network', 'years', ?, ?)
-     ON CONFLICT DO UPDATE SET title = excluded.title, authors = excluded.authors,
-      venue = excluded.venue, url = excluded.url, published_at = excluded.published_at,
-      citation_count = MAX(monitored_papers.citation_count, excluded.citation_count),
-      relevance_score = MAX(monitored_papers.relevance_score, excluded.relevance_score), last_seen_at = CURRENT_TIMESTAMP`,
-  ).bind(monitoredPaperId, spaceId, candidate.canonicalId, candidate.doi || null, candidate.title, candidate.authors,
-    candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, candidate.score));
   statements.push(database.prepare(
     `INSERT INTO research_track_papers
      (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role,
@@ -1688,7 +1825,7 @@ export async function PATCH(request: Request) {
       summary_zh = CASE WHEN excluded.summary_zh <> '' THEN excluded.summary_zh ELSE research_track_papers.summary_zh END,
       summary_en = CASE WHEN excluded.summary_en <> '' THEN excluded.summary_en ELSE research_track_papers.summary_en END,
       rationale_zh = excluded.rationale_zh, rationale_en = excluded.rationale_en`,
-  ).bind(stableFormalId, trackId, spaceId, candidate.canonicalId, candidate.doi || null, candidate.title, candidate.authors,
+  ).bind(stableFormalId, trackId, spaceId, acceptedCanonicalId, candidate.doi || null, candidate.title, candidate.authors,
     candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, role, candidate.abstractText,
     candidate.abstractText, rationaleZh, rationaleEn, trackId));
   const verifiedEdges = await database.prepare(
@@ -1714,13 +1851,13 @@ export async function PATCH(request: Request) {
     ).bind(`network-edge:${candidateId}:${edge.seed_paper_id}:${edge.direction}`, spaceId, edge.seed_paper_id,
       verifiedByOpenAlex ? "OpenAlex 已核验的直接引用关系。" : "Semantic Scholar 已核验的直接引用关系。",
       verifiedByOpenAlex ? "Direct citation verified by OpenAlex." : "Direct citation verified by Semantic Scholar.",
-      verifiedByOpenAlex ? "openalex" : "semantic-scholar", trackId, candidate.canonicalId, edge.seed_paper_id));
+      verifiedByOpenAlex ? "openalex" : "semantic-scholar", trackId, acceptedCanonicalId, edge.seed_paper_id));
   }
   statements.push(
     database.prepare("UPDATE research_network_candidates SET status = 'accepted', last_seen_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?").bind(candidateId, spaceId),
     ...confirmedExternalResearchMapEvidenceStatements(database, {
       id: `network-accept:${trackId}:${candidateId}`,
-      spaceId, trackId, paperId: monitoredPaperId, paperCanonicalId: candidate.canonicalId,
+      spaceId, trackId, paperId: monitoredPaperId, paperCanonicalId: acceptedCanonicalId,
       mapRole: role, rationaleZh, rationaleEn,
       confidence: verifiedDirect ? 100 : Math.max(65, candidate.score), paperTitle: candidate.title,
       trackTitleZh: track.title_zh, trackTitleEn: track.title_en,
@@ -1729,6 +1866,22 @@ export async function PATCH(request: Request) {
   await database.batch(statements);
   const acceptedPaper = await database.prepare(
     "SELECT id FROM research_track_papers WHERE track_id = ? AND canonical_id = ? LIMIT 1",
-  ).bind(trackId, candidate.canonicalId).first<{ id: string }>();
-  return Response.json({ action: "accept", paperId: acceptedPaper?.id || stableFormalId, trackId, candidate: await candidateWithRelations(database, spaceId, candidateId) });
+  ).bind(trackId, acceptedCanonicalId).first<{ id: string }>();
+  const qualityStage = queuedPaper.analysis_source === "deepseek" && Boolean(queuedPaper.llm_recommended)
+    ? "recommended"
+    : queuedPaper.analysis_source === "deepseek_screened"
+      ? "reviewing"
+      : queuedPaper.analysis_source === "deepseek_rejected"
+        ? "rejected"
+        : "queued";
+  return Response.json({
+    action: "accept",
+    paperId: acceptedPaper?.id || stableFormalId,
+    trackId,
+    formalized: true,
+    qualityStage,
+    reviewQueued: qualityStage === "queued" || qualityStage === "reviewing",
+    queue: acceptanceQueue,
+    candidate: await candidateWithRelations(database, spaceId, candidateId),
+  });
 }

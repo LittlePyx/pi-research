@@ -11,7 +11,8 @@ import {
 } from "../../../lib/discovery/candidate-selection.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
-import { promoteAlreadyAcceptedResearchMapEvidence, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
+import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
+import { promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
@@ -231,6 +232,10 @@ type PaperRow = {
   research_questions_zh: string;
   research_questions_en: string;
   track_id: string;
+  discovery_source_key: string;
+  discovery_route_id: string;
+  discovery_track_title_zh: string;
+  discovery_track_title_en: string;
 };
 type Candidate = {
   canonicalId: string;
@@ -246,7 +251,7 @@ type Candidate = {
   relevanceScore: number;
   qualityScore: number;
   priorityVenue: boolean;
-  source: "crossref" | "semantic_scholar" | "openalex" | "arxiv";
+  source: "crossref" | "semantic_scholar" | "openalex" | "arxiv" | "research-route" | "research-network";
   discoveryChannel: "topic" | "journal" | "author" | "semantic" | "preprint" | "citation";
   provenance: CandidateProvenance[];
 };
@@ -258,6 +263,42 @@ type CandidateProvenance = {
   routeId?: string;
   appearances?: number;
 };
+
+function routeOriginKind(sourceKey: string) {
+  if (sourceKey === "research-route:foundation") return "route_foundation" as const;
+  if (sourceKey === "research-route:milestone") return "route_milestone" as const;
+  if (sourceKey === "research-route:frontier") return "route_frontier" as const;
+  if (sourceKey === "research-route:gap") return "route_gap" as const;
+  if (sourceKey === "research-route:network") return "route_network" as const;
+  return null;
+}
+
+type RouteReviewTitle = { titleZh: string; titleEn: string };
+
+function routeReviewOrigins(candidate: Candidate, trackTitles: Map<string, RouteReviewTitle> = new Map()) {
+  return candidate.provenance
+    .filter((entry) => Boolean(entry.routeId) || entry.sourceKey.startsWith("research-route:"))
+    .slice(0, 6)
+    .map((entry) => {
+      const title = entry.routeId ? trackTitles.get(entry.routeId) : undefined;
+      return {
+        routeId: entry.routeId || null,
+        routeTitleZh: title?.titleZh || "",
+        routeTitleEn: title?.titleEn || "",
+        sourceKind: routeOriginKind(entry.sourceKey) || entry.sourceKey,
+        queryContext: cleanText(entry.queryText || "").slice(0, 300),
+      };
+    });
+}
+
+async function loadRouteReviewTitles(database: D1Database, spaceId: string, candidates: Candidate[]) {
+  const routeIds = Array.from(new Set(candidates.flatMap((candidate) => candidate.provenance.map((entry) => entry.routeId || "")).filter(Boolean))).slice(0, 30);
+  if (!routeIds.length) return new Map<string, RouteReviewTitle>();
+  const rows = await database.prepare(
+    `SELECT id, title_zh, title_en FROM research_tracks WHERE space_id = ? AND id IN (${routeIds.map(() => "?").join(", ")})`,
+  ).bind(spaceId, ...routeIds).all<{ id: string; title_zh: string; title_en: string }>();
+  return new Map(rows.results.map((row) => [row.id, { titleZh: row.title_zh, titleEn: row.title_en }]));
+}
 type DiscoveryQuery = {
   key: string;
   query: string;
@@ -298,7 +339,7 @@ type PaperReview = {
   whyReadEn: string;
   screeningReason: string;
   trackId: string;
-  mapRole: "milestone" | "frontier";
+  mapRole: "foundation" | "milestone" | "frontier";
   mapRationaleZh: string;
   mapRationaleEn: string;
   recommendationTier: "must_read" | "browse" | "reserve";
@@ -317,6 +358,10 @@ type PaperReview = {
   researchQuestionsZh: string[];
   researchQuestionsEn: string[];
 };
+
+function paperReviewMapRole(value: unknown): PaperReview["mapRole"] {
+  return value === "foundation" || value === "milestone" ? value : "frontier";
+}
 type QuickScreen = {
   canonicalId: string;
   isPaper: boolean;
@@ -1671,6 +1716,7 @@ async function quickScreenBatch(
   mode: "fast" | "rescue" = "fast",
 ) {
   const deliberate = mode === "rescue";
+  const routeTitles = await loadRouteReviewTitles(database, space.id, candidates);
   const prompt = [
     "Return one JSON object only with shape {\"screens\":[...]}. Screen every supplied record.",
     "Each screen must contain canonicalId, isPaper, relevanceScore, qualityScore, and screeningReason.",
@@ -1680,6 +1726,7 @@ async function quickScreenBatch(
       : "This is a fast but rigorous academic triage pass. Reject mastheads, publication information, author instructions, contents, corrections, calls for papers, and non-research records.",
     "Judge direct fit to the research space, evidence quality, durable usefulness, and the different standards for 14 days, 6 months, and 5 years.",
     "Calibrate relevance consistently: 80-100 means a direct advance; 65-79 means a credible theoretical, methodological, or foundational contribution to a confirmed route; 55-64 means useful adjacent support; below 55 means genuinely weak fit. Do not require the title to repeat the research-space keywords when the supplied abstract or route context establishes the connection.",
+    "Route origins are discovery context only. Use them to test the paper's concrete relationship to that direction, but never treat route discovery as recommendation permission, evidence that the paper is good, or a score boost.",
     "Do not write summaries or reading advice in this pass. Keep screeningReason under 35 words and use only supplied metadata.",
     `Research space: ${space.name} — ${space.description}`,
     `Confirmed research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
@@ -1694,6 +1741,8 @@ async function quickScreenBatch(
       horizon: paper.horizon,
       citations: paper.citationCount,
       priorityVenue: paper.priorityVenue,
+      discoverySource: paper.source,
+      routeOrigins: routeReviewOrigins(paper, routeTitles),
       abstract: paper.abstractText.slice(0, 900),
     })))}`,
   ].join("\n");
@@ -1856,9 +1905,13 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
   if (insightStatements.length) await database.batch(insightStatements);
 
   const proposals = reviews.flatMap((review) => {
+    const candidate = candidateByCanonical.get(review.canonicalId);
     const paperId = paperIds.get(review.canonicalId);
     if (!review.recommended || !review.trackId || !paperId || !review.mapRationaleZh || !review.mapRationaleEn) return [];
+    const reviewsSystemCuratedPaper = candidate?.provenance.some((entry) => entry.routeId === review.trackId
+      && /^research-route:(foundation|milestone|frontier)$/.test(entry.sourceKey));
     return [{
+      id: reviewsSystemCuratedPaper ? `${SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX}${spaceId}:${review.trackId}:${paperId}` : undefined,
       spaceId, trackId: review.trackId, paperId, scanJobId, mapRole: review.mapRole,
       rationaleZh: review.mapRationaleZh, rationaleEn: review.mapRationaleEn, confidence: review.relevanceScore,
     }];
@@ -1892,11 +1945,15 @@ async function persistRecommendationAuditBatch(
     const candidate = candidateByCanonical.get(review.canonicalId);
     const paperId = paperIds.get(review.canonicalId);
     if (!candidate || !paperId) return [];
-    const provenance = candidate.provenance.slice(0, 16).map((entry) => ({
+    const routeProvenance = candidate.provenance.filter((entry) => Boolean(entry.routeId) || entry.sourceKey.startsWith("research-route:"));
+    const genericProvenance = candidate.provenance.filter((entry) => !routeProvenance.includes(entry));
+    const provenance = [...routeProvenance, ...genericProvenance].slice(0, 16).map((entry) => ({
       sourceKey: entry.sourceKey,
       channel: entry.channel,
       queryKey: entry.queryKey,
       queryText: cleanText(entry.queryText || "").slice(0, 500),
+      routeId: entry.routeId || null,
+      originKind: routeOriginKind(entry.sourceKey),
       appearances: Math.max(1, entry.appearances || 1),
     }));
     const appearanceCount = provenance.reduce((sum, entry) => sum + entry.appearances, 0) || 1;
@@ -1945,6 +2002,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     "SELECT id, title_zh, title_en, summary_en, search_queries, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 10",
   ).bind(space.id).all<MapTrackContext>();
   const validTrackIds = new Set(mapTracks.results.map((track) => track.id));
+  const routeTitles = new Map(mapTracks.results.map((track) => [track.id, { titleZh: track.title_zh, titleEn: track.title_en }]));
   const completed: PaperReview[] = [];
 
   for (let start = 0; start < candidates.length; start += REVIEW_BATCH_SIZE) {
@@ -1972,12 +2030,13 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "Do not write generic phrases such as 'it is recent', 'it has a high score', or 'it comes from a priority venue' as the main reason to read.",
       "For rejected records, set all summary, whyRead, problem, method, contribution, limitations, and readingFocus fields to empty strings, set both researchQuestions arrays to [], and give a short screeningReason. Never spend narrative tokens explaining a rejected record.",
       "When research-map directions are supplied, assign every recommended paper to the single best-fitting trackId whenever a credible direct or supporting relationship exists. Use an empty trackId only when every available direction would create a misleading relationship.",
-      "For a track assignment, use mapRole=frontier for current active work or mapRole=milestone for a durable development, and write a concrete bilingual map rationale explaining how it extends that direction. For no assignment, keep both map rationales empty.",
+      "For a track assignment, use mapRole=foundation for a field-defining prerequisite, milestone for a durable development, or frontier for current active work, and write a concrete bilingual map rationale explaining how it extends that direction. For no assignment, keep both map rationales empty.",
       `Research space: ${space.name} — ${space.description}`,
       `User-confirmed imported research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
       `Papers the user explicitly valued or saved: ${space.positiveExamples || "No positive paper feedback yet"}`,
       `Papers the user explicitly marked not relevant: ${space.negativeExamples || "No negative paper feedback yet"}`,
       "Treat positive examples as preference evidence, not as permission to recommend loosely related papers. Use negative examples to recognize and reject recurring topic drift.",
+      "Route-origin metadata explains why Pi surfaced a candidate. Verify that relationship against the supplied title and abstract; it is context only and never permission to recommend or to lower the quality threshold.",
       `Priority venues: ${priorityVenues.join("; ")}`,
       `Existing research-map directions: ${JSON.stringify(mapTracks.results.map((track) => ({
         id: track.id,
@@ -2000,6 +2059,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         priorityVenue: paper.priorityVenue,
         discoverySource: paper.source,
         discoveryChannel: paper.discoveryChannel,
+        routeOrigins: routeReviewOrigins(paper, routeTitles),
         abstract: paper.abstractText.slice(0, 1400),
       }))),
     ].join("\n");
@@ -2092,7 +2152,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         whyReadEn: recommended ? whyReadEn : "",
         screeningReason: cleanText(item.screeningReason || (recommended ? "Recommended by DeepSeek Pro" : "Rejected by DeepSeek Pro")).slice(0, 500),
         trackId: mapRationaleZh && mapRationaleEn ? trackId : "",
-        mapRole: item.mapRole === "milestone" ? "milestone" : "frontier",
+        mapRole: paperReviewMapRole(item.mapRole),
         mapRationaleZh,
         mapRationaleEn,
         recommendationTier,
@@ -2167,7 +2227,7 @@ async function reconcileRecommendedReviewTracks(
           { role: "system", content: "You are Pi Research's research-map routing editor. Return strict JSON grounded only in supplied paper and route evidence." },
           { role: "user", content: [
             "Return {\"assignments\":[...]} and review every supplied paper.",
-            "Each assignment needs canonicalId, trackId, mapRole (milestone|frontier), rationaleZh, rationaleEn, confidence (0-100).",
+            "Each assignment needs canonicalId, trackId, mapRole (foundation|milestone|frontier), rationaleZh, rationaleEn, confidence (0-100).",
             "Choose the single route that the paper most credibly extends, supports, challenges, or connects. Do not rely on title keywords alone.",
             "Use an empty trackId and empty rationales only when all available routes would be misleading. Never invent a result beyond supplied summaries.",
             `Research space: ${space.name} — ${space.description}`,
@@ -2207,7 +2267,7 @@ async function reconcileRecommendedReviewTracks(
       if (!canonicalId || !validTrackIds.has(trackId) || !rationaleZh || !rationaleEn) return [];
       return [[canonicalId, {
         trackId,
-        mapRole: item.mapRole === "milestone" ? "milestone" as const : "frontier" as const,
+        mapRole: paperReviewMapRole(item.mapRole),
         mapRationaleZh: rationaleZh,
         mapRationaleEn: rationaleEn,
       }] as const];
@@ -2703,53 +2763,7 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
 }
 
 async function persistCandidatePool(database: D1Database, spaceId: string, candidates: Candidate[]) {
-  const candidateByCanonical = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
-  const paperIds = new Map<string, string>();
-  for (let start = 0; start < candidates.length; start += 70) {
-    const chunk = candidates.slice(start, start + 70);
-    await database.batch(chunk.map((candidate) => database.prepare(
-      `INSERT INTO monitored_papers
-       (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon, citation_count, relevance_score)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(space_id, canonical_id) DO UPDATE SET title = excluded.title, authors = excluded.authors,
-       venue = excluded.venue, url = excluded.url, published_at = excluded.published_at, source = excluded.source,
-       horizon = excluded.horizon, last_seen_at = CURRENT_TIMESTAMP,
-       citation_count = MAX(monitored_papers.citation_count, excluded.citation_count),
-       relevance_score = MAX(monitored_papers.relevance_score, excluded.relevance_score)`,
-    ).bind(crypto.randomUUID(), spaceId, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
-      candidate.url, candidate.publishedAt, candidate.source, candidate.horizon, candidate.citationCount, candidate.relevanceScore)));
-    const placeholders = chunk.map(() => "?").join(", ");
-    const rows = await database.prepare(`SELECT id, canonical_id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`)
-      .bind(spaceId, ...chunk.map((candidate) => candidate.canonicalId)).all<{ id: string; canonical_id: string }>();
-    for (const row of rows.results) paperIds.set(row.canonical_id, row.id);
-  }
-  const metadataStatements = Array.from(paperIds.entries()).map(([canonicalId, paperId]) => {
-    const candidate = candidateByCanonical.get(canonicalId)!;
-    return database.prepare(
-      `INSERT INTO paper_insights (paper_id, space_id, abstract_text, quality_score, priority_venue, analysis_source)
-       VALUES (?, ?, ?, ?, ?, 'metadata')
-       ON CONFLICT(paper_id) DO UPDATE SET
-       abstract_text = CASE WHEN LENGTH(excluded.abstract_text) > LENGTH(paper_insights.abstract_text) THEN excluded.abstract_text ELSE paper_insights.abstract_text END,
-       quality_score = MAX(paper_insights.quality_score, excluded.quality_score),
-       priority_venue = MAX(paper_insights.priority_venue, excluded.priority_venue), updated_at = CURRENT_TIMESTAMP
-       WHERE paper_insights.analysis_source = 'metadata'`,
-    ).bind(paperId, spaceId, candidate.abstractText, candidate.qualityScore, candidate.priorityVenue ? 1 : 0);
-  });
-  for (let start = 0; start < metadataStatements.length; start += 70) {
-    await database.batch(metadataStatements.slice(start, start + 70));
-  }
-  const provenanceStatements = Array.from(paperIds.entries()).flatMap(([canonicalId, paperId]) => {
-    const candidate = candidateByCanonical.get(canonicalId)!;
-    return candidate.provenance.map((entry) => database.prepare(
-      `INSERT INTO monitor_candidate_sources (id, space_id, paper_id, source_key, channel, query_key)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(paper_id, source_key, query_key) DO UPDATE SET
-         appearances = monitor_candidate_sources.appearances + 1, last_seen_at = CURRENT_TIMESTAMP`,
-    ).bind(crypto.randomUUID(), spaceId, paperId, entry.sourceKey, entry.channel, entry.queryKey));
-  });
-  for (let start = 0; start < provenanceStatements.length; start += 70) {
-    await database.batch(provenanceStatements.slice(start, start + 70));
-  }
+  await enqueueMonitorCandidates(database, spaceId, candidates);
 }
 
 async function pendingCandidateQueue(database: D1Database, spaceId: string, canonicalIds?: string[]) {
@@ -2830,7 +2844,12 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
     relevanceScore: row.relevance_score,
     qualityScore: row.quality_score,
     priorityVenue: Boolean(row.priority_venue),
-    source: row.source === "semantic_scholar" ? "semantic_scholar" as const : row.source === "openalex" ? "openalex" as const : row.source === "arxiv" ? "arxiv" as const : "crossref" as const,
+    source: row.source === "semantic_scholar" ? "semantic_scholar" as const
+      : row.source === "openalex" ? "openalex" as const
+        : row.source === "arxiv" ? "arxiv" as const
+          : row.source === "research-route" ? "research-route" as const
+            : row.source === "research-network" ? "research-network" as const
+              : "crossref" as const,
     discoveryChannel: row.source === "arxiv" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
     provenance: provenanceByPaper.get(row.paper_id)?.length ? provenanceByPaper.get(row.paper_id)! : [{
       sourceKey: `${row.source}:stored`,
@@ -2901,13 +2920,25 @@ function selectCurrentAndBacklogReviewBatch(candidates: Candidate[], currentCand
     const limit = HORIZON_REVIEW_LIMITS[horizon];
     const currentBudget = Math.max(1, Math.round(limit * 0.72));
     const horizonCandidates = candidates.filter((candidate) => candidate.horizon === horizon);
-    const current = selectHorizonScreeningCandidates(horizonCandidates.filter((candidate) => currentIds.has(candidate.canonicalId)), currentBudget);
+    // Route-origin discoveries share the exact same screening and recommendation
+    // gates. One screening slot per non-empty horizon merely prevents a large
+    // generic backlog from starving them before the model can judge their fit.
+    const routeCandidate = selectHorizonScreeningCandidates(
+      horizonCandidates.filter((candidate) => candidate.provenance.some((entry) => entry.sourceKey.startsWith("research-route:"))),
+      1,
+    )[0];
+    const reservedIds = new Set(routeCandidate ? [routeCandidate.canonicalId] : []);
+    const current = selectHorizonScreeningCandidates(
+      horizonCandidates.filter((candidate) => currentIds.has(candidate.canonicalId) && !reservedIds.has(candidate.canonicalId)),
+      Math.max(0, currentBudget - (routeCandidate && currentIds.has(routeCandidate.canonicalId) ? 1 : 0)),
+    );
     const currentSelected = new Set(current.map((candidate) => candidate.canonicalId));
     const backlog = selectHorizonScreeningCandidates(
-      horizonCandidates.filter((candidate) => !currentIds.has(candidate.canonicalId) && !currentSelected.has(candidate.canonicalId)),
-      limit - current.length,
+      horizonCandidates.filter((candidate) => !currentIds.has(candidate.canonicalId)
+        && !currentSelected.has(candidate.canonicalId) && !reservedIds.has(candidate.canonicalId)),
+      limit - current.length - reservedIds.size,
     );
-    const seeded = [...current, ...backlog];
+    const seeded = [...(routeCandidate ? [routeCandidate] : []), ...current, ...backlog];
     const seededIds = new Set(seeded.map((candidate) => candidate.canonicalId));
     const fill = selectHorizonScreeningCandidates(horizonCandidates.filter((candidate) => !seededIds.has(candidate.canonicalId)), limit - seeded.length);
     selected.push(...seeded, ...fill);
@@ -3031,6 +3062,17 @@ function isPaperDue(paper: PaperRow, now: number) {
 }
 
 function toPaper(paper: PaperRow, now: number) {
+  const originKind = routeOriginKind(paper.discovery_source_key);
+  const discoveryType = originKind === "route_gap" ? "gap" as const
+    : originKind === "route_network" ? "citation_network" as const
+      : originKind ? "route_search" as const : null;
+  const sourceLabels = originKind === "route_gap"
+    ? { zh: "研究路线缺口深挖", en: "Research-route gap discovery" }
+    : originKind === "route_network"
+      ? { zh: "论文引用网络扩展", en: "Citation-network expansion" }
+      : originKind
+        ? { zh: "研究路线定向检索", en: "Research-route discovery" }
+        : null;
   return {
     id: paper.id,
     doi: paper.doi,
@@ -3076,6 +3118,23 @@ function toPaper(paper: PaperRow, now: number) {
     researchQuestionsZh: parseVenues(paper.research_questions_zh),
     researchQuestionsEn: parseVenues(paper.research_questions_en),
     trackId: paper.track_id || null,
+    qualityStage: "recommended" as const,
+    ...(originKind && paper.discovery_route_id && sourceLabels ? {
+      discoveryOrigin: {
+        kind: originKind,
+        trackId: paper.discovery_route_id,
+        trackTitleZh: paper.discovery_track_title_zh,
+        trackTitleEn: paper.discovery_track_title_en,
+        sourceLabelZh: sourceLabels.zh,
+        sourceLabelEn: sourceLabels.en,
+      },
+      discoveryType,
+      discoveryTrack: {
+        id: paper.discovery_route_id,
+        titleZh: paper.discovery_track_title_zh,
+        titleEn: paper.discovery_track_title_en,
+      },
+    } : {}),
   };
 }
 
@@ -3106,6 +3165,10 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
          (SELECT ep.track_id FROM research_map_evidence_proposals ep
           WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending', 'confirmed')
           ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1), '') AS track_id,
+       COALESCE(route_origin.source_key, '') AS discovery_source_key,
+       COALESCE(route_origin.route_id, '') AS discovery_route_id,
+       COALESCE(route_track.title_zh, '') AS discovery_track_title_zh,
+       COALESCE(route_track.title_en, '') AS discovery_track_title_en,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
        COALESCE(f.saved, 0) AS saved, f.feedback, COALESCE(r.status, 'unread') AS reading_status,
        COALESCE(r.note, '') AS reading_note
@@ -3113,6 +3176,27 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        LEFT JOIN paper_delivery_state d ON d.paper_id = p.id AND d.space_id = p.space_id
        LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
        LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
+       LEFT JOIN (
+        SELECT space_id, paper_id, source_key, route_id FROM (
+         SELECT latest.space_id, latest.paper_id,
+          json_extract(origin.value, '$.sourceKey') AS source_key,
+          json_extract(origin.value, '$.routeId') AS route_id,
+          ROW_NUMBER() OVER (
+           PARTITION BY latest.space_id, latest.paper_id ORDER BY CAST(origin.key AS INTEGER)
+          ) AS origin_rank
+         FROM (
+          SELECT ranked.* FROM (
+           SELECT ae.*,
+            ROW_NUMBER() OVER (PARTITION BY ae.space_id, ae.paper_id ORDER BY ae.reviewed_at DESC, ae.rowid DESC) AS audit_rank
+           FROM recommendation_audit_events ae
+          ) ranked WHERE ranked.audit_rank = 1 AND ranked.recommended = 1
+         ) latest
+         JOIN json_each(latest.provenance_json) origin
+         WHERE json_extract(origin.value, '$.sourceKey') LIKE 'research-route:%'
+          AND COALESCE(json_extract(origin.value, '$.routeId'), '') <> ''
+        ) WHERE origin_rank = 1
+       ) route_origin ON route_origin.space_id = p.space_id AND route_origin.paper_id = p.id
+       LEFT JOIN research_tracks route_track ON route_track.id = route_origin.route_id AND route_track.space_id = p.space_id
         WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek'
         ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 300`,
     ).bind(space.id).all<PaperRow>(),
@@ -4041,7 +4125,7 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
       canonicalId, isPaper: true, recommended: Boolean(row.llm_recommended), relevanceScore: row.llm_relevance_score,
       qualityScore: row.quality_score, summaryZh: row.summary_zh, summaryEn: row.summary_en, whyReadZh: row.why_read_zh,
       whyReadEn: row.why_read_en, screeningReason: row.screening_reason, trackId: row.track_id,
-      mapRole: row.map_role === "milestone" ? "milestone" as const : "frontier" as const,
+      mapRole: paperReviewMapRole(row.map_role),
       mapRationaleZh: row.map_rationale_zh, mapRationaleEn: row.map_rationale_en,
       recommendationTier: tier, readMinutes: row.read_minutes, readDepth: depth,
       problemZh: row.problem_zh, problemEn: row.problem_en, methodZh: row.method_zh, methodEn: row.method_en,

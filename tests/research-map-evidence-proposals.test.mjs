@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { enqueueMonitorCandidates } from "../lib/monitor-candidate-queue.ts";
 import {
   confirmedExternalResearchMapEvidenceStatements,
   dismissResearchMapEvidence,
@@ -10,6 +11,7 @@ import {
   reconcileResearchMapEvidenceDecision,
   reconcileResearchMapEvidenceStatements,
   researchEvidenceHorizon,
+  SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX,
   upsertPendingResearchMapEvidence,
   upsertRouteGapResearchMapEvidence,
 } from "../lib/research-map-evidence.ts";
@@ -111,6 +113,43 @@ function createFixture() {
       research_questions_zh TEXT NOT NULL DEFAULT '[]',
       research_questions_en TEXT NOT NULL DEFAULT '[]',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE monitor_candidate_sources (
+      id TEXT PRIMARY KEY NOT NULL,
+      space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE,
+      paper_id TEXT NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE,
+      source_key TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      query_key TEXT NOT NULL,
+      appearances INTEGER NOT NULL DEFAULT 1,
+      first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(paper_id, source_key, query_key)
+    );
+    CREATE TABLE monitor_discovery_coverage (
+      id TEXT PRIMARY KEY NOT NULL,
+      space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE,
+      horizon TEXT NOT NULL,
+      source_key TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      query_key TEXT NOT NULL,
+      query_text TEXT NOT NULL DEFAULT '',
+      route_id TEXT,
+      exploration_role TEXT NOT NULL DEFAULT 'core',
+      adaptive_score INTEGER NOT NULL DEFAULT 55,
+      next_cursor INTEGER NOT NULL DEFAULT 0,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      candidate_count INTEGER NOT NULL DEFAULT 0,
+      total_candidate_count INTEGER NOT NULL DEFAULT 0,
+      new_candidate_count INTEGER NOT NULL DEFAULT 0,
+      zero_yield_streak INTEGER NOT NULL DEFAULT 0,
+      branch_status TEXT NOT NULL DEFAULT 'exploring',
+      cooldown_until TEXT,
+      first_scanned_at TEXT,
+      last_scanned_at TEXT,
+      last_error TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(space_id, horizon, source_key, query_key)
     );
     CREATE TABLE paper_feedback (
       id TEXT PRIMARY KEY NOT NULL,
@@ -284,7 +323,7 @@ test("legacy reconcile repairs formal rows only from confirmed proposal evidence
   }
 });
 
-test("route-gap discovery persists only a pending proposal and remains idempotent", async () => {
+test("route-gap discovery enters the shared quality queue without pre-approving map evidence", async () => {
   const { sqlite, database } = createFixture();
   try {
     const input = {
@@ -306,25 +345,30 @@ test("route-gap discovery persists only a pending proposal and remains idempoten
       model: "deepseek-v4-pro",
     };
     assert.deepEqual(await upsertRouteGapResearchMapEvidence(database, "space-a", "track-a", [input]), {
-      pendingCount: 1,
+      pendingCount: 0,
+      queuedCount: 1,
       paperIds: [sqlite.prepare("SELECT id FROM monitored_papers WHERE canonical_id = 'doi:10.2000/gap'").get().id],
     });
     assert.deepEqual(
       { ...sqlite.prepare("SELECT source, horizon FROM monitored_papers WHERE canonical_id = 'doi:10.2000/gap'").get() },
-      { source: "route-gap", horizon: "years" },
+      { source: "research-route", horizon: "years" },
     );
     assert.deepEqual(
-      { ...sqlite.prepare("SELECT analysis_source, summary_en, why_read_en FROM paper_insights WHERE paper_id = (SELECT id FROM monitored_papers WHERE canonical_id = 'doi:10.2000/gap')").get() },
-      { analysis_source: "route-gap", summary_en: input.summaryEn, why_read_en: input.rationaleEn },
+      { ...sqlite.prepare("SELECT analysis_source, llm_recommended, analysis_model FROM paper_insights WHERE paper_id = (SELECT id FROM monitored_papers WHERE canonical_id = 'doi:10.2000/gap')").get() },
+      { analysis_source: "metadata", llm_recommended: 0, analysis_model: "" },
     );
-    assert.equal(sqlite.prepare("SELECT status FROM research_map_evidence_proposals WHERE track_id = 'track-a' AND paper_id <> 'paper-a'").get().status, "pending");
+    assert.equal(count(sqlite, "research_map_evidence_proposals"), 0);
+    assert.deepEqual(
+      { ...sqlite.prepare("SELECT cs.source_key, cs.channel, cs.query_key, c.route_id FROM monitor_candidate_sources cs JOIN monitor_discovery_coverage c USING (space_id, source_key, query_key)").get() },
+      { source_key: "research-route:gap", channel: "topic", query_key: "track-a:legacy-gap", route_id: "track-a" },
+    );
     assert.equal(count(sqlite, "research_track_papers"), 0);
     assert.equal(count(sqlite, "research_map_changes"), 0);
 
     const updated = { ...input, rationaleEn: "Updated route-specific rationale." };
-    assert.equal((await upsertRouteGapResearchMapEvidence(database, "space-a", "track-a", [updated])).pendingCount, 1);
-    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_map_evidence_proposals").get().count, 1);
-    assert.equal(sqlite.prepare("SELECT rationale_en FROM research_map_evidence_proposals").get().rationale_en, updated.rationaleEn);
+    assert.equal((await upsertRouteGapResearchMapEvidence(database, "space-a", "track-a", [updated])).queuedCount, 1);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_map_evidence_proposals").get().count, 0);
+    assert.equal(sqlite.prepare("SELECT appearances FROM monitor_candidate_sources").get().appearances, 2);
     assert.equal(count(sqlite, "research_track_papers"), 0);
   } finally {
     sqlite.close();
@@ -337,6 +381,174 @@ test("route-gap horizon follows the three discovery windows", () => {
   assert.equal(researchEvidenceHorizon("2026-04-01", now), "months");
   assert.equal(researchEvidenceHorizon("2024-01-01", now), "years");
   assert.equal(researchEvidenceHorizon(null, now), "years");
+});
+
+test("the shared queue deduplicates DOI-less provider identities within and across batches", async () => {
+  const { sqlite, database } = createFixture();
+  const candidate = (canonicalId, sourceKey) => ({
+    canonicalId,
+    doi: null,
+    title: "The Same Provider-Neutral Research Work",
+    authors: "Ada Researcher",
+    venue: "Research Archive",
+    url: `https://example.test/${canonicalId}`,
+    publishedAt: "2026-08-01",
+    abstractText: "A shared abstract.",
+    horizon: "days",
+    citationCount: 3,
+    relevanceScore: 61,
+    qualityScore: 64,
+    priorityVenue: false,
+    source: sourceKey,
+    provenance: [{ sourceKey, channel: "semantic", queryKey: `${sourceKey}:query` }],
+  });
+  try {
+    const first = await enqueueMonitorCandidates(database, "space-a", [
+      candidate("arxiv:2608.01234", "arxiv"),
+      candidate("openalex:W123", "openalex"),
+    ]);
+    assert.equal(first.candidateCount, 1);
+    assert.equal(first.newCandidateCount, 1);
+    assert.match(first.canonicalIds[0], /^title:[a-f0-9]{64}$/);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE title = ?").get("The Same Provider-Neutral Research Work").count, 1);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitor_candidate_sources WHERE paper_id = (SELECT id FROM monitored_papers WHERE title = ?)").get("The Same Provider-Neutral Research Work").count, 2);
+
+    const second = await enqueueMonitorCandidates(database, "space-a", [candidate("s2:provider-record", "semantic-scholar")]);
+    assert.equal(second.newCandidateCount, 0);
+    assert.deepEqual(second.canonicalIds, first.canonicalIds);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE title = ?").get("The Same Provider-Neutral Research Work").count, 1);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitor_candidate_sources WHERE paper_id = (SELECT id FROM monitored_papers WHERE title = ?)").get("The Same Provider-Neutral Research Work").count, 3);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("legacy DOI-less rows are reused across punctuation and whitespace variants", async () => {
+  const { sqlite, database } = createFixture();
+  const candidate = (canonicalId, title, sourceKey) => ({
+    canonicalId,
+    doi: null,
+    title,
+    authors: "Ada Researcher",
+    venue: "Research Archive",
+    url: `https://example.test/${canonicalId}`,
+    publishedAt: "2026-08-01",
+    abstractText: "A shared abstract.",
+    horizon: "days",
+    citationCount: 3,
+    relevanceScore: 61,
+    qualityScore: 64,
+    priorityVenue: false,
+    source: sourceKey,
+    provenance: [{ sourceKey, channel: "semantic", queryKey: `${sourceKey}:query` }],
+  });
+  try {
+    await enqueueMonitorCandidates(database, "space-a", [
+      candidate("arxiv:legacy-record", "Rate–Distortion: A Theory", "arxiv"),
+    ]);
+    sqlite.prepare("UPDATE monitored_papers SET canonical_id = 'arxiv:legacy-record' WHERE title = 'Rate–Distortion: A Theory'").run();
+
+    const second = await enqueueMonitorCandidates(database, "space-a", [
+      candidate("openalex:W999", "Rate Distortion — A Theory", "openalex"),
+    ]);
+    assert.deepEqual(second.canonicalIds, ["arxiv:legacy-record"]);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = 'space-a' AND doi IS NULL").get().count, 1);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitor_candidate_sources WHERE paper_id = (SELECT id FROM monitored_papers WHERE canonical_id = 'arxiv:legacy-record')").get().count, 2);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("same-title DOI-less works with conflicting authors or years remain separate", async () => {
+  const { sqlite, database } = createFixture();
+  const candidate = (canonicalId, authors, publishedAt) => ({
+    canonicalId,
+    doi: null,
+    title: "An Introduction to Information Theory",
+    authors,
+    venue: "Research Archive",
+    url: `https://example.test/${canonicalId}`,
+    publishedAt,
+    abstractText: "Distinct work metadata.",
+    horizon: "years",
+    citationCount: 3,
+    relevanceScore: 61,
+    qualityScore: 64,
+    priorityVenue: false,
+    source: canonicalId.startsWith("arxiv") ? "arxiv" : "openalex",
+    provenance: [{ sourceKey: canonicalId, channel: "semantic", queryKey: `${canonicalId}:query` }],
+  });
+  try {
+    const result = await enqueueMonitorCandidates(database, "space-a", [
+      candidate("arxiv:2001.00001", "Ada Researcher", "2020-01-01"),
+      candidate("openalex:W222", "Bertrand Scholar", "2021-01-01"),
+    ]);
+    assert.equal(result.candidateCount, 2);
+    assert.equal(new Set(result.canonicalIds).size, 2);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE title = 'An Introduction to Information Theory'").get().count, 2);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a unique DOI coalesces its provider-only twin without merging distinct DOI works", async () => {
+  const { sqlite, database } = createFixture();
+  const candidate = (canonicalId, doi, sourceKey) => ({
+    canonicalId,
+    doi,
+    title: "A DOI-Preserved Research Work",
+    authors: "Grace Researcher",
+    venue: "Journal of Identity",
+    url: `https://example.test/${canonicalId}`,
+    publishedAt: "2026-07-01",
+    abstractText: "Identity evidence.",
+    horizon: "months",
+    citationCount: 5,
+    relevanceScore: 63,
+    qualityScore: 67,
+    priorityVenue: false,
+    source: sourceKey,
+    provenance: [{ sourceKey, channel: "topic", queryKey: `${sourceKey}:query` }],
+  });
+  try {
+    const first = await enqueueMonitorCandidates(database, "space-a", [
+      candidate("arxiv:2607.10000", null, "arxiv"),
+      candidate("crossref:10.5555/one", "10.5555/one", "crossref"),
+    ]);
+    assert.deepEqual(first.canonicalIds, ["doi:10.5555/one"]);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE title = ?").get("A DOI-Preserved Research Work").count, 1);
+    assert.equal(sqlite.prepare("SELECT doi FROM monitored_papers WHERE title = ?").get("A DOI-Preserved Research Work").doi, "10.5555/one");
+
+    const distinct = await enqueueMonitorCandidates(database, "space-a", [
+      candidate("crossref:10.5555/two", "10.5555/two", "crossref-second"),
+    ]);
+    assert.deepEqual(distinct.canonicalIds, ["doi:10.5555/two"]);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE title = ?").get("A DOI-Preserved Research Work").count, 2);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("route discovery never resets an existing DeepSeek quality decision for duplicate review", async () => {
+  const { sqlite, database } = createFixture();
+  try {
+    sqlite.prepare(
+      "UPDATE paper_insights SET analysis_source = 'deepseek_rejected', analysis_model = 'deepseek-v4-pro', llm_recommended = 0, llm_relevance_score = 41 WHERE paper_id = 'paper-a'",
+    ).run();
+    await upsertRouteGapResearchMapEvidence(database, "space-a", "track-a", [{
+      canonicalId: "doi:10.1000/a", doi: "10.1000/a", title: "A useful theorem", authors: "Ada Researcher",
+      venue: "Journal A", url: "https://example.test/a", publishedAt: "2026-08-01", citationCount: 18,
+      abstractText: "A longer replacement abstract that must not clear a completed model decision.", mapRole: "frontier",
+      summaryZh: "", summaryEn: "", rationaleZh: "", rationaleEn: "", confidence: 90, model: "deepseek-v4-pro",
+    }]);
+    assert.deepEqual(
+      { ...sqlite.prepare("SELECT analysis_source, analysis_model, llm_recommended, llm_relevance_score FROM paper_insights WHERE paper_id = 'paper-a'").get() },
+      { analysis_source: "deepseek_rejected", analysis_model: "deepseek-v4-pro", llm_recommended: 0, llm_relevance_score: 41 },
+    );
+    assert.equal(count(sqlite, "research_map_evidence_proposals"), 0);
+  } finally {
+    sqlite.close();
+  }
 });
 
 test("pending evidence remains provisional and repeated scans update it idempotently", async () => {
@@ -372,6 +584,34 @@ test("pending evidence remains provisional and repeated scans update it idempote
       },
     );
     assert.equal(count(sqlite, "research_track_papers"), 0);
+    assert.equal(count(sqlite, "research_map_changes"), 0);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a quality-approved system-curated paper can be confirmed without dismissal deleting its context node", async () => {
+  const { sqlite, database } = createFixture();
+  try {
+    sqlite.prepare(
+      `INSERT INTO research_track_papers
+       (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role)
+       SELECT 'system-paper-a', 'track-a', 'space-a', canonical_id, doi, title, authors, venue, url, published_at, citation_count, 'foundation'
+       FROM monitored_papers WHERE id = 'paper-a'`,
+    ).run();
+    await upsertPendingResearchMapEvidence(database, [proposal({
+      id: `${SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX}space-a:track-a:paper-a`,
+      mapRole: "foundation",
+    })]);
+    assert.equal(sqlite.prepare("SELECT status FROM research_map_evidence_proposals").get().status, "pending");
+
+    await promoteResearchMapEvidence(database, "space-a", "paper-a");
+    assert.equal(sqlite.prepare("SELECT role FROM research_track_papers").get().role, "foundation");
+    assert.equal(count(sqlite, "research_map_changes"), 1);
+
+    await dismissResearchMapEvidence(database, "space-a", "paper-a");
+    assert.equal(sqlite.prepare("SELECT status FROM research_map_evidence_proposals").get().status, "dismissed");
+    assert.equal(count(sqlite, "research_track_papers"), 1);
     assert.equal(count(sqlite, "research_map_changes"), 0);
   } finally {
     sqlite.close();

@@ -35,6 +35,7 @@ type EvidenceProposalRow = {
 };
 
 export const PERSISTENT_RESEARCH_MAP_ACCEPTANCE_ID_PREFIX = "network-accept:";
+export const SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX = "system-curated-review:";
 
 export type ResearchMapEvidenceDecision = {
   changed: number;
@@ -83,7 +84,7 @@ type ConfirmedEvidenceSyncRow = {
 };
 
 function normalizedRole(role: string | undefined) {
-  return role === "milestone" ? "milestone" : "frontier";
+  return role === "foundation" || role === "milestone" ? role : "frontier";
 }
 
 function normalizedConfidence(confidence: number) {
@@ -104,7 +105,9 @@ export async function upsertPendingResearchMapEvidence(
   inputs: ResearchMapEvidenceProposalInput[],
 ) {
   if (!inputs.length) return;
-  const statements = inputs.flatMap((input) => [
+  const statements = inputs.flatMap((input) => {
+    const systemCuratedReview = input.id?.startsWith(SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX) ? 1 : 0;
+    return [
     database.prepare(
       `UPDATE research_map_evidence_proposals SET status = 'dismissed', decided_at = NULL,
        updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ? AND track_id <> ? AND status = 'pending'
@@ -127,21 +130,22 @@ export async function upsertPendingResearchMapEvidence(
     database.prepare(
       `UPDATE research_map_evidence_proposals SET status = 'dismissed', decided_at = NULL,
        updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND track_id = ? AND paper_id = ? AND status = 'pending'
+       AND ? = 0
        AND EXISTS (
          SELECT 1 FROM research_track_papers tp JOIN monitored_papers mp
           ON mp.space_id = tp.space_id AND mp.canonical_id = tp.canonical_id
          WHERE tp.space_id = ? AND tp.track_id = ? AND mp.id = ?
        )`,
-    ).bind(input.spaceId, input.trackId, input.paperId, input.spaceId, input.trackId, input.paperId),
+    ).bind(input.spaceId, input.trackId, input.paperId, systemCuratedReview, input.spaceId, input.trackId, input.paperId),
     database.prepare(
       `INSERT INTO research_map_evidence_proposals
        (id, space_id, track_id, paper_id, scan_job_id, map_role, rationale_zh, rationale_en, confidence, status)
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending'
-       WHERE NOT EXISTS (
+       WHERE (? = 1 OR NOT EXISTS (
          SELECT 1 FROM research_track_papers tp JOIN monitored_papers mp
           ON mp.space_id = tp.space_id AND mp.canonical_id = tp.canonical_id
          WHERE tp.space_id = ? AND tp.track_id = ? AND mp.id = ?
-       )
+       ))
        AND NOT EXISTS (
          SELECT 1 FROM research_map_evidence_proposals confirmed
          WHERE confirmed.space_id = ? AND confirmed.paper_id = ? AND confirmed.status = 'confirmed'
@@ -170,10 +174,11 @@ export async function upsertPendingResearchMapEvidence(
     ).bind(
       input.id || crypto.randomUUID(), input.spaceId, input.trackId, input.paperId, input.scanJobId || null,
       normalizedRole(input.mapRole), input.rationaleZh, input.rationaleEn, normalizedConfidence(input.confidence),
-      input.spaceId, input.trackId, input.paperId,
+      systemCuratedReview, input.spaceId, input.trackId, input.paperId,
       input.spaceId, input.paperId,
     ),
-  ]);
+    ];
+  });
   await database.batch(statements);
 }
 
@@ -185,73 +190,75 @@ export async function upsertRouteGapResearchMapEvidence(
   inputs: RouteGapResearchMapEvidenceInput[],
 ) {
   const uniqueInputs = Array.from(new Map(inputs.map((input) => [input.canonicalId, input])).values());
-  if (!uniqueInputs.length) return { pendingCount: 0, paperIds: [] as string[] };
-
+  if (!uniqueInputs.length) return { pendingCount: 0, queuedCount: 0, paperIds: [] as string[] };
+  const placeholders = uniqueInputs.map(() => "?").join(", ");
+  const legacyRows = await database.prepare(
+    `SELECT p.id FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+     WHERE p.space_id = ? AND i.analysis_source = 'route-gap' AND p.canonical_id IN (${placeholders})`,
+  ).bind(spaceId, ...uniqueInputs.map((input) => input.canonicalId)).all<{ id: string }>();
   await database.batch(uniqueInputs.map((input) => database.prepare(
     `INSERT INTO monitored_papers
      (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon, citation_count, relevance_score)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'route-gap', ?, ?, ?)
-     ON CONFLICT(space_id, canonical_id) DO UPDATE SET
-      doi = COALESCE(excluded.doi, monitored_papers.doi), title = excluded.title, authors = excluded.authors,
-      venue = excluded.venue, url = excluded.url, published_at = excluded.published_at,
-      horizon = excluded.horizon, citation_count = MAX(monitored_papers.citation_count, excluded.citation_count),
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'research-route', ?, ?, ?)
+     ON CONFLICT(space_id, canonical_id) DO UPDATE SET doi = COALESCE(monitored_papers.doi, excluded.doi),
+      title = excluded.title, authors = excluded.authors, venue = excluded.venue, url = excluded.url,
+      published_at = COALESCE(excluded.published_at, monitored_papers.published_at), horizon = excluded.horizon,
+      citation_count = MAX(monitored_papers.citation_count, excluded.citation_count),
       relevance_score = MAX(monitored_papers.relevance_score, excluded.relevance_score), last_seen_at = CURRENT_TIMESTAMP`,
-  ).bind(
-    `route-gap:${crypto.randomUUID()}`, spaceId, input.canonicalId, input.doi, input.title, input.authors,
-    input.venue, input.url, input.publishedAt, researchEvidenceHorizon(input.publishedAt),
-    Math.max(0, Math.round(input.citationCount)), normalizedConfidence(input.confidence),
-  )));
-
-  const placeholders = uniqueInputs.map(() => "?").join(", ");
-  const paperRows = await database.prepare(
-    `SELECT id, canonical_id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`,
-  ).bind(spaceId, ...uniqueInputs.map((input) => input.canonicalId)).all<{ id: string; canonical_id: string }>();
-  const paperIdByCanonicalId = new Map(paperRows.results.map((row) => [row.canonical_id, row.id]));
-  const persisted = uniqueInputs.flatMap((input) => {
-    const paperId = paperIdByCanonicalId.get(input.canonicalId);
-    return paperId ? [{ input, paperId }] : [];
+  ).bind(crypto.randomUUID(), spaceId, input.canonicalId, input.doi, input.title, input.authors, input.venue,
+    input.url, input.publishedAt, researchEvidenceHorizon(input.publishedAt), input.citationCount,
+    normalizedConfidence(input.confidence))));
+  const persistedRows = await database.prepare(
+    `SELECT id, canonical_id, horizon FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`,
+  ).bind(spaceId, ...uniqueInputs.map((input) => input.canonicalId)).all<{ id: string; canonical_id: string; horizon: string }>();
+  const inputByCanonicalId = new Map(uniqueInputs.map((input) => [input.canonicalId, input]));
+  const queueStatements = persistedRows.results.flatMap((row) => {
+    const input = inputByCanonicalId.get(row.canonical_id);
+    if (!input) return [];
+    const queryKey = `${trackId}:legacy-gap`;
+    return [
+      database.prepare(
+        `INSERT INTO paper_insights (paper_id, space_id, abstract_text, quality_score, analysis_source)
+         VALUES (?, ?, ?, ?, 'metadata')
+         ON CONFLICT(paper_id) DO UPDATE SET
+          abstract_text = CASE WHEN LENGTH(excluded.abstract_text) > LENGTH(paper_insights.abstract_text)
+           THEN excluded.abstract_text ELSE paper_insights.abstract_text END,
+          quality_score = MAX(paper_insights.quality_score, excluded.quality_score),
+          analysis_source = CASE WHEN paper_insights.analysis_source = 'route-gap' THEN 'metadata' ELSE paper_insights.analysis_source END,
+          analysis_model = CASE WHEN paper_insights.analysis_source = 'route-gap' THEN '' ELSE paper_insights.analysis_model END,
+          llm_recommended = CASE WHEN paper_insights.analysis_source = 'route-gap' THEN 0 ELSE paper_insights.llm_recommended END,
+          updated_at = CURRENT_TIMESTAMP WHERE paper_insights.analysis_source IN ('metadata', 'route-gap')`,
+      ).bind(row.id, spaceId, input.abstractText, normalizedConfidence(input.confidence)),
+      database.prepare(
+        `INSERT INTO monitor_candidate_sources (id, space_id, paper_id, source_key, channel, query_key)
+         VALUES (?, ?, ?, 'research-route:gap', 'topic', ?)
+         ON CONFLICT(paper_id, source_key, query_key) DO UPDATE SET
+          appearances = monitor_candidate_sources.appearances + 1, last_seen_at = CURRENT_TIMESTAMP`,
+      ).bind(crypto.randomUUID(), spaceId, row.id, queryKey),
+      database.prepare(
+        `INSERT INTO monitor_discovery_coverage
+         (id, space_id, horizon, source_key, channel, query_key, route_id, attempt_count, candidate_count,
+          total_candidate_count, new_candidate_count, branch_status, first_scanned_at, last_scanned_at)
+         VALUES (?, ?, ?, 'research-route:gap', 'topic', ?, ?, 1, 1, 1, 1, 'revisit', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT(space_id, horizon, source_key, query_key) DO UPDATE SET
+          route_id = excluded.route_id, attempt_count = monitor_discovery_coverage.attempt_count + 1,
+          candidate_count = 1, total_candidate_count = monitor_discovery_coverage.total_candidate_count + 1,
+          branch_status = 'revisit', last_scanned_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP`,
+      ).bind(crypto.randomUUID(), spaceId, row.horizon, queryKey, trackId),
+    ];
   });
-  if (!persisted.length) return { pendingCount: 0, paperIds: [] as string[] };
-
-  await database.batch(persisted.map(({ input, paperId }) => database.prepare(
-    `INSERT INTO paper_insights
-     (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en,
-      quality_score, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'route-gap', ?, 1, ?, ?)
-     ON CONFLICT(paper_id) DO UPDATE SET
-      abstract_text = CASE WHEN LENGTH(excluded.abstract_text) > LENGTH(paper_insights.abstract_text)
-       THEN excluded.abstract_text ELSE paper_insights.abstract_text END,
-      summary_zh = excluded.summary_zh, summary_en = excluded.summary_en,
-      why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
-      quality_score = MAX(paper_insights.quality_score, excluded.quality_score),
-      analysis_source = CASE WHEN paper_insights.analysis_source IN ('metadata', 'route-gap')
-       THEN 'route-gap' ELSE paper_insights.analysis_source END,
-      analysis_model = CASE WHEN paper_insights.analysis_source IN ('metadata', 'route-gap')
-       THEN excluded.analysis_model ELSE paper_insights.analysis_model END,
-      llm_recommended = MAX(paper_insights.llm_recommended, excluded.llm_recommended),
-      llm_relevance_score = MAX(paper_insights.llm_relevance_score, excluded.llm_relevance_score),
-      screening_reason = excluded.screening_reason, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(
-    paperId, spaceId, input.abstractText, input.summaryZh, input.summaryEn, input.rationaleZh, input.rationaleEn,
-    normalizedConfidence(input.confidence), input.model, normalizedConfidence(input.confidence), input.rationaleEn,
-  )));
-
-  await upsertPendingResearchMapEvidence(database, persisted.map(({ input, paperId }) => ({
-    spaceId,
-    trackId,
-    paperId,
-    mapRole: input.mapRole,
-    rationaleZh: input.rationaleZh,
-    rationaleEn: input.rationaleEn,
-    confidence: normalizedConfidence(input.confidence),
-  })));
-  const paperIds = persisted.map((item) => item.paperId);
-  const pending = await database.prepare(
-    `SELECT COUNT(*) AS count FROM research_map_evidence_proposals
-     WHERE space_id = ? AND track_id = ? AND status = 'pending'
-      AND paper_id IN (${paperIds.map(() => "?").join(", ")})`,
-  ).bind(spaceId, trackId, ...paperIds).first<{ count: number }>();
-  return { pendingCount: Number(pending?.count || 0), paperIds };
+  if (queueStatements.length) await database.batch(queueStatements);
+  if (legacyRows.results.length) {
+    await database.prepare(
+      `DELETE FROM research_map_evidence_proposals WHERE space_id = ? AND track_id = ? AND status = 'pending'
+       AND decided_at IS NULL AND paper_id IN (${legacyRows.results.map(() => "?").join(", ")})`,
+    ).bind(spaceId, trackId, ...legacyRows.results.map((row) => row.id)).run();
+  }
+  const queued = await database.prepare(
+    `SELECT COUNT(*) AS count FROM paper_insights WHERE space_id = ? AND analysis_source = 'metadata'
+     AND paper_id IN (${persistedRows.results.map(() => "?").join(", ")})`,
+  ).bind(spaceId, ...persistedRows.results.map((row) => row.id)).first<{ count: number }>();
+  return { pendingCount: 0, queuedCount: Number(queued?.count || 0), paperIds: persistedRows.results.map((row) => row.id) };
 }
 
 async function evidenceRows(database: D1Database, spaceId: string, paperId: string) {
@@ -276,6 +283,10 @@ function activeEvidenceRow(rows: EvidenceProposalRow[]) {
 
 function isPersistentExplicitAcceptance(row: EvidenceProposalRow) {
   return row.status === "confirmed" && row.id.startsWith(PERSISTENT_RESEARCH_MAP_ACCEPTANCE_ID_PREFIX);
+}
+
+function isSystemCuratedReview(row: EvidenceProposalRow) {
+  return row.id.startsWith(SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX);
 }
 
 function invalidationStatements(database: D1Database, spaceId: string, trackIds: string[]) {
@@ -416,7 +427,7 @@ export function reconcileResearchMapEvidenceStatements(
        (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role,
         summary_zh, summary_en, rationale_zh, rationale_en, position)
        SELECT ?3, active.track_id, ?1, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at,
-        p.citation_count, CASE WHEN active.map_role = 'milestone' THEN 'milestone' ELSE 'frontier' END,
+        p.citation_count, CASE active.map_role WHEN 'foundation' THEN 'foundation' WHEN 'milestone' THEN 'milestone' ELSE 'frontier' END,
         COALESCE(i.summary_zh, ''), COALESCE(i.summary_en, ''), active.rationale_zh, active.rationale_en,
         (SELECT COALESCE(MAX(position) + 1, 0) FROM research_track_papers WHERE track_id = active.track_id)
        FROM active JOIN final_state
@@ -459,6 +470,7 @@ export function reconcileResearchMapEvidenceStatements(
        DELETE FROM research_track_papers WHERE space_id = ?1
         AND track_id = (SELECT track_id FROM active)
         AND canonical_id = (SELECT canonical_id FROM monitored_papers WHERE id = ?2 AND space_id = ?1)
+        AND (SELECT id FROM active) NOT LIKE '${SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX}%'
         AND EXISTS (SELECT 1 FROM active JOIN final_state WHERE
          (${finalStateDismisses} AND active.status <> 'dismissed')
          OR (${finalStateIsNeutral} AND active.status <> 'pending'
@@ -606,10 +618,10 @@ export async function dismissResearchMapEvidence(
     database.prepare(
       "DELETE FROM research_map_changes WHERE space_id = ? AND track_id = ? AND paper_id = ? AND kind = 'new_evidence'",
     ).bind(spaceId, row.track_id, paperId),
-    database.prepare(
-      "DELETE FROM research_track_papers WHERE space_id = ? AND track_id = ? AND canonical_id = ?",
-    ).bind(spaceId, row.track_id, row.canonical_id),
   ];
+  if (!isSystemCuratedReview(row)) statements.push(database.prepare(
+    "DELETE FROM research_track_papers WHERE space_id = ? AND track_id = ? AND canonical_id = ?",
+  ).bind(spaceId, row.track_id, row.canonical_id));
   statements.push(...invalidationStatements(database, spaceId, trackIds));
   await database.batch(statements);
   return { changed: 1, trackIds };
@@ -634,10 +646,10 @@ export async function resetResearchMapEvidenceToPending(
     database.prepare(
       "DELETE FROM research_map_changes WHERE space_id = ? AND track_id = ? AND paper_id = ? AND kind = 'new_evidence'",
     ).bind(spaceId, row.track_id, paperId),
-    database.prepare(
-      "DELETE FROM research_track_papers WHERE space_id = ? AND track_id = ? AND canonical_id = ?",
-    ).bind(spaceId, row.track_id, row.canonical_id),
   ];
+  if (!isSystemCuratedReview(row)) statements.push(database.prepare(
+    "DELETE FROM research_track_papers WHERE space_id = ? AND track_id = ? AND canonical_id = ?",
+  ).bind(spaceId, row.track_id, row.canonical_id));
   statements.push(...invalidationStatements(database, spaceId, trackIds));
   await database.batch(statements);
   return { changed: 1, trackIds };

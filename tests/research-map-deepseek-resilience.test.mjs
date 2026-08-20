@@ -62,8 +62,9 @@ test("targeted gap expansion queues reviewable evidence instead of writing forma
   const route = await readFile(routePath, "utf8");
   const gapBranch = section(route, "if (gapExpanding) {", "} else {");
 
-  assert.match(gapBranch, /upsertRouteGapResearchMapEvidence/);
-  assert.match(gapBranch, /addedCount = persisted\.pendingCount/);
+  assert.match(gapBranch, /queueResult\.queuedForReviewCount/);
+  assert.match(route, /enqueueMonitorCandidates/);
+  assert.match(gapBranch, /addedCount = queueResult\.queuedForReviewCount/);
   assert.doesNotMatch(gapBranch, /INSERT (?:OR IGNORE )?INTO research_track_papers/);
   assert.match(route, /if \(!gapExpanding\) await saveDirectionIntelligence/);
 });

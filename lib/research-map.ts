@@ -192,6 +192,10 @@ export type ResearchTrack = {
   recentPaperCount: number;
   confirmedEvidenceCount: number;
   pendingEvidenceCount: number;
+  queuedForReviewCount: number;
+  reviewingForReviewCount: number;
+  recommendedCandidateCount: number;
+  lastQueuedAt: string | null;
   latestChange: ResearchTrackLatestChange | null;
   buildStatus: ResearchTrackBuildStatus;
   intelligence: ResearchDirectionIntelligence | null;

@@ -1,8 +1,9 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
-import { reconcileConfirmedResearchMapEvidence, upsertRouteGapResearchMapEvidence } from "../../../lib/research-map-evidence";
+import { reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -148,6 +149,13 @@ type Selection = {
   rationaleEn: string;
 };
 type TrackEvidenceCountRow = { track_id: string; confirmed_count: number; pending_count: number };
+type TrackReviewQueueCountRow = {
+  track_id: string;
+  queued_count: number;
+  reviewing_count: number;
+  recommended_count: number;
+  last_queued_at: string | null;
+};
 type TrackLatestChangeRow = {
   track_id: string;
   kind: string;
@@ -1162,7 +1170,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 }
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult] = await Promise.all([
+  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
@@ -1199,8 +1207,50 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
         FROM research_map_changes WHERE space_id = ?
        ) WHERE change_rank = 1`,
     ).bind(spaceId).all<TrackLatestChangeRow>(),
+    database.prepare(
+      `WITH queue_counts AS (
+        SELECT coverage.route_id AS track_id,
+         COUNT(DISTINCT CASE WHEN i.analysis_source = 'metadata' OR i.analysis_model = '' THEN cs.paper_id END) AS queued_count,
+         COUNT(DISTINCT CASE WHEN i.analysis_source = 'deepseek_screened' THEN cs.paper_id END) AS reviewing_count,
+         MAX(cs.last_seen_at) AS last_queued_at
+        FROM monitor_candidate_sources cs
+        JOIN monitored_papers p ON p.id = cs.paper_id AND p.space_id = cs.space_id
+        JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+        JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id AND coverage.horizon = p.horizon
+         AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
+        WHERE cs.space_id = ? AND coverage.route_id IS NOT NULL AND cs.source_key LIKE 'research-route:%'
+        GROUP BY coverage.route_id
+       ), latest_recommended AS (
+        SELECT * FROM (
+         SELECT audit.*,
+          ROW_NUMBER() OVER (PARTITION BY audit.space_id, audit.paper_id ORDER BY audit.reviewed_at DESC, audit.rowid DESC) AS audit_rank
+         FROM recommendation_audit_events audit
+         WHERE audit.space_id = ?
+        ) WHERE audit_rank = 1 AND recommended = 1
+       ), recommended_counts AS (
+        SELECT json_extract(origin.value, '$.routeId') AS track_id,
+         COUNT(DISTINCT audit.paper_id) AS recommended_count
+        FROM latest_recommended audit
+        JOIN json_each(audit.provenance_json) origin
+        WHERE json_extract(origin.value, '$.routeId') IS NOT NULL
+         AND json_extract(origin.value, '$.originKind') IN
+          ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_network')
+        GROUP BY json_extract(origin.value, '$.routeId')
+       ), track_ids AS (
+        SELECT track_id FROM queue_counts UNION SELECT track_id FROM recommended_counts
+       )
+       SELECT track_ids.track_id,
+        COALESCE(queue_counts.queued_count, 0) AS queued_count,
+        COALESCE(queue_counts.reviewing_count, 0) AS reviewing_count,
+        COALESCE(recommended_counts.recommended_count, 0) AS recommended_count,
+        queue_counts.last_queued_at
+       FROM track_ids
+       LEFT JOIN queue_counts ON queue_counts.track_id = track_ids.track_id
+       LEFT JOIN recommended_counts ON recommended_counts.track_id = track_ids.track_id`,
+    ).bind(spaceId, spaceId).all<TrackReviewQueueCountRow>(),
   ]);
   const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
+  const reviewQueueCountsByTrack = new Map(reviewQueueCountsResult.results.map((row) => [row.track_id, row]));
   const latestChangeByTrack = new Map(latestChangesResult.results.map((row) => [row.track_id, row]));
   const papersByTrack = new Map<string, ResearchTrackPaper[]>();
   for (const row of papersResult.results) papersByTrack.set(row.track_id, [...(papersByTrack.get(row.track_id) || []), toPaper(row)]);
@@ -1229,6 +1279,10 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     recentPaperCount: heatByTrack.get(row.id)?.recentPaperCount || 0,
     confirmedEvidenceCount: Number(evidenceCountsByTrack.get(row.id)?.confirmed_count || 0),
     pendingEvidenceCount: Number(evidenceCountsByTrack.get(row.id)?.pending_count || 0),
+    queuedForReviewCount: Number(reviewQueueCountsByTrack.get(row.id)?.queued_count || 0),
+    reviewingForReviewCount: Number(reviewQueueCountsByTrack.get(row.id)?.reviewing_count || 0),
+    recommendedCandidateCount: Number(reviewQueueCountsByTrack.get(row.id)?.recommended_count || 0),
+    lastQueuedAt: reviewQueueCountsByTrack.get(row.id)?.last_queued_at || null,
     latestChange: (() => {
       const change = latestChangeByTrack.get(row.id);
       return change ? {
@@ -1436,33 +1490,44 @@ export async function POST(request: Request) {
     const inserted = new Set<string>();
     let position = existing.results.length;
     let addedCount = 0;
+    const queueCandidates = selections.flatMap((selection) => {
+      const candidate = candidateById.get(selection.canonicalId);
+      if (!candidate || inserted.has(selection.canonicalId)) return [];
+      inserted.add(selection.canonicalId);
+      const sourceKind = gapExpanding ? "gap" : selection.role;
+      return [{
+        canonicalId: candidate.canonicalId,
+        doi: candidate.doi,
+        title: candidate.title,
+        authors: candidate.authors,
+        venue: candidate.venue,
+        url: candidate.url,
+        publishedAt: candidate.publishedAt,
+        abstractText: candidate.abstractText,
+        horizon: researchEvidenceHorizon(candidate.publishedAt),
+        citationCount: candidate.citationCount,
+        relevanceScore: Math.min(68, 42 + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 4)
+          + (candidate.abstractText.length >= 180 ? 5 : 0)),
+        qualityScore: Math.min(72, 46 + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 5)
+          + (candidate.abstractText.length >= 180 ? 5 : 0)),
+        priorityVenue: false,
+        source: "research-route",
+        provenance: [{
+          sourceKey: `research-route:${sourceKind}`,
+          channel: "topic" as const,
+          queryKey: `${track.id}:${gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}`}`,
+          queryText: gapExpanding ? gapQuery : queries.join(" | "),
+          routeId: track.id,
+        }],
+      }];
+    });
+    const queueResult = await enqueueMonitorCandidates(database, space.id, queueCandidates, { recordDiscoveryCoverage: true });
     if (gapExpanding) {
-      const gapInputs = selections.flatMap((selection) => {
-        const candidate = candidateById.get(selection.canonicalId);
-        if (!candidate || inserted.has(selection.canonicalId)) return [];
-        inserted.add(selection.canonicalId);
-        return [{
-          canonicalId: candidate.canonicalId,
-          doi: candidate.doi,
-          title: candidate.title,
-          authors: candidate.authors,
-          venue: candidate.venue,
-          url: candidate.url,
-          publishedAt: candidate.publishedAt,
-          citationCount: candidate.citationCount,
-          abstractText: candidate.abstractText,
-          mapRole: selection.role,
-          summaryZh: selection.summaryZh,
-          summaryEn: selection.summaryEn,
-          rationaleZh: selection.rationaleZh,
-          rationaleEn: selection.rationaleEn,
-          confidence: reviewed.intelligence[0]?.confidence || 75,
-          model: MODEL,
-        }];
-      });
-      const persisted = await upsertRouteGapResearchMapEvidence(database, space.id, track.id, gapInputs);
-      addedCount = persisted.pendingCount;
+      // Gap discovery is only a review candidate. Deep review creates the
+      // pending evidence proposal if and only if it passes the quality gate.
+      addedCount = queueResult.queuedForReviewCount;
     } else {
+      inserted.clear();
       for (const selection of selections) {
         const candidate = candidateById.get(selection.canonicalId);
         if (!candidate || inserted.has(selection.canonicalId)) continue;
@@ -1487,6 +1552,9 @@ export async function POST(request: Request) {
     return Response.json(await readMap(database, space.id, {
       cached: false,
       addedCount,
+      reviewQueuedCount: queueResult.queuedForReviewCount,
+      reviewInProgressCount: queueResult.reviewingCount,
+      alreadyReviewedCount: queueResult.alreadyReviewedCount,
       hydratedTrackId: hydrating ? track.id : null,
       gapExpanded: gapExpanding,
       gapQuery: gapExpanding ? gapQuery : undefined,
