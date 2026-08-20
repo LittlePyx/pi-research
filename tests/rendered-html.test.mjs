@@ -207,7 +207,15 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /PaperNetworkGraph/);
   assert.match(client, /DirectionPathMap/);
   assert.match(client, /相似性地图/);
-  assert.match(client, /种子论文/);
+  assert.match(client, /网络种子/);
+  assert.match(client, /"all" \| "one-hop" \| "multi-seed"/);
+  assert.match(client, /selectBalancedMultiSeedEdges/);
+  assert.match(client, /paperNetworkOriginCanonicalIds/);
+  assert.match(client, /多种子联合邻域/);
+  assert.match(client, /优先保留每个种子的强关系和共同邻居/);
+  assert.match(client, /seedConnectionCount/);
+  assert.match(css, /\.v2-network-origin-remove/);
+  assert.match(css, /\.v2-paper-network-node \.shared-ring/);
   assert.match(client, /数据库确认的引用/);
   assert.match(client, /Pi 解释的语义关系/);
   assert.match(client, /Pi 推断，不代表真实引用/);
