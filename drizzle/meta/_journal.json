@@ -169,6 +169,13 @@
       "when": 1787214580765,
       "tag": "0023_lethal_unicorn",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1787217522200,
+      "tag": "0024_dry_nitro",
+      "breakpoints": true
     }
   ]
 }

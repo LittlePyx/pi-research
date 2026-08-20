@@ -62,6 +62,7 @@ export type ResearchNetworkIssue = {
   message: string;
   retryable: boolean;
   seedCanonicalId?: string;
+  retryAfterSeconds?: number;
 };
 
 export type ResearchNetworkSourceStatus = {
@@ -85,6 +86,7 @@ export type ResearchNetworkExpandResponse = {
     hitSeedCanonicalIds: string[];
     expandedSeedCanonicalIds: string[];
   };
+  retryAfterSeconds: number | null;
   expiresAt: string | null;
 };
 

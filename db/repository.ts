@@ -80,6 +80,16 @@ async function ensureResearchNetworkColumns(database: D1Database) {
   const existing = new Set(edgeColumns.results.map((column) => column.name));
   if (!existing.has("expansion_key")) await database.prepare("ALTER TABLE research_network_candidate_edges ADD COLUMN expansion_key TEXT NOT NULL DEFAULT ''").run();
   if (!existing.has("seed_set_json")) await database.prepare("ALTER TABLE research_network_candidate_edges ADD COLUMN seed_set_json TEXT NOT NULL DEFAULT '[]'").run();
+  const expansionColumns = await database.prepare("PRAGMA table_info(research_network_expansion_states)").all<{ name: string }>();
+  const expansionExisting = new Set(expansionColumns.results.map((column) => column.name));
+  const additions = [
+    ["similarity_json", "ALTER TABLE research_network_expansion_states ADD COLUMN similarity_json TEXT NOT NULL DEFAULT '[]'"],
+    ["similarity_status", "ALTER TABLE research_network_expansion_states ADD COLUMN similarity_status TEXT NOT NULL DEFAULT 'idle'"],
+    ["similarity_expires_at", "ALTER TABLE research_network_expansion_states ADD COLUMN similarity_expires_at TEXT"],
+    ["lock_token", "ALTER TABLE research_network_expansion_states ADD COLUMN lock_token TEXT"],
+    ["lock_expires_at", "ALTER TABLE research_network_expansion_states ADD COLUMN lock_expires_at TEXT"],
+  ] as const;
+  for (const [name, sql] of additions) if (!expansionExisting.has(name)) await database.prepare(sql).run();
 }
 
 export async function ensureSchema(database = getDatabase()) {
@@ -96,6 +106,9 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS ai_usage_daily (id TEXT PRIMARY KEY NOT NULL, scope TEXT NOT NULL, usage_date TEXT NOT NULL, request_count INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_usage_daily_scope_date ON ai_usage_daily(scope, usage_date)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_ai_usage_daily_date ON ai_usage_daily(usage_date)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS semantic_scholar_throttles (id TEXT PRIMARY KEY NOT NULL, scope_key TEXT NOT NULL, failure_count INTEGER NOT NULL DEFAULT 0, next_allowed_at TEXT, last_status INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_scholar_throttles_scope ON semantic_scholar_throttles(scope_key)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_semantic_scholar_throttles_next ON semantic_scholar_throttles(next_allowed_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', last_run_at TEXT, next_run_at TEXT, new_count INTEGER NOT NULL DEFAULT 0, scanned_count INTEGER NOT NULL DEFAULT 0, discovery_round INTEGER NOT NULL DEFAULT 0, lock_token TEXT, lock_expires_at TEXT, last_trigger TEXT NOT NULL DEFAULT 'visit', error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_runs_space ON monitor_runs(space_id)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_discovery_pages (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, horizon TEXT NOT NULL, query_key TEXT NOT NULL, next_offset INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
@@ -176,7 +189,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS research_network_seed_expansion_states (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, seed_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, reference_offset INTEGER NOT NULL DEFAULT 0, citation_offset INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'idle', error TEXT, last_expanded_at TEXT, expires_at TEXT)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_network_seed_expansion_unique ON research_network_seed_expansion_states(space_id, seed_paper_id)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_seed_expansion_fresh ON research_network_seed_expansion_states(space_id, expires_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS research_network_expansion_states (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, expansion_key TEXT NOT NULL, seed_canonical_ids TEXT NOT NULL DEFAULT '[]', recommendation_offset INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'idle', error TEXT, last_expanded_at TEXT, expires_at TEXT)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_network_expansion_states (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, expansion_key TEXT NOT NULL, seed_canonical_ids TEXT NOT NULL DEFAULT '[]', recommendation_offset INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'idle', error TEXT, similarity_json TEXT NOT NULL DEFAULT '[]', similarity_status TEXT NOT NULL DEFAULT 'idle', similarity_expires_at TEXT, lock_token TEXT, lock_expires_at TEXT, last_expanded_at TEXT, expires_at TEXT)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_network_expansion_state_unique ON research_network_expansion_states(space_id, expansion_key)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_expansion_state_fresh ON research_network_expansion_states(space_id, expires_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS learning_paths (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, target TEXT NOT NULL, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', analysis_model TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),

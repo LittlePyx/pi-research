@@ -11,6 +11,7 @@ import {
 } from "../../../lib/discovery/candidate-selection.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
 type Horizon = "days" | "months" | "years";
@@ -378,6 +379,7 @@ const MONITOR_PIPELINE_VERSION = "continuous-evidence-v3";
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
 const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48;
+const MONITOR_SEMANTIC_SCHOLAR_DAILY_LIMIT = 90;
 const MONITOR_MODEL = "deepseek-v4-pro";
 const RECOMMENDATION_THRESHOLD = 72;
 const DEEPSEEK_BALANCE_ERROR = "deepseek_insufficient_balance";
@@ -1042,6 +1044,19 @@ function sourceFocusQuery(space: SpaceRow, round: number, horizon: Horizon, quer
   return cleanText(`${space.description} ${rotatedSlice(branches, round, 2).join(" ")}`).slice(0, 260);
 }
 
+function monitorSemanticScholarFetch(database: D1Database, spaceId: string, endpoint: URL, init: RequestInit, scopeKey: string) {
+  return fetchSemanticScholar(endpoint, init, {
+    database,
+    spaceId,
+    scopeKey,
+    feature: "monitor",
+    featureDailyLimit: MONITOR_SEMANTIC_SCHOLAR_DAILY_LIMIT,
+    // A provider 429 should open the shared cooldown instead of multiplying
+    // retries across the concurrently running discovery branches.
+    maxRetries: 1,
+  });
+}
+
 async function fetchSemanticScholarHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, round: number, queryPlan?: QueryPlan) {
   const profileQuery = sourceFocusQuery(space, round, horizon.key, queryPlan);
   if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
@@ -1060,11 +1075,13 @@ async function fetchSemanticScholarHorizon(database: D1Database, space: SpaceRow
     signal: AbortSignal.timeout(20_000),
   };
   try {
-    let response = await fetch(endpoint, options);
-    if (response.status === 429) {
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      response = await fetch(endpoint, options);
-    }
+    const response = await monitorSemanticScholarFetch(
+      database,
+      space.id,
+      endpoint,
+      options,
+      `topic:${horizon.key}:${offset}`,
+    );
     if (!response.ok) throw new Error(`Semantic Scholar returned ${response.status}`);
     const data = await response.json() as SemanticScholarResponse;
     const queryKey = await discoveryQueryKey(plan);
@@ -1200,10 +1217,10 @@ async function fetchCitationFrontier(
     endpoint.searchParams.set("limit", String(limit));
     endpoint.searchParams.set("fields", "externalIds,title,abstract,authors,venue,url,publicationDate,year,citationCount");
     try {
-      const response = await fetch(endpoint, {
+      const response = await monitorSemanticScholarFetch(database, space.id, endpoint, {
         headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
         signal: AbortSignal.timeout(20_000),
-      });
+      }, `citation:${relation}:${paperId}:${offset}`);
       if (!response.ok) throw new Error(`Semantic Scholar ${relation} returned ${response.status}`);
       const data = await response.json() as SemanticScholarGraphResponse;
       const papers = (data.data || []).map((entry) => relation === "references" ? entry.citedPaper : entry.citingPaper).filter((item): item is SemanticScholarPaper => Boolean(item));
@@ -2817,7 +2834,7 @@ function semanticScholarIdentifier(candidate: Candidate) {
   return arxivId ? `ARXIV:${arxivId}` : "";
 }
 
-async function fetchSemanticScholarAbstracts(candidates: Candidate[]) {
+async function fetchSemanticScholarAbstracts(database: D1Database, spaceId: string, candidates: Candidate[]) {
   const identified = candidates.map((candidate) => ({ candidate, identifier: semanticScholarIdentifier(candidate) }))
     .filter((entry) => Boolean(entry.identifier));
   const abstracts = new Map<string, string>();
@@ -2825,21 +2842,12 @@ async function fetchSemanticScholarAbstracts(candidates: Candidate[]) {
   try {
     const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/batch");
     endpoint.searchParams.set("fields", "paperId,externalIds,abstract");
-    let response = await fetch(endpoint, {
+    const response = await monitorSemanticScholarFetch(database, spaceId, endpoint, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
       body: JSON.stringify({ ids: identified.map((entry) => entry.identifier) }),
       signal: AbortSignal.timeout(18_000),
-    });
-    if (response.status === 429) {
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
-        body: JSON.stringify({ ids: identified.map((entry) => entry.identifier) }),
-        signal: AbortSignal.timeout(18_000),
-      });
-    }
+    }, `abstracts:${identified.length}`);
     if (!response.ok) return abstracts;
     const records = await response.json() as Array<SemanticScholarPaper | null>;
     records.forEach((record, index) => {
@@ -2887,7 +2895,7 @@ async function fetchOpenAlexAbstracts(candidates: Candidate[]) {
 async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, candidates: Candidate[]) {
   const missing = candidates.filter((candidate) => candidate.abstractText.trim().length < 120);
   if (!missing.length) return { requested: 0, enriched: 0 };
-  const abstracts = await fetchSemanticScholarAbstracts(missing);
+  const abstracts = await fetchSemanticScholarAbstracts(database, spaceId, missing);
   const unresolved = missing.filter((candidate) => !abstracts.has(candidate.canonicalId) && candidate.doi);
   const openAlexAbstracts = await fetchOpenAlexAbstracts(unresolved);
   for (const [canonicalId, abstractText] of openAlexAbstracts) abstracts.set(canonicalId, abstractText);

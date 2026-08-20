@@ -1,4 +1,4 @@
-import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import type {
   ResearchNetworkCandidate,
   ResearchNetworkCandidateRelation,
@@ -12,6 +12,7 @@ import type {
   ResearchNetworkSourceStatus,
 } from "../../../lib/research-network";
 import { isVerifiedBridge, partitionExpansionSeeds, verifiedRelationFallbackEdge, verifiedSeedCoverage } from "../../../lib/research-network";
+import { fetchSemanticScholar, SemanticScholarQuotaError, SemanticScholarRateLimitError } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string };
 type SeedRow = {
@@ -66,6 +67,11 @@ type ExpansionStateRow = {
   recommendation_offset: number;
   status: string;
   expires_at: string | null;
+  similarity_json: string;
+  similarity_status: string;
+  similarity_expires_at: string | null;
+  lock_token: string | null;
+  lock_expires_at: string | null;
 };
 type SemanticScholarPaper = {
   paperId?: string;
@@ -109,27 +115,38 @@ const CACHE_HOURS = 24;
 const MAX_SEEDS = 3;
 const MAX_CANDIDATES = 24;
 const DEFAULT_CANDIDATES = 18;
-const DAILY_EXTERNAL_CALL_LIMIT = 60;
 const RELATION_PAGE_SIZE = 40;
 const RECOMMENDATION_POOL_SIZE = 100;
 const RECOMMENDATION_PAGE_SIZE = 20;
+const EXPANSION_LOCK_LEASE_MS = 120_000;
 const NON_PAPER = /(publication information|information for authors|instructions for authors|table of contents|editorial board|front matter|back matter|issue information|journal masthead|correction|erratum)/i;
 const RELATION_KINDS = new Set<ResearchNetworkRelationKind>(["reference", "citation", "recommendation"]);
 const DIRECTIONS = new Set<ResearchNetworkRelationDirection>(["seed_cites_candidate", "candidate_cites_seed", "undirected"]);
 const CANDIDATE_STATUSES = new Set<ResearchNetworkCandidateStatus>(["ghost", "accepted", "dismissed"]);
 const TRACK_ROLES = new Set(["foundation", "milestone", "frontier"]);
 
-type ExternalCallBudget = { database: D1Database; scope: string; date: string };
-
-class ExternalCallLimitError extends Error {
-  constructor() {
-    super("Daily external research-network call limit reached");
-    this.name = "ExternalCallLimitError";
-  }
-}
+type ExternalCallBudget = { database: D1Database; spaceId: string };
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+}
+
+function isSemanticScholarCircuitError(error: unknown): error is SemanticScholarRateLimitError | SemanticScholarQuotaError {
+  return error instanceof SemanticScholarRateLimitError || error instanceof SemanticScholarQuotaError;
+}
+
+function reportNetworkSourceError(error: unknown, kind: "rate" | "seed" | "relation" | "recommendation" | "similarity" | "upstream") {
+  const correlationId = crypto.randomUUID();
+  console.error(`[research-network:${correlationId}] ${kind}`, error);
+  if (error instanceof SemanticScholarRateLimitError) {
+    return `Academic graph requests are cooling down. Cached verified results are shown; retry in about ${error.retryAfterSeconds} seconds.`;
+  }
+  if (error instanceof SemanticScholarQuotaError) return "Today's academic-graph request budget is exhausted. Cached verified results remain available.";
+  if (kind === "seed") return "One or more selected seed papers could not be matched in the academic graph.";
+  if (kind === "similarity") return "Paper-similarity links could not be refreshed; verified citation links remain available.";
+  if (kind === "recommendation") return "Related-paper recommendations could not be refreshed; verified citation results remain available.";
+  if (kind === "relation") return "Some verified citation links could not be refreshed; cached links remain available.";
+  return "Part of the academic graph could not be refreshed; cached verified results remain available.";
 }
 
 function boundedInteger(value: unknown, minimum: number, maximum: number, fallback: number) {
@@ -200,41 +217,17 @@ function normalizePaper(paper: SemanticScholarPaper): InternalCandidate | null {
   };
 }
 
-function semanticScholarHeaders() {
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)",
-  };
-  const key = cleanText(getRuntimeEnv().SEMANTIC_SCHOLAR_API_KEY);
-  if (key) headers["x-api-key"] = key;
-  return headers;
-}
-
-async function consumeExternalCall(budget: ExternalCallBudget) {
-  const row = await budget.database.prepare("SELECT request_count FROM ai_usage_daily WHERE scope = ? AND usage_date = ? LIMIT 1")
-    .bind(budget.scope, budget.date).first<{ request_count: number }>();
-  if ((row?.request_count || 0) >= DAILY_EXTERNAL_CALL_LIMIT) throw new ExternalCallLimitError();
-  await budget.database.prepare(
-    `INSERT INTO ai_usage_daily (id, scope, usage_date, request_count, input_tokens, output_tokens)
-     VALUES (?, ?, ?, 1, 0, 0) ON CONFLICT(scope, usage_date) DO UPDATE SET request_count = request_count + 1, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(crypto.randomUUID(), budget.scope, budget.date).run();
-}
-
-async function semanticScholarFetch(url: URL, init: RequestInit, budget: ExternalCallBudget) {
-  let lastResponse: Response | null = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await consumeExternalCall(budget);
-    const response = await fetch(url, {
-      ...init,
-      headers: { ...semanticScholarHeaders(), ...(init.headers || {}) },
-      signal: AbortSignal.timeout(22_000),
-    });
-    lastResponse = response;
-    if (response.status !== 429 && response.status < 500) return response;
-    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, response.status === 429 ? 900 : 350));
-  }
-  return lastResponse!;
+async function semanticScholarFetch(url: URL, init: RequestInit, budget: ExternalCallBudget, scopeKey: string) {
+  return fetchSemanticScholar(url, init, {
+    database: budget.database,
+    spaceId: budget.spaceId,
+    scopeKey,
+    feature: "research-network",
+    featureDailyLimit: 60,
+    // A single 429 opens the route-level circuit. Do not spend more of the
+    // provider quota retrying the same request during this expansion.
+    maxRetries: 1,
+  });
 }
 
 async function ownedSpace(request: Request, spaceId: string) {
@@ -262,7 +255,8 @@ async function resolveSemanticScholarSeeds(rows: SeedRow[], budget: ExternalCall
   if (!identified.length) return { seeds: [] as ResearchNetworkSeed[], resolved: [] as Array<{ row: SeedRow; paper: SemanticScholarPaper }>, errors: ["Selected papers do not have DOI, arXiv, or Semantic Scholar identifiers"] };
   const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/batch");
   endpoint.searchParams.set("fields", "paperId,externalIds,title,authors,venue,url,publicationDate,year,citationCount");
-  const response = await semanticScholarFetch(endpoint, { method: "POST", body: JSON.stringify({ ids: identified.map((entry) => entry.identifier) }) }, budget);
+  const response = await semanticScholarFetch(endpoint, { method: "POST", body: JSON.stringify({ ids: identified.map((entry) => entry.identifier) }) }, budget,
+    `seed-lookup:${identified.map((entry) => entry.row.id).sort().join(",")}`);
   if (!response.ok) throw new Error(`Semantic Scholar seed lookup returned ${response.status}`);
   const records = await response.json() as Array<SemanticScholarPaper | null>;
   const resolved: Array<{ row: SeedRow; paper: SemanticScholarPaper }> = [];
@@ -270,7 +264,7 @@ async function resolveSemanticScholarSeeds(rows: SeedRow[], budget: ExternalCall
   records.forEach((paper, index) => {
     const identifiedSeed = identified[index];
     if (paper?.paperId && identifiedSeed) resolved.push({ row: identifiedSeed.row, paper });
-    else if (identifiedSeed) errors.push(`Semantic Scholar could not resolve ${identifiedSeed.row.title}`);
+    else if (identifiedSeed) errors.push("One or more selected seed papers could not be matched in the academic graph.");
   });
   const seeds = resolved.map(({ row, paper }): ResearchNetworkSeed => ({
     paperId: row.id,
@@ -310,7 +304,7 @@ async function fetchSeedRelations(seed: { row: SeedRow; paper: SemanticScholarPa
     endpoint.searchParams.set("limit", String(RELATION_PAGE_SIZE));
     endpoint.searchParams.set("fields", "paperId,externalIds,title,abstract,authors,venue,url,publicationDate,year,citationCount,publicationTypes,isRetracted,contexts,intents,isInfluential");
     try {
-      const response = await semanticScholarFetch(endpoint, {}, budget);
+      const response = await semanticScholarFetch(endpoint, {}, budget, `seed:${seed.row.id}`);
       if (!response.ok) throw new Error(`Semantic Scholar ${relationKind} returned ${response.status}`);
       const data = await response.json() as SemanticScholarRelationResponse;
       nextOffsets[offsetKey] = typeof data.next === "number" ? data.next : 0;
@@ -339,10 +333,14 @@ async function fetchSeedRelations(seed: { row: SeedRow; paper: SemanticScholarPa
         });
       }
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : `Semantic Scholar ${relationKind} failed`);
+      // Preserve any references already received when the following citations
+      // request opens the circuit. The caller persists this partial page before
+      // stopping all remaining Semantic Scholar work.
+      if (isSemanticScholarCircuitError(error)) return { results, errors, nextOffsets, circuitError: error };
+      errors.push(reportNetworkSourceError(error, "relation"));
     }
   }
-  return { results, errors, nextOffsets };
+  return { results, errors, nextOffsets, circuitError: null as SemanticScholarRateLimitError | SemanticScholarQuotaError | null };
 }
 
 function recommendationFields(endpoint: URL) {
@@ -396,28 +394,33 @@ async function fetchRecommendations(
       const response = await semanticScholarFetch(endpoint, {
         method: "POST",
         body: JSON.stringify({ positivePaperIds: resolved.map((seed) => seed.paper.paperId), negativePaperIds: [] }),
-      }, budget);
+      }, budget, `recommendation:${expansionKey}`);
       if (!response.ok) throw new Error(`Semantic Scholar recommendations returned ${response.status}`);
       const data = await response.json() as SemanticScholarRecommendationResponse;
       const page = rotatedRecommendationPage(data.recommendedPapers || [], offset);
       for (const paper of page.papers) results.push(recommendationRelation(resolved, paper, expansionKey));
       return { results, errors, nextOffset: page.nextOffset };
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : "Semantic Scholar multi-seed recommendations failed");
+      if (isSemanticScholarCircuitError(error)) throw error;
+      errors.push(reportNetworkSourceError(error, "recommendation"));
+      // Never turn one failed joint request into an N-request fan-out. A later
+      // expansion can retry the joint endpoint after the cached cooldown.
+      return { results, errors, nextOffset: offset };
     }
   }
   let nextOffset = offset;
   for (const seed of resolved) {
     try {
       const endpoint = recommendationFields(new URL(`https://api.semanticscholar.org/recommendations/v1/papers/forpaper/${encodeURIComponent(seed.paper.paperId!)}`));
-      const response = await semanticScholarFetch(endpoint, {}, budget);
+      const response = await semanticScholarFetch(endpoint, {}, budget, `recommendation:${expansionKey}:${seed.row.id}`);
       if (!response.ok) throw new Error(`Semantic Scholar single-seed recommendations returned ${response.status}`);
       const data = await response.json() as SemanticScholarRecommendationResponse;
       const page = rotatedRecommendationPage(data.recommendedPapers || [], offset);
       nextOffset = page.nextOffset;
       for (const paper of page.papers) results.push(recommendationRelation([seed], paper, expansionKey, seed.row.id));
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : "Semantic Scholar single-seed recommendations failed");
+      if (isSemanticScholarCircuitError(error)) throw error;
+      errors.push(reportNetworkSourceError(error, "recommendation"));
     }
   }
   return { results, errors, nextOffset };
@@ -550,15 +553,20 @@ function directRelationEdges(candidates: ResearchNetworkCandidate[]) {
 }
 
 async function buildSimilarityEdges(seeds: ResearchNetworkSeed[], candidates: ResearchNetworkCandidate[], budget: ExternalCallBudget) {
+  const seedIdentifier = (seed: ResearchNetworkSeed) => seed.s2PaperId
+    || (seed.canonicalId.startsWith("doi:") ? `DOI:${seed.canonicalId.slice(4)}`
+      : seed.canonicalId.startsWith("arxiv:") ? `ARXIV:${seed.canonicalId.slice(6)}`
+        : seed.canonicalId.startsWith("s2:") ? seed.canonicalId.slice(3) : "");
   const nodes = [
-    ...seeds.filter((seed) => seed.s2PaperId).map((seed) => ({ canonicalId: seed.canonicalId, identifier: seed.s2PaperId! })),
+    ...seeds.map((seed) => ({ canonicalId: seed.canonicalId, identifier: seedIdentifier(seed) })).filter((seed) => seed.identifier),
     ...candidates.filter((candidate) => candidate.s2PaperId).map((candidate) => ({ canonicalId: candidate.canonicalId, identifier: candidate.s2PaperId! })),
   ];
   const uniqueNodes = Array.from(new Map(nodes.map((node) => [node.canonicalId, node])).values());
   if (uniqueNodes.length < 2) return [] as ResearchNetworkSimilarityEdge[];
   const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/batch");
   endpoint.searchParams.set("fields", "paperId,externalIds,references.paperId,references.externalIds");
-  const response = await semanticScholarFetch(endpoint, { method: "POST", body: JSON.stringify({ ids: uniqueNodes.map((node) => node.identifier) }) }, budget);
+  const response = await semanticScholarFetch(endpoint, { method: "POST", body: JSON.stringify({ ids: uniqueNodes.map((node) => node.identifier) }) }, budget,
+    `similarity:${uniqueNodes.map((node) => node.canonicalId).sort().join(",")}`);
   if (!response.ok) throw new Error(`Semantic Scholar similarity lookup returned ${response.status}`);
   const records = await response.json() as Array<SemanticScholarPaper | null>;
   const references = new Map<string, Set<string>>();
@@ -617,7 +625,7 @@ async function buildSimilarityEdges(seeds: ResearchNetworkSeed[], candidates: Re
 }
 
 function externalBudget(database: D1Database, spaceId: string): ExternalCallBudget {
-  return { database, scope: `research-network-external:${spaceId}`, date: new Date().toISOString().slice(0, 10) };
+  return { database, spaceId };
 }
 
 async function loadSeedExpansionStates(database: D1Database, spaceId: string, seeds: SeedRow[]) {
@@ -632,8 +640,68 @@ async function loadSeedExpansionStates(database: D1Database, spaceId: string, se
 
 async function loadExpansionState(database: D1Database, spaceId: string, expansionKey: string) {
   return database.prepare(
-    "SELECT expansion_key, recommendation_offset, status, expires_at FROM research_network_expansion_states WHERE space_id = ? AND expansion_key = ? LIMIT 1",
+    `SELECT expansion_key, recommendation_offset, status, expires_at, similarity_json, similarity_status,
+     similarity_expires_at, lock_token, lock_expires_at
+     FROM research_network_expansion_states WHERE space_id = ? AND expansion_key = ? LIMIT 1`,
   ).bind(spaceId, expansionKey).first<ExpansionStateRow>();
+}
+
+function cachedSimilarityEdges(state: ExpansionStateRow | null) {
+  if (!state?.similarity_expires_at || Date.parse(state.similarity_expires_at) <= Date.now()) return null;
+  try {
+    const parsed = JSON.parse(state.similarity_json || "[]");
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((edge): edge is ResearchNetworkSimilarityEdge => edge && typeof edge === "object"
+      && typeof edge.sourceCanonicalId === "string" && typeof edge.targetCanonicalId === "string"
+      && (edge.kind === "bibliographic_coupling" || edge.kind === "verified_citation"));
+  } catch {
+    return null;
+  }
+}
+
+async function saveSimilarityState(
+  database: D1Database,
+  spaceId: string,
+  expansionKey: string,
+  edges: ResearchNetworkSimilarityEdge[],
+  status: "ready" | "partial",
+  ttlMilliseconds: number,
+) {
+  await database.prepare(
+    `UPDATE research_network_expansion_states SET similarity_json = ?, similarity_status = ?, similarity_expires_at = ?
+     WHERE space_id = ? AND expansion_key = ?`,
+  ).bind(JSON.stringify(edges), status, new Date(Date.now() + ttlMilliseconds).toISOString(), spaceId, expansionKey).run();
+}
+
+async function tryAcquireExpansionLock(database: D1Database, spaceId: string, expansionKey: string, seedCanonicalIds: string[]) {
+  const token = crypto.randomUUID();
+  const lockExpiresAt = new Date(Date.now() + EXPANSION_LOCK_LEASE_MS).toISOString();
+  const result = await database.prepare(
+    `INSERT INTO research_network_expansion_states
+     (id, space_id, expansion_key, seed_canonical_ids, status, lock_token, lock_expires_at)
+     VALUES (?, ?, ?, ?, 'building', ?, ?)
+     ON CONFLICT(space_id, expansion_key) DO UPDATE SET status = 'building', lock_token = excluded.lock_token,
+     lock_expires_at = excluded.lock_expires_at
+     WHERE research_network_expansion_states.lock_token IS NULL
+       OR datetime(research_network_expansion_states.lock_expires_at) <= datetime('now')`,
+  ).bind(crypto.randomUUID(), spaceId, expansionKey, JSON.stringify(seedCanonicalIds), token, lockExpiresAt).run();
+  return (result.meta.changes || 0) === 1 ? token : null;
+}
+
+async function renewExpansionLock(database: D1Database, spaceId: string, expansionKey: string, token: string) {
+  const lockExpiresAt = new Date(Date.now() + EXPANSION_LOCK_LEASE_MS).toISOString();
+  const result = await database.prepare(
+    `UPDATE research_network_expansion_states SET lock_expires_at = ?, status = 'building'
+     WHERE space_id = ? AND expansion_key = ? AND lock_token = ?`,
+  ).bind(lockExpiresAt, spaceId, expansionKey, token).run();
+  if ((result.meta.changes || 0) !== 1) throw new Error("Research-network expansion lease was lost");
+}
+
+async function releaseExpansionLock(database: D1Database, spaceId: string, expansionKey: string, token: string, status?: "ready" | "partial" | "unavailable") {
+  await database.prepare(
+    `UPDATE research_network_expansion_states SET lock_token = NULL, lock_expires_at = NULL,
+     status = COALESCE(?, status) WHERE space_id = ? AND expansion_key = ? AND lock_token = ?`,
+  ).bind(status || null, spaceId, expansionKey, token).run();
 }
 
 function isFreshState(state: { status: string; expires_at: string | null } | null | undefined) {
@@ -681,16 +749,20 @@ async function saveExpansionState(
 
 function issuesFromErrors(errors: string[]): ResearchNetworkIssue[] {
   return errors.map((message) => ({
-    source: /limit|quota/i.test(message) ? "quota" as const : "semantic-scholar" as const,
-    code: /429|limit|quota/i.test(message) ? "rate_limited" : /resolve/i.test(message) ? "seed_unresolved" : "upstream_partial",
+    source: /budget|quota/i.test(message) ? "quota" as const : "semantic-scholar" as const,
+    code: /cooling down|rate.limit|retry in/i.test(message) ? "rate_limited"
+      : /budget|quota/i.test(message) ? "quota_exhausted"
+        : /match|seed/i.test(message) ? "seed_unresolved"
+          : /similarity/i.test(message) ? "similarity_partial" : "upstream_partial",
     message,
-    retryable: /429|limit|quota|returned 5|failed|unavailable/i.test(message),
+    retryable: !/budget|quota/i.test(message),
+    ...(/retry in about (\d+) seconds/i.test(message) ? { retryAfterSeconds: Number(message.match(/retry in about (\d+) seconds/i)?.[1] || 1) } : {}),
   }));
 }
 
 function expandResponse(values: Partial<ResearchNetworkExpandResponse> & Pick<ResearchNetworkExpandResponse, "seeds" | "candidates">): ResearchNetworkExpandResponse {
   const sourceStatus = values.sourceStatus || { semanticScholar: "not_attempted", openAlex: "not_attempted", similarity: "not_attempted" };
-  const errors = values.errors || [];
+  const errors = Array.from(new Set(values.errors || []));
   const status = values.status || (values.externalUnavailable ? "unavailable"
     : errors.length || sourceStatus.semanticScholar === "partial" || sourceStatus.similarity === "partial" ? "partial" : "ok");
   return {
@@ -705,6 +777,7 @@ function expandResponse(values: Partial<ResearchNetworkExpandResponse> & Pick<Re
     errors,
     issues: values.issues || issuesFromErrors(errors),
     cache: values.cache || { hitSeedCanonicalIds: [], expandedSeedCanonicalIds: [] },
+    retryAfterSeconds: values.retryAfterSeconds ?? null,
     expiresAt: values.expiresAt || null,
   };
 }
@@ -747,44 +820,70 @@ export async function POST(request: Request) {
   const shouldExpandRecommendation = force || !recommendationFresh;
   const cached = await loadCandidates(database, spaceId, seedRows, expansionKey, false, limit);
   if (partition.fullyCached) {
+    const storedSimilarity = cachedSimilarityEdges(expansionState);
     return Response.json(expandResponse({
       seeds: localSeeds(seedRows),
       candidates: cached,
-      similarityEdges: directRelationEdges(cached),
+      similarityEdges: storedSimilarity || directRelationEdges(cached),
       cached: true,
-      sourceStatus: { semanticScholar: "cached", openAlex: "not_attempted", similarity: cached.length ? "partial" : "not_attempted" },
+      sourceStatus: {
+        semanticScholar: "cached",
+        openAlex: "not_attempted",
+        similarity: storedSimilarity && expansionState?.similarity_status === "ready" ? "cached" : cached.length ? "partial" : "not_attempted",
+      },
       cache: { hitSeedCanonicalIds: seedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds: [] },
       expiresAt: new Date(Date.now() + CACHE_HOURS * 3600_000).toISOString(),
     }));
   }
 
+  const expansionLockToken = await tryAcquireExpansionLock(database, spaceId, expansionKey, seedRows.map((seed) => seed.canonical_id));
+  if (!expansionLockToken) {
+    const inProgress = await loadCandidates(database, spaceId, seedRows, expansionKey, true, limit);
+    const message = "This academic-graph expansion is already running; current verified results are shown while it finishes.";
+    return Response.json(expandResponse({
+      seeds: localSeeds(seedRows), candidates: inProgress, similarityEdges: directRelationEdges(inProgress), cached: Boolean(inProgress.length), stale: true,
+      sourceStatus: { semanticScholar: "cached", openAlex: "not_attempted", similarity: "partial" }, errors: [message], status: "partial",
+      cache: { hitSeedCanonicalIds: hitSeedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds: [] },
+    }), { status: 202 });
+  }
+
   const errors: string[] = [];
+  let expansionLockStatus: "ready" | "partial" | "unavailable" = "unavailable";
+  try {
   let seedResult: Awaited<ReturnType<typeof resolveSemanticScholarSeeds>>;
   try {
     seedResult = await resolveSemanticScholarSeeds(seedRows, budget);
     errors.push(...seedResult.errors);
+    await renewExpansionLock(database, spaceId, expansionKey, expansionLockToken);
   } catch (error) {
-    errors.push(error instanceof Error ? error.message : "Semantic Scholar seed lookup failed");
+    errors.push(reportNetworkSourceError(error, isSemanticScholarCircuitError(error) ? "rate" : "seed"));
+    const circuitOpen = isSemanticScholarCircuitError(error);
+    const retryAfterSeconds = error instanceof SemanticScholarRateLimitError ? error.retryAfterSeconds : null;
     const stale = await loadCandidates(database, spaceId, seedRows, expansionKey, true, limit);
-    if (stale.length) return Response.json(expandResponse({
+    expansionLockStatus = circuitOpen ? "partial" : "unavailable";
+    if (stale.length) {
+      expansionLockStatus = "partial";
+      return Response.json(expandResponse({
       seeds: localSeeds(seedRows),
       candidates: stale, similarityEdges: directRelationEdges(stale), cached: true, stale: true, externalUnavailable: true,
       sourceStatus: { semanticScholar: "unavailable", openAlex: "not_attempted", similarity: "partial" }, errors,
-      status: error instanceof ExternalCallLimitError ? "rate_limited" : "partial",
+      status: circuitOpen ? "rate_limited" : "partial", retryAfterSeconds,
       cache: { hitSeedCanonicalIds: hitSeedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds: [] }, expiresAt: null,
-    }));
+      }));
+    }
     return Response.json(expandResponse({
       seeds: localSeeds(seedRows), candidates: [], externalUnavailable: true,
       sourceStatus: { semanticScholar: "unavailable", openAlex: "not_attempted", similarity: "unavailable" }, errors,
-      status: error instanceof ExternalCallLimitError ? "rate_limited" : "unavailable",
+      status: circuitOpen ? "rate_limited" : "unavailable", retryAfterSeconds,
       cache: { hitSeedCanonicalIds: hitSeedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds: [] },
-    }), { status: error instanceof ExternalCallLimitError ? 429 : 503 });
+    }), { status: circuitOpen ? 429 : 503 });
   }
 
   if (!seedResult.resolved.length) {
-    const unresolvedError = "Semantic Scholar could not resolve any selected seed paper";
+    const unresolvedError = "None of the selected seed papers could be matched in the academic graph.";
     errors.push(unresolvedError);
     const stale = await loadCandidates(database, spaceId, seedRows, expansionKey, true, limit);
+    expansionLockStatus = stale.length ? "partial" : "unavailable";
     return Response.json(expandResponse({
       seeds: localSeeds(seedRows), candidates: stale, similarityEdges: directRelationEdges(stale), cached: Boolean(stale.length), stale: Boolean(stale.length), externalUnavailable: true,
       sourceStatus: { semanticScholar: "unavailable", openAlex: "not_attempted", similarity: stale.length ? "partial" : "unavailable" }, errors,
@@ -796,19 +895,39 @@ export async function POST(request: Request) {
   const resolvedByPaperId = new Map(seedResult.resolved.map((seed) => [seed.row.id, seed]));
   const resolvedToExpand = rowsToExpand.map((seed) => resolvedByPaperId.get(seed.id)).filter((seed): seed is { row: SeedRow; paper: SemanticScholarPaper } => Boolean(seed));
   const expansionOffset = expansionState?.recommendation_offset || 0;
-  const [directRelationResults, recommendationResult] = await Promise.all([
-    Promise.all(resolvedToExpand.map((seed) => fetchSeedRelations(seed, seedStates.get(seed.row.id), budget))),
-    shouldExpandRecommendation
-      ? fetchRecommendations(seedResult.resolved, expansionKey, expansionOffset, budget)
-      : Promise.resolve({ results: [] as Array<{ paper: SemanticScholarPaper; relation: InternalRelation }>, errors: [] as string[], nextOffset: expansionOffset }),
-  ]);
+  const directRelationResults: Awaited<ReturnType<typeof fetchSeedRelations>>[] = [];
+  let recommendationResult = { results: [] as Array<{ paper: SemanticScholarPaper; relation: InternalRelation }>, errors: [] as string[], nextOffset: expansionOffset };
+  let recommendationCompleted = false;
+  let circuitError: SemanticScholarRateLimitError | SemanticScholarQuotaError | null = null;
+  try {
+    for (const seed of resolvedToExpand) {
+      const relationResult = await fetchSeedRelations(seed, seedStates.get(seed.row.id), budget);
+      directRelationResults.push(relationResult);
+      await renewExpansionLock(database, spaceId, expansionKey, expansionLockToken);
+      if (relationResult.circuitError) {
+        circuitError = relationResult.circuitError;
+        errors.push(reportNetworkSourceError(relationResult.circuitError, "rate"));
+        break;
+      }
+    }
+    if (shouldExpandRecommendation && !circuitError) {
+      recommendationResult = await fetchRecommendations(seedResult.resolved, expansionKey, expansionOffset, budget);
+      recommendationCompleted = true;
+      await renewExpansionLock(database, spaceId, expansionKey, expansionLockToken);
+    }
+  } catch (error) {
+    if (!isSemanticScholarCircuitError(error)) throw error;
+    circuitError = error;
+    errors.push(reportNetworkSourceError(error, "rate"));
+  }
   const relationResults = [...directRelationResults, recommendationResult];
   errors.push(...relationResults.flatMap((result) => result.errors));
   const expiresAt = new Date(Date.now() + CACHE_HOURS * 3600_000).toISOString();
   const stateWrites: Promise<void>[] = directRelationResults.map((result, index) => {
     const seed = resolvedToExpand[index];
-    const status = result.errors.length ? "partial" as const : "ready" as const;
-    return saveSeedExpansionState(database, spaceId, seed.row.id, result.nextOffsets, status, result.errors.join(" · "), expiresAt);
+    const status = result.errors.length || result.circuitError ? "partial" as const : "ready" as const;
+    const stateErrors = [...result.errors, ...(result.circuitError ? [result.circuitError.message] : [])];
+    return saveSeedExpansionState(database, spaceId, seed.row.id, result.nextOffsets, status, stateErrors.join(" · "), expiresAt);
   });
   for (const seed of rowsToExpand) {
     if (resolvedByPaperId.has(seed.id)) continue;
@@ -818,12 +937,13 @@ export async function POST(request: Request) {
       citation: previous?.citation_offset || 0,
     }, "unavailable", "Semantic Scholar could not resolve this seed", expiresAt));
   }
-  if (shouldExpandRecommendation) {
+  if (shouldExpandRecommendation && recommendationCompleted) {
     const recommendationStatus = recommendationResult.results.length || !recommendationResult.errors.length ? "ready" as const : "partial" as const;
     stateWrites.push(saveExpansionState(database, spaceId, expansionKey, seedRows.map((seed) => seed.canonical_id),
       recommendationResult.nextOffset, recommendationStatus, recommendationResult.errors.join(" · "), expiresAt));
   }
   await Promise.all(stateWrites);
+  await renewExpansionLock(database, spaceId, expansionKey, expansionLockToken);
   const formalRows = await database.prepare("SELECT canonical_id FROM research_track_papers WHERE space_id = ?")
     .bind(spaceId).all<{ canonical_id: string }>();
   const excluded = new Set(formalRows.results.map((row) => row.canonical_id));
@@ -856,30 +976,82 @@ export async function POST(request: Request) {
   }
   if (selected.length) await persistCandidates(database, spaceId, selected, expiresAt);
   const candidates = await loadCandidates(database, spaceId, seedRows, expansionKey, false, limit);
+  await renewExpansionLock(database, spaceId, expansionKey, expansionLockToken);
   let similarityEdges: ResearchNetworkSimilarityEdge[] = [];
   let similarityStatus: ResearchNetworkSourceStatus["similarity"] = "not_attempted";
-  try {
-    similarityEdges = await buildSimilarityEdges(seedResult.seeds, candidates, budget);
-    similarityStatus = "ok";
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : "Semantic Scholar similarity lookup failed");
+  if (circuitError) {
     similarityEdges = directRelationEdges(candidates);
     similarityStatus = "partial";
+  } else {
+    try {
+      similarityEdges = await buildSimilarityEdges(seedResult.seeds, candidates, budget);
+      similarityStatus = "ok";
+    } catch (error) {
+      errors.push(reportNetworkSourceError(error, "similarity"));
+      similarityEdges = directRelationEdges(candidates);
+      similarityStatus = "partial";
+      if (isSemanticScholarCircuitError(error)) circuitError = error;
+    }
   }
+  await saveSimilarityState(
+    database,
+    spaceId,
+    expansionKey,
+    similarityEdges,
+    similarityStatus === "ok" ? "ready" : "partial",
+    similarityStatus === "ok" ? CACHE_HOURS * 3600_000 : 15 * 60_000,
+  );
   const semanticStatus: ResearchNetworkSourceStatus["semanticScholar"] = seedResult.resolved.length < seedRows.length
-    || errors.some((message) => /references|citations|recommend|resolve|limit|quota/i.test(message)) ? "partial" : "ok";
+    || errors.some((message) => /citation|recommend|match|seed|cooling|budget|quota|refresh/i.test(message)) ? "partial" : "ok";
+  const expandedSeedCanonicalIds = resolvedToExpand.slice(0, directRelationResults.length).map((seed) => seed.row.canonical_id);
+  expansionLockStatus = circuitError || errors.length ? "partial" : "ready";
   if (!candidates.length && errors.length) {
     return Response.json(expandResponse({
       seeds: seedResult.seeds, candidates: [], similarityEdges: [], externalUnavailable: semanticStatus !== "ok",
       sourceStatus: { semanticScholar: semanticStatus, openAlex: "not_attempted", similarity: similarityStatus }, errors, expiresAt,
-      cache: { hitSeedCanonicalIds: hitSeedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds: rowsToExpand.map((seed) => seed.canonical_id) },
+      status: circuitError ? "rate_limited" : undefined,
+      retryAfterSeconds: circuitError instanceof SemanticScholarRateLimitError ? circuitError.retryAfterSeconds : null,
+      cache: { hitSeedCanonicalIds: hitSeedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds },
     }), { status: semanticStatus === "partial" ? 200 : 503 });
   }
   return Response.json(expandResponse({
     seeds: seedResult.seeds, candidates, similarityEdges,
     sourceStatus: { semanticScholar: semanticStatus, openAlex: "not_attempted", similarity: similarityStatus }, errors, expiresAt,
-    cache: { hitSeedCanonicalIds: hitSeedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds: rowsToExpand.map((seed) => seed.canonical_id) },
+    status: circuitError ? "rate_limited" : undefined,
+    retryAfterSeconds: circuitError instanceof SemanticScholarRateLimitError ? circuitError.retryAfterSeconds : null,
+    cache: { hitSeedCanonicalIds: hitSeedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds },
   }));
+  } catch (error) {
+    expansionLockStatus = "unavailable";
+    const safeError = reportNetworkSourceError(error, "upstream");
+    let stale: ResearchNetworkCandidate[] = [];
+    try {
+      stale = await loadCandidates(database, spaceId, seedRows, expansionKey, true, limit);
+    } catch (cacheError) {
+      const correlationId = crypto.randomUUID();
+      console.error(`[research-network:${correlationId}] recovery-cache`, cacheError);
+    }
+    if (stale.length) expansionLockStatus = "partial";
+    return Response.json(expandResponse({
+      seeds: localSeeds(seedRows),
+      candidates: stale,
+      similarityEdges: directRelationEdges(stale),
+      cached: Boolean(stale.length),
+      stale: Boolean(stale.length),
+      externalUnavailable: true,
+      sourceStatus: { semanticScholar: "unavailable", openAlex: "not_attempted", similarity: stale.length ? "partial" : "unavailable" },
+      errors: [safeError],
+      status: stale.length ? "partial" : "unavailable",
+      cache: { hitSeedCanonicalIds: hitSeedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds: [] },
+    }), { status: stale.length ? 200 : 503 });
+  } finally {
+    try {
+      await releaseExpansionLock(database, spaceId, expansionKey, expansionLockToken, expansionLockStatus);
+    } catch (releaseError) {
+      const correlationId = crypto.randomUUID();
+      console.error(`[research-network:${correlationId}] release-lock`, releaseError);
+    }
+  }
 }
 
 async function candidateWithRelations(database: D1Database, spaceId: string, candidateId: string) {

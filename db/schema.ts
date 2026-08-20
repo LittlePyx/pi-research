@@ -84,6 +84,22 @@ export const aiUsageDaily = sqliteTable(
   ],
 );
 
+export const semanticScholarThrottles = sqliteTable(
+  "semantic_scholar_throttles",
+  {
+    id: text("id").primaryKey(),
+    scopeKey: text("scope_key").notNull(),
+    failureCount: integer("failure_count").notNull().default(0),
+    nextAllowedAt: text("next_allowed_at"),
+    lastStatus: integer("last_status").notNull().default(0),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_semantic_scholar_throttles_scope").on(table.scopeKey),
+    index("idx_semantic_scholar_throttles_next").on(table.nextAllowedAt),
+  ],
+);
+
 export const monitorRuns = sqliteTable(
   "monitor_runs",
   {
@@ -760,6 +776,11 @@ export const researchNetworkExpansionStates = sqliteTable(
     recommendationOffset: integer("recommendation_offset").notNull().default(0),
     status: text("status").notNull().default("idle"),
     error: text("error"),
+    similarityJson: text("similarity_json").notNull().default("[]"),
+    similarityStatus: text("similarity_status").notNull().default("idle"),
+    similarityExpiresAt: text("similarity_expires_at"),
+    lockToken: text("lock_token"),
+    lockExpiresAt: text("lock_expires_at"),
     lastExpandedAt: text("last_expanded_at"),
     expiresAt: text("expires_at"),
   },

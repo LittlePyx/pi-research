@@ -1,6 +1,7 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
+import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type TrackRow = {
@@ -759,7 +760,7 @@ function toCoverageCandidate(row: TrackPaperRow): ResearchPaperCoverageCandidate
   };
 }
 
-async function fetchScholarlyEdges(papers: TrackPaperRow[]) {
+async function fetchScholarlyEdges(database: D1Database, spaceId: string, papers: TrackPaperRow[]) {
   const eligible = papers.filter((paper) => paper.doi).slice(0, NETWORK_PAPER_LIMIT);
   if (eligible.length < 2) return { edges: [] as Array<Omit<ResearchPaperEdge, "id">>, coveredPaperIds: [] as string[] };
   const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/batch");
@@ -770,11 +771,13 @@ async function fetchScholarlyEdges(papers: TrackPaperRow[]) {
     body: JSON.stringify({ ids: eligible.map((paper) => "DOI:" + paper.doi) }),
     signal: AbortSignal.timeout(24_000),
   };
-  let response = await fetch(endpoint, options);
-  if (response.status === 429) {
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    response = await fetch(endpoint, options);
-  }
+  const response = await fetchSemanticScholar(endpoint, options, {
+    database,
+    spaceId,
+    scopeKey: `research-map:verified:${researchPaperCoverageHash(eligible.map((paper) => paper.id))}`,
+    feature: "research-map",
+    featureDailyLimit: 48,
+  });
   if (!response.ok) throw new Error(`Semantic Scholar returned ${response.status}`);
   const results = await response.json() as Array<SemanticScholarPaper | null>;
   const doiToPaperId = new Map(eligible.map((paper) => [paper.doi!.toLocaleLowerCase(), paper.id]));
@@ -1081,7 +1084,7 @@ async function rebuildPaperNetwork(
   if (effectivePhase === "all" || effectivePhase === "verified") {
     sources = sources.filter((source) => !source.startsWith("semantic-scholar"));
     try {
-      const fresh = await fetchScholarlyEdges(papers);
+      const fresh = await fetchScholarlyEdges(database, space.id, papers);
       const freshEdges = fresh.edges;
       const refreshedPaperIds = fresh.coveredPaperIds;
       const refreshedIds = new Set(refreshedPaperIds);

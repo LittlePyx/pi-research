@@ -1307,6 +1307,43 @@ function researchNetworkSourceLabel(status: ResearchNetworkSourceStatus[keyof Re
   return labels[status][locale];
 }
 
+function researchNetworkIssueSummary(response: ResearchNetworkExpandResponse, locale: Locale) {
+  const codes = new Set(response.issues.map((issue) => issue.code));
+  if (codes.has("quota_exhausted")) return locale === "zh"
+    ? "今日外部发现额度已用完；现有论文与关系已保留，明日可继续。"
+    : "Today's external discovery budget is used up. Existing papers and links are preserved; continue tomorrow.";
+  if (response.status === "rate_limited" || codes.has("rate_limited")) {
+    const seconds = response.retryAfterSeconds || Math.max(0, ...response.issues.map((issue) => issue.retryAfterSeconds || 0));
+    const waitLabel = seconds > 0
+      ? locale === "zh"
+        ? seconds >= 60 ? `约 ${Math.ceil(seconds / 60)} 分钟后` : `约 ${seconds} 秒后`
+        : seconds >= 60 ? `in about ${Math.ceil(seconds / 60)} minute(s)` : `in about ${seconds} seconds`
+      : locale === "zh" ? "稍后" : "later";
+    return locale === "zh"
+      ? `Semantic Scholar 正在限流；现有论文与关系已保留，可${waitLabel}继续发现。`
+      : `Semantic Scholar is rate-limiting requests. Existing papers and links are preserved; try discovery again ${waitLabel}.`;
+  }
+  if (codes.has("seed_unresolved")) return locale === "zh"
+    ? "部分起始论文暂未匹配到外部数据库；已展示其余可核验结果。"
+    : "Some origin papers could not be matched in the external database; other verified results are shown.";
+  if (response.issues.length || response.errors.length) return locale === "zh"
+    ? "部分外部证据暂未刷新；已展示并保留当前可核验结果。"
+    : "Some external evidence could not refresh; current verified results remain available.";
+  return "";
+}
+
+function paperNetworkStateLabel(state: MonitorPaper["userState"] | undefined, locale: Locale) {
+  if (!state) return "";
+  const labels: Record<MonitorPaper["userState"], Localized> = {
+    unseen: { zh: "未查看", en: "unseen" },
+    seen: { zh: "已浏览", en: "seen" },
+    snoozed: { zh: "稍后处理", en: "snoozed" },
+    accepted: { zh: "已接受", en: "accepted" },
+    dismissed: { zh: "已忽略", en: "dismissed" },
+  };
+  return labels[state][locale];
+}
+
 function buildExternalNetworkPaperNodes(map: ResearchMapState, candidates: ResearchNetworkCandidate[]) {
   const internalNodes = buildNetworkPaperNodes(map);
   const internalCanonicalIds = new Set(internalNodes.map((node) => node.paper.canonicalId));
@@ -1797,6 +1834,7 @@ function PaperNetworkGraph({
             const selected = selectedPaperId === node.paper.id;
             const hovered = hoveredPaperId === node.paper.id;
             const state = paperStates[node.paper.canonicalId];
+            const stateLabel = paperNetworkStateLabel(state, locale);
             const origin = originSet.has(node.paper.id);
             const muted = Boolean(scope === "all" && selectedPaperId && !connectedToSelection.has(node.paper.id));
             const sharedBridge = layout.multiSeedActive && !origin && (layout.seedConnectionCount.get(node.paper.id) || 0) >= 2;
@@ -1804,13 +1842,14 @@ function PaperNetworkGraph({
             const label = node.paper.title.length > 30 ? node.paper.title.slice(0, 29) + "…" : node.paper.title;
             const step = layout.pathLayout.stepById.get(node.paper.id);
             const sharedCount = layout.seedConnectionCount.get(node.paper.id) || 0;
-            return <g key={node.paper.id} className={`v2-paper-network-node ${mode === "path" ? "path-step" : ""} ${node.external ? "external-ghost" : ""} ${selected ? "selected" : ""} ${hovered ? "hovered" : ""} ${origin ? "origin" : ""} ${sharedBridge ? "shared-bridge" : ""} ${muted ? "muted" : ""} ${state || ""}`} transform={`translate(${position.x} ${position.y})`} role="button" tabIndex={0} aria-label={`${step ? `${locale === "zh" ? "第" : "Step "}${step}${locale === "zh" ? "步，" : ", "}` : ""}${node.paper.title}${sharedBridge ? (locale === "zh" ? `，连接 ${sharedCount} 个种子` : `, shared by ${sharedCount} origins`) : ""}`} onPointerEnter={() => onHover(node.paper.id)} onPointerLeave={() => onHover(null)} onFocus={() => onHover(node.paper.id)} onBlur={() => onHover(null)} onClick={() => onSelect(node.paper.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(node.paper.id); } }}>
+            return <g key={node.paper.id} className={`v2-paper-network-node ${mode === "path" ? "path-step" : ""} ${node.external ? "external-ghost" : ""} ${selected ? "selected" : ""} ${hovered ? "hovered" : ""} ${origin ? "origin" : ""} ${sharedBridge ? "shared-bridge" : ""} ${muted ? "muted" : ""} ${state || ""}`} transform={`translate(${position.x} ${position.y})`} role="button" tabIndex={0} aria-pressed={selected} aria-label={`${step ? `${locale === "zh" ? "第" : "Step "}${step}${locale === "zh" ? "步，" : ", "}` : ""}${node.paper.title}${origin ? (locale === "zh" ? "，起始论文" : ", origin paper") : ""}${selected ? (locale === "zh" ? "，已选中" : ", selected") : ""}${stateLabel ? `，${stateLabel}` : ""}${sharedBridge ? (locale === "zh" ? `，连接 ${sharedCount} 个种子` : `, shared by ${sharedCount} origins`) : ""}`} onPointerEnter={() => onHover(node.paper.id)} onPointerLeave={() => onHover(null)} onFocus={() => onHover(node.paper.id)} onBlur={() => onHover(null)} onClick={() => onSelect(node.paper.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(node.paper.id); } }}>
               {sharedBridge && <circle className="shared-ring" r={position.radius + 10}><title>{locale === "zh" ? `连接 ${sharedCount} 个种子的共同邻居` : `Neighbor shared by ${sharedCount} origins`}</title></circle>}
               <circle className="state-ring" r={position.radius + 5} />
               <circle className="paper-dot" r={position.radius} style={{ fill: position.color }} />
+              {(state === "seen" || state === "snoozed") && <circle className="reading-state-marker" cx={position.radius * .72} cy={-position.radius * .72} r="3.2" aria-hidden="true" />}
               {mode === "path" ? <text className="path-step-number" textAnchor="middle" y="3.5">{step}</text> : <circle className="paper-core" r="3" />}
               {showLabel && <text className="v2-paper-node-label" y={-(position.radius + 9)} textAnchor="middle">{label}</text>}
-              <title>{node.paper.title} · {researchPaperYear(node.paper)} · {node.paper.citationCount} {locale === "zh" ? "次引用" : "citations"}</title>
+              <title>{node.paper.title} · {researchPaperYear(node.paper)} · {node.paper.citationCount} {locale === "zh" ? "次引用" : "citations"}{stateLabel ? ` · ${stateLabel}` : ""}</title>
             </g>;
           })}
         </g>
@@ -2349,6 +2388,16 @@ export default function ResearchApp({ user }: { user: User }) {
         body: JSON.stringify({ action: "expand", spaceId, originCanonicalIds: origins, limit: 36, force }),
       });
       const data = await response.json() as ResearchNetworkExpandResponse | { error?: string };
+      if (!response.ok && "status" in data && data.status === "rate_limited") {
+        if (!requestIsCurrent()) return;
+        setResearchNetworkResponse(data);
+        if (data.candidates.length) {
+          setResearchNetworkSeeds(data.seeds);
+          setResearchNetworkCandidates(data.candidates);
+          setResearchNetworkSimilarityEdges(data.similarityEdges);
+        }
+        return;
+      }
       if (!response.ok) throw new Error("error" in data && data.error ? data.error : "research network unavailable");
       if (!requestIsCurrent()) return;
       const payload = data as ResearchNetworkExpandResponse;
@@ -2357,8 +2406,10 @@ export default function ResearchApp({ user }: { user: User }) {
       setResearchNetworkSimilarityEdges(payload.similarityEdges);
       setResearchNetworkResponse(payload);
       setResearchNetworkDecisions({});
-    } catch (error) {
-      if (requestIsCurrent()) setResearchNetworkError(error instanceof Error ? error.message : "research network unavailable");
+    } catch {
+      if (requestIsCurrent()) setResearchNetworkError(locale === "zh"
+        ? "本次外部发现未能完成，现有图谱没有变化；请稍后再试。"
+        : "External discovery could not complete. The current map is unchanged; please try again later.");
     } finally {
       if (requestIsCurrent()) setResearchNetworkLoading(false);
     }
@@ -3776,7 +3827,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   {(paperNetworkLoading || researchMap.paperNetwork.status === "building") && <div className="v2-paper-network-progress" role="status"><span><i /></span><div><strong>{paperNetworkBuildPhase === "pi" ? (locale === "zh" ? "真实关系已可浏览" : "Verified links are ready") : (locale === "zh" ? "正在核验真实引用" : "Verifying real citations")}</strong><p>{paperNetworkBuildPhase === "pi" ? (locale === "zh" ? `Pi 正在逐条补充语义关系与阅读路径；当前已有 ${researchMap.paperNetwork.citationEdgeCount + researchMap.paperNetwork.similarityEdgeCount} 条真实关系。` : `Pi is adding semantic links and reading paths; ${researchMap.paperNetwork.citationEdgeCount + researchMap.paperNetwork.similarityEdgeCount} verified links are already visible.`) : (locale === "zh" ? "真实引用与文献耦合一旦核验完成，就会先出现在图上。" : "Verified citations and coupling links will appear before Pi analysis finishes.")}</p></div></div>}
                   {!paperNetworkLoading && ["partial", "error"].includes(researchMap.paperNetwork.status) && (() => { const notice = paperNetworkSourceNotice(researchMap.paperNetwork, locale); return <div className="v2-paper-network-note" role="status"><span /><div><strong>{notice.title}</strong><p>{notice.body}</p></div><button type="button" onClick={() => void refreshPaperNetwork()}>{notice.action}</button></div>; })()}
                   {researchNetworkLoading && <div className="v2-paper-network-progress v2-external-network-progress" role="status"><span><i /></span><div><strong>{locale === "zh" ? "正在围绕起始论文寻找新邻域" : "Discovering a new neighborhood around the origins"}</strong><p>{locale === "zh" ? "现有图谱仍可浏览；候选返回后会作为浅色节点加入。" : "The current graph remains usable; candidates will arrive as lightweight ghost nodes."}</p></div></div>}
-                  {researchNetworkResponse && <div className={`v2-research-network-source-state ${researchNetworkResponse.stale ? "stale" : researchNetworkIsPartial ? "partial" : "ready"}`} role="status"><div><strong>{researchNetworkResponse.stale ? (locale === "zh" ? "当前是过期缓存，建议刷新" : "Stale cached discovery; refresh recommended") : researchNetworkResponse.cached ? (locale === "zh" ? "已复用仍有效的发现缓存" : "Using a valid discovery cache") : researchNetworkIsPartial ? (locale === "zh" ? "部分来源完成，已展示可核验证据" : "Some sources completed; verified evidence is shown") : (locale === "zh" ? "外部发现已更新" : "External discovery updated")}</strong><span>{locale === "zh" ? `${researchNetworkCoveredOriginIds.size}/${effectiveNetworkOriginCanonicalIds.length} 个当前起点获得数据库核验关系` : `${researchNetworkCoveredOriginIds.size}/${effectiveNetworkOriginCanonicalIds.length} active origins have database-verified relations`}</span></div><dl><div><dt>Semantic Scholar</dt><dd>{researchNetworkSourceLabel(researchNetworkResponse.sourceStatus.semanticScholar, locale)}</dd></div><div><dt>{locale === "zh" ? "相似性" : "Similarity"}</dt><dd>{researchNetworkSourceLabel(researchNetworkResponse.sourceStatus.similarity, locale)}</dd></div><div><dt>OpenAlex</dt><dd>{researchNetworkSourceLabel(researchNetworkResponse.sourceStatus.openAlex, locale)}</dd></div></dl>{researchNetworkResponse.errors.length > 0 && <small title={researchNetworkResponse.errors.join(" · ")}>{locale === "zh" ? `${researchNetworkResponse.errors.length} 个来源提示：${researchNetworkResponse.errors[0]}` : `${researchNetworkResponse.errors.length} source warning(s): ${researchNetworkResponse.errors[0]}`}</small>}</div>}
+                  {researchNetworkResponse && (() => { const issueSummary = researchNetworkIssueSummary(researchNetworkResponse, locale); return <div className={`v2-research-network-source-state ${researchNetworkResponse.stale ? "stale" : researchNetworkIsPartial ? "partial" : "ready"}`} role="status"><div><strong>{researchNetworkResponse.status === "rate_limited" ? (locale === "zh" ? "来源短暂限流，已保留当前结果" : "Source temporarily rate-limited; current results preserved") : researchNetworkResponse.stale ? (locale === "zh" ? "当前是过期缓存，建议刷新" : "Stale cached discovery; refresh recommended") : researchNetworkResponse.cached ? (locale === "zh" ? "已复用仍有效的发现缓存" : "Using a valid discovery cache") : researchNetworkIsPartial ? (locale === "zh" ? "部分来源完成，已展示可核验证据" : "Some sources completed; verified evidence is shown") : (locale === "zh" ? "外部发现已更新" : "External discovery updated")}</strong><span>{locale === "zh" ? `${researchNetworkCoveredOriginIds.size}/${effectiveNetworkOriginCanonicalIds.length} 个当前起点获得数据库核验关系` : `${researchNetworkCoveredOriginIds.size}/${effectiveNetworkOriginCanonicalIds.length} active origins have database-verified relations`}</span></div><dl><div><dt>Semantic Scholar</dt><dd>{researchNetworkSourceLabel(researchNetworkResponse.sourceStatus.semanticScholar, locale)}</dd></div><div><dt>{locale === "zh" ? "相似性" : "Similarity"}</dt><dd>{researchNetworkSourceLabel(researchNetworkResponse.sourceStatus.similarity, locale)}</dd></div><div><dt>OpenAlex</dt><dd>{researchNetworkSourceLabel(researchNetworkResponse.sourceStatus.openAlex, locale)}</dd></div></dl>{issueSummary && <small>{issueSummary}</small>}</div>; })()}
                   {researchNetworkError && <div className="v2-paper-network-note" role="status"><span /><div><strong>{locale === "zh" ? "外部论文发现暂时不可用" : "External discovery is temporarily unavailable"}</strong><p>{researchNetworkError}</p></div><button type="button" onClick={() => setResearchNetworkError("")}>{locale === "zh" ? "关闭" : "Dismiss"}</button></div>}
                   <div className={`v2-paper-network-stage ${paperNetworkMode === "similarity" ? "discovery-mode" : "analysis-mode"} ${selectedNetworkNode ? "has-drawer" : ""}`}>
                     {paperNetworkMode === "similarity" && <aside className="v2-paper-discovery-list" aria-label={locale === "zh" ? "论文发现列表" : "Paper discovery list"}>
