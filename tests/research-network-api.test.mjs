@@ -89,9 +89,11 @@ test("empty and exhausted discovery states are negative-cached while force remai
   assert.equal(isFreshDiscoveryCacheEntry({ status: "ready", expiresAt: future }, false, now), false);
   assert.equal(isFreshDiscoveryCacheEntry({ status: "ready", expiresAt: future }, true, now), true);
   for (const status of ["no_matches", "partial", "unavailable", "exhausted"]) {
-    assert.equal(isFreshDiscoveryCacheEntry({ status, expiresAt: future }, false, now), true);
+    assert.equal(isFreshDiscoveryCacheEntry({ status, expiresAt: future, lastExpandedAt: "2026-08-20 00:00:00" }, false, now), true);
   }
-  assert.equal(isFreshDiscoveryCacheEntry({ status: "no_matches", expiresAt: "2026-08-19T23:59:59.000Z" }, false, now), false);
+  assert.equal(isFreshDiscoveryCacheEntry({
+    status: "no_matches", expiresAt: "2026-08-19T23:59:59.000Z", lastExpandedAt: "2026-08-19 23:45:00",
+  }, false, now), false);
   assert.match(route, /nextOffsets\[offsetKey\] = typeof data\.next === "number" \? data\.next : -1/);
   assert.match(route, /if \(nextOffsets\[offsetKey\] < 0\)/);
   assert.match(route, /visibleSelected/);
@@ -104,6 +106,23 @@ test("empty and exhausted discovery states are negative-cached while force remai
   assert.match(route, /openAlexResult\.cursorUpdates\.get\(seed\.id\)/);
   assert.doesNotMatch(route, /Math\.max\(recommendationResult\.nextOffset, openAlexResult\.nextOffset\)/);
   assert.doesNotMatch(route, /DISCOVERY_CURSOR_MARKER|encodeDiscoveryCursors|decodeDiscoveryCursors/);
+});
+
+test("legacy 24-hour negative cache is capped at fifteen minutes from the last expansion", async () => {
+  const route = await readFile(routePath, "utf8");
+  const lastExpandedAt = "2026-08-20 09:52:32";
+  const legacyExpiry = "2026-08-21T09:52:32.885Z";
+  assert.equal(isFreshDiscoveryCacheEntry({
+    status: "partial", expiresAt: legacyExpiry, lastExpandedAt,
+  }, false, Date.parse("2026-08-20T10:07:31.999Z")), true);
+  assert.equal(isFreshDiscoveryCacheEntry({
+    status: "partial", expiresAt: legacyExpiry, lastExpandedAt,
+  }, false, Date.parse("2026-08-20T10:07:32.000Z")), false);
+  assert.equal(isFreshDiscoveryCacheEntry({
+    status: "unavailable", expiresAt: legacyExpiry, lastExpandedAt: null,
+  }, false, Date.parse("2026-08-20T09:53:00.000Z")), false);
+  assert.match(route, /status, last_expanded_at, expires_at/);
+  assert.match(route, /lock_expires_at, last_expanded_at/);
 });
 
 test("mixed cached and live coverage never masquerades as a clean no-match", () => {
@@ -274,6 +293,8 @@ test("a complete cache hit performs no upstream scholarly request", async () => 
   assert.doesNotMatch(cachedBranch, /resolveSemanticScholarSeeds|buildSimilarityEdges|semanticScholarFetch/);
   assert.match(cachedBranch, /cachedSimilarityEdges/);
   assert.match(cachedBranch, /similarity_status === "ready"/);
+  assert.match(cachedBranch, /cachedCoverageStatus === "unavailable" \? "partial"/);
+  assert.match(cachedBranch, /\{ status: 200 \}/);
 });
 
 test("Semantic Scholar calls are serialized, cross-isolate leased, and atomically counted", async () => {

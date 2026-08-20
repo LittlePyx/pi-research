@@ -77,6 +77,7 @@ type SeedExpansionStateRow = {
   openalex_neighbor_offset: number;
   openalex_citation_page: number;
   status: string;
+  last_expanded_at: string | null;
   expires_at: string | null;
 };
 type ExpansionStateRow = {
@@ -89,6 +90,7 @@ type ExpansionStateRow = {
   similarity_expires_at: string | null;
   lock_token: string | null;
   lock_expires_at: string | null;
+  last_expanded_at: string | null;
 };
 type SemanticScholarPaper = {
   paperId?: string;
@@ -948,7 +950,7 @@ async function loadSeedExpansionStates(database: D1Database, spaceId: string, se
   if (!seeds.length) return new Map<string, SeedExpansionStateRow>();
   const placeholders = seeds.map(() => "?").join(",");
   const rows = await database.prepare(
-    `SELECT seed_paper_id, reference_offset, citation_offset, openalex_neighbor_offset, openalex_citation_page, status, expires_at
+    `SELECT seed_paper_id, reference_offset, citation_offset, openalex_neighbor_offset, openalex_citation_page, status, last_expanded_at, expires_at
      FROM research_network_seed_expansion_states WHERE space_id = ? AND seed_paper_id IN (${placeholders})`,
   ).bind(spaceId, ...seeds.map((seed) => seed.id)).all<SeedExpansionStateRow>();
   return new Map(rows.results.map((row) => [row.seed_paper_id, row]));
@@ -957,7 +959,7 @@ async function loadSeedExpansionStates(database: D1Database, spaceId: string, se
 async function loadExpansionState(database: D1Database, spaceId: string, expansionKey: string) {
   return database.prepare(
     `SELECT expansion_key, recommendation_offset, status, expires_at, similarity_json, similarity_status,
-     similarity_expires_at, lock_token, lock_expires_at
+     similarity_expires_at, lock_token, lock_expires_at, last_expanded_at
      FROM research_network_expansion_states WHERE space_id = ? AND expansion_key = ? LIMIT 1`,
   ).bind(spaceId, expansionKey).first<ExpansionStateRow>();
 }
@@ -1046,8 +1048,15 @@ async function releaseExpansionLock(database: D1Database, spaceId: string, expan
   ).bind(status || null, spaceId, expansionKey, token).run();
 }
 
-function isFreshDiscoveryState(state: { status: string; expires_at: string | null } | null | undefined, hasVisibleEvidence: boolean) {
-  return isFreshDiscoveryCacheEntry(state ? { status: state.status, expiresAt: state.expires_at } : null, hasVisibleEvidence);
+function isFreshDiscoveryState(
+  state: { status: string; expires_at: string | null; last_expanded_at?: string | null } | null | undefined,
+  hasVisibleEvidence: boolean,
+) {
+  return isFreshDiscoveryCacheEntry(state ? {
+    status: state.status,
+    expiresAt: state.expires_at,
+    lastExpandedAt: state.last_expanded_at,
+  } : null, hasVisibleEvidence);
 }
 
 async function saveSeedExpansionState(
@@ -1172,9 +1181,13 @@ export async function POST(request: Request) {
     const storedSimilarity = cachedSimilarityEdges(expansionState);
     const cachedStatuses = [...seedRows.map((seed) => seedStates.get(seed.id)?.status), expansionState?.status].filter(Boolean);
     const cachedCoverageStatus = classifyCoverageStatuses(cachedStatuses);
+    // A fresh negative cache prevents immediate upstream retry storms, but it
+    // is still cached knowledge rather than proof that a provider is currently
+    // unavailable. Keep this response structured and retryable instead of
+    // presenting a cached failure as a new live 503.
+    const cachedIncomplete = cachedCoverageStatus === "partial" || cachedCoverageStatus === "unavailable";
     const cachedResponseStatus: ResearchNetworkExpandResponse["status"] | undefined = cachedCoverageStatus === "ok" ? undefined
-      : cachedCoverageStatus === "unavailable" && cached.length ? "partial" : cachedCoverageStatus;
-    const cachedUnavailable = cachedResponseStatus === "unavailable";
+      : cachedCoverageStatus === "unavailable" ? "partial" : cachedCoverageStatus;
     const cachedPartial = cachedResponseStatus === "partial";
     const cachedExpiryValues = [...seedRows.map((seed) => seedStates.get(seed.id)?.expires_at), expansionState?.expires_at]
       .map((value) => value ? Date.parse(value) : Number.NaN).filter(Number.isFinite);
@@ -1187,15 +1200,15 @@ export async function POST(request: Request) {
       stale: cachedPartial && Boolean(cached.length),
       sourceStatus: {
         semanticScholar: cachedCoverageStatus === "no_matches" ? "empty"
-          : cachedUnavailable ? "unavailable" : cachedPartial ? "partial" : "cached",
+          : cachedIncomplete ? "partial" : "cached",
         openAlex: cachedOpenAlexStatus(cached),
         similarity: storedSimilarity?.length && expansionState?.similarity_status === "ready" ? "cached" : cached.length ? "partial" : "not_attempted",
       },
       cache: { hitSeedCanonicalIds: seedRows.map((seed) => seed.canonical_id), expandedSeedCanonicalIds: [] },
       expiresAt: cachedExpiresAt,
       status: cachedResponseStatus,
-      externalUnavailable: cachedUnavailable || cachedPartial,
-    }), { status: cachedUnavailable ? 503 : 200 });
+      externalUnavailable: cachedIncomplete,
+    }), { status: 200 });
   }
 
   const expansionLockToken = await tryAcquireExpansionLock(database, spaceId, expansionKey, seedRows.map((seed) => seed.canonical_id));

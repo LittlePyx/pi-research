@@ -158,13 +158,29 @@ export function similarityStatusForEdgeCount(edgeCount: number): "ok" | "not_att
 }
 
 export function isFreshDiscoveryCacheEntry(
-  state: { status: string; expiresAt: string | null } | null | undefined,
+  state: { status: string; expiresAt: string | null; lastExpandedAt?: string | null } | null | undefined,
   hasVisibleEvidence: boolean,
   now = Date.now(),
 ) {
-  if (!state?.expiresAt || Date.parse(state.expiresAt) <= now) return false;
+  const parseTimestamp = (value: string | null | undefined) => {
+    if (!value) return Number.NaN;
+    // SQLite CURRENT_TIMESTAMP is stored as `YYYY-MM-DD HH:mm:ss` without an
+    // explicit zone. D1 timestamps are UTC, so normalize that legacy shape
+    // before comparing it with ISO expiry values.
+    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
+      ? `${value.replace(" ", "T")}Z`
+      : value;
+    return Date.parse(normalized);
+  };
+  if (!state) return false;
+  const expiresAt = parseTimestamp(state.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) return false;
   if (state.status === "ready") return hasVisibleEvidence;
-  return ["no_matches", "partial", "unavailable", "exhausted"].includes(state.status);
+  if (!["no_matches", "partial", "unavailable", "exhausted"].includes(state.status)) return false;
+  const lastExpandedAt = parseTimestamp(state.lastExpandedAt);
+  if (!Number.isFinite(lastExpandedAt)) return false;
+  const negativeCacheExpiresAt = Math.min(expiresAt, lastExpandedAt + 15 * 60_000);
+  return negativeCacheExpiresAt > now;
 }
 
 export function relationOffsetsForExpansion(

@@ -241,6 +241,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /节点大小：被引量/);
   assert.match(client, /颜色：发表年份/);
   assert.match(client, /发现更多论文/);
+  assert.match(client, /expandResearchNetwork\(undefined, true\)/);
   assert.match(client, /以此生成新图/);
   assert.match(client, /candidateId: candidate\.id/);
   assert.match(client, /ResearchNetworkExpandResponse/);
@@ -309,7 +310,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.doesNotMatch(client, /真实引用与文献耦合已更新 \$\{verifiedCount\} 条/);
   assert.match(researchNetworkStatus, /researchMap\.paperNetwork\.citationEdgeCount \+ researchMap\.paperNetwork\.similarityEdgeCount/);
   assert.doesNotMatch(researchNetworkStatus, /当前起点获得数据库核验关系/);
-  assert.doesNotMatch(researchNetworkStatus, /<dt>OpenAlex<\/dt>/);
+  assert.match(researchNetworkStatus, /sourceStatus\.openAlex !== "not_attempted"/);
+  assert.match(researchNetworkStatus, /<dt>OpenAlex<\/dt>/);
   assert.match(client, /className="reading-state-marker"/);
   assert.match(client, /aria-pressed=\{selected\}/);
   assert.match(css, /\.v2-paper-network-node\.seen \.state-ring, \.v2-paper-network-node\.snoozed \.state-ring \{ stroke: transparent; \}/);
