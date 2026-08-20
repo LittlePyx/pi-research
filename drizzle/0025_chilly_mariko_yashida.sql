@@ -1,0 +1,2 @@
+ALTER TABLE `research_network_seed_expansion_states` ADD `openalex_neighbor_offset` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `research_network_seed_expansion_states` ADD `openalex_citation_page` integer DEFAULT 1 NOT NULL;

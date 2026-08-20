@@ -192,6 +192,21 @@ type DeepSeekResponse = {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 };
+type DeepSeekJsonFailureKind = "empty" | "truncated" | "invalid_json";
+type DeepSeekCallOptions = { reasoningEffort?: "low" | "medium" | "high" };
+
+class DeepSeekJsonResponseError extends Error {
+  readonly kind: DeepSeekJsonFailureKind;
+  readonly finishReason: string;
+
+  constructor(kind: DeepSeekJsonFailureKind, finishReason: string, cause?: unknown) {
+    const detail = kind === "empty" ? "an empty JSON response" : kind === "truncated" ? "truncated JSON" : "invalid JSON";
+    super(`DeepSeek Pro returned ${detail} (finish: ${finishReason})`, cause === undefined ? undefined : { cause });
+    this.name = "DeepSeekJsonResponseError";
+    this.kind = kind;
+    this.finishReason = finishReason;
+  }
+}
 
 const MODEL = "deepseek-v4-pro";
 const NETWORK_MODEL = "deepseek-v4-pro+coupling-v2";
@@ -207,6 +222,49 @@ const WORKSPACE_DAILY_LIMIT = 32;
 
 function cleanText(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+}
+
+function extractCompleteJsonObject(value: string) {
+  const unfenced = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+  const start = unfenced.indexOf("{");
+  if (start < 0) return "";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < unfenced.length; index += 1) {
+    const character = unfenced[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return unfenced.slice(start, index + 1);
+    }
+  }
+  return "";
+}
+
+function parseDeepSeekJsonPayload<T>(content: string, finishReason: string) {
+  const normalizedFinishReason = cleanText(finishReason || "unknown").toLowerCase() || "unknown";
+  if (!content.trim()) throw new DeepSeekJsonResponseError(normalizedFinishReason === "length" ? "truncated" : "empty", normalizedFinishReason);
+  if (normalizedFinishReason === "length") throw new DeepSeekJsonResponseError("truncated", normalizedFinishReason);
+  const candidate = extractCompleteJsonObject(content);
+  if (!candidate) throw new DeepSeekJsonResponseError("invalid_json", normalizedFinishReason);
+  try {
+    return JSON.parse(candidate) as T;
+  } catch (error) {
+    throw new DeepSeekJsonResponseError("invalid_json", normalizedFinishReason, error);
+  }
+}
+
+function isRetryableDeepSeekJsonError(error: unknown): error is DeepSeekJsonResponseError {
+  return error instanceof DeepSeekJsonResponseError
+    && (error.kind === "empty" || error.kind === "truncated" || error.kind === "invalid_json");
 }
 
 function boundedScore(value: unknown, fallback = 0) {
@@ -367,7 +425,7 @@ async function recordUsage(database: D1Database, scope: string, date: string, in
   ).bind(crypto.randomUUID(), scope, date, inputTokens, outputTokens).run();
 }
 
-async function callDeepSeek<T>(database: D1Database, workspaceId: string, system: string, prompt: string, maxTokens: number, apiKey: string) {
+async function callDeepSeek<T>(database: D1Database, workspaceId: string, system: string, prompt: string, maxTokens: number, apiKey: string, options: DeepSeekCallOptions = {}) {
   if (!apiKey) throw new Error("DeepSeek Pro is required to build the research map");
   const date = new Date().toISOString().slice(0, 10);
   const workspaceScope = "research-map-workspace:" + workspaceId;
@@ -383,7 +441,7 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
       model: MODEL,
       messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
       thinking: { type: "enabled" },
-      reasoning_effort: "high",
+      reasoning_effort: options.reasoningEffort || "high",
       response_format: { type: "json_object" },
       max_tokens: maxTokens,
       stream: false,
@@ -395,12 +453,8 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
     recordUsage(database, "research-map:global", date, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
     recordUsage(database, workspaceScope, date, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
   ]);
-  const content = data.choices?.[0]?.message?.content || "";
-  if (!content.trim()) {
-    const finishReason = cleanText(data.choices?.[0]?.finish_reason || "unknown");
-    throw new Error(`DeepSeek Pro returned an empty research map (finish: ${finishReason})`);
-  }
-  return JSON.parse(content) as T;
+  const choice = data.choices?.[0];
+  return parseDeepSeekJsonPayload<T>(choice?.message?.content || "", choice?.finish_reason || "unknown");
 }
 
 async function reconcileRecentRecommendations(database: D1Database, workspaceId: string, space: SpaceRow, apiKey: string) {
@@ -449,7 +503,22 @@ async function reconcileRecentRecommendations(database: D1Database, workspaceId:
   const date = new Date().toISOString().slice(0, 10);
   const markerScope = "map-reconcile-space:" + space.id;
   if (await usageCount(database, markerScope, date)) return reconciled;
-  const parsed = await callDeepSeek<{ assignments?: Array<Record<string, unknown>> }>(
+  const compactTracks = tracks.results.slice(0, 10).map((track) => ({
+    id: track.id,
+    titleZh: cleanText(track.title_zh).slice(0, 120),
+    titleEn: cleanText(track.title_en).slice(0, 160),
+    summaryZh: cleanText(track.summary_zh).slice(0, 260),
+    summaryEn: cleanText(track.summary_en).slice(0, 320),
+  }));
+  const compactPaper = (paper: RecommendedMapPaper) => ({
+    canonicalId: paper.canonical_id,
+    title: cleanText(paper.title).slice(0, 260),
+    summaryZh: cleanText(paper.summary_zh).slice(0, 360),
+    summaryEn: cleanText(paper.summary_en).slice(0, 440),
+    contributionZh: cleanText(paper.contribution_zh).slice(0, 320),
+    contributionEn: cleanText(paper.contribution_en).slice(0, 400),
+  });
+  const requestAssignments = (input: RecommendedMapPaper[], maxTokens: number, reasoningEffort: "low" | "medium") => callDeepSeek<{ assignments?: Array<Record<string, unknown>> }>(
     database,
     workspaceId,
     "You are Pi Research's evidence-disciplined research-map routing editor. Return strict JSON.",
@@ -458,13 +527,27 @@ async function reconcileRecentRecommendations(database: D1Database, workspaceId:
       "Each assignment needs canonicalId, trackId, mapRole (milestone|frontier), rationaleZh, rationaleEn, confidence (0-100).",
       "Choose the single route the paper most credibly extends, supports, challenges, or bridges. Use an empty trackId only if all listed routes would be misleading.",
       "Ground rationales in the supplied summary and contribution. Do not infer a theorem, method, or result that the evidence does not state.",
-      `Research space: ${space.name} — ${space.description}`,
-      `Routes: ${JSON.stringify(tracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en })))}`,
-      `Recommended papers: ${JSON.stringify(unmatched.map((paper) => ({ canonicalId: paper.canonical_id, title: paper.title, summaryZh: paper.summary_zh, summaryEn: paper.summary_en, contributionZh: paper.contribution_zh, contributionEn: paper.contribution_en })))}`,
+      "Keep each bilingual rationale to one concise sentence so the JSON completes within the response budget.",
+      `Research space: ${cleanText(space.name).slice(0, 180)} — ${cleanText(space.description).slice(0, 600)}`,
+      `Routes: ${JSON.stringify(compactTracks)}`,
+      `Recommended papers: ${JSON.stringify(input.map(compactPaper))}`,
     ].join("\n"),
-    5000,
+    maxTokens,
     apiKey,
+    { reasoningEffort },
   );
+  const primaryReconcileInput = unmatched.slice(0, 6);
+  const reducedReconcileInput = primaryReconcileInput.slice(0, Math.max(1, Math.ceil(primaryReconcileInput.length / 2)));
+  let reconciledInput = primaryReconcileInput;
+  let parsed: { assignments?: Array<Record<string, unknown>> };
+  try {
+    parsed = await requestAssignments(primaryReconcileInput, 3200, "medium");
+  } catch (error) {
+    if (!isRetryableDeepSeekJsonError(error)) throw error;
+    reconciledInput = reducedReconcileInput;
+    parsed = await requestAssignments(reducedReconcileInput, 2200, "low");
+  }
+  const reconciledInputIds = new Set(reconciledInput.map((paper) => paper.canonical_id));
   const validTrackIds = new Set(tracks.results.map((track) => track.id));
   for (const raw of parsed.assignments || []) {
     const canonicalId = cleanText(String(raw.canonicalId || ""));
@@ -473,7 +556,7 @@ async function reconcileRecentRecommendations(database: D1Database, workspaceId:
     const track = trackById.get(trackId);
     const rationaleZh = cleanText(String(raw.rationaleZh || "")).slice(0, 700);
     const rationaleEn = cleanText(String(raw.rationaleEn || "")).slice(0, 900);
-    if (!paper || !track || !validTrackIds.has(trackId) || !rationaleZh || !rationaleEn) continue;
+    if (!reconciledInputIds.has(canonicalId) || !paper || !track || !validTrackIds.has(trackId) || !rationaleZh || !rationaleEn) continue;
     const role: ResearchTrackRole = raw.mapRole === "milestone" ? "milestone" : "frontier";
     await database.batch([
       database.prepare(
@@ -862,7 +945,7 @@ async function generatePaperNetworkEdges(
   citationEdges: Array<Omit<ResearchPaperEdge, "id">>,
   apiKey: string,
 ) {
-  if (papers.length < 2) return [] as Array<Omit<ResearchPaperEdge, "id">>;
+  if (papers.length < 2) return { edges: [] as Array<Omit<ResearchPaperEdge, "id">>, coveredPaperIds: papers.map((paper) => paper.id) };
   const compact = papers.map((paper) => ({
     id: paper.id,
     trackId: paper.track_id,
@@ -870,10 +953,10 @@ async function generatePaperNetworkEdges(
     year: paper.published_at?.slice(0, 4) || null,
     role: paper.role,
     citations: paper.citation_count,
-    summary: cleanText(paper.summary_en).slice(0, 320),
-    routeRationale: cleanText(paper.rationale_en).slice(0, 260),
+    summary: cleanText(paper.summary_en).slice(0, 220),
+    routeRationale: cleanText(paper.rationale_en).slice(0, 160),
   }));
-  const requestEdges = (input: typeof compact, maxTokens: number) => {
+  const requestEdges = (input: typeof compact, maxTokens: number, reasoningEffort: "low" | "medium") => {
     const inputIds = new Set(input.map((paper) => paper.id));
     return callDeepSeek<{ edges?: Array<Partial<PaperNetworkEdgeDraft>> }>(
       database,
@@ -881,7 +964,7 @@ async function generatePaperNetworkEdges(
       "You are Pi Research's evidence-disciplined scholarly network editor. Return strict JSON and never invent citation claims.",
       [
       "Return {\"edges\":[...]} using only supplied paper ids.",
-      "Create up to 18 semantic edges and 4-12 path edges. Every edge needs sourcePaperId, targetPaperId, kind (semantic|path), relationKind, relationshipZh, relationshipEn, confidence (0-100).",
+      "Create up to 14 semantic edges and 4-8 path edges. Every edge needs sourcePaperId, targetPaperId, kind (semantic|path), relationKind, relationshipZh, relationshipEn, confidence (0-100).",
       "Semantic relationKind must be extends, challenges, applies, unifies, bridges, or reframes. It describes an evidence-grounded intellectual relationship, not a factual citation unless it appears in actualCitationPairs.",
       "Path relationKind must be prepares or advances. Direct path edges from earlier foundations or milestones toward the later work a researcher should read next. Build one readable backbone and only a few meaningful branches.",
       "Use the supplied summaries and route rationales. Omit uncertain relationships, avoid generic 'related work' wording, and explain the precise conceptual or methodological connection in one concise sentence per language.",
@@ -893,6 +976,7 @@ async function generatePaperNetworkEdges(
       ].join("\n"),
       maxTokens,
       apiKey,
+      { reasoningEffort },
     );
   };
   const reducedInput = () => {
@@ -908,17 +992,23 @@ async function generatePaperNetworkEdges(
     }
     return reduced;
   };
+  const reduced = reducedInput();
+  let requestedInput = compact;
+  let retriedWithReducedInput = false;
   let parsed: { edges?: Array<Partial<PaperNetworkEdgeDraft>> };
   try {
-    parsed = await requestEdges(compact, 10000);
+    parsed = await requestEdges(compact, 6000, "medium");
   } catch (error) {
-    if (!(error instanceof Error) || !/empty research map/i.test(error.message) || compact.length <= 18) throw error;
-    parsed = await requestEdges(reducedInput(), 7000);
+    if (!isRetryableDeepSeekJsonError(error)) throw error;
+    requestedInput = reduced;
+    retriedWithReducedInput = true;
+    parsed = await requestEdges(reduced, 4400, "low");
   }
-  if ((!(parsed.edges || []).length || !(parsed.edges || []).some((edge) => edge.kind === "path")) && compact.length > 18) {
-    parsed = await requestEdges(reducedInput(), 7000);
+  if ((!(parsed.edges || []).length || !(parsed.edges || []).some((edge) => edge.kind === "path")) && !retriedWithReducedInput) {
+    requestedInput = reduced;
+    parsed = await requestEdges(reduced, 4400, "low");
   }
-  const validIds = new Set(papers.map((paper) => paper.id));
+  const validIds = new Set(requestedInput.map((paper) => paper.id));
   const citationPairs = new Set(citationEdges.map((edge) => edge.sourcePaperId + ":" + edge.targetPaperId));
   const counts = { semantic: 0, path: 0 };
   const unique = new Map<string, Omit<ResearchPaperEdge, "id">>();
@@ -931,7 +1021,7 @@ async function generatePaperNetworkEdges(
     const relationKind = PAPER_RELATION_KINDS.has(String(item.relationKind)) ? String(item.relationKind) : kind === "path" ? "advances" : "extends";
     const relationshipZh = cleanText(item.relationshipZh || "").slice(0, 320);
     const relationshipEn = cleanText(item.relationshipEn || "").slice(0, 440);
-    if (!relationshipZh || !relationshipEn || counts[kind] >= (kind === "semantic" ? 18 : 12)) continue;
+    if (!relationshipZh || !relationshipEn || counts[kind] >= (kind === "semantic" ? 14 : 8)) continue;
     counts[kind] += 1;
     unique.set(`${sourcePaperId}:${targetPaperId}:${kind}:${relationKind}`, {
       sourcePaperId,
@@ -944,7 +1034,7 @@ async function generatePaperNetworkEdges(
       evidenceSource: MODEL,
     });
   }
-  return Array.from(unique.values());
+  return { edges: Array.from(unique.values()), coveredPaperIds: requestedInput.map((paper) => paper.id) };
 }
 
 type PaperNetworkBuildPhase = "all" | "verified" | "pi";
@@ -1109,13 +1199,18 @@ async function rebuildPaperNetwork(
   if (effectivePhase === "all" || effectivePhase === "pi") {
     sources = sources.filter((source) => !source.startsWith(MODEL));
     try {
-      const freshEdges = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers,
+      const generated = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers,
         scholarlyEdges.filter((edge) => edge.kind === "citation"), apiKey);
+      const freshEdges = generated.edges;
       if (!freshEdges.length) throw new Error("DeepSeek Pro returned no defensible paper relations");
       if (!freshEdges.some((edge) => edge.kind === "path")) throw new Error("DeepSeek Pro returned no defensible reading path");
-      curatedEdges = freshEdges;
+      const refreshedIds = new Set(generated.coveredPaperIds);
+      curatedEdges = [
+        ...curatedEdges.filter((edge) => !refreshedIds.has(edge.sourcePaperId) || !refreshedIds.has(edge.targetPaperId)),
+        ...freshEdges,
+      ];
       sources.push(MODEL);
-      await replacePaperNetworkEdges(database, space.id, ["semantic", "path"], curatedEdges, papers.map((paper) => paper.id));
+      await replacePaperNetworkEdges(database, space.id, ["semantic", "path"], freshEdges, generated.coveredPaperIds);
     } catch (error) {
       errors.push(`pi: ${error instanceof Error ? error.message : "Pi path analysis failed"}`);
       if (curatedEdges.length) sources.push(`${MODEL}-cache`);

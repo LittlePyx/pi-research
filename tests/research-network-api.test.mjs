@@ -2,7 +2,22 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { isVerifiedBridge, partitionExpansionSeeds, verifiedRelationFallbackEdge, verifiedSeedCoverage } from "../lib/research-network.ts";
+import {
+  advanceOpenAlexSeedCursor,
+  classifyCoverageStatuses,
+  classifyNoNovelCoverage,
+  discoveryStateForCoverage,
+  fairRoundRobinRelations,
+  isFreshDiscoveryCacheEntry,
+  isPositiveExpansionResult,
+  isVerifiedBridge,
+  partitionExpansionSeeds,
+  relationOffsetsForExpansion,
+  shouldUseOpenAlexFallback,
+  similarityStatusForEdgeCount,
+  verifiedRelationFallbackEdge,
+  verifiedSeedCoverage,
+} from "../lib/research-network.ts";
 import { reserveSemanticScholarUsage } from "../lib/semantic-scholar-quota.ts";
 
 const routePath = new URL("../app/api/research-network/route.ts", import.meta.url);
@@ -14,6 +29,7 @@ const monitorPath = new URL("../app/api/monitor/route.ts", import.meta.url);
 const migrationPath = new URL("../drizzle/0022_bright_kat_farrell.sql", import.meta.url);
 const continuationMigrationPath = new URL("../drizzle/0023_lethal_unicorn.sql", import.meta.url);
 const throttleMigrationPath = new URL("../drizzle/0024_dry_nitro.sql", import.meta.url);
+const openAlexCursorMigrationPath = new URL("../drizzle/0025_chilly_mariko_yashida.sql", import.meta.url);
 
 test("research-network expansion uses verified external relations, cache, and coupling", async () => {
   const route = await readFile(routePath, "utf8");
@@ -29,6 +45,170 @@ test("research-network expansion uses verified external relations, cache, and co
   assert.match(route, /recommendation_offset/);
   assert.match(route, /status = 'dismissed'/);
   assert.match(route, /status = 'accepted'/);
+});
+
+test("S2 empty pages remain retryable and bounded OpenAlex discovery supplies real one-hop relations", async () => {
+  const route = await readFile(routePath, "utf8");
+  assert.doesNotMatch(route, /isRetracted/);
+  assert.match(route, /Array\.isArray\(data\.data\)/);
+  assert.match(route, /emptyKinds\.push/);
+  assert.match(route, /NEGATIVE_CACHE_MS = 15 \* 60_000/);
+  assert.match(route, /hasFreshRecommendationCandidates/);
+  assert.match(route, /isFreshDiscoveryState\(expansionState, hasRecommendationEvidence\)/);
+  assert.match(route, /OPENALEX_CALL_LIMIT = 9/);
+  assert.match(route, /OPENALEX_CANDIDATE_LIMIT = 18/);
+  assert.match(route, /https:\/\/api\.openalex\.org\/works/);
+  assert.match(route, /`openalex:\$\{normalized\.join\("\|"\)\}`/);
+  assert.match(route, /`cites:\$\{identifier\}`/);
+  assert.match(route, /work\.referenced_works/);
+  assert.match(route, /work\.related_works/);
+  assert.match(route, /evidenceSource: "openalex"/);
+  assert.match(route, /similarityStatusForEdgeCount/);
+});
+
+test("OpenAlex multi-seed candidates are selected fairly within the global cap", () => {
+  const entries = [
+    ...Array.from({ length: 8 }, (_, index) => ({ seed: "A", candidate: `a-${index}` })),
+    ...Array.from({ length: 3 }, (_, index) => ({ seed: "B", candidate: `b-${index}` })),
+    ...Array.from({ length: 3 }, (_, index) => ({ seed: "C", candidate: `c-${index}` })),
+  ];
+  const selected = fairRoundRobinRelations(entries, ["A", "B", "C"], (entry) => entry.candidate, (entry) => entry.seed, 6);
+  assert.equal(new Set(selected.map((entry) => entry.candidate)).size, 6);
+  assert.deepEqual(new Set(selected.map((entry) => entry.seed)), new Set(["A", "B", "C"]));
+});
+
+test("empty and exhausted discovery states are negative-cached while force remains an escape hatch", async () => {
+  const [route, contract] = await Promise.all([
+    readFile(routePath, "utf8"),
+    readFile(new URL("../lib/research-network.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(contract, /"no_matches"/);
+  assert.match(contract, /"empty"/);
+  const now = Date.parse("2026-08-20T00:00:00.000Z");
+  const future = "2026-08-20T00:15:00.000Z";
+  assert.equal(isFreshDiscoveryCacheEntry({ status: "ready", expiresAt: future }, false, now), false);
+  assert.equal(isFreshDiscoveryCacheEntry({ status: "ready", expiresAt: future }, true, now), true);
+  for (const status of ["no_matches", "partial", "unavailable", "exhausted"]) {
+    assert.equal(isFreshDiscoveryCacheEntry({ status, expiresAt: future }, false, now), true);
+  }
+  assert.equal(isFreshDiscoveryCacheEntry({ status: "no_matches", expiresAt: "2026-08-19T23:59:59.000Z" }, false, now), false);
+  assert.match(route, /nextOffsets\[offsetKey\] = typeof data\.next === "number" \? data\.next : -1/);
+  assert.match(route, /if \(nextOffsets\[offsetKey\] < 0\)/);
+  assert.match(route, /visibleSelected/);
+  assert.match(route, /classifyNoNovelCoverage/);
+  assert.match(route, /endpoint\.searchParams\.set\("page"/);
+  assert.match(route, /force \|\| \(previousSeedState\?\.citation_offset \?\? 0\) < 0/);
+  assert.match(route, /state\?\.openalex_neighbor_offset \?\? 0/);
+  assert.match(route, /state\?\.openalex_citation_page \?\? 1/);
+  assert.match(route, /endpoint\.searchParams\.set\("page", String\(citationPage\)\)/);
+  assert.match(route, /openAlexResult\.cursorUpdates\.get\(seed\.id\)/);
+  assert.doesNotMatch(route, /Math\.max\(recommendationResult\.nextOffset, openAlexResult\.nextOffset\)/);
+  assert.doesNotMatch(route, /DISCOVERY_CURSOR_MARKER|encodeDiscoveryCursors|decodeDiscoveryCursors/);
+});
+
+test("mixed cached and live coverage never masquerades as a clean no-match", () => {
+  assert.equal(classifyCoverageStatuses(["no_matches", "exhausted"]), "no_matches");
+  assert.equal(classifyCoverageStatuses(["ready", "ready"]), "ok");
+  assert.equal(classifyCoverageStatuses(["no_matches", "unavailable"]), "partial");
+  assert.equal(classifyCoverageStatuses(["ready", "unavailable"]), "partial");
+  assert.equal(classifyCoverageStatuses(["unavailable", "unavailable"]), "unavailable");
+
+  assert.equal(classifyNoNovelCoverage({
+    allTargetsCovered: true,
+    anyTargetCovered: true,
+    errorCount: 0,
+    hasPartialSource: false,
+    rateLimited: false,
+  }), "no_matches");
+  assert.equal(classifyNoNovelCoverage({
+    allTargetsCovered: false,
+    anyTargetCovered: true,
+    errorCount: 1,
+    hasPartialSource: true,
+    rateLimited: false,
+  }), "partial");
+  assert.equal(classifyNoNovelCoverage({
+    allTargetsCovered: false,
+    anyTargetCovered: false,
+    errorCount: 1,
+    hasPartialSource: false,
+    rateLimited: true,
+  }), "rate_limited");
+});
+
+test("citation exhaustion is revisited without reopening the finite reference page", () => {
+  assert.deepEqual(relationOffsetsForExpansion({ referenceOffset: -1, citationOffset: -1 }, false), {
+    reference: -1,
+    citation: -1,
+  });
+  assert.deepEqual(relationOffsetsForExpansion({ referenceOffset: -1, citationOffset: -1 }, true), {
+    reference: -1,
+    citation: 0,
+  });
+});
+
+test("OpenAlex neighbor and citation cursors advance independently per seed and stream", () => {
+  const current = { neighborOffset: 40, citationPage: 3 };
+  assert.deepEqual(advanceOpenAlexSeedCursor(current, {
+    neighborSucceeded: true, citationSucceeded: false, citationResultCount: 0,
+  }), { neighborOffset: 60, citationPage: 3 });
+  assert.deepEqual(advanceOpenAlexSeedCursor(current, {
+    neighborSucceeded: false, citationSucceeded: true, citationResultCount: 40,
+  }), { neighborOffset: 40, citationPage: 4 });
+  assert.deepEqual(advanceOpenAlexSeedCursor(current, {
+    neighborSucceeded: false, citationSucceeded: true, citationResultCount: 8,
+  }), { neighborOffset: 40, citationPage: 1 });
+  assert.deepEqual(advanceOpenAlexSeedCursor(current, {
+    neighborSucceeded: false, citationSucceeded: false, citationResultCount: 0,
+  }), current);
+});
+
+test("ready state requires visible evidence, complete coverage, and no retained issue", () => {
+  assert.equal(discoveryStateForCoverage({ visible: true, coverageComplete: true, issueCount: 0, attempted: true }), "ready");
+  assert.equal(discoveryStateForCoverage({ visible: true, coverageComplete: false, issueCount: 0, attempted: true }), "partial");
+  assert.equal(discoveryStateForCoverage({ visible: true, coverageComplete: true, issueCount: 1, attempted: true }), "partial");
+  assert.equal(discoveryStateForCoverage({ visible: false, coverageComplete: true, issueCount: 0, attempted: true }), "no_matches");
+  assert.equal(discoveryStateForCoverage({ visible: false, coverageComplete: false, issueCount: 1, attempted: true }), "partial");
+});
+
+test("empty expansion behavior triggers fallback and never becomes a positive fresh result", () => {
+  assert.equal(isPositiveExpansionResult(0, 0, 2, false), false);
+  assert.equal(isPositiveExpansionResult(8, 0, 0, false), true);
+  assert.equal(isPositiveExpansionResult(8, 1, 0, false), false);
+  assert.equal(isPositiveExpansionResult(8, 0, 0, true), false);
+  assert.equal(shouldUseOpenAlexFallback({
+    seedCount: 1,
+    semanticScholarResolvedSeedCount: 1,
+    semanticScholarDirectCandidateCount: 0,
+    semanticScholarRecommendationCount: 0,
+    semanticScholarErrorCount: 0,
+    semanticScholarEmptyRelationCount: 2,
+  }), true);
+  assert.equal(shouldUseOpenAlexFallback({
+    seedCount: 1,
+    semanticScholarResolvedSeedCount: 1,
+    semanticScholarDirectCandidateCount: 10,
+    semanticScholarRecommendationCount: 10,
+    semanticScholarErrorCount: 0,
+    semanticScholarEmptyRelationCount: 0,
+  }), false);
+  assert.equal(similarityStatusForEdgeCount(0), "not_attempted");
+  assert.equal(similarityStatusForEdgeCount(3), "ok");
+});
+
+test("OpenAlex verified citations preserve their provenance in fallback rendering", () => {
+  const edge = verifiedRelationFallbackEdge("openalex:w2", {
+    seedCanonicalId: "openalex:w1",
+    seedCanonicalIds: ["openalex:w1"],
+    joint: false,
+    kind: "reference",
+    direction: "seed_cites_candidate",
+    isInfluential: false,
+    evidenceSource: "openalex",
+  });
+  assert.equal(edge?.evidenceSource, "openalex");
+  assert.equal(edge?.sourceCanonicalId, "openalex:w1");
+  assert.equal(edge?.targetCanonicalId, "openalex:w2");
 });
 
 test("joint recommendations are not counted as verified multi-seed bridges", () => {
@@ -81,6 +261,9 @@ test("per-seed cache expands B when only A is fresh", () => {
   assert.deepEqual(partial.expandSeeds.map((seed) => seed.id), ["B"]);
   assert.equal(partial.fullyCached, false);
   assert.equal(partitionExpansionSeeds(seeds, new Set(["A", "B"]), true, false).fullyCached, true);
+  const forced = partitionExpansionSeeds(seeds, new Set(["A", "B"]), true, true);
+  assert.equal(forced.fullyCached, false);
+  assert.deepEqual(forced.expandSeeds.map((seed) => seed.id), ["A", "B"]);
 });
 
 test("a complete cache hit performs no upstream scholarly request", async () => {
@@ -228,13 +411,14 @@ test("429 opens a safe route circuit and does not fan out recommendations", asyn
   assert.match(helper, /SemanticScholarRateLimitError/);
   assert.match(route, /if \(!isSemanticScholarCircuitError\(error\)\) throw error/);
   assert.match(route, /Never turn one failed joint request into an N-request fan-out/);
-  assert.match(route, /return \{ results, errors, nextOffsets, circuitError: error \}/);
+  assert.match(route, /return \{ results, errors, emptyKinds, exhaustedKinds, attemptedKinds, nextOffsets, circuitError: error \}/);
   assert.match(route, /if \(relationResult\.circuitError\)/);
   assert.match(route, /directRelationResults\.push\(relationResult\)/);
   assert.doesNotMatch(route, /errors\.push\(error instanceof Error \? error\.message/);
-  assert.match(route, /status: circuitError \? "rate_limited"/);
+  assert.match(route, /rateLimited: Boolean\(circuitError\)/);
+  assert.match(route, /status: responseStatus/);
   assert.match(route, /retryAfterSeconds/);
-  assert.match(contract, /status: "ok" \| "partial" \| "unavailable" \| "rate_limited"/);
+  assert.match(contract, /status: "ok" \| "no_matches" \| "partial" \| "unavailable" \| "rate_limited"/);
   assert.match(contract, /retryAfterSeconds: number \| null/);
 });
 
@@ -266,12 +450,13 @@ test("expansion lock is token-guarded, renewed, and exception-safe", async () =>
 });
 
 test("research-network candidate cache is represented in schema, runtime bootstrap, and migration", async () => {
-  const [schema, repository, migration, continuationMigration, throttleMigration] = await Promise.all([
+  const [schema, repository, migration, continuationMigration, throttleMigration, openAlexCursorMigration] = await Promise.all([
     readFile(schemaPath, "utf8"),
     readFile(repositoryPath, "utf8"),
     readFile(migrationPath, "utf8"),
     readFile(continuationMigrationPath, "utf8"),
     readFile(throttleMigrationPath, "utf8"),
+    readFile(openAlexCursorMigrationPath, "utf8"),
   ]);
   for (const source of [schema, repository, migration]) {
     assert.match(source, /research_network_candidates/);
@@ -287,4 +472,51 @@ test("research-network candidate cache is represented in schema, runtime bootstr
   }
   assert.match(throttleMigration, /ADD `similarity_json`/);
   assert.match(throttleMigration, /ADD `lock_token`/);
+  for (const source of [schema, repository, openAlexCursorMigration]) {
+    assert.match(source, /openalex_neighbor_offset/);
+    assert.match(source, /openalex_citation_page/);
+  }
+  assert.doesNotMatch(repository, /ALTER TABLE research_network_seed_expansion_states ADD COLUMN openalex_(?:neighbor_offset|citation_page)/);
+  assert.equal((openAlexCursorMigration.match(/ALTER TABLE `research_network_seed_expansion_states` ADD/g) || []).length, 2);
+});
+
+test("OpenAlex cursor migration adds durable per-seed defaults to a legacy state table", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec(`CREATE TABLE research_network_seed_expansion_states (
+      id TEXT PRIMARY KEY NOT NULL,
+      space_id TEXT NOT NULL,
+      seed_paper_id TEXT NOT NULL,
+      reference_offset INTEGER NOT NULL DEFAULT 0,
+      citation_offset INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'idle'
+    )`);
+    sqlite.exec(await readFile(openAlexCursorMigrationPath, "utf8"));
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS research_network_seed_expansion_states (
+      id TEXT PRIMARY KEY NOT NULL,
+      space_id TEXT NOT NULL,
+      seed_paper_id TEXT NOT NULL,
+      reference_offset INTEGER NOT NULL DEFAULT 0,
+      citation_offset INTEGER NOT NULL DEFAULT 0,
+      openalex_neighbor_offset INTEGER NOT NULL DEFAULT 0,
+      openalex_citation_page INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'idle'
+    )`);
+    const columns = sqlite.prepare("PRAGMA table_info(research_network_seed_expansion_states)").all();
+    const byName = new Map(columns.map((column) => [column.name, column]));
+    assert.equal(byName.get("openalex_neighbor_offset")?.dflt_value, "0");
+    assert.equal(byName.get("openalex_citation_page")?.dflt_value, "1");
+    sqlite.prepare("INSERT INTO research_network_seed_expansion_states (id, space_id, seed_paper_id) VALUES (?, ?, ?)").run("a", "space", "seed-a");
+    sqlite.prepare("INSERT INTO research_network_seed_expansion_states (id, space_id, seed_paper_id) VALUES (?, ?, ?)").run("b", "space", "seed-b");
+    sqlite.prepare("UPDATE research_network_seed_expansion_states SET openalex_neighbor_offset = ? WHERE seed_paper_id = ?").run(20, "seed-a");
+    sqlite.prepare("UPDATE research_network_seed_expansion_states SET openalex_citation_page = ? WHERE seed_paper_id = ?").run(2, "seed-b");
+    const rows = sqlite.prepare("SELECT seed_paper_id, openalex_neighbor_offset, openalex_citation_page FROM research_network_seed_expansion_states ORDER BY seed_paper_id").all()
+      .map((row) => ({ ...row }));
+    assert.deepEqual(rows, [
+      { seed_paper_id: "seed-a", openalex_neighbor_offset: 20, openalex_citation_page: 1 },
+      { seed_paper_id: "seed-b", openalex_neighbor_offset: 0, openalex_citation_page: 2 },
+    ]);
+  } finally {
+    sqlite.close();
+  }
 });

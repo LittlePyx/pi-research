@@ -176,6 +176,13 @@
       "when": 1787217522200,
       "tag": "0024_dry_nitro",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1787226020966,
+      "tag": "0025_chilly_mariko_yashida",
+      "breakpoints": true
     }
   ]
 }

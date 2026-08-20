@@ -755,6 +755,8 @@ export const researchNetworkSeedExpansionStates = sqliteTable(
     seedPaperId: text("seed_paper_id").notNull().references(() => researchTrackPapers.id, { onDelete: "cascade" }),
     referenceOffset: integer("reference_offset").notNull().default(0),
     citationOffset: integer("citation_offset").notNull().default(0),
+    openAlexNeighborOffset: integer("openalex_neighbor_offset").notNull().default(0),
+    openAlexCitationPage: integer("openalex_citation_page").notNull().default(1),
     status: text("status").notNull().default("idle"),
     error: text("error"),
     lastExpandedAt: text("last_expanded_at"),
