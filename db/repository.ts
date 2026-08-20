@@ -10,6 +10,7 @@ type RuntimeEnv = {
   DB?: D1Database;
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL?: string;
+  SEMANTIC_SCHOLAR_API_KEY?: string;
 };
 
 export function getRuntimeEnv(): RuntimeEnv {
@@ -72,6 +73,13 @@ async function ensureGrowthMapColumns(database: D1Database) {
   for (const addition of additions) {
     if (!existing.has(addition.name)) await database.prepare(addition.sql).run();
   }
+}
+
+async function ensureResearchNetworkColumns(database: D1Database) {
+  const edgeColumns = await database.prepare("PRAGMA table_info(research_network_candidate_edges)").all<{ name: string }>();
+  const existing = new Set(edgeColumns.results.map((column) => column.name));
+  if (!existing.has("expansion_key")) await database.prepare("ALTER TABLE research_network_candidate_edges ADD COLUMN expansion_key TEXT NOT NULL DEFAULT ''").run();
+  if (!existing.has("seed_set_json")) await database.prepare("ALTER TABLE research_network_candidate_edges ADD COLUMN seed_set_json TEXT NOT NULL DEFAULT '[]'").run();
 }
 
 export async function ensureSchema(database = getDatabase()) {
@@ -157,6 +165,20 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_paper_edges_space_kind ON research_paper_edges(space_id, kind)"),
     database.prepare("CREATE TABLE IF NOT EXISTS research_paper_network_states (space_id TEXT PRIMARY KEY NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', built_paper_count INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', sources_json TEXT NOT NULL DEFAULT '[]', error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_paper_network_states_status ON research_paper_network_states(status, updated_at)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_network_candidates (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, canonical_id TEXT NOT NULL, s2_paper_id TEXT, openalex_id TEXT, doi TEXT, title TEXT NOT NULL, authors TEXT NOT NULL DEFAULT '', venue TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', published_at TEXT, citation_count INTEGER NOT NULL DEFAULT 0, abstract_text TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'ghost', metadata_source TEXT NOT NULL DEFAULT 'semantic-scholar', score INTEGER NOT NULL DEFAULT 0, discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_network_candidates_space_canonical ON research_network_candidates(space_id, canonical_id)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_candidates_space_status_seen ON research_network_candidates(space_id, status, last_seen_at)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_candidates_space_s2 ON research_network_candidates(space_id, s2_paper_id)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_network_candidate_edges (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, seed_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, candidate_id TEXT NOT NULL REFERENCES research_network_candidates(id) ON DELETE CASCADE, kind TEXT NOT NULL, direction TEXT NOT NULL, is_influential INTEGER NOT NULL DEFAULT 0, intents_json TEXT NOT NULL DEFAULT '[]', contexts_json TEXT NOT NULL DEFAULT '[]', expansion_key TEXT NOT NULL DEFAULT '', seed_set_json TEXT NOT NULL DEFAULT '[]', score INTEGER NOT NULL DEFAULT 0, evidence_source TEXT NOT NULL DEFAULT 'semantic-scholar', first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at TEXT)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_network_candidate_edges_unique ON research_network_candidate_edges(seed_paper_id, candidate_id, kind)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_candidate_edges_space_seed_seen ON research_network_candidate_edges(space_id, seed_paper_id, last_seen_at)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_candidate_edges_space_candidate_seen ON research_network_candidate_edges(space_id, candidate_id, last_seen_at)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_network_seed_expansion_states (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, seed_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, reference_offset INTEGER NOT NULL DEFAULT 0, citation_offset INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'idle', error TEXT, last_expanded_at TEXT, expires_at TEXT)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_network_seed_expansion_unique ON research_network_seed_expansion_states(space_id, seed_paper_id)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_seed_expansion_fresh ON research_network_seed_expansion_states(space_id, expires_at)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_network_expansion_states (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, expansion_key TEXT NOT NULL, seed_canonical_ids TEXT NOT NULL DEFAULT '[]', recommendation_offset INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'idle', error TEXT, last_expanded_at TEXT, expires_at TEXT)"),
+    database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_network_expansion_state_unique ON research_network_expansion_states(space_id, expansion_key)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_expansion_state_fresh ON research_network_expansion_states(space_id, expires_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS learning_paths (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, target TEXT NOT NULL, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', analysis_model TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_paths_space_updated ON learning_paths(space_id, updated_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS learning_path_steps (id TEXT PRIMARY KEY NOT NULL, path_id TEXT NOT NULL REFERENCES learning_paths(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, kind TEXT NOT NULL DEFAULT 'foundation', title_zh TEXT NOT NULL, title_en TEXT NOT NULL, goal_zh TEXT NOT NULL DEFAULT '', goal_en TEXT NOT NULL DEFAULT '', why_zh TEXT NOT NULL DEFAULT '', why_en TEXT NOT NULL DEFAULT '', read_focus_zh TEXT NOT NULL DEFAULT '', read_focus_en TEXT NOT NULL DEFAULT '', checkpoint_zh TEXT NOT NULL DEFAULT '', checkpoint_en TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', position INTEGER NOT NULL DEFAULT 0, resources_json TEXT NOT NULL DEFAULT '[]', completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
@@ -165,6 +187,7 @@ export async function ensureSchema(database = getDatabase()) {
   ]);
   await ensurePaperInsightReviewColumns(database);
   await ensureGrowthMapColumns(database);
+  await ensureResearchNetworkColumns(database);
   const feedbackColumns = await database.prepare("PRAGMA table_info(paper_feedback)").all<{ name: string }>();
   const feedbackColumnNames = new Set(feedbackColumns.results.map((column) => column.name));
   if (!feedbackColumnNames.has("reason_code")) await database.prepare("ALTER TABLE paper_feedback ADD COLUMN reason_code TEXT").run();

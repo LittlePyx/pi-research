@@ -1,6 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
-import type { ResearchDirectionIntelligence, ResearchDirectionRole, ResearchHeatLevel, ResearchMapState, ResearchPaperEdge, ResearchPaperEdgeKind, ResearchTrack, ResearchTrackEdge, ResearchTrackPaper, ResearchTrackRole } from "../../../lib/research-map";
+import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type TrackRow = {
@@ -46,6 +46,7 @@ type TrackPaperRow = {
   rationale_zh: string;
   rationale_en: string;
   position: number;
+  created_at?: string;
 };
 type PaperEdgeRow = {
   id: string;
@@ -65,6 +66,19 @@ type PaperNetworkStateRow = {
   sources_json: string;
   error: string | null;
   updated_at: string;
+};
+type StoredPaperNetworkCoverage = {
+  totalPaperCount: number;
+  paperRevision: string;
+  coveredPaperIds: string[];
+  coveredPaperHash: string;
+  coverageRevision: number;
+  cursor: number;
+  nextCursor: number;
+};
+type StoredPaperNetworkState = {
+  sources: string[];
+  coverage: StoredPaperNetworkCoverage | null;
 };
 type ExistingPaperEvidence = {
   canonical_id: string;
@@ -205,6 +219,35 @@ function parseJsonArray(value: string) {
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
   } catch {
     return [];
+  }
+}
+
+function parseStoredPaperNetworkState(value: string): StoredPaperNetworkState {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) return { sources: parsed.filter((item): item is string => typeof item === "string"), coverage: null };
+    if (!parsed || typeof parsed !== "object") return { sources: [], coverage: null };
+    const record = parsed as Record<string, unknown>;
+    const rawCoverage = record.coverage && typeof record.coverage === "object" ? record.coverage as Record<string, unknown> : null;
+    const coveredPaperIds = rawCoverage && Array.isArray(rawCoverage.coveredPaperIds)
+      ? rawCoverage.coveredPaperIds.filter((item): item is string => typeof item === "string").slice(0, NETWORK_PAPER_LIMIT)
+      : [];
+    const paperRevision = rawCoverage && typeof rawCoverage.paperRevision === "string" ? rawCoverage.paperRevision : "";
+    const coverage: StoredPaperNetworkCoverage | null = rawCoverage ? {
+      totalPaperCount: Math.max(0, Number(rawCoverage.totalPaperCount) || 0),
+      paperRevision,
+      coveredPaperIds,
+      coveredPaperHash: typeof rawCoverage.coveredPaperHash === "string" ? rawCoverage.coveredPaperHash : researchPaperCoverageHash(coveredPaperIds),
+      coverageRevision: Math.max(0, Number(rawCoverage.coverageRevision) || 0),
+      cursor: Math.max(0, Number(rawCoverage.cursor) || 0),
+      nextCursor: Math.max(0, Number(rawCoverage.nextCursor) || 0),
+    } : null;
+    return {
+      sources: Array.isArray(record.sources) ? record.sources.filter((item): item is string => typeof item === "string") : [],
+      coverage: coverage?.paperRevision ? coverage : null,
+    };
+  } catch {
+    return { sources: [], coverage: null };
   }
 }
 
@@ -701,12 +744,24 @@ function uniqueNetworkPapers(rows: TrackPaperRow[]) {
     const previous = unique.get(row.canonical_id);
     if (!previous || (!previous.doi && row.doi) || row.citation_count > previous.citation_count) unique.set(row.canonical_id, row);
   }
-  return Array.from(unique.values()).slice(0, NETWORK_PAPER_LIMIT);
+  return Array.from(unique.values());
+}
+
+function toCoverageCandidate(row: TrackPaperRow): ResearchPaperCoverageCandidate {
+  return {
+    id: row.id,
+    canonicalId: row.canonical_id,
+    trackId: row.track_id,
+    publishedAt: row.published_at,
+    createdAt: row.created_at || null,
+    citationCount: row.citation_count,
+    role: row.role,
+  };
 }
 
 async function fetchScholarlyEdges(papers: TrackPaperRow[]) {
   const eligible = papers.filter((paper) => paper.doi).slice(0, NETWORK_PAPER_LIMIT);
-  if (eligible.length < 2) return [] as Array<Omit<ResearchPaperEdge, "id">>;
+  if (eligible.length < 2) return { edges: [] as Array<Omit<ResearchPaperEdge, "id">>, coveredPaperIds: [] as string[] };
   const endpoint = new URL("https://api.semanticscholar.org/graph/v1/paper/batch");
   endpoint.searchParams.set("fields", "paperId,externalIds,references.paperId,references.externalIds");
   const options: RequestInit = {
@@ -724,10 +779,12 @@ async function fetchScholarlyEdges(papers: TrackPaperRow[]) {
   const results = await response.json() as Array<SemanticScholarPaper | null>;
   const doiToPaperId = new Map(eligible.map((paper) => [paper.doi!.toLocaleLowerCase(), paper.id]));
   const referencesByPaper = new Map<string, Set<string>>();
+  const coveredPaperIds: string[] = [];
   const unique = new Map<string, Omit<ResearchPaperEdge, "id">>();
   results.forEach((result, index) => {
     const source = eligible[index];
     if (!source || !result?.references) return;
+    coveredPaperIds.push(source.id);
     const referenceKeys = new Set<string>();
     for (const reference of result.references) {
       const doi = reference.externalIds?.DOI?.trim().toLocaleLowerCase();
@@ -790,7 +847,7 @@ async function fetchScholarlyEdges(papers: TrackPaperRow[]) {
     similarityDegree.set(candidate.edge.targetPaperId, targetDegree + 1);
     if (similarityDegree.size && Array.from(unique.values()).filter((edge) => edge.kind === "similarity").length >= 42) break;
   }
-  return Array.from(unique.values());
+  return { edges: Array.from(unique.values()), coveredPaperIds };
 }
 
 async function generatePaperNetworkEdges(
@@ -894,17 +951,33 @@ async function replacePaperNetworkEdges(
   spaceId: string,
   kinds: ResearchPaperEdgeKind[],
   edges: Array<Omit<ResearchPaperEdge, "id">>,
+  coveredPaperIds: string[],
 ) {
-  const statements = kinds.map((kind) => database.prepare("DELETE FROM research_paper_edges WHERE space_id = ? AND kind = ?").bind(spaceId, kind));
+  const coveredIds = Array.from(new Set(coveredPaperIds)).slice(0, NETWORK_PAPER_LIMIT);
+  const statements: D1PreparedStatement[] = [];
+  if (coveredIds.length) {
+    const placeholders = coveredIds.map(() => "?").join(", ");
+    for (const kind of kinds) {
+      statements.push(database.prepare(
+        `DELETE FROM research_paper_edges
+         WHERE space_id = ? AND kind = ?
+           AND source_paper_id IN (${placeholders})
+           AND target_paper_id IN (${placeholders})`,
+      ).bind(spaceId, kind, ...coveredIds, ...coveredIds));
+    }
+  }
   for (const edge of edges) {
     statements.push(database.prepare(
-      `INSERT OR IGNORE INTO research_paper_edges
+      `INSERT INTO research_paper_edges
        (id, space_id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(source_paper_id, target_paper_id, kind, relation_kind) DO UPDATE SET
+         relationship_zh = excluded.relationship_zh, relationship_en = excluded.relationship_en,
+         confidence = excluded.confidence, evidence_source = excluded.evidence_source`,
     ).bind(crypto.randomUUID(), spaceId, edge.sourcePaperId, edge.targetPaperId, edge.kind, edge.relationKind,
       edge.relationshipZh, edge.relationshipEn, edge.confidence, edge.evidenceSource));
   }
-  await database.batch(statements);
+  if (statements.length) await database.batch(statements);
 }
 
 async function writePaperNetworkState(
@@ -914,13 +987,18 @@ async function writePaperNetworkState(
   paperCount: number,
   sources: string[],
   error: string | null,
+  coverage: StoredPaperNetworkCoverage,
 ) {
   await database.prepare(
     `INSERT INTO research_paper_network_states (space_id, status, built_paper_count, model, sources_json, error, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(space_id) DO UPDATE SET status = excluded.status, built_paper_count = excluded.built_paper_count,
      model = excluded.model, sources_json = excluded.sources_json, error = excluded.error, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(spaceId, status, paperCount, NETWORK_MODEL, JSON.stringify(Array.from(new Set(sources))), error).run();
+  ).bind(spaceId, status, paperCount, NETWORK_MODEL, JSON.stringify({
+    version: 1,
+    sources: Array.from(new Set(sources)),
+    coverage,
+  }), error).run();
 }
 
 async function rebuildPaperNetwork(
@@ -932,10 +1010,44 @@ async function rebuildPaperNetwork(
   force = false,
   phase: PaperNetworkBuildPhase = "all",
 ) {
-  const allPapers = await database.prepare(
-    "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY (SELECT position FROM research_tracks WHERE id = research_track_papers.track_id), position, created_at",
-  ).bind(space.id).all<TrackPaperRow>();
-  const papers = uniqueNetworkPapers(allPapers.results);
+  const [allPapers, state] = await Promise.all([
+    database.prepare(
+      "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position, created_at FROM research_track_papers WHERE space_id = ? ORDER BY (SELECT position FROM research_tracks WHERE id = research_track_papers.track_id), position, created_at",
+    ).bind(space.id).all<TrackPaperRow>(),
+    database.prepare("SELECT status, built_paper_count, model, sources_json, error, updated_at FROM research_paper_network_states WHERE space_id = ? LIMIT 1")
+      .bind(space.id).first<PaperNetworkStateRow>(),
+  ]);
+  const allUniquePapers = uniqueNetworkPapers(allPapers.results);
+  const totalPaperCount = allUniquePapers.length;
+  const paperRevision = researchPaperSetRevision(allPapers.results.map(toCoverageCandidate));
+  const stored = state ? parseStoredPaperNetworkState(state.sources_json) : { sources: [], coverage: null };
+  if (!force && phase === "all" && state?.status === "ready" && stored.coverage?.paperRevision === paperRevision && state.model === NETWORK_MODEL) return;
+
+  const uniquePaperById = new Map(allUniquePapers.map((paper) => [paper.id, paper]));
+  const resumedPaperIds = phase === "pi" && stored.coverage?.paperRevision === paperRevision
+    ? stored.coverage.coveredPaperIds.filter((id) => uniquePaperById.has(id)) : [];
+  const canResumeCoverage = phase === "pi" && Boolean(stored.coverage?.coveredPaperIds.length)
+    && resumedPaperIds.length === stored.coverage?.coveredPaperIds.length;
+  const effectivePhase: PaperNetworkBuildPhase = phase === "pi" && !canResumeCoverage ? "all" : phase;
+  let coverage: StoredPaperNetworkCoverage;
+  let papers: TrackPaperRow[];
+  if (canResumeCoverage && stored.coverage) {
+    coverage = stored.coverage;
+    papers = resumedPaperIds.map((id) => uniquePaperById.get(id)).filter((paper): paper is TrackPaperRow => Boolean(paper));
+  } else {
+    const cursor = stored.coverage?.nextCursor || 0;
+    const selection = selectResearchPaperCoverage(allUniquePapers.map(toCoverageCandidate), cursor, NETWORK_PAPER_LIMIT);
+    papers = selection.paperIds.map((id) => uniquePaperById.get(id)).filter((paper): paper is TrackPaperRow => Boolean(paper));
+    coverage = {
+      totalPaperCount,
+      paperRevision,
+      coveredPaperIds: papers.map((paper) => paper.id),
+      coveredPaperHash: researchPaperCoverageHash(papers.map((paper) => paper.id)),
+      coverageRevision: (stored.coverage?.coverageRevision || 0) + 1,
+      cursor,
+      nextCursor: selection.nextCursor,
+    };
+  }
   const existingRows = await database.prepare(
     "SELECT id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source FROM research_paper_edges WHERE space_id = ?",
   ).bind(space.id).all<PaperEdgeRow>();
@@ -955,18 +1067,10 @@ async function rebuildPaperNetwork(
         evidenceSource: edge.evidenceSource,
       } satisfies Omit<ResearchPaperEdge, "id">;
     });
-  const state = await database.prepare("SELECT status, built_paper_count, model, sources_json, error, updated_at FROM research_paper_network_states WHERE space_id = ? LIMIT 1")
-    .bind(space.id).first<PaperNetworkStateRow>();
-  if (!force && phase === "all" && state?.status === "ready" && state.built_paper_count >= papers.length && state.model === NETWORK_MODEL) return;
-  let previousSources: string[] = [];
-  try {
-    previousSources = state ? parseJsonArray(state.sources_json) : [];
-  } catch {
-    previousSources = [];
-  }
-  if (phase !== "pi") await writePaperNetworkState(database, space.id, "building", papers.length, previousSources, null);
+  const previousSources = stored.sources;
+  if (effectivePhase !== "pi") await writePaperNetworkState(database, space.id, "building", totalPaperCount, previousSources, null, coverage);
   if (papers.length < 2) {
-    await writePaperNetworkState(database, space.id, "ready", papers.length, [], null);
+    await writePaperNetworkState(database, space.id, "ready", totalPaperCount, [], null, coverage);
     return;
   }
   let scholarlyEdges = cachedEdges.filter((edge) => edge.kind === "citation" || edge.kind === "similarity");
@@ -974,25 +1078,32 @@ async function rebuildPaperNetwork(
   let sources = [...previousSources];
   const errors: string[] = [];
 
-  if (phase === "all" || phase === "verified") {
+  if (effectivePhase === "all" || effectivePhase === "verified") {
     sources = sources.filter((source) => !source.startsWith("semantic-scholar"));
     try {
-      const freshEdges = await fetchScholarlyEdges(papers);
-      if (!freshEdges.length && scholarlyEdges.length) throw new Error("Semantic Scholar returned no usable paper links");
-      scholarlyEdges = freshEdges;
+      const fresh = await fetchScholarlyEdges(papers);
+      const freshEdges = fresh.edges;
+      const refreshedPaperIds = fresh.coveredPaperIds;
+      const refreshedIds = new Set(refreshedPaperIds);
+      const cachedWithinCoverage = scholarlyEdges.filter((edge) => refreshedIds.has(edge.sourcePaperId) && refreshedIds.has(edge.targetPaperId));
+      if (!freshEdges.length && cachedWithinCoverage.length) throw new Error("Semantic Scholar returned no usable paper links");
+      scholarlyEdges = [
+        ...scholarlyEdges.filter((edge) => !refreshedIds.has(edge.sourcePaperId) || !refreshedIds.has(edge.targetPaperId)),
+        ...freshEdges,
+      ];
       sources.push("semantic-scholar");
-      await replacePaperNetworkEdges(database, space.id, ["citation", "similarity"], scholarlyEdges);
+      await replacePaperNetworkEdges(database, space.id, ["citation", "similarity"], freshEdges, refreshedPaperIds);
     } catch (error) {
       errors.push(`citation: ${error instanceof Error ? error.message : "Citation lookup failed"}`);
       if (scholarlyEdges.length) sources.push("semantic-scholar-cache");
     }
-    await writePaperNetworkState(database, space.id, "building", papers.length, sources, errors.join("; ").slice(0, 800) || null);
-    if (phase === "verified") return;
+    await writePaperNetworkState(database, space.id, "building", totalPaperCount, sources, errors.join("; ").slice(0, 800) || null, coverage);
+    if (effectivePhase === "verified") return;
   } else if (state?.error && /citation:|semantic scholar|citation lookup/i.test(state.error)) {
     errors.push(state.error);
   }
 
-  if (phase === "all" || phase === "pi") {
+  if (effectivePhase === "all" || effectivePhase === "pi") {
     sources = sources.filter((source) => !source.startsWith(MODEL));
     try {
       const freshEdges = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers,
@@ -1001,7 +1112,7 @@ async function rebuildPaperNetwork(
       if (!freshEdges.some((edge) => edge.kind === "path")) throw new Error("DeepSeek Pro returned no defensible reading path");
       curatedEdges = freshEdges;
       sources.push(MODEL);
-      await replacePaperNetworkEdges(database, space.id, ["semantic", "path"], curatedEdges);
+      await replacePaperNetworkEdges(database, space.id, ["semantic", "path"], curatedEdges, papers.map((paper) => paper.id));
     } catch (error) {
       errors.push(`pi: ${error instanceof Error ? error.message : "Pi path analysis failed"}`);
       if (curatedEdges.length) sources.push(`${MODEL}-cache`);
@@ -1009,7 +1120,7 @@ async function rebuildPaperNetwork(
   }
   const allEdges = [...scholarlyEdges, ...curatedEdges];
   const status = errors.length ? (allEdges.length ? "partial" : "error") : "ready";
-  await writePaperNetworkState(database, space.id, status, papers.length, sources, errors.join("; ").slice(0, 800) || null);
+  await writePaperNetworkState(database, space.id, status, totalPaperCount, sources, errors.join("; ").slice(0, 800) || null, coverage);
 }
 
 function heatEvidence(papers: ResearchTrackPaper[]) {
@@ -1078,7 +1189,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
-    database.prepare("SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position FROM research_track_papers WHERE space_id = ? ORDER BY position, created_at")
+    database.prepare("SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position, created_at FROM research_track_papers WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackPaperRow>(),
     database.prepare("SELECT id, source_track_id, target_track_id, kind, relationship_zh, relationship_en, strength FROM research_track_edges WHERE space_id = ? ORDER BY strength DESC, created_at")
       .bind(spaceId).all<TrackEdgeRow>(),
@@ -1128,12 +1239,9 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   }));
   const paperEdges = paperEdgesResult.results.map(toPaperEdge);
   const uniquePaperCount = new Set(papersResult.results.map((paper) => paper.canonical_id)).size;
-  let networkSources: string[] = [];
-  try {
-    networkSources = paperNetworkState ? parseJsonArray(paperNetworkState.sources_json) : [];
-  } catch {
-    networkSources = [];
-  }
+  const storedNetworkState = paperNetworkState ? parseStoredPaperNetworkState(paperNetworkState.sources_json) : { sources: [], coverage: null };
+  const currentPaperRevision = researchPaperSetRevision(papersResult.results.map(toCoverageCandidate));
+  const storedCoverage = storedNetworkState.coverage;
   const needsStructure = tracks.length > 1 && !edges.length;
   const pendingTrackIds = tracks.filter((track) => track.buildStatus === "queued").map((track) => track.id);
   const intelligenceEligibleTracks = tracks.filter((track) => track.buildStatus === "ready" && track.papers.length > 0);
@@ -1144,14 +1252,21 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     paperEdges,
     paperNetwork: {
       status: paperNetworkState?.status || "idle",
-      paperCount: Math.min(uniquePaperCount, NETWORK_PAPER_LIMIT),
+      paperCount: uniquePaperCount,
+      totalPaperCount: uniquePaperCount,
       builtPaperCount: paperNetworkState?.built_paper_count || 0,
+      coveredPaperIds: storedCoverage?.coveredPaperIds || [],
+      coveredPaperHash: storedCoverage?.coveredPaperHash || "",
+      coverageRevision: storedCoverage?.coverageRevision || 0,
+      coverageCursor: storedCoverage?.nextCursor || 0,
+      paperRevision: currentPaperRevision,
+      builtPaperRevision: storedCoverage?.paperRevision || "",
       citationEdgeCount: paperEdges.filter((edge) => edge.kind === "citation").length,
       similarityEdgeCount: paperEdges.filter((edge) => edge.kind === "similarity").length,
       semanticEdgeCount: paperEdges.filter((edge) => edge.kind === "semantic").length,
       pathEdgeCount: paperEdges.filter((edge) => edge.kind === "path").length,
       model: paperNetworkState?.model || "",
-      sources: networkSources,
+      sources: storedNetworkState.sources,
       updatedAt: paperNetworkState?.updated_at || null,
       error: paperNetworkState?.error || null,
     },

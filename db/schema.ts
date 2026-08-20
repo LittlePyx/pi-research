@@ -674,6 +674,101 @@ export const researchPaperNetworkStates = sqliteTable(
   (table) => [index("idx_research_paper_network_states_status").on(table.status, table.updatedAt)],
 );
 
+export const researchNetworkCandidates = sqliteTable(
+  "research_network_candidates",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    canonicalId: text("canonical_id").notNull(),
+    s2PaperId: text("s2_paper_id"),
+    openalexId: text("openalex_id"),
+    doi: text("doi"),
+    title: text("title").notNull(),
+    authors: text("authors").notNull().default(""),
+    venue: text("venue").notNull().default(""),
+    url: text("url").notNull().default(""),
+    publishedAt: text("published_at"),
+    citationCount: integer("citation_count").notNull().default(0),
+    abstractText: text("abstract_text").notNull().default(""),
+    status: text("status").notNull().default("ghost"),
+    metadataSource: text("metadata_source").notNull().default("semantic-scholar"),
+    score: integer("score").notNull().default(0),
+    discoveredAt: text("discovered_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    lastSeenAt: text("last_seen_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    expiresAt: text("expires_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_research_network_candidates_space_canonical").on(table.spaceId, table.canonicalId),
+    index("idx_research_network_candidates_space_status_seen").on(table.spaceId, table.status, table.lastSeenAt),
+    index("idx_research_network_candidates_space_s2").on(table.spaceId, table.s2PaperId),
+  ],
+);
+
+export const researchNetworkCandidateEdges = sqliteTable(
+  "research_network_candidate_edges",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    seedPaperId: text("seed_paper_id").notNull().references(() => researchTrackPapers.id, { onDelete: "cascade" }),
+    candidateId: text("candidate_id").notNull().references(() => researchNetworkCandidates.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    direction: text("direction").notNull(),
+    isInfluential: integer("is_influential", { mode: "boolean" }).notNull().default(false),
+    intentsJson: text("intents_json").notNull().default("[]"),
+    contextsJson: text("contexts_json").notNull().default("[]"),
+    expansionKey: text("expansion_key").notNull().default(""),
+    seedSetJson: text("seed_set_json").notNull().default("[]"),
+    score: integer("score").notNull().default(0),
+    evidenceSource: text("evidence_source").notNull().default("semantic-scholar"),
+    firstSeenAt: text("first_seen_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    lastSeenAt: text("last_seen_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    expiresAt: text("expires_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_research_network_candidate_edges_unique").on(table.seedPaperId, table.candidateId, table.kind),
+    index("idx_research_network_candidate_edges_space_seed_seen").on(table.spaceId, table.seedPaperId, table.lastSeenAt),
+    index("idx_research_network_candidate_edges_space_candidate_seen").on(table.spaceId, table.candidateId, table.lastSeenAt),
+  ],
+);
+
+export const researchNetworkSeedExpansionStates = sqliteTable(
+  "research_network_seed_expansion_states",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    seedPaperId: text("seed_paper_id").notNull().references(() => researchTrackPapers.id, { onDelete: "cascade" }),
+    referenceOffset: integer("reference_offset").notNull().default(0),
+    citationOffset: integer("citation_offset").notNull().default(0),
+    status: text("status").notNull().default("idle"),
+    error: text("error"),
+    lastExpandedAt: text("last_expanded_at"),
+    expiresAt: text("expires_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_research_network_seed_expansion_unique").on(table.spaceId, table.seedPaperId),
+    index("idx_research_network_seed_expansion_fresh").on(table.spaceId, table.expiresAt),
+  ],
+);
+
+export const researchNetworkExpansionStates = sqliteTable(
+  "research_network_expansion_states",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    expansionKey: text("expansion_key").notNull(),
+    seedCanonicalIds: text("seed_canonical_ids").notNull().default("[]"),
+    recommendationOffset: integer("recommendation_offset").notNull().default(0),
+    status: text("status").notNull().default("idle"),
+    error: text("error"),
+    lastExpandedAt: text("last_expanded_at"),
+    expiresAt: text("expires_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_research_network_expansion_state_unique").on(table.spaceId, table.expansionKey),
+    index("idx_research_network_expansion_state_fresh").on(table.spaceId, table.expiresAt),
+  ],
+);
+
 export const learningPaths = sqliteTable(
   "learning_paths",
   {
