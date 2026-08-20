@@ -1,6 +1,8 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
+import { reconcileConfirmedResearchMapEvidence, upsertRouteGapResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -48,6 +50,7 @@ type TrackPaperRow = {
   rationale_en: string;
   position: number;
   created_at?: string;
+  provenance: "system_curated" | "user_confirmed";
 };
 type PaperEdgeRow = {
   id: string;
@@ -93,6 +96,7 @@ type ExistingPaperEvidence = {
   summary_en: string;
   rationale_zh: string;
   rationale_en: string;
+  provenance: "system_curated" | "user_confirmed";
 };
 type CrossrefDate = { "date-parts"?: number[][] };
 type CrossrefItem = {
@@ -143,21 +147,16 @@ type Selection = {
   rationaleZh: string;
   rationaleEn: string;
 };
-type RecommendedMapPaper = {
-  paper_id: string;
-  canonical_id: string;
-  doi: string | null;
-  title: string;
-  authors: string;
-  venue: string;
-  url: string;
-  published_at: string | null;
-  citation_count: number;
-  relevance_score: number;
+type TrackEvidenceCountRow = { track_id: string; confirmed_count: number; pending_count: number };
+type TrackLatestChangeRow = {
+  track_id: string;
+  kind: string;
+  title_zh: string;
+  title_en: string;
   summary_zh: string;
   summary_en: string;
-  contribution_zh: string;
-  contribution_en: string;
+  confidence: number;
+  created_at: string;
 };
 type DirectionIntelligenceDraft = {
   directionKey: string;
@@ -395,8 +394,11 @@ async function ownedSpace(request: Request, spaceId: string) {
 }
 
 async function importedMemory(database: D1Database, spaceId: string) {
-  const rows = await database.prepare("SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5")
-    .bind(spaceId).all<{ analysis_json: string }>();
+  const [rows, preferenceSignals] = await Promise.all([
+    database.prepare("SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5")
+      .bind(spaceId).all<{ analysis_json: string }>(),
+    readPreferenceSignals(database, spaceId, 24),
+  ]);
   const memory: string[] = [];
   for (const row of rows.results) {
     try {
@@ -406,6 +408,7 @@ async function importedMemory(database: D1Database, spaceId: string) {
       // A malformed historical profile should not prevent a map refresh.
     }
   }
+  memory.push(...preferenceSignals.map((signal) => `${signal.layer} ${signal.kind}: ${signal.labelEn}${signal.evidence ? ` — ${signal.evidence}` : ""}`));
   return Array.from(new Set(memory.map(cleanText).filter(Boolean))).join("; ").slice(0, 2600);
 }
 
@@ -457,133 +460,6 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
   return parseDeepSeekJsonPayload<T>(choice?.message?.content || "", choice?.finish_reason || "unknown");
 }
 
-async function reconcileRecentRecommendations(database: D1Database, workspaceId: string, space: SpaceRow, apiKey: string) {
-  const papers = await database.prepare(
-    `SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at,
-     p.citation_count, i.llm_relevance_score AS relevance_score, i.summary_zh, i.summary_en,
-     i.contribution_zh, i.contribution_en
-     FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
-     WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek'
-      AND p.discovered_at >= datetime('now', '-7 days')
-      AND NOT EXISTS (SELECT 1 FROM research_map_changes c WHERE c.paper_id = p.id AND c.space_id = p.space_id)
-     ORDER BY p.discovered_at DESC LIMIT 12`,
-  ).bind(space.id).all<RecommendedMapPaper>();
-  if (!papers.results.length) return 0;
-  const tracks = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_zh, summary_en FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 12",
-  ).bind(space.id).all<{ id: string; title_zh: string; title_en: string; summary_zh: string; summary_en: string }>();
-  if (!tracks.results.length) return 0;
-  const directMatches = await database.prepare(
-    `SELECT tp.canonical_id, tp.track_id, tp.role, tp.rationale_zh, tp.rationale_en
-     FROM research_track_papers tp
-     WHERE tp.space_id = ? AND tp.canonical_id IN (${papers.results.map(() => "?").join(", ")})`,
-  ).bind(space.id, ...papers.results.map((paper) => paper.canonical_id)).all<{
-    canonical_id: string; track_id: string; role: string; rationale_zh: string; rationale_en: string;
-  }>();
-  const trackById = new Map(tracks.results.map((track) => [track.id, track]));
-  const paperById = new Map(papers.results.map((paper) => [paper.canonical_id, paper]));
-  const assigned = new Set<string>();
-  let reconciled = 0;
-  for (const match of directMatches.results) {
-    const paper = paperById.get(match.canonical_id);
-    const track = trackById.get(match.track_id);
-    if (!paper || !track || assigned.has(paper.canonical_id)) continue;
-    assigned.add(paper.canonical_id);
-    await database.prepare(
-      `INSERT OR IGNORE INTO research_map_changes
-       (id, space_id, track_id, paper_id, kind, title_zh, title_en, summary_zh, summary_en, confidence)
-       VALUES (?, ?, ?, ?, 'new_evidence', ?, ?, ?, ?, ?)`,
-    ).bind(crypto.randomUUID(), space.id, match.track_id, paper.paper_id,
-      `${track.title_zh}新增证据：${paper.title}`.slice(0, 420), `New evidence for ${track.title_en}: ${paper.title}`.slice(0, 520),
-      match.rationale_zh || paper.summary_zh, match.rationale_en || paper.summary_en, paper.relevance_score).run();
-    reconciled += 1;
-  }
-  const unmatched = papers.results.filter((paper) => !assigned.has(paper.canonical_id));
-  if (!unmatched.length || !apiKey) return reconciled;
-  const date = new Date().toISOString().slice(0, 10);
-  const markerScope = "map-reconcile-space:" + space.id;
-  if (await usageCount(database, markerScope, date)) return reconciled;
-  const compactTracks = tracks.results.slice(0, 10).map((track) => ({
-    id: track.id,
-    titleZh: cleanText(track.title_zh).slice(0, 120),
-    titleEn: cleanText(track.title_en).slice(0, 160),
-    summaryZh: cleanText(track.summary_zh).slice(0, 260),
-    summaryEn: cleanText(track.summary_en).slice(0, 320),
-  }));
-  const compactPaper = (paper: RecommendedMapPaper) => ({
-    canonicalId: paper.canonical_id,
-    title: cleanText(paper.title).slice(0, 260),
-    summaryZh: cleanText(paper.summary_zh).slice(0, 360),
-    summaryEn: cleanText(paper.summary_en).slice(0, 440),
-    contributionZh: cleanText(paper.contribution_zh).slice(0, 320),
-    contributionEn: cleanText(paper.contribution_en).slice(0, 400),
-  });
-  const requestAssignments = (input: RecommendedMapPaper[], maxTokens: number, reasoningEffort: "low" | "medium") => callDeepSeek<{ assignments?: Array<Record<string, unknown>> }>(
-    database,
-    workspaceId,
-    "You are Pi Research's evidence-disciplined research-map routing editor. Return strict JSON.",
-    [
-      "Return {\"assignments\":[...]} and assess every supplied recommended paper.",
-      "Each assignment needs canonicalId, trackId, mapRole (milestone|frontier), rationaleZh, rationaleEn, confidence (0-100).",
-      "Choose the single route the paper most credibly extends, supports, challenges, or bridges. Use an empty trackId only if all listed routes would be misleading.",
-      "Ground rationales in the supplied summary and contribution. Do not infer a theorem, method, or result that the evidence does not state.",
-      "Keep each bilingual rationale to one concise sentence so the JSON completes within the response budget.",
-      `Research space: ${cleanText(space.name).slice(0, 180)} — ${cleanText(space.description).slice(0, 600)}`,
-      `Routes: ${JSON.stringify(compactTracks)}`,
-      `Recommended papers: ${JSON.stringify(input.map(compactPaper))}`,
-    ].join("\n"),
-    maxTokens,
-    apiKey,
-    { reasoningEffort },
-  );
-  const primaryReconcileInput = unmatched.slice(0, 6);
-  const reducedReconcileInput = primaryReconcileInput.slice(0, Math.max(1, Math.ceil(primaryReconcileInput.length / 2)));
-  let reconciledInput = primaryReconcileInput;
-  let parsed: { assignments?: Array<Record<string, unknown>> };
-  try {
-    parsed = await requestAssignments(primaryReconcileInput, 3200, "medium");
-  } catch (error) {
-    if (!isRetryableDeepSeekJsonError(error)) throw error;
-    reconciledInput = reducedReconcileInput;
-    parsed = await requestAssignments(reducedReconcileInput, 2200, "low");
-  }
-  const reconciledInputIds = new Set(reconciledInput.map((paper) => paper.canonical_id));
-  const validTrackIds = new Set(tracks.results.map((track) => track.id));
-  for (const raw of parsed.assignments || []) {
-    const canonicalId = cleanText(String(raw.canonicalId || ""));
-    const trackId = cleanText(String(raw.trackId || ""));
-    const paper = paperById.get(canonicalId);
-    const track = trackById.get(trackId);
-    const rationaleZh = cleanText(String(raw.rationaleZh || "")).slice(0, 700);
-    const rationaleEn = cleanText(String(raw.rationaleEn || "")).slice(0, 900);
-    if (!reconciledInputIds.has(canonicalId) || !paper || !track || !validTrackIds.has(trackId) || !rationaleZh || !rationaleEn) continue;
-    const role: ResearchTrackRole = raw.mapRole === "milestone" ? "milestone" : "frontier";
-    await database.batch([
-      database.prepare(
-        `INSERT OR IGNORE INTO research_track_papers
-         (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role,
-          summary_zh, summary_en, rationale_zh, rationale_en, position)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          (SELECT COALESCE(MAX(position) + 1, 0) FROM research_track_papers WHERE track_id = ?))`,
-      ).bind(crypto.randomUUID(), trackId, space.id, paper.canonical_id, paper.doi, paper.title, paper.authors, paper.venue,
-        paper.url, paper.published_at, paper.citation_count, role, paper.summary_zh, paper.summary_en, rationaleZh, rationaleEn, trackId),
-      database.prepare(
-        `INSERT OR IGNORE INTO research_map_changes
-         (id, space_id, track_id, paper_id, kind, title_zh, title_en, summary_zh, summary_en, confidence)
-         VALUES (?, ?, ?, ?, 'new_evidence', ?, ?, ?, ?, ?)`,
-      ).bind(crypto.randomUUID(), space.id, trackId, paper.paper_id,
-        `${track.title_zh}新增证据：${paper.title}`.slice(0, 420), `New evidence for ${track.title_en}: ${paper.title}`.slice(0, 520),
-        rationaleZh, rationaleEn, boundedScore(raw.confidence, paper.relevance_score)),
-      database.prepare(
-        "UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?",
-      ).bind(trackId, space.id),
-    ]);
-    reconciled += 1;
-  }
-  await recordUsage(database, markerScope, date, 0, 0);
-  return reconciled;
-}
-
 async function generateDirections(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, apiKey: string) {
   const parsed = await callDeepSeek<{ directions?: Array<Partial<DirectionDraft>>; relationships?: Array<Partial<DirectionRelationship>> }>(
     database,
@@ -597,7 +473,7 @@ async function generateDirections(database: D1Database, workspaceId: string, spa
       "Directions must be intellectually meaningful branches, not generic labels such as background, methods, or applications.",
       "The summaries should state the central question and how this branch relates to the user's scope. Do not claim any specific paper or result yet.",
       `Research space: ${space.name} — ${space.description}`,
-      `User-confirmed research memory: ${memory || "none"}`,
+      `Research memory and preference evidence: ${memory || "none"}`,
     ].join("\n"),
     8000,
     apiKey,
@@ -693,7 +569,7 @@ async function selectPapers(
   candidates: MapCandidate[],
   mode: "initialize" | "expand",
   apiKey: string,
-  existingEvidence: Array<{ canonicalId: string; title: string; publishedAt: string | null; role: ResearchTrackRole; summaryEn: string; rationaleEn: string }> = [],
+  existingEvidence: Array<{ canonicalId: string; title: string; publishedAt: string | null; role: ResearchTrackRole; summaryEn: string; rationaleEn: string; provenance: "system_curated" | "user_confirmed" }> = [],
 ) {
   const compact = candidates.map((item) => ({
     directionKey: item.directionKey,
@@ -723,9 +599,10 @@ async function selectPapers(
       "Citation count is a noisy signal, not proof. Prefer intellectual representativeness and direct fit. A famous paper outside the exact direction must be rejected.",
       "Summary must explain the paper's question, approach, and evidenced contribution. Rationale must explain why it occupies this exact position in the development route. Never invent results not supported by metadata.",
       `Research space: ${space.name} — ${space.description}`,
-      `User-confirmed research memory: ${memory || "none"}`,
+      `Research memory and preference evidence: ${memory || "none"}`,
       `Directions: ${JSON.stringify(directions)}`,
-      `Existing accepted route papers: ${JSON.stringify(existingEvidence)}`,
+      "Existing route papers include provenance. system_curated means Pi selected the paper as useful context; user_confirmed alone means the user accepted it as formal evidence.",
+      `Existing route papers: ${JSON.stringify(existingEvidence)}`,
       `Candidate records: ${JSON.stringify(compact)}`,
     ].join("\n"),
     20000,
@@ -756,7 +633,7 @@ async function interpretDirection(
   space: SpaceRow,
   memory: string,
   track: TrackRow,
-  evidence: Array<{ canonicalId: string; title: string; authors: string; venue: string; publishedAt: string | null; citations: number; role: ResearchTrackRole; summaryZh: string; summaryEn: string; rationaleZh: string; rationaleEn: string }>,
+  evidence: Array<{ canonicalId: string; title: string; authors: string; venue: string; publishedAt: string | null; citations: number; role: ResearchTrackRole; summaryZh: string; summaryEn: string; rationaleZh: string; rationaleEn: string; provenance: "system_curated" | "user_confirmed" }>,
   apiKey: string,
 ) {
   if (!evidence.length) return null;
@@ -769,12 +646,12 @@ async function interpretDirection(
       "Assessment: synthesize the direction's current intellectual state and the most important unresolved tension; do not merely summarize titles.",
       "Opportunity: give one concrete, high-value next research move tailored to the user's confirmed memory, depth, and open questions.",
       "Watch signal: name a specific observable theorem, method, empirical result, benchmark shift, or new connection that would materially change the assessment.",
-      "Evidence gap: identify the most consequential claim or branch that the accepted papers still cannot support. nextSearchQuery: provide one concise English scholarly query that targets the missing evidence.",
-      "Use 2-6 exact evidenceCanonicalIds from supplied accepted papers. Distinguish metadata-supported statements from your synthesis, state uncertainty, and lower confidence when abstracts or evidence are sparse.",
+      "Evidence gap: identify the most consequential claim or branch that the available route papers still cannot support. nextSearchQuery: provide one concise English scholarly query that targets the missing evidence.",
+      "Use 2-6 exact evidenceCanonicalIds from supplied route papers. Treat system_curated papers as provisional context and user_confirmed papers as formal user evidence. Never describe system-curated material as user accepted. Distinguish metadata-supported statements from your synthesis, state uncertainty, and lower confidence when abstracts or evidence are sparse.",
       `Research space: ${space.name} — ${space.description}`,
-      `User-confirmed research memory: ${memory || "none"}`,
+      `Research memory and preference evidence: ${memory || "none"}`,
       `Direction: ${JSON.stringify({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, userRole: track.user_role, depthScore: track.depth_score + track.interaction_score, supportScore: track.support_score })}`,
-      `Accepted evidence papers: ${JSON.stringify(evidence)}`,
+      `Route evidence papers: ${JSON.stringify(evidence)}`,
     ].join("\n"),
     7000,
     apiKey,
@@ -805,6 +682,7 @@ function toPaper(row: TrackPaperRow): ResearchTrackPaper {
     rationaleZh: row.rationale_zh,
     rationaleEn: row.rationale_en,
     position: row.position,
+    provenance: row.provenance,
   };
 }
 
@@ -970,7 +848,7 @@ async function generatePaperNetworkEdges(
       "Use the supplied summaries and route rationales. Omit uncertain relationships, avoid generic 'related work' wording, and explain the precise conceptual or methodological connection in one concise sentence per language.",
       "Do not duplicate an actual citation as a semantic edge. Do not connect papers merely because they share a direction label.",
       `Research space: ${space.name} — ${space.description}`,
-      `User-confirmed research memory: ${memory || "none"}`,
+      `Research memory and preference evidence: ${memory || "none"}`,
       `Papers: ${JSON.stringify(input)}`,
       `Actual citation pairs (source cites target): ${JSON.stringify(citationEdges.filter((edge) => inputIds.has(edge.sourcePaperId) && inputIds.has(edge.targetPaperId)).map((edge) => [edge.sourcePaperId, edge.targetPaperId]))}`,
       ].join("\n"),
@@ -1257,7 +1135,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
     "Each edge needs sourceTrackId, targetTrackId, kind (builds_on|bridges|supports), relationshipZh, relationshipEn, strength.",
     "Build a connected main backbone that gives a clear learning/development path, then add only meaningful cross-direction bridge edges. Never create self-edges.",
     `Research space: ${space.name} — ${space.description}`,
-    `User-confirmed memory: ${memory || "none"}`,
+    `Research memory and preference evidence: ${memory || "none"}`,
     `Existing directions: ${JSON.stringify(tracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, paperCountHint: track.expansion_count, searchQueries: parseJsonArray(track.search_queries) })))}`,
   ].join("\n"), 10000, apiKey);
   const validIds = new Set(tracks.results.map((track) => track.id));
@@ -1265,7 +1143,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
     const trackId = cleanText(profile.trackId || "");
     if (!validIds.has(trackId)) continue;
     const userRole = DIRECTION_ROLES.has(profile.userRole as ResearchDirectionRole) ? profile.userRole as ResearchDirectionRole : "explore";
-    await database.prepare("UPDATE research_tracks SET user_role = ?, depth_score = ?, support_score = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+    await database.prepare("UPDATE research_tracks SET user_role = ?, depth_score = ?, support_score = ?, intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
       .bind(userRole, boundedScore(profile.depthScore), boundedScore(profile.supportScore), trackId, space.id).run();
   }
   await database.prepare("DELETE FROM research_track_edges WHERE space_id = ?").bind(space.id).run();
@@ -1284,10 +1162,21 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 }
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState] = await Promise.all([
+  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
-    database.prepare("SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position, created_at FROM research_track_papers WHERE space_id = ? ORDER BY position, created_at")
+    database.prepare(
+      `SELECT tp.id, tp.track_id, tp.canonical_id, tp.doi, tp.title, tp.authors, tp.venue, tp.url,
+       tp.published_at, tp.citation_count, tp.role, tp.summary_zh, tp.summary_en, tp.rationale_zh,
+       tp.rationale_en, tp.position, tp.created_at,
+       CASE WHEN EXISTS (
+        SELECT 1 FROM research_map_evidence_proposals ep
+        JOIN monitored_papers mp ON mp.id = ep.paper_id AND mp.space_id = ep.space_id
+        WHERE ep.space_id = tp.space_id AND ep.track_id = tp.track_id
+         AND mp.canonical_id = tp.canonical_id AND ep.status = 'confirmed'
+       ) THEN 'user_confirmed' ELSE 'system_curated' END AS provenance
+       FROM research_track_papers tp WHERE tp.space_id = ? ORDER BY tp.position, tp.created_at`,
+    )
       .bind(spaceId).all<TrackPaperRow>(),
     database.prepare("SELECT id, source_track_id, target_track_id, kind, relationship_zh, relationship_en, strength FROM research_track_edges WHERE space_id = ? ORDER BY strength DESC, created_at")
       .bind(spaceId).all<TrackEdgeRow>(),
@@ -1295,7 +1184,24 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       .bind(spaceId).all<PaperEdgeRow>(),
     database.prepare("SELECT status, built_paper_count, model, sources_json, error, updated_at FROM research_paper_network_states WHERE space_id = ? LIMIT 1")
       .bind(spaceId).first<PaperNetworkStateRow>(),
+    database.prepare(
+      `SELECT track_id,
+       SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed_count,
+       SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count
+       FROM research_map_evidence_proposals
+       WHERE space_id = ? AND status IN ('confirmed', 'pending') GROUP BY track_id`,
+    ).bind(spaceId).all<TrackEvidenceCountRow>(),
+    database.prepare(
+      `SELECT track_id, kind, title_zh, title_en, summary_zh, summary_en, confidence, created_at
+       FROM (
+        SELECT track_id, kind, title_zh, title_en, summary_zh, summary_en, confidence, created_at,
+         ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY created_at DESC, rowid DESC) AS change_rank
+        FROM research_map_changes WHERE space_id = ?
+       ) WHERE change_rank = 1`,
+    ).bind(spaceId).all<TrackLatestChangeRow>(),
   ]);
+  const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
+  const latestChangeByTrack = new Map(latestChangesResult.results.map((row) => [row.track_id, row]));
   const papersByTrack = new Map<string, ResearchTrackPaper[]>();
   for (const row of papersResult.results) papersByTrack.set(row.track_id, [...(papersByTrack.get(row.track_id) || []), toPaper(row)]);
   const heatByTrack = new Map(tracksResult.results.map((row) => [row.id, heatEvidence(papersByTrack.get(row.id) || [])]));
@@ -1321,6 +1227,20 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       return heatLevel(score, evidence.recentPaperCount);
     })(),
     recentPaperCount: heatByTrack.get(row.id)?.recentPaperCount || 0,
+    confirmedEvidenceCount: Number(evidenceCountsByTrack.get(row.id)?.confirmed_count || 0),
+    pendingEvidenceCount: Number(evidenceCountsByTrack.get(row.id)?.pending_count || 0),
+    latestChange: (() => {
+      const change = latestChangeByTrack.get(row.id);
+      return change ? {
+        kind: change.kind,
+        titleZh: change.title_zh,
+        titleEn: change.title_en,
+        summaryZh: change.summary_zh,
+        summaryEn: change.summary_en,
+        confidence: change.confidence,
+        createdAt: change.created_at,
+      } : null;
+    })(),
     buildStatus: row.expansion_count < 0 ? "queued" : "ready",
     intelligence: parseStoredIntelligence(row),
     updatedAt: row.updated_at,
@@ -1391,7 +1311,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "expand-gap" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -1408,8 +1328,8 @@ export async function POST(request: Request) {
     }
 
     if (payload.action === "reconcile") {
-      const reconciledCount = await reconcileRecentRecommendations(database, workspaceId, space, apiKey);
-      return Response.json(await readMap(database, space.id, { reconciledCount }));
+      const reconciled = await reconcileConfirmedResearchMapEvidence(database, space.id);
+      return Response.json(await readMap(database, space.id, { reconciledCount: reconciled.changed }));
     }
 
     if (payload.action === "activity") {
@@ -1449,6 +1369,7 @@ export async function POST(request: Request) {
     }
 
     const hydrating = payload.action === "hydrate";
+    const gapExpanding = payload.action === "expand-gap";
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
       "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
@@ -1457,26 +1378,41 @@ export async function POST(request: Request) {
     if (hydrating && track.expansion_count >= 0) return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
     const queries = parseJsonArray(track.search_queries);
     if (!queries.length) throw new Error("This direction has no usable discovery queries");
+    const gapQuery = gapExpanding ? parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
+    if (gapExpanding && !gapQuery) {
+      return Response.json({ error: "Refresh Pi's direction assessment before scanning this evidence gap" }, { status: 422 });
+    }
     const direction: DirectionDraft = {
       key: track.id,
       titleZh: track.title_zh,
       titleEn: track.title_en,
       summaryZh: track.summary_zh,
       summaryEn: track.summary_en,
-      searchQueries: queries,
+      searchQueries: gapExpanding ? [gapQuery] : queries,
       userRole: track.user_role,
       depthScore: track.depth_score,
       supportScore: track.support_score,
     };
-    const existing = await database.prepare("SELECT canonical_id, title, authors, venue, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en FROM research_track_papers WHERE track_id = ? ORDER BY position")
+    const existing = await database.prepare(
+      `SELECT tp.canonical_id, tp.title, tp.authors, tp.venue, tp.published_at, tp.citation_count, tp.role,
+       tp.summary_zh, tp.summary_en, tp.rationale_zh, tp.rationale_en,
+       CASE WHEN EXISTS (
+        SELECT 1 FROM research_map_evidence_proposals ep
+        JOIN monitored_papers mp ON mp.id = ep.paper_id AND mp.space_id = ep.space_id
+        WHERE ep.space_id = tp.space_id AND ep.track_id = tp.track_id
+         AND mp.canonical_id = tp.canonical_id AND ep.status = 'confirmed'
+       ) THEN 'user_confirmed' ELSE 'system_curated' END AS provenance
+       FROM research_track_papers tp WHERE tp.track_id = ? ORDER BY tp.position`,
+    )
       .bind(track.id).all<ExistingPaperEvidence>();
     const existingEvidence = existing.results.map((item) => ({
       canonicalId: item.canonical_id, title: item.title, authors: item.authors, venue: item.venue, publishedAt: item.published_at,
       citations: item.citation_count, role: item.role, summaryZh: item.summary_zh, summaryEn: item.summary_en, rationaleZh: item.rationale_zh, rationaleEn: item.rationale_en,
+      provenance: item.provenance,
     }));
     if (payload.action === "interpret") {
       const intelligence = await interpretDirection(database, workspaceId, space, memory, track, existingEvidence, apiKey);
-      if (!intelligence) return Response.json({ error: "This direction does not yet have enough accepted evidence for a grounded assessment" }, { status: 422 });
+      if (!intelligence) return Response.json({ error: "This direction does not yet have enough grounded evidence for an assessment" }, { status: 422 });
       await saveDirectionIntelligence(database, space.id, track.id, intelligence);
       return Response.json(await readMap(database, space.id, { interpretedTrackId: track.id }));
     }
@@ -1493,25 +1429,53 @@ export async function POST(request: Request) {
       candidates,
       hydrating ? "initialize" : "expand",
       apiKey,
-      existingEvidence.map((item) => ({ canonicalId: item.canonicalId, title: item.title, publishedAt: item.publishedAt, role: item.role, summaryEn: item.summaryEn, rationaleEn: item.rationaleEn })),
+      existingEvidence.map((item) => ({ canonicalId: item.canonicalId, title: item.title, publishedAt: item.publishedAt, role: item.role, summaryEn: item.summaryEn, rationaleEn: item.rationaleEn, provenance: item.provenance })),
     ) : { selections: [], intelligence: [] };
     const selections = reviewed.selections;
     const candidateById = new Map(candidates.map((item) => [item.canonicalId, item]));
     const inserted = new Set<string>();
     let position = existing.results.length;
     let addedCount = 0;
-    for (const selection of selections) {
-      const candidate = candidateById.get(selection.canonicalId);
-      if (!candidate || inserted.has(selection.canonicalId)) continue;
-      inserted.add(selection.canonicalId);
-      await database.prepare(
-        `INSERT OR IGNORE INTO research_track_papers
-         (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(crypto.randomUUID(), track.id, space.id, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
-        candidate.url, candidate.publishedAt, candidate.citationCount, selection.role, selection.summaryZh, selection.summaryEn,
-        selection.rationaleZh, selection.rationaleEn, position++).run();
-      addedCount += 1;
+    if (gapExpanding) {
+      const gapInputs = selections.flatMap((selection) => {
+        const candidate = candidateById.get(selection.canonicalId);
+        if (!candidate || inserted.has(selection.canonicalId)) return [];
+        inserted.add(selection.canonicalId);
+        return [{
+          canonicalId: candidate.canonicalId,
+          doi: candidate.doi,
+          title: candidate.title,
+          authors: candidate.authors,
+          venue: candidate.venue,
+          url: candidate.url,
+          publishedAt: candidate.publishedAt,
+          citationCount: candidate.citationCount,
+          abstractText: candidate.abstractText,
+          mapRole: selection.role,
+          summaryZh: selection.summaryZh,
+          summaryEn: selection.summaryEn,
+          rationaleZh: selection.rationaleZh,
+          rationaleEn: selection.rationaleEn,
+          confidence: reviewed.intelligence[0]?.confidence || 75,
+          model: MODEL,
+        }];
+      });
+      const persisted = await upsertRouteGapResearchMapEvidence(database, space.id, track.id, gapInputs);
+      addedCount = persisted.pendingCount;
+    } else {
+      for (const selection of selections) {
+        const candidate = candidateById.get(selection.canonicalId);
+        if (!candidate || inserted.has(selection.canonicalId)) continue;
+        inserted.add(selection.canonicalId);
+        await database.prepare(
+          `INSERT OR IGNORE INTO research_track_papers
+           (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(crypto.randomUUID(), track.id, space.id, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
+          candidate.url, candidate.publishedAt, candidate.citationCount, selection.role, selection.summaryZh, selection.summaryEn,
+          selection.rationaleZh, selection.rationaleEn, position++).run();
+        addedCount += 1;
+      }
     }
     if (hydrating) {
       await database.prepare("UPDATE research_tracks SET expansion_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?").bind(track.id, space.id).run();
@@ -1519,8 +1483,14 @@ export async function POST(request: Request) {
       await database.prepare("UPDATE research_tracks SET expansion_count = expansion_count + 1, interaction_score = MIN(35, interaction_score + 5), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
         .bind(track.id, space.id).run();
     }
-    await saveDirectionIntelligence(database, space.id, track.id, reviewed.intelligence[0] || null);
-    return Response.json(await readMap(database, space.id, { cached: false, addedCount, hydratedTrackId: hydrating ? track.id : null }));
+    if (!gapExpanding) await saveDirectionIntelligence(database, space.id, track.id, reviewed.intelligence[0] || null);
+    return Response.json(await readMap(database, space.id, {
+      cached: false,
+      addedCount,
+      hydratedTrackId: hydrating ? track.id : null,
+      gapExpanded: gapExpanding,
+      gapQuery: gapExpanding ? gapQuery : undefined,
+    }));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to build the research map" }, { status: 502 });
   }
@@ -1536,7 +1506,7 @@ export async function PATCH(request: Request) {
     }
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
-    await context.database.prepare("UPDATE research_tracks SET user_role = ?, interaction_score = MIN(35, interaction_score + 3), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+    await context.database.prepare("UPDATE research_tracks SET user_role = ?, interaction_score = MIN(35, interaction_score + 3), intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
       .bind(payload.userRole, trackId, context.space.id).run();
     return Response.json(await readMap(context.database, context.space.id));
   } catch (error) {

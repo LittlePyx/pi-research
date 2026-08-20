@@ -45,6 +45,21 @@ test("research-network expansion uses verified external relations, cache, and co
   assert.match(route, /recommendation_offset/);
   assert.match(route, /status = 'dismissed'/);
   assert.match(route, /status = 'accepted'/);
+  assert.match(route, /confirmedExternalResearchMapEvidenceStatements/);
+  assert.match(route, /statements\.push[\s\S]*confirmedExternalResearchMapEvidenceStatements[\s\S]*await database\.batch\(statements\)/);
+});
+
+test("candidate acceptance uses stable conflict-safe identities and one atomic write batch", async () => {
+  const route = await readFile(routePath, "utf8");
+  const patchBlock = route.slice(route.indexOf("export async function PATCH"));
+  assert.match(patchBlock, /`network-monitored:\$\{candidateId\}`/);
+  assert.match(patchBlock, /`network-paper:\$\{trackId\}:\$\{candidateId\}`/);
+  assert.match(patchBlock, /`network-accept:\$\{trackId\}:\$\{candidateId\}`/);
+  assert.match(patchBlock, /SELECT COALESCE\(MAX\(position\), -1\) \+ 1 FROM research_track_papers/);
+  assert.match(patchBlock, /ON CONFLICT DO UPDATE SET/);
+  assert.doesNotMatch(patchBlock, /existingFormal|existingMonitoredPaper|position = await|crypto\.randomUUID\(\)/);
+  assert.match(patchBlock, /paperCanonicalId: candidate\.canonicalId/);
+  assert.match(patchBlock, /await database\.batch\(statements\)/);
 });
 
 test("S2 empty pages remain retryable and bounded OpenAlex discovery supplies real one-hop relations", async () => {

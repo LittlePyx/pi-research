@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const researchSpaces = sqliteTable(
   "research_spaces",
@@ -654,6 +654,41 @@ export const researchTrackPapers = sqliteTable(
     index("idx_research_track_papers_track_position").on(table.trackId, table.position),
   ],
 );
+
+export const researchMapEvidenceProposals = sqliteTable(
+  "research_map_evidence_proposals",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    scanJobId: text("scan_job_id").references(() => monitorScanJobs.id, { onDelete: "set null" }),
+    mapRole: text("map_role").notNull().default("frontier"),
+    rationaleZh: text("rationale_zh").notNull().default(""),
+    rationaleEn: text("rationale_en").notNull().default(""),
+    confidence: integer("confidence").notNull().default(0),
+    status: text("status").notNull().default("pending"),
+    decidedAt: text("decided_at"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_map_evidence_proposals_identity").on(table.spaceId, table.trackId, table.paperId),
+    index("idx_research_map_evidence_proposals_space_status").on(table.spaceId, table.status, table.updatedAt),
+    index("idx_research_map_evidence_proposals_paper_status").on(table.paperId, table.status),
+    check("research_map_evidence_proposals_status_check", sql`${table.status} in ('pending', 'confirmed', 'dismissed')`),
+  ],
+);
+
+// Keep the runtime bootstrap idempotent with migration 0026. Sites can execute
+// application startup before a pending migration on an existing D1 database,
+// so both paths must be able to create the same table safely.
+export const researchMapEvidenceProposalBootstrapSql = [
+  "CREATE TABLE IF NOT EXISTS research_map_evidence_proposals (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, paper_id TEXT NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, scan_job_id TEXT REFERENCES monitor_scan_jobs(id) ON DELETE SET NULL, map_role TEXT NOT NULL DEFAULT 'frontier', rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', confidence INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'dismissed')), decided_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_map_evidence_proposals_identity ON research_map_evidence_proposals(space_id, track_id, paper_id)",
+  "CREATE INDEX IF NOT EXISTS idx_research_map_evidence_proposals_space_status ON research_map_evidence_proposals(space_id, status, updated_at)",
+  "CREATE INDEX IF NOT EXISTS idx_research_map_evidence_proposals_paper_status ON research_map_evidence_proposals(paper_id, status)",
+] as const;
 
 export const researchPaperEdges = sqliteTable(
   "research_paper_edges",

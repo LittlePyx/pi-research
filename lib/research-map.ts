@@ -2,6 +2,7 @@ export type ResearchTrackRole = "foundation" | "milestone" | "frontier";
 export type ResearchDirectionRole = "core" | "support" | "explore";
 export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
 export type ResearchTrackBuildStatus = "queued" | "ready";
+export type ResearchEvidenceProvenance = "system_curated" | "user_confirmed";
 export type ResearchPaperEdgeKind = "citation" | "similarity" | "semantic" | "path";
 export type ResearchPaperNetworkStatus = "idle" | "building" | "ready" | "partial" | "error";
 
@@ -162,6 +163,17 @@ export type ResearchTrackPaper = {
   rationaleZh: string;
   rationaleEn: string;
   position: number;
+  provenance?: ResearchEvidenceProvenance;
+};
+
+export type ResearchTrackLatestChange = {
+  kind: string;
+  titleZh: string;
+  titleEn: string;
+  summaryZh: string;
+  summaryEn: string;
+  confidence: number;
+  createdAt: string;
 };
 
 export type ResearchTrack = {
@@ -178,6 +190,9 @@ export type ResearchTrack = {
   heatScore: number;
   heatLevel: ResearchHeatLevel;
   recentPaperCount: number;
+  confirmedEvidenceCount: number;
+  pendingEvidenceCount: number;
+  latestChange: ResearchTrackLatestChange | null;
   buildStatus: ResearchTrackBuildStatus;
   intelligence: ResearchDirectionIntelligence | null;
   updatedAt: string;

@@ -26,6 +26,7 @@ import {
   verifiedRelationFallbackEdge,
   verifiedSeedCoverage,
 } from "../../../lib/research-network";
+import { confirmedExternalResearchMapEvidenceStatements } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar, SemanticScholarQuotaError, SemanticScholarRateLimitError } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string };
@@ -1646,63 +1647,88 @@ export async function PATCH(request: Request) {
     ).bind(candidateId, spaceId).first<{ track_id: string }>();
     trackId = fallback?.track_id || "";
   }
-  const track = trackId ? await database.prepare("SELECT id FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1").bind(trackId, spaceId).first<{ id: string }>() : null;
+  const track = trackId ? await database.prepare("SELECT id, title_zh, title_en FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1")
+    .bind(trackId, spaceId).first<{ id: string; title_zh: string; title_en: string }>() : null;
   if (!track) return Response.json({ error: "A valid target track is required to accept this candidate" }, { status: 400 });
   const role = TRACK_ROLES.has(cleanText(body.role)) ? cleanText(body.role) : "frontier";
-  const existingFormal = await database.prepare("SELECT id FROM research_track_papers WHERE track_id = ? AND canonical_id = ? LIMIT 1")
-    .bind(trackId, candidate.canonicalId).first<{ id: string }>();
-  const formalId = existingFormal?.id || crypto.randomUUID();
+  const stableFormalId = `network-paper:${trackId}:${candidateId}`;
+  const relationKinds = Array.from(new Set(candidate.relations.map((relation) => relation.kind)));
+  const verifiedDirect = relationKinds.some((kind) => kind === "reference" || kind === "citation");
+  const directSources = new Set(candidate.relations.filter((relation) => relation.kind !== "recommendation").map((relation) => relation.evidenceSource));
+  const relationSourceZh = directSources.size > 1 ? "Semantic Scholar 与 OpenAlex"
+    : directSources.has("openalex") ? "OpenAlex" : "Semantic Scholar";
+  const relationSourceEn = relationSourceZh;
+  const rationaleZh = verifiedDirect
+    ? `该论文通过 ${relationSourceZh} 核验的真实引用或被引关系从当前研究种子扩展，并由用户确认收录。`
+    : "该论文由外部学术图谱基于当前研究种子推荐，并由用户确认收录；其引用关系仍待后续核验。";
+  const rationaleEn = verifiedDirect
+    ? `The paper was expanded from the current seeds through a citation relation verified by ${relationSourceEn} and then accepted by the user.`
+    : "The paper was recommended by an external academic graph from the current seeds and accepted by the user; direct citation evidence remains to be verified.";
+  const monitoredPaperId = `network-monitored:${candidateId}`;
   const statements: D1PreparedStatement[] = [];
-  if (!existingFormal) {
-    const position = await database.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS position FROM research_track_papers WHERE track_id = ?")
-      .bind(trackId).first<{ position: number }>();
-    const relationKinds = Array.from(new Set(candidate.relations.map((relation) => relation.kind)));
-    const verifiedDirect = relationKinds.some((kind) => kind === "reference" || kind === "citation");
-    const directSources = new Set(candidate.relations.filter((relation) => relation.kind !== "recommendation").map((relation) => relation.evidenceSource));
-    const relationSourceZh = directSources.size > 1 ? "Semantic Scholar 与 OpenAlex"
-      : directSources.has("openalex") ? "OpenAlex" : "Semantic Scholar";
-    const relationSourceEn = relationSourceZh;
-    const rationaleZh = verifiedDirect
-      ? `该论文通过 ${relationSourceZh} 核验的真实引用或被引关系从当前研究种子扩展，并由用户确认收录。`
-      : "该论文由外部学术图谱基于当前研究种子推荐，并由用户确认收录；其引用关系仍待后续核验。";
-    const rationaleEn = verifiedDirect
-      ? `The paper was expanded from the current seeds through a citation relation verified by ${relationSourceEn} and then accepted by the user.`
-      : "The paper was recommended by an external academic graph from the current seeds and accepted by the user; direct citation evidence remains to be verified.";
-    statements.push(database.prepare(
-      `INSERT INTO research_track_papers
-       (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(formalId, trackId, spaceId, candidate.canonicalId, candidate.doi || null, candidate.title, candidate.authors, candidate.venue,
-      candidate.url, candidate.publishedAt, candidate.citationCount, role, candidate.abstractText, candidate.abstractText,
-      rationaleZh, rationaleEn, position?.position || 0));
-  }
+  statements.push(database.prepare(
+    `INSERT INTO monitored_papers
+     (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon, citation_count, relevance_score)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'research-network', 'years', ?, ?)
+     ON CONFLICT DO UPDATE SET title = excluded.title, authors = excluded.authors,
+      venue = excluded.venue, url = excluded.url, published_at = excluded.published_at,
+      citation_count = MAX(monitored_papers.citation_count, excluded.citation_count),
+      relevance_score = MAX(monitored_papers.relevance_score, excluded.relevance_score), last_seen_at = CURRENT_TIMESTAMP`,
+  ).bind(monitoredPaperId, spaceId, candidate.canonicalId, candidate.doi || null, candidate.title, candidate.authors,
+    candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, candidate.score));
+  statements.push(database.prepare(
+    `INSERT INTO research_track_papers
+     (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role,
+      summary_zh, summary_en, rationale_zh, rationale_en, position)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      (SELECT COALESCE(MAX(position), -1) + 1 FROM research_track_papers WHERE track_id = ?))
+     ON CONFLICT DO UPDATE SET doi = COALESCE(excluded.doi, research_track_papers.doi), title = excluded.title,
+      authors = excluded.authors, venue = excluded.venue, url = excluded.url, published_at = excluded.published_at,
+      citation_count = MAX(research_track_papers.citation_count, excluded.citation_count), role = excluded.role,
+      summary_zh = CASE WHEN excluded.summary_zh <> '' THEN excluded.summary_zh ELSE research_track_papers.summary_zh END,
+      summary_en = CASE WHEN excluded.summary_en <> '' THEN excluded.summary_en ELSE research_track_papers.summary_en END,
+      rationale_zh = excluded.rationale_zh, rationale_en = excluded.rationale_en`,
+  ).bind(stableFormalId, trackId, spaceId, candidate.canonicalId, candidate.doi || null, candidate.title, candidate.authors,
+    candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, role, candidate.abstractText,
+    candidate.abstractText, rationaleZh, rationaleEn, trackId));
   const verifiedEdges = await database.prepare(
     "SELECT seed_paper_id, kind, direction, evidence_source FROM research_network_candidate_edges WHERE candidate_id = ? AND space_id = ? AND kind IN ('reference', 'citation')",
   ).bind(candidateId, spaceId).all<{ seed_paper_id: string; kind: string; direction: string; evidence_source: string }>();
   for (const edge of verifiedEdges.results) {
-    const sourceId = edge.direction === "candidate_cites_seed" ? formalId : edge.seed_paper_id;
-    const targetId = edge.direction === "candidate_cites_seed" ? edge.seed_paper_id : formalId;
-    if (sourceId === targetId) continue;
     const verifiedByOpenAlex = edge.evidence_source === "openalex";
+    const candidateIsSource = edge.direction === "candidate_cites_seed";
+    const sourceExpression = candidateIsSource
+      ? "candidate_paper.id"
+      : "?";
+    const targetExpression = candidateIsSource
+      ? "?"
+      : "candidate_paper.id";
     statements.push(database.prepare(
       `INSERT INTO research_paper_edges
         (id, space_id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source)
-        VALUES (?, ?, ?, ?, 'citation', 'cites', ?, ?, 100, ?)
-        ON CONFLICT(source_paper_id, target_paper_id, kind, relation_kind) DO UPDATE SET confidence = 100,
+        SELECT ?, ?, ${sourceExpression}, ${targetExpression}, 'citation', 'cites', ?, ?, 100, ?
+        FROM research_track_papers candidate_paper
+        WHERE candidate_paper.track_id = ? AND candidate_paper.canonical_id = ? AND candidate_paper.id <> ?
+        ON CONFLICT DO UPDATE SET confidence = 100,
         evidence_source = excluded.evidence_source, relationship_zh = excluded.relationship_zh, relationship_en = excluded.relationship_en`,
-    ).bind(crypto.randomUUID(), spaceId, sourceId, targetId,
+    ).bind(`network-edge:${candidateId}:${edge.seed_paper_id}:${edge.direction}`, spaceId, edge.seed_paper_id,
       verifiedByOpenAlex ? "OpenAlex 已核验的直接引用关系。" : "Semantic Scholar 已核验的直接引用关系。",
       verifiedByOpenAlex ? "Direct citation verified by OpenAlex." : "Direct citation verified by Semantic Scholar.",
-      verifiedByOpenAlex ? "openalex" : "semantic-scholar"));
+      verifiedByOpenAlex ? "openalex" : "semantic-scholar", trackId, candidate.canonicalId, edge.seed_paper_id));
   }
   statements.push(
     database.prepare("UPDATE research_network_candidates SET status = 'accepted', last_seen_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?").bind(candidateId, spaceId),
-    database.prepare(
-      `INSERT INTO research_paper_network_states (space_id, status, built_paper_count, model, sources_json, error, updated_at)
-       VALUES (?, 'idle', 0, '', '[]', NULL, CURRENT_TIMESTAMP)
-       ON CONFLICT(space_id) DO UPDATE SET status = 'idle', error = NULL, updated_at = CURRENT_TIMESTAMP`,
-    ).bind(spaceId),
+    ...confirmedExternalResearchMapEvidenceStatements(database, {
+      id: `network-accept:${trackId}:${candidateId}`,
+      spaceId, trackId, paperId: monitoredPaperId, paperCanonicalId: candidate.canonicalId,
+      mapRole: role, rationaleZh, rationaleEn,
+      confidence: verifiedDirect ? 100 : Math.max(65, candidate.score), paperTitle: candidate.title,
+      trackTitleZh: track.title_zh, trackTitleEn: track.title_en,
+    }),
   );
   await database.batch(statements);
-  return Response.json({ action: "accept", paperId: formalId, trackId, candidate: await candidateWithRelations(database, spaceId, candidateId) });
+  const acceptedPaper = await database.prepare(
+    "SELECT id FROM research_track_papers WHERE track_id = ? AND canonical_id = ? LIMIT 1",
+  ).bind(trackId, candidate.canonicalId).first<{ id: string }>();
+  return Response.json({ action: "accept", paperId: acceptedPaper?.id || stableFormalId, trackId, candidate: await candidateWithRelations(database, spaceId, candidateId) });
 }

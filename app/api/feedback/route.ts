@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { FEEDBACK_REASONS, recordPaperFeedbackSignal, type FeedbackReasonCode } from "../../../lib/preference-memory";
+import { reconcileResearchMapEvidenceStatements } from "../../../lib/research-map-evidence";
 
 type FeedbackPayload = {
   spaceId?: string;
@@ -21,6 +22,17 @@ async function addResearchTrackSignal(database: D1Database, spaceId: string, pap
        WHERE mp.id = ? AND mp.space_id = ?
      )`,
   ).bind(weight, spaceId, paperId, spaceId).run();
+}
+
+async function refreshResearchLoopAfterFeedback(database: D1Database, spaceId: string, paperId: string) {
+  await database.prepare(
+    `UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE space_id = ? AND id IN (
+       SELECT tp.track_id FROM research_track_papers tp
+       JOIN monitored_papers mp ON mp.space_id = tp.space_id AND mp.canonical_id = tp.canonical_id
+       WHERE mp.id = ? AND mp.space_id = ?
+     )`,
+  ).bind(spaceId, paperId, spaceId).run();
 }
 
 export async function POST(request: Request) {
@@ -87,8 +99,6 @@ export async function POST(request: Request) {
        VALUES (?, ?, ?, ?)
        ON CONFLICT(space_id, paper_id) DO UPDATE SET snoozed_until = excluded.snoozed_until, updated_at = CURRENT_TIMESTAMP`,
     ).bind(crypto.randomUUID(), spaceId, paperId, snoozedUntil).run();
-    await DB.prepare("UPDATE paper_feedback SET saved = 0, feedback = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
-      .bind(spaceId, paperId).run();
     await addResearchTrackSignal(DB, spaceId, paperId, 1);
     return NextResponse.json({ ok: true, state: "snoozed", snoozedUntil });
   }
@@ -104,19 +114,19 @@ export async function POST(request: Request) {
     }
   }
 
+  let feedbackStatement: D1PreparedStatement;
   if (kind === "save") {
-    await DB.prepare(
+    feedbackStatement = DB.prepare(
       `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback, reason_code, note)
        VALUES (?, ?, ?, ?, NULL, NULL, '')
        ON CONFLICT(space_id, paper_id) DO UPDATE SET
          saved = excluded.saved,
-         feedback = CASE WHEN excluded.saved = 1 THEN NULL ELSE paper_feedback.feedback END,
+         feedback = paper_feedback.feedback,
          updated_at = CURRENT_TIMESTAMP`,
     )
-      .bind(crypto.randomUUID(), spaceId, paperId, saved)
-      .run();
+      .bind(crypto.randomUUID(), spaceId, paperId, saved);
   } else if (kind === "not_relevant") {
-    await DB.prepare(
+    feedbackStatement = DB.prepare(
       `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback, reason_code, note)
        VALUES (?, ?, ?, 0, ?, ?, ?)
        ON CONFLICT(space_id, paper_id) DO UPDATE SET
@@ -126,10 +136,9 @@ export async function POST(request: Request) {
          note = excluded.note,
          updated_at = CURRENT_TIMESTAMP`,
     )
-      .bind(crypto.randomUUID(), spaceId, paperId, feedback, reasonCode, note)
-      .run();
+      .bind(crypto.randomUUID(), spaceId, paperId, feedback, reasonCode, note);
   } else {
-    await DB.prepare(
+    feedbackStatement = DB.prepare(
       `INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback, reason_code, note)
        VALUES (?, ?, ?, 0, ?, ?, ?)
        ON CONFLICT(space_id, paper_id) DO UPDATE SET
@@ -137,8 +146,16 @@ export async function POST(request: Request) {
          reason_code = excluded.reason_code,
          note = excluded.note,
          updated_at = CURRENT_TIMESTAMP`,
-    ).bind(crypto.randomUUID(), spaceId, paperId, feedback, reasonCode, note).run();
+    ).bind(crypto.randomUUID(), spaceId, paperId, feedback, reasonCode, note);
   }
+
+  // D1 batches are transactional. Every evidence predicate below observes the
+  // feedback row written above, so two tabs making opposite decisions cannot
+  // leave the paper feedback and research map in contradictory states.
+  await DB.batch([
+    feedbackStatement,
+    ...reconcileResearchMapEvidenceStatements(DB, spaceId, paperId),
+  ]);
 
   if (body.value) {
     await DB.prepare("UPDATE paper_delivery_state SET snoozed_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
@@ -155,6 +172,10 @@ export async function POST(request: Request) {
     await DB.prepare("UPDATE research_preference_signals SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND source_type = 'paper_feedback' AND source_id LIKE ?")
       .bind(spaceId, `${paperId}:%`).run();
     await recordPaperFeedbackSignal(DB, spaceId, paperId, ownedPaper.title, reasonCode, note);
+  }
+
+  if (kind === "save" || kind === "relevant" || kind === "not_relevant") {
+    await refreshResearchLoopAfterFeedback(DB, spaceId, paperId);
   }
 
   return NextResponse.json({ ok: true, state: body.value ? kind === "not_relevant" ? "dismissed" : "accepted" : "pending" });

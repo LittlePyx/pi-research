@@ -11,6 +11,7 @@ import {
 } from "../../../lib/discovery/candidate-selection.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { promoteAlreadyAcceptedResearchMapEvidence, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
@@ -270,6 +271,7 @@ type DiscoveryQuery = {
   routeId?: string;
   explorationRole?: "core" | "adjacent";
   adaptiveScore?: number;
+  routeUrgency?: number;
 };
 type DiscoveryBranchScore = {
   sourceKey: string;
@@ -343,10 +345,28 @@ type ScanWorkQueue = {
   deepFailureCount: number;
   pipelineVersion: string;
   horizonStats: Record<Horizon, HorizonScanStats>;
+  frozenQueryPlan?: QueryPlan;
   resumeCheckpoint?: string;
 };
 type StagedJobRow = ScanJobRow & { work_queue_json: string };
-type MapTrackContext = { id: string; title_zh: string; title_en: string; summary_en: string; search_queries: string };
+type DirectionDiscoverySignal = {
+  opportunityEn: string;
+  watchSignalEn: string;
+  evidenceGapEn: string;
+  nextSearchQuery: string;
+  confidence: number;
+  evidenceCanonicalIds: string[];
+  updatedAt: string;
+};
+type MapTrackContext = {
+  id: string;
+  title_zh: string;
+  title_en: string;
+  summary_en: string;
+  search_queries: string;
+  intelligence_json: string;
+  intelligence_updated_at: string | null;
+};
 
 const CADENCE_MS = 24 * 60 * 60 * 1000;
 const MANUAL_COOLDOWN_MS = 60 * 60 * 1000;
@@ -354,6 +374,7 @@ const ERROR_RETRY_MS = 15 * 60 * 1000;
 const STALE_RUN_MS = 20 * 60 * 1000;
 const RUN_LOCK_LEASE_MS = 10 * 60 * 1000;
 const DISCOVERY_OFFSET_LIMIT = 3000;
+const DIRECTION_INTELLIGENCE_MAX_AGE_MS = 45 * 24 * 60 * 60 * 1000;
 const REVIEW_BATCH_SIZE = 14;
 const QUICK_SCREEN_BATCH_SIZE = 14;
 const QUICK_SCREEN_CONCURRENCY = 2;
@@ -434,6 +455,31 @@ function dateBefore(now: Date, days: number) {
 
 function cleanText(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+}
+
+function directionDiscoverySignal(value: string, updatedAt: string | null = null): DirectionDiscoverySignal | null {
+  try {
+    const parsed = JSON.parse(value || "{}") as Record<string, unknown>;
+    const evidenceCanonicalIds = Array.isArray(parsed.evidenceCanonicalIds)
+      ? parsed.evidenceCanonicalIds.map((item) => cleanText(String(item))).filter(Boolean).slice(0, 12)
+      : [];
+    const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence) || 0)));
+    const updatedAtMs = updatedAt ? databaseTime(updatedAt) : 0;
+    const isFresh = updatedAtMs > 0 && Date.now() - updatedAtMs <= DIRECTION_INTELLIGENCE_MAX_AGE_MS;
+    if (confidence < 60 || !evidenceCanonicalIds.length || !isFresh) return null;
+    const signal = {
+      opportunityEn: cleanText(String(parsed.opportunityEn || "")).slice(0, 700),
+      watchSignalEn: cleanText(String(parsed.watchSignalEn || "")).slice(0, 700),
+      evidenceGapEn: cleanText(String(parsed.evidenceGapEn || "")).slice(0, 700),
+      nextSearchQuery: cleanText(String(parsed.nextSearchQuery || "")).slice(0, 220),
+      confidence,
+      evidenceCanonicalIds,
+      updatedAt: updatedAt!,
+    };
+    return signal.nextSearchQuery || signal.evidenceGapEn || signal.watchSignalEn || signal.opportunityEn ? signal : null;
+  } catch {
+    return null;
+  }
 }
 
 function publicationDate(item: CrossrefItem) {
@@ -784,19 +830,21 @@ async function routeDiscoveryQueries(
 ) {
   const rows = await database.prepare(
     `SELECT t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score, t.interaction_score,
+     t.intelligence_json, t.intelligence_updated_at,
      MAX(c.last_scanned_at) AS last_scanned_at
      FROM research_tracks t
-     LEFT JOIN monitor_discovery_coverage c ON c.space_id = t.space_id AND c.route_id = t.id
-     WHERE t.space_id = ? GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score, t.interaction_score
+     LEFT JOIN monitor_discovery_coverage c ON c.space_id = t.space_id AND c.route_id = t.id AND c.horizon = ?
+      WHERE t.space_id = ? GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score,
+      t.interaction_score, t.intelligence_json, t.intelligence_updated_at
      ORDER BY CASE WHEN MAX(c.last_scanned_at) IS NULL THEN 0 ELSE 1 END, MAX(c.last_scanned_at),
      CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, t.interaction_score DESC, t.depth_score DESC`,
-  ).bind(spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; last_scanned_at: string | null }>();
+  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; intelligence_json: string; intelligence_updated_at: string | null; last_scanned_at: string | null }>();
   const coreBudget = mode === "focused" ? 2 : 2;
   const adjacentBudget = mode === "focused" ? 0 : mode === "open" ? 2 : 1;
   const coreRows = rows.results.filter((row) => row.user_role !== "explore").slice(0, coreBudget);
   const adjacentRows = rows.results.filter((row) => row.user_role === "explore").slice(0, adjacentBudget);
-  return [...coreRows.map((row) => ({ row, role: "core" as const })), ...adjacentRows.map((row) => ({ row, role: "adjacent" as const }))]
-    .map(({ row, role }) => {
+  const selectedRows = [...coreRows.map((row) => ({ row, role: "core" as const })), ...adjacentRows.map((row) => ({ row, role: "adjacent" as const }))];
+  const basePlans = selectedRows.map(({ row, role }) => {
       const queries = parseVenues(row.search_queries).filter(asciiOnly);
       const routeQuery = queries.length ? queries[round % queries.length] : `${row.title_en} ${row.summary_en}`;
       return {
@@ -808,8 +856,28 @@ async function routeDiscoveryQueries(
         channel: "topic" as const,
         routeId: row.id,
         explorationRole: role,
+        routeUrgency: 0,
       };
     }).filter((plan) => plan.query.length >= 4);
+  const gapRows = selectedRows.flatMap(({ row, role }) => {
+    const intelligence = directionDiscoverySignal(row.intelligence_json, row.intelligence_updated_at);
+    if (!intelligence?.nextSearchQuery || !asciiOnly(intelligence.nextSearchQuery)) return [];
+    return [{ row, role, intelligence }];
+  }).sort((left, right) => right.intelligence.confidence - left.intelligence.confidence);
+  const gap = gapRows.length ? gapRows[round % gapRows.length] : null;
+  const gapPlan: DiscoveryQuery[] = gap ? [{
+    key: `research-route-gap-${gap.row.id}`,
+    sourceKey: `crossref:route-gap:${gap.row.id}`,
+    query: cleanText(gap.intelligence.nextSearchQuery).slice(0, 480),
+    sort: horizon.key === "days" ? "published" : horizon.sort,
+    rotating: true,
+    channel: "topic",
+    routeId: gap.row.id,
+    explorationRole: gap.role,
+    routeUrgency: Math.min(20, 10 + Math.round(gap.intelligence.confidence / 10)),
+  }] : [];
+  return [...basePlans, ...gapPlan].filter((plan, index, plans) => plan.query.length >= 4
+    && plans.findIndex((candidate) => candidate.routeId === plan.routeId && candidate.query === plan.query) === index);
 }
 
 async function prioritizeDiscoveryPlans(database: D1Database, spaceId: string, plans: DiscoveryQuery[], mode: ExplorationMode) {
@@ -818,7 +886,7 @@ async function prioritizeDiscoveryPlans(database: D1Database, spaceId: string, p
     const queryKey = await discoveryQueryKey(plan);
     const exact = performance.exact.get(`${plan.sourceKey}|${queryKey}`)?.score;
     const source = performance.sources.get(plan.sourceKey);
-    const score = Math.max(5, Math.min(100, (exact ?? source ?? 55) + (plan.key === "topic-anchor" ? 8 : 0)));
+    const score = Math.max(5, Math.min(100, (exact ?? source ?? 55) + (plan.key === "topic-anchor" ? 8 : 0) + (plan.routeUrgency || 0)));
     return { ...plan, explorationRole: plan.explorationRole || "core", adaptiveScore: score };
   }));
   const maxPlans = mode === "focused" ? 8 : mode === "open" ? 12 : 10;
@@ -998,9 +1066,11 @@ async function fetchHorizon(
     fetchOpenAlexHorizon(database, space, horizon, now, round, queryPlan),
     fetchArxivHorizon(database, space, horizon, now, round, queryPlan),
   ]);
-  const citationFrontier = horizon.key === "years"
-    ? await fetchCitationFrontier(database, space, horizon, now, round, jobId, discoveredBefore + normalizedCrossref.length + semantic.length + openAlex.length + arxiv.length)
-    : [];
+  const citationFrontier = await fetchCitationFrontier(
+    database, space, horizon, now, round, jobId,
+    discoveredBefore + normalizedCrossref.length + semantic.length + openAlex.length + arxiv.length,
+    horizon.key === "years" ? ["references"] : ["citations"],
+  );
   const normalized = [...normalizedCrossref, ...semantic, ...openAlex, ...arxiv, ...citationFrontier];
   const unique = new Map<string, Candidate>();
   for (const item of normalized
@@ -1188,19 +1258,20 @@ async function fetchCitationFrontier(
   round: number,
   jobId: string,
   discoveredBefore: number,
+  relations: Array<"references" | "citations">,
 ) {
   const seeds = await database.prepare(
-    `SELECT doi, url, title FROM research_track_papers
+    `SELECT track_id, doi, url, title FROM research_track_papers
      WHERE space_id = ? AND (doi IS NOT NULL OR url LIKE '%arxiv.org/%')
      ORDER BY CASE role WHEN 'milestone' THEN 0 ELSE 1 END, citation_count DESC, created_at ASC LIMIT 24`,
-  ).bind(space.id).all<{ doi: string | null; url: string; title: string }>();
+  ).bind(space.id).all<{ track_id: string; doi: string | null; url: string; title: string }>();
   if (!seeds.results.length) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
   const seed = seeds.results[round % seeds.results.length];
   const arxivId = arxivIdFromUrl(seed.url);
   const paperId = seed.doi ? `DOI:${seed.doi}` : arxivId ? `ARXIV:${arxivId}` : "";
   if (!paperId) return [];
   await setScanSource(database, jobId, horizon.key, `Citation frontier · ${cleanText(seed.title).slice(0, 70)}`, 53, discoveredBefore);
-  const relationResults = await Promise.all((["references", "citations"] as const).map(async (relation) => {
+  const relationResults = await Promise.all(relations.map(async (relation) => {
     const plan: DiscoveryQuery = {
       key: `citation-${relation}`,
       sourceKey: `semantic_scholar:${relation}`,
@@ -1208,6 +1279,7 @@ async function fetchCitationFrontier(
       sort: "relevance",
       rotating: true,
       channel: "citation",
+      routeId: seed.track_id,
     };
     if (!(await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan))) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
     const limit = 40;
@@ -1228,7 +1300,7 @@ async function fetchCitationFrontier(
       const normalizedCandidates = await Promise.all(papers.map(async (item) => {
         const candidate = await normalizeSemanticScholarItem(item, horizon.key);
         return candidate && candidateWithinHorizon(candidate, horizon, now)
-          ? { ...candidate, discoveryChannel: "citation" as const, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey }] }
+          ? { ...candidate, discoveryChannel: "citation" as const, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, routeId: seed.track_id }] }
           : null;
       }));
       const normalized = normalizedCandidates.filter((item): item is NonNullable<typeof item> => item !== null);
@@ -1360,23 +1432,43 @@ async function ensureDailyQueryPlan(
   apiKey: string,
 ): Promise<QueryPlan> {
   const planDate = new Date().toISOString().slice(0, 10);
-  const existing = await database.prepare(
-    "SELECT plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error, created_at FROM monitor_query_plans WHERE space_id = ? AND plan_date = ? LIMIT 1",
-  ).bind(space.id, planDate).first<{
-    plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null; created_at: string;
-  }>();
+  const [existing, guidanceTracks, guidance] = await Promise.all([
+    database.prepare(
+      "SELECT plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error, created_at FROM monitor_query_plans WHERE space_id = ? AND plan_date = ? LIMIT 1",
+    ).bind(space.id, planDate).first<{
+      plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null; created_at: string;
+    }>(),
+    database.prepare(
+      "SELECT id, user_role, depth_score, support_score, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY id",
+    ).bind(space.id).all<{ id: string; user_role: string; depth_score: number; support_score: number; intelligence_json: string; intelligence_updated_at: string | null }>(),
+    database.prepare(
+      `SELECT
+       COALESCE((SELECT MAX(updated_at) FROM research_preference_signals WHERE space_id = ? AND active = 1), '') AS preference_revision,
+       COALESCE((SELECT MAX(updated_at) FROM paper_feedback WHERE space_id = ?), '') AS feedback_revision,
+       COALESCE((SELECT MAX(updated_at) FROM paper_reading_progress WHERE space_id = ?), '') AS reading_revision`,
+    ).bind(space.id, space.id, space.id).first<{ preference_revision: string; feedback_revision: string; reading_revision: string }>(),
+  ]);
+  const guidanceIdentity = JSON.stringify({
+    tracks: guidanceTracks.results,
+    preferenceRevision: guidance?.preference_revision || "",
+    feedbackRevision: guidance?.feedback_revision || "",
+    readingRevision: guidance?.reading_revision || "",
+  });
+  const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(guidanceIdentity));
+  const guidanceRevision = Array.from(new Uint8Array(guidanceDigest)).slice(0, 12).map((value) => value.toString(16).padStart(2, "0")).join("");
+  let existingQueries: (Partial<Record<Horizon, string[]>> & { guidanceRevision?: string }) = {};
+  try { existingQueries = existing ? JSON.parse(existing.queries_json) as typeof existingQueries : {}; } catch { existingQueries = {}; }
   const staleFallback = Boolean(existing && apiKey && existing.model === "deterministic-fallback");
   const stalePipelinePlan = Boolean(existing && databaseTime(existing.created_at) < MONITOR_QUERY_PLAN_RELEASED_AT);
-  if (existing && !staleFallback && !stalePipelinePlan) {
-    let parsed: Partial<Record<Horizon, string[]>> = {};
-    try { parsed = JSON.parse(existing.queries_json) as Partial<Record<Horizon, string[]>>; } catch { parsed = {}; }
+  const staleGuidancePlan = Boolean(existing && existingQueries.guidanceRevision !== guidanceRevision);
+  if (existing && !staleFallback && !stalePipelinePlan && !staleGuidancePlan) {
     return {
       planDate: existing.plan_date,
       explorationMode: preference.explorationMode,
       queries: {
-        days: normalizePlannedQueries(parsed.days, 3),
-        months: normalizePlannedQueries(parsed.months, 3),
-        years: normalizePlannedQueries(parsed.years, 3),
+        days: normalizePlannedQueries(existingQueries.days, 3),
+        months: normalizePlannedQueries(existingQueries.months, 3),
+        years: normalizePlannedQueries(existingQueries.years, 3),
       },
       rationaleZh: existing.rationale_zh,
       rationaleEn: existing.rationale_en,
@@ -1384,7 +1476,7 @@ async function ensureDailyQueryPlan(
       error: existing.error,
     };
   }
-  if (staleFallback || stalePipelinePlan) {
+  if (staleFallback || stalePipelinePlan || staleGuidancePlan) {
     await database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = ?")
       .bind(space.id, planDate).run();
   }
@@ -1393,13 +1485,28 @@ async function ensureDailyQueryPlan(
   const [signals, tracks, recentCoverage, branchPerformance] = await Promise.all([
     readPreferenceSignals(database, space.id, 28),
     database.prepare(
-      "SELECT title_en, summary_en, search_queries, user_role, depth_score, interaction_score FROM research_tracks WHERE space_id = ? ORDER BY CASE user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, interaction_score DESC, depth_score DESC LIMIT 10",
-    ).bind(space.id).all<{ title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number }>(),
+      "SELECT id, title_en, summary_en, search_queries, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY CASE user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, interaction_score DESC, depth_score DESC LIMIT 10",
+    ).bind(space.id).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; support_score: number; interaction_score: number; intelligence_json: string; intelligence_updated_at: string | null }>(),
     database.prepare(
       "SELECT source_key, channel, SUM(attempt_count) AS attempts, SUM(new_candidate_count) AS new_candidates FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY source_key, channel ORDER BY SUM(new_candidate_count) ASC, SUM(attempt_count) DESC LIMIT 12",
     ).bind(space.id).all<{ source_key: string; channel: string; attempts: number; new_candidates: number }>(),
     loadDiscoveryBranchScores(database, space.id),
   ]);
+  const directionSignals = tracks.results.flatMap((track) => {
+    const intelligence = directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at);
+    return intelligence ? [{
+      trackId: track.id,
+      title: track.title_en,
+      role: track.user_role,
+      depth: track.depth_score + track.interaction_score,
+      support: track.support_score,
+      opportunity: intelligence.opportunityEn,
+      watchSignal: intelligence.watchSignalEn,
+      evidenceGap: intelligence.evidenceGapEn,
+      nextSearchQuery: intelligence.nextSearchQuery,
+      confidence: intelligence.confidence,
+    }] : [];
+  });
   let queries: Record<Horizon, string[]> = { days: [], months: [], years: [] };
   let rationaleZh = "";
   let rationaleEn = "";
@@ -1422,10 +1529,11 @@ async function ensureDailyQueryPlan(
               `Build today's query plan for ${space.name}: ${space.description}.`,
               `Exploration mode: ${preference.explorationMode}. Return exactly ${queryLimit} concise English bibliographic query strings per horizon.`,
               "The three horizons are simultaneous: days = newest 14 days; months = new and high-quality 6 months; years = durable, foundational, methodologically useful 5 years.",
-              "Move beyond yesterday's obvious wording. Cover core depth, one adjacent bridge when mode allows, unresolved questions, under-covered subdirections, methods, and representative venues. Do not include dates, API syntax, Boolean operators, journal names alone, or generic words such as research/study/paper.",
+              "Move beyond yesterday's obvious wording. Cover core depth, one adjacent bridge when mode allows, unresolved questions, under-covered subdirections, methods, and representative venues. When grounded direction intelligence contains an evidence gap or nextSearchQuery, use at least one horizon slot to test that gap instead of merely repeating broad topic keywords. Do not include dates, API syntax, Boolean operators, journal names alone, or generic words such as research/study/paper.",
               "Return {\"days\":[...],\"months\":[...],\"years\":[...],\"rationaleZh\":\"...\",\"rationaleEn\":\"...\"}.",
               `Explicit and inferred preference evidence: ${JSON.stringify(signals.map((item) => ({ layer: item.layer, kind: item.kind, label: item.labelEn, evidence: item.evidence, confidence: item.effectiveConfidence })))}`,
               `Existing directions and user depth: ${JSON.stringify(tracks.results.map((track) => ({ title: track.title_en, role: track.user_role, depth: track.depth_score, interaction: track.interaction_score, summary: track.summary_en, queries: parseVenues(track.search_queries).slice(0, 4) })))}`,
+              `Grounded direction opportunities, watch signals, and evidence gaps that today's search should test: ${JSON.stringify(directionSignals)}`,
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
               `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,
               `Low-yield or repeatedly covered channels: ${JSON.stringify(recentCoverage.results)}`,
@@ -1469,7 +1577,7 @@ async function ensureDailyQueryPlan(
      queries_json = excluded.queries_json, rationale_zh = excluded.rationale_zh,
      rationale_en = excluded.rationale_en, model = excluded.model, error = excluded.error,
      created_at = CURRENT_TIMESTAMP`,
-  ).bind(crypto.randomUUID(), space.id, planDate, preference.explorationMode, JSON.stringify(queries), rationaleZh, rationaleEn, model, error).run();
+  ).bind(crypto.randomUUID(), space.id, planDate, preference.explorationMode, JSON.stringify({ ...queries, guidanceRevision }), rationaleZh, rationaleEn, model, error).run();
   return { planDate, explorationMode: preference.explorationMode, queries, rationaleZh, rationaleEn, model, error };
 }
 
@@ -1482,11 +1590,11 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
       "SELECT title_en, summary_en, search_queries FROM research_tracks WHERE space_id = ? ORDER BY interaction_score DESC, depth_score DESC, position LIMIT 8",
     ).bind(space.id).all<{ title_en: string; summary_en: string; search_queries: string }>(),
     database.prepare(
-      `SELECT p.title, p.venue, f.feedback, f.saved FROM paper_feedback f
+      `SELECT p.title, p.venue, f.feedback, f.saved, f.reason_code FROM paper_feedback f
        JOIN monitored_papers p ON p.id = f.paper_id AND p.space_id = f.space_id
        WHERE f.space_id = ? AND (f.saved = 1 OR f.feedback IN ('relevant', 'not_relevant'))
        ORDER BY f.updated_at DESC LIMIT 30`,
-    ).bind(space.id).all<{ title: string; venue: string; feedback: string | null; saved: number }>(),
+    ).bind(space.id).all<{ title: string; venue: string; feedback: string | null; saved: number; reason_code: string | null }>(),
     database.prepare(
       `SELECT takeaway_en, methods_en, questions_en, connections_en, topics_en
        FROM paper_reading_memories WHERE space_id = ? AND analysis_status = 'ready'
@@ -1526,7 +1634,7 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
     .filter((row) => row.saved || row.feedback === "relevant")
     .map((row) => cleanText(`${row.title}${row.venue ? ` — ${row.venue}` : ""}`));
   const negative = feedbackRows.results
-    .filter((row) => row.feedback === "not_relevant")
+    .filter((row) => row.feedback === "not_relevant" && row.reason_code !== "duplicate_known")
     .map((row) => cleanText(`${row.title}${row.venue ? ` — ${row.venue}` : ""}`));
   return {
     ...space,
@@ -1704,7 +1812,7 @@ async function persistQuickScreens(database: D1Database, spaceId: string, screen
   if (statements.length) await database.batch(statements);
 }
 
-async function persistReviewBatch(database: D1Database, spaceId: string, candidates: Candidate[], reviews: PaperReview[]) {
+async function persistReviewBatch(database: D1Database, spaceId: string, scanJobId: string, candidates: Candidate[], reviews: PaperReview[]) {
   if (!reviews.length) return;
   const candidateByCanonical = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
   const placeholders = reviews.map(() => "?").join(", ");
@@ -1747,48 +1855,16 @@ async function persistReviewBatch(database: D1Database, spaceId: string, candida
   });
   if (insightStatements.length) await database.batch(insightStatements);
 
-  const trackStatements = reviews.flatMap((review) => {
-    if (!review.recommended || !review.trackId) return [];
-    const candidate = candidateByCanonical.get(review.canonicalId);
-    if (!candidate) return [];
-    return [database.prepare(
-      `INSERT OR IGNORE INTO research_track_papers
-       (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role,
-        summary_zh, summary_en, rationale_zh, rationale_en, position)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        (SELECT COALESCE(MAX(position) + 1, 0) FROM research_track_papers WHERE track_id = ?))`,
-    ).bind(crypto.randomUUID(), review.trackId, spaceId, candidate.canonicalId, candidate.doi, candidate.title,
-      candidate.authors, candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, review.mapRole,
-      review.summaryZh, review.summaryEn, review.mapRationaleZh, review.mapRationaleEn, review.trackId)];
+  const proposals = reviews.flatMap((review) => {
+    const paperId = paperIds.get(review.canonicalId);
+    if (!review.recommended || !review.trackId || !paperId || !review.mapRationaleZh || !review.mapRationaleEn) return [];
+    return [{
+      spaceId, trackId: review.trackId, paperId, scanJobId, mapRole: review.mapRole,
+      rationaleZh: review.mapRationaleZh, rationaleEn: review.mapRationaleEn, confidence: review.relevanceScore,
+    }];
   });
-  if (trackStatements.length) await database.batch(trackStatements);
-  const trackIds = Array.from(new Set(reviews.filter((review) => review.recommended && review.trackId).map((review) => review.trackId)));
-  if (trackIds.length) {
-    const placeholders = trackIds.map(() => "?").join(", ");
-    const tracks = await database.prepare(`SELECT id, title_zh, title_en FROM research_tracks WHERE space_id = ? AND id IN (${placeholders})`)
-      .bind(spaceId, ...trackIds).all<{ id: string; title_zh: string; title_en: string }>();
-    const trackById = new Map(tracks.results.map((track) => [track.id, track]));
-    const changeStatements = reviews.flatMap((review) => {
-      if (!review.recommended || !review.trackId || !paperIds.has(review.canonicalId)) return [];
-      const candidate = candidateByCanonical.get(review.canonicalId);
-      const track = trackById.get(review.trackId);
-      if (!candidate || !track || !review.mapRationaleZh || !review.mapRationaleEn) return [];
-      return [database.prepare(
-        `INSERT OR IGNORE INTO research_map_changes
-         (id, space_id, track_id, paper_id, kind, title_zh, title_en, summary_zh, summary_en, confidence)
-         VALUES (?, ?, ?, ?, 'new_evidence', ?, ?, ?, ?, ?)`,
-      ).bind(
-        crypto.randomUUID(), spaceId, review.trackId, paperIds.get(review.canonicalId),
-        `${track.title_zh}新增证据：${candidate.title}`.slice(0, 420),
-        `New evidence for ${track.title_en}: ${candidate.title}`.slice(0, 520),
-        review.mapRationaleZh, review.mapRationaleEn, review.relevanceScore,
-      )];
-    });
-    if (changeStatements.length) await database.batch(changeStatements);
-    await database.batch(trackIds.map((trackId) => database.prepare(
-      "UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?",
-    ).bind(trackId, spaceId)));
-  }
+  await upsertPendingResearchMapEvidence(database, proposals);
+  await promoteAlreadyAcceptedResearchMapEvidence(database, spaceId, proposals.map((proposal) => proposal.paperId));
 }
 
 function allocatedTokenShare(total: number, count: number, index: number) {
@@ -1866,7 +1942,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     throw new Error("DeepSeek Pro review budget reached; unreviewed papers were not published");
   }
   const mapTracks = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_en, search_queries FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 10",
+    "SELECT id, title_zh, title_en, summary_en, search_queries, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 10",
   ).bind(space.id).all<MapTrackContext>();
   const validTrackIds = new Set(mapTracks.results.map((track) => track.id));
   const completed: PaperReview[] = [];
@@ -1903,7 +1979,15 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       `Papers the user explicitly marked not relevant: ${space.negativeExamples || "No negative paper feedback yet"}`,
       "Treat positive examples as preference evidence, not as permission to recommend loosely related papers. Use negative examples to recognize and reject recurring topic drift.",
       `Priority venues: ${priorityVenues.join("; ")}`,
-      `Existing research-map directions: ${JSON.stringify(mapTracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryEn: track.summary_en, searchQueries: parseVenues(track.search_queries) })))}`,
+      `Existing research-map directions: ${JSON.stringify(mapTracks.results.map((track) => ({
+        id: track.id,
+        titleZh: track.title_zh,
+        titleEn: track.title_en,
+        summaryEn: track.summary_en,
+        searchQueries: parseVenues(track.search_queries),
+        intelligence: directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at),
+      })))}`,
+      "Use each direction's evidence gap and watch signal when judging whether a paper actually changes that route. A keyword match that does not close a gap, strengthen evidence, or reveal a credible new branch should not be mapped as new route evidence.",
       "JSON records to review:",
       JSON.stringify(batch.map((paper) => ({
         canonicalId: paper.canonicalId,
@@ -2029,7 +2113,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       });
     }
     const batchReviews = completed.slice(completedBefore);
-    await persistReviewBatch(database, space.id, batch, batchReviews);
+    await persistReviewBatch(database, space.id, jobId, batch, batchReviews);
     try {
       await persistRecommendationAuditBatch(database, space.id, jobId, batch, batchReviews, batchInputTokens, batchOutputTokens);
     } catch (auditError) {
@@ -2433,7 +2517,12 @@ async function createScanNotifications(
       actionView: "today",
     });
   }
-  const changedTracks = new Set(reviews.filter((review) => review.recommended && review.trackId && review.mapRationaleZh && review.mapRationaleEn).map((review) => review.trackId));
+  const confirmedTrackRows = await database.prepare(
+    `SELECT DISTINCT ep.track_id FROM research_map_evidence_proposals ep
+     JOIN monitor_daily_briefs b ON b.space_id = ep.space_id AND b.scan_job_id = ep.scan_job_id
+     WHERE ep.space_id = ? AND b.brief_date = ? AND ep.status = 'confirmed'`,
+  ).bind(spaceId, briefDate).all<{ track_id: string }>();
+  const changedTracks = new Set(confirmedTrackRows.results.map((row) => row.track_id));
   if (changedTracks.size) {
     await upsertResearchNotification(database, {
       spaceId, dedupeKey: `route-change:${briefDate}`, kind: "route_change", priority: "high",
@@ -2923,7 +3012,7 @@ async function updateRunPhase(database: D1Database, spaceId: string, jobId: stri
 
 function paperUserState(paper: PaperRow, now: number) {
   if (paper.feedback === "not_relevant") return "dismissed" as const;
-  if (paper.saved || paper.feedback === "relevant") return "accepted" as const;
+  if (paper.saved || paper.feedback === "relevant" || ["queued", "reading", "read", "mastered", "cited"].includes(paper.reading_status)) return "accepted" as const;
   if (paper.snoozed_until && Date.parse(paper.snoozed_until) > now) return "snoozed" as const;
   if (paper.opened_at || paper.show_count > 0) return "seen" as const;
   return "unseen" as const;
@@ -3013,7 +3102,10 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.research_questions_en, '[]') AS research_questions_en,
        COALESCE((SELECT tp.track_id FROM research_track_papers tp
          WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
-         ORDER BY tp.position LIMIT 1), '') AS track_id,
+         ORDER BY tp.position LIMIT 1),
+         (SELECT ep.track_id FROM research_map_evidence_proposals ep
+          WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending', 'confirmed')
+          ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1), '') AS track_id,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
        COALESCE(f.saved, 0) AS saved, f.feedback, COALESCE(r.status, 'unread') AS reading_status,
        COALESCE(r.note, '') AS reading_note
@@ -3075,6 +3167,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        FROM monitored_papers p
        JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id AND i.llm_recommended = 1
        JOIN research_track_papers tp ON tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
+       JOIN research_map_evidence_proposals ep ON ep.space_id = p.space_id AND ep.paper_id = p.id
+        AND ep.track_id = tp.track_id AND ep.status = 'confirmed'
        JOIN research_tracks t ON t.id = tp.track_id AND t.space_id = tp.space_id
        LEFT JOIN research_map_changes c ON c.paper_id = p.id AND c.track_id = tp.track_id AND c.kind = 'new_evidence'
        WHERE p.space_id = ? AND c.id IS NULL
@@ -3696,6 +3790,27 @@ function emptyHorizonScanStats(): Record<Horizon, HorizonScanStats> {
   };
 }
 
+function parseFrozenQueryPlan(value: unknown): QueryPlan | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const parsed = value as Partial<QueryPlan>;
+  if (!parsed.queries || typeof parsed.queries !== "object") return undefined;
+  const explorationMode: ExplorationMode = ["focused", "balanced", "open"].includes(parsed.explorationMode || "")
+    ? parsed.explorationMode as ExplorationMode : "balanced";
+  return {
+    planDate: typeof parsed.planDate === "string" ? parsed.planDate : "",
+    explorationMode,
+    queries: {
+      days: normalizePlannedQueries(parsed.queries.days, 3),
+      months: normalizePlannedQueries(parsed.queries.months, 3),
+      years: normalizePlannedQueries(parsed.queries.years, 3),
+    },
+    rationaleZh: typeof parsed.rationaleZh === "string" ? parsed.rationaleZh : "",
+    rationaleEn: typeof parsed.rationaleEn === "string" ? parsed.rationaleEn : "",
+    model: typeof parsed.model === "string" ? parsed.model : "deterministic-fallback",
+    error: typeof parsed.error === "string" ? parsed.error : null,
+  };
+}
+
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
@@ -3733,6 +3848,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       deepFailureCount: Math.max(0, Number(parsed.deepFailureCount) || 0),
       pipelineVersion: typeof parsed.pipelineVersion === "string" ? parsed.pipelineVersion : "",
       horizonStats,
+      frozenQueryPlan: parseFrozenQueryPlan(parsed.frozenQueryPlan),
       resumeCheckpoint: typeof parsed.resumeCheckpoint === "string" ? parsed.resumeCheckpoint : "",
     };
   } catch {
@@ -3885,14 +4001,26 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
      i.recommendation_tier, i.read_minutes, i.read_depth, i.problem_zh, i.problem_en,
      i.method_zh, i.method_en, i.contribution_zh, i.contribution_en, i.limitations_zh,
      i.limitations_en, i.reading_focus_zh, i.reading_focus_en, i.research_questions_zh, i.research_questions_en,
-     COALESCE((SELECT tp.track_id FROM research_track_papers tp
-       WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS track_id,
-     COALESCE((SELECT tp.role FROM research_track_papers tp
-       WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), 'frontier') AS map_role,
-     COALESCE((SELECT tp.rationale_zh FROM research_track_papers tp
-       WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_zh,
-     COALESCE((SELECT tp.rationale_en FROM research_track_papers tp
-       WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_en
+     COALESCE((SELECT ep.track_id FROM research_map_evidence_proposals ep
+       WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
+       ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
+       (SELECT tp.track_id FROM research_track_papers tp
+        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS track_id,
+     COALESCE((SELECT ep.map_role FROM research_map_evidence_proposals ep
+       WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
+       ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
+       (SELECT tp.role FROM research_track_papers tp
+        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), 'frontier') AS map_role,
+     COALESCE((SELECT ep.rationale_zh FROM research_map_evidence_proposals ep
+       WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
+       ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
+       (SELECT tp.rationale_zh FROM research_track_papers tp
+        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_zh,
+     COALESCE((SELECT ep.rationale_en FROM research_map_evidence_proposals ep
+       WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
+       ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
+       (SELECT tp.rationale_en FROM research_track_papers tp
+        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_en
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
      WHERE p.space_id = ? AND p.canonical_id IN (${placeholders})`,
   ).bind(spaceId, ...canonicalIds).all<{
@@ -4267,7 +4395,7 @@ export async function POST(request: Request) {
       const completedAt = new Date();
       const reconciledReviews = await reconcileRecommendedReviewTracks(database, enrichedSpace, user.userId, candidates, reviews, apiKey);
       if (reconciledReviews.some((review, index) => review.trackId && review.trackId !== reviews[index]?.trackId)) {
-        await persistReviewBatch(database, space.id, candidates, reconciledReviews);
+        await persistReviewBatch(database, space.id, job.id, candidates, reconciledReviews);
       }
       const recommended = reconciledReviews.filter((review) => review.recommended).length;
       const rejected = Math.max(0, work.screens.length - recommended);
@@ -4309,12 +4437,17 @@ export async function POST(request: Request) {
     try {
       if (job.checkpoint === "planning" || job.checkpoint === "queued") {
         await setStage("planning", "scanning", 5, "DeepSeek Pro 正在规划本轮检索");
-        await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
+        work.frozenQueryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
+        await saveScanWorkQueue(database, job.id, work);
         await setStage("discovering_days", "discovering_days", 10, "正在检索近 14 天", "days");
       } else if (["discovering_days", "discovering_months", "discovering_years"].includes(job.checkpoint)) {
         const horizonKey = job.checkpoint.replace("discovering_", "") as Horizon;
         const horizon = HORIZONS.find((item) => item.key === horizonKey)!;
-        const queryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
+        const queryPlan = work.frozenQueryPlan || await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
+        if (!work.frozenQueryPlan) {
+          work.frozenQueryPlan = queryPlan;
+          await saveScanWorkQueue(database, job.id, work);
+        }
         const batch = await fetchHorizon(database, enrichedSpace, horizon, new Date(), preference.priorityVenues, preference.trackedAuthors, preference.profileKey, Math.max(0, run?.discovery_round || 0), job.id, job.discovered_count, queryPlan);
         const newCandidates = await countNewCandidates(database, space.id, batch.candidates);
         await persistCandidatePool(database, space.id, batch.candidates);

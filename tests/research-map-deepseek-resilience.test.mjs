@@ -14,7 +14,7 @@ function section(source, startMarker, endMarker) {
 test("research-map classifies truncated and malformed DeepSeek JSON as retryable", async () => {
   const route = await readFile(routePath, "utf8");
   const parser = section(route, "function extractCompleteJsonObject", "function boundedScore");
-  const call = section(route, "async function callDeepSeek", "async function reconcileRecentRecommendations");
+  const call = section(route, "async function callDeepSeek", "async function generateDirections");
 
   assert.match(parser, /normalizedFinishReason === "length"/);
   assert.match(parser, /new DeepSeekJsonResponseError\("truncated"/);
@@ -44,15 +44,26 @@ test("paper-network Pi analysis retries a smaller balanced input and preserves u
   assert.match(rebuild, /if \(curatedEdges\.length\) sources\.push\(`\$\{MODEL\}-cache`\)/);
 });
 
-test("recommendation reconciliation bounds each request and retries malformed JSON with a smaller batch", async () => {
-  const route = await readFile(routePath, "utf8");
-  const reconcile = section(route, "async function reconcileRecentRecommendations", "async function generateDirections");
+test("recommendation reconciliation consumes confirmed evidence without another LLM routing pass", async () => {
+  const [route, evidence] = await Promise.all([
+    readFile(routePath, "utf8"),
+    readFile(new URL("../lib/research-map-evidence.ts", import.meta.url), "utf8"),
+  ]);
+  const reconcile = section(evidence, "export async function reconcileConfirmedResearchMapEvidence", "const decisionCtes");
 
-  assert.match(reconcile, /primaryReconcileInput = unmatched\.slice\(0, 6\)/);
-  assert.match(reconcile, /reducedReconcileInput = primaryReconcileInput\.slice/);
-  assert.match(reconcile, /requestAssignments\(primaryReconcileInput, 3200, "medium"\)/);
-  assert.match(reconcile, /isRetryableDeepSeekJsonError\(error\)/);
-  assert.match(reconcile, /requestAssignments\(reducedReconcileInput, 2200, "low"\)/);
-  assert.match(reconcile, /reconciledInputIds\.has\(canonicalId\)/);
-  assert.doesNotMatch(reconcile, /\n\s*5000,\n\s*apiKey/);
+  assert.match(route, /reconcileConfirmedResearchMapEvidence\(database, space\.id\)/);
+  assert.match(reconcile, /ep\.status = 'confirmed'/);
+  assert.match(reconcile, /research_track_papers/);
+  assert.match(reconcile, /research_map_changes/);
+  assert.doesNotMatch(reconcile, /llm_recommended|callDeepSeek|paper_insights[^]*analysis_source/);
+});
+
+test("targeted gap expansion queues reviewable evidence instead of writing formal route papers", async () => {
+  const route = await readFile(routePath, "utf8");
+  const gapBranch = section(route, "if (gapExpanding) {", "} else {");
+
+  assert.match(gapBranch, /upsertRouteGapResearchMapEvidence/);
+  assert.match(gapBranch, /addedCount = persisted\.pendingCount/);
+  assert.doesNotMatch(gapBranch, /INSERT (?:OR IGNORE )?INTO research_track_papers/);
+  assert.match(route, /if \(!gapExpanding\) await saveDirectionIntelligence/);
 });

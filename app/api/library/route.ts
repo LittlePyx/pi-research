@@ -1,6 +1,7 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { upsertPreferenceSignal } from "../../../lib/preference-memory";
+import { reconcileResearchMapEvidenceStatements } from "../../../lib/research-map-evidence";
 
 const READING_STATUSES = new Set(["unread", "queued", "reading", "read", "mastered", "cited"]);
 const READING_MEMORY_MODEL = "deepseek-v4-pro";
@@ -279,7 +280,7 @@ export async function PATCH(request: Request) {
   ).bind(paperId, spaceId).first<ReadingPaper>();
   if (!paper) return Response.json({ error: "Paper not found" }, { status: 404 });
   const now = new Date().toISOString();
-  await context.database.prepare(
+  const readingProgressStatement = context.database.prepare(
     `INSERT INTO paper_reading_progress (id, space_id, paper_id, status, note, started_at, completed_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(space_id, paper_id) DO UPDATE SET status = excluded.status, note = excluded.note,
@@ -287,7 +288,11 @@ export async function PATCH(request: Request) {
      completed_at = CASE WHEN excluded.status IN ('read','mastered','cited') THEN excluded.completed_at ELSE NULL END,
      updated_at = CURRENT_TIMESTAMP`,
   ).bind(crypto.randomUUID(), spaceId, paperId, status, note, status === "reading" ? now : null,
-    ["read", "mastered", "cited"].includes(status) ? now : null).run();
+    ["read", "mastered", "cited"].includes(status) ? now : null);
+  await context.database.batch([
+    readingProgressStatement,
+    ...reconcileResearchMapEvidenceStatements(context.database, spaceId, paperId),
+  ]);
   const memoryAnalysis = payload?.analyze
     ? note.length >= 40 ? await analyzeReadingNote(context.database, context.space, context.user.userId, paper, note, status, resolveDeepSeekCredential(request).apiKey)
       : { status: "needs_more_context", cached: false }

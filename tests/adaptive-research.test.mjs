@@ -28,12 +28,14 @@ test("explicit and inferred preference evidence stay separate", async () => {
   assert.match(repository, /research_preference_signals/);
 });
 
-test("new recommendations update route changes and quality metrics", async () => {
+test("new recommendations stay provisional until confirmed evidence updates route changes", async () => {
   const [monitor, client] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(monitor, /INSERT OR IGNORE INTO research_map_changes/);
+  assert.match(monitor, /upsertPendingResearchMapEvidence/);
+  assert.match(monitor, /research_map_evidence_proposals/);
+  assert.doesNotMatch(monitor, /INSERT OR IGNORE INTO research_map_changes/);
   assert.match(monitor, /reconcileRecommendedReviewTracks/);
   assert.match(monitor, /route_initialized/);
   assert.match(monitor, /inferredMapChanges/);

@@ -23,6 +23,7 @@ test("completed scans create non-blocking catch-up notifications and evidence-gr
   assert.match(monitor, /createScanNotifications/);
   assert.match(monitor, /kind: "route_change"/);
   assert.match(monitor, /changedTracks\.size/);
+  assert.match(monitor, /ep\.status = 'confirmed'/);
   assert.match(monitor, /maybeGenerateWeeklyReview/);
   assert.match(monitor, /sourceDays < 3/);
   assert.match(monitor, /sourceDays < 7/);
