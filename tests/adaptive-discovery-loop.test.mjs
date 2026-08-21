@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("explicit feedback changes the next source and query budget", async () => {
-  const [monitor, memory] = await Promise.all([
+  const [monitor, planning, memory] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/monitor-route-planning.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/preference-memory.ts", import.meta.url), "utf8"),
   ]);
 
@@ -12,7 +13,8 @@ test("explicit feedback changes the next source and query budget", async () => {
   assert.match(monitor, /adaptiveBranchScore/);
   assert.match(monitor, /COALESCE\(f\.reason_code, ''\) <> 'duplicate_known'/);
   assert.match(monitor, /prioritizeDiscoveryPlans/);
-  assert.match(monitor, /Math\.round\(maxPlans \* 0\.18\)/);
+  assert.match(planning, /Math\.round\(maxPlans \* 0\.18\)/);
+  assert.match(monitor, /selectPrioritizedDiscoveryPlans/);
   assert.match(monitor, /branchPerformance\.ranked/);
   assert.match(memory, /duplicate_known: \{ kind: "mastery"/);
   assert.match(memory, /mastered \? "已掌握"/);
@@ -61,7 +63,8 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /status: 202/);
   assert.match(monitor, /quickScreenCandidates/);
   assert.match(monitor, /QUICK_SCREEN_CONCURRENCY = 2/);
-  assert.match(monitor, /thinking: \{ type: deliberate \? "enabled" : "disabled" \}/);
+  assert.match(monitor, /thinking: \{ type: deliberate && attempt === 0 \? "enabled" : "disabled" \}/);
+  assert.match(monitor, /QUICK_SCREEN_RETRY_TIMEOUT_MS = 12_000/);
   assert.match(monitor, /mode: "fast" \| "rescue"/);
   assert.match(monitor, /rescue_screening/);
   assert.match(monitor, /chooseRescueCandidateIds/);

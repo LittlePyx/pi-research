@@ -12,6 +12,24 @@ import {
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
+import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
+import {
+  LATEST_AUDIT_ROUTE_ORIGIN_SUBQUERY,
+  PRE_REVIEW_ROUTE_ORIGIN_SUBQUERY,
+  RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL,
+  RESEARCH_GUIDANCE_REVISIONS_SQL,
+  RESEARCH_GUIDANCE_TRACKS_SQL,
+  isMonitorRouteProvenance,
+  monitorPaperNotDismissedSql,
+  monitorRouteOriginKind,
+  retainReviewableScanWork,
+  retainChangedMonitorWrites,
+  reviewableScanCandidateIdsSql,
+  researchGuidanceIdentity,
+  selectPrioritizedDiscoveryPlans,
+  type ConfirmedRouteEvidenceSnapshot,
+  type ResearchGuidanceTrackSnapshot,
+} from "../../../lib/monitor-route-planning";
 import { promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
@@ -112,6 +130,7 @@ type ScanJobRow = {
   trigger_source: string;
   resume_of_job_id: string | null;
   checkpoint: string;
+  first_recommendation_at: string | null;
   started_at: string;
   completed_at: string | null;
   error: string | null;
@@ -264,20 +283,11 @@ type CandidateProvenance = {
   appearances?: number;
 };
 
-function routeOriginKind(sourceKey: string) {
-  if (sourceKey === "research-route:foundation") return "route_foundation" as const;
-  if (sourceKey === "research-route:milestone") return "route_milestone" as const;
-  if (sourceKey === "research-route:frontier") return "route_frontier" as const;
-  if (sourceKey === "research-route:gap") return "route_gap" as const;
-  if (sourceKey === "research-route:network") return "route_network" as const;
-  return null;
-}
-
 type RouteReviewTitle = { titleZh: string; titleEn: string };
 
 function routeReviewOrigins(candidate: Candidate, trackTitles: Map<string, RouteReviewTitle> = new Map()) {
   return candidate.provenance
-    .filter((entry) => Boolean(entry.routeId) || entry.sourceKey.startsWith("research-route:"))
+    .filter(isMonitorRouteProvenance)
     .slice(0, 6)
     .map((entry) => {
       const title = entry.routeId ? trackTitles.get(entry.routeId) : undefined;
@@ -285,7 +295,7 @@ function routeReviewOrigins(candidate: Candidate, trackTitles: Map<string, Route
         routeId: entry.routeId || null,
         routeTitleZh: title?.titleZh || "",
         routeTitleEn: title?.titleEn || "",
-        sourceKind: routeOriginKind(entry.sourceKey) || entry.sourceKey,
+        sourceKind: monitorRouteOriginKind(entry.sourceKey, entry.routeId) || entry.sourceKey,
         queryContext: cleanText(entry.queryText || "").slice(0, 300),
       };
     });
@@ -442,6 +452,12 @@ const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-19T09:00:00.000Z");
 const MONITOR_PIPELINE_VERSION = "continuous-evidence-v3";
+const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
+const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
+const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
+const QUICK_SCREEN_RETRY_TIMEOUT_MS = 12_000;
+const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 28_000;
+const DEEP_REVIEW_RETRY_TIMEOUT_MS = 12_000;
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
 const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48;
@@ -934,17 +950,7 @@ async function prioritizeDiscoveryPlans(database: D1Database, spaceId: string, p
     const score = Math.max(5, Math.min(100, (exact ?? source ?? 55) + (plan.key === "topic-anchor" ? 8 : 0) + (plan.routeUrgency || 0)));
     return { ...plan, explorationRole: plan.explorationRole || "core", adaptiveScore: score };
   }));
-  const maxPlans = mode === "focused" ? 8 : mode === "open" ? 12 : 10;
-  const adjacentSlots = mode === "focused" ? 0 : Math.max(1, Math.round(maxPlans * 0.18));
-  const rank = (items: DiscoveryQuery[]) => items.sort((left, right) => (right.adaptiveScore || 55) - (left.adaptiveScore || 55));
-  const adjacent = rank(enriched.filter((plan) => plan.explorationRole === "adjacent")).slice(0, adjacentSlots);
-  const core = rank(enriched.filter((plan) => plan.explorationRole !== "adjacent")).slice(0, maxPlans - adjacent.length);
-  const selected = [...core, ...adjacent];
-  if (selected.length < maxPlans) {
-    const selectedKeys = new Set(selected.map((plan) => `${plan.sourceKey}|${plan.query}`));
-    selected.push(...rank(enriched.filter((plan) => !selectedKeys.has(`${plan.sourceKey}|${plan.query}`))).slice(0, maxPlans - selected.length));
-  }
-  return selected;
+  return selectPrioritizedDiscoveryPlans(enriched, mode);
 }
 
 async function discoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery) {
@@ -1033,6 +1039,18 @@ async function recordDiscoveryCoverage(
   ).bind(crypto.randomUUID(), spaceId, horizon, plan.sourceKey, plan.channel, queryKey, queryText,
     plan.routeId || null, plan.explorationRole || "core", plan.adaptiveScore || 55, nextCursor,
     candidates.length, candidates.length, newCount, zeroYieldStreak, branchStatus, cooldownUntil, error).run();
+  if (error) {
+    await recordReliabilityEvent(database, {
+      spaceId,
+      kind: "source_degraded",
+      stage: `discovering_${horizon}`,
+      source: plan.sourceKey,
+      outcome: "degraded",
+      errorCode: monitorErrorCode(error),
+      message: error,
+      metadata: { horizon, channel: plan.channel, queryKey, routeId: plan.routeId || null },
+    });
+  }
 }
 
 async function setScanSource(database: D1Database, jobId: string, horizon: Horizon, source: string, progress: number, discoveredCount: number) {
@@ -1459,6 +1477,44 @@ function normalizedMonitorError(error: unknown) {
   return message || "Monitoring stage failed";
 }
 
+function monitorErrorCode(error: unknown) {
+  const normalized = normalizedMonitorError(error);
+  if (normalized === DEEPSEEK_BALANCE_ERROR || normalized === DEEPSEEK_CREDENTIAL_ERROR) return normalized;
+  if (/timeout|aborted/i.test(normalized)) return "timeout";
+  if (/429|rate.?limit|throttl/i.test(normalized)) return "rate_limited";
+  if (/5\d\d|temporarily unavailable/i.test(normalized)) return "upstream_unavailable";
+  if (/json|malformed|did not (?:screen|review)/i.test(normalized)) return "invalid_model_output";
+  return "stage_failed";
+}
+
+async function recordReliabilityEvent(database: D1Database, input: {
+  spaceId: string;
+  scanJobId?: string | null;
+  kind: string;
+  stage?: string;
+  source?: string;
+  outcome?: "success" | "degraded" | "failed" | "info";
+  durationMs?: number;
+  errorCode?: string;
+  message?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  try {
+    await database.prepare(
+      `INSERT INTO monitor_reliability_events
+       (id, space_id, scan_job_id, kind, stage, source, outcome, duration_ms, error_code, message, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      crypto.randomUUID(), input.spaceId, input.scanJobId || null, input.kind, input.stage || "", input.source || "",
+      input.outcome || "info", Math.max(0, Math.round(input.durationMs || 0)), input.errorCode || "",
+      cleanText(input.message || "").slice(0, 500), JSON.stringify(input.metadata || {}),
+    ).run();
+  } catch (error) {
+    // Reliability telemetry must never become a new failure mode for the scan itself.
+    console.error("Failed to record monitor reliability event", error);
+  }
+}
+
 function isNonRetryableDeepSeekError(error: unknown) {
   return [DEEPSEEK_BALANCE_ERROR, DEEPSEEK_CREDENTIAL_ERROR].includes(normalizedMonitorError(error));
 }
@@ -1477,27 +1533,28 @@ async function ensureDailyQueryPlan(
   apiKey: string,
 ): Promise<QueryPlan> {
   const planDate = new Date().toISOString().slice(0, 10);
-  const [existing, guidanceTracks, guidance] = await Promise.all([
+  const [existing, guidanceTracks, guidance, confirmedEvidence] = await Promise.all([
     database.prepare(
       "SELECT plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error, created_at FROM monitor_query_plans WHERE space_id = ? AND plan_date = ? LIMIT 1",
     ).bind(space.id, planDate).first<{
       plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null; created_at: string;
     }>(),
-    database.prepare(
-      "SELECT id, user_role, depth_score, support_score, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY id",
-    ).bind(space.id).all<{ id: string; user_role: string; depth_score: number; support_score: number; intelligence_json: string; intelligence_updated_at: string | null }>(),
-    database.prepare(
-      `SELECT
-       COALESCE((SELECT MAX(updated_at) FROM research_preference_signals WHERE space_id = ? AND active = 1), '') AS preference_revision,
-       COALESCE((SELECT MAX(updated_at) FROM paper_feedback WHERE space_id = ?), '') AS feedback_revision,
-       COALESCE((SELECT MAX(updated_at) FROM paper_reading_progress WHERE space_id = ?), '') AS reading_revision`,
-    ).bind(space.id, space.id, space.id).first<{ preference_revision: string; feedback_revision: string; reading_revision: string }>(),
+    database.prepare(RESEARCH_GUIDANCE_TRACKS_SQL).bind(space.id).all<ResearchGuidanceTrackSnapshot>(),
+    database.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).bind(space.id, space.id, space.id, space.id).first<{
+      preference_revision: string;
+      feedback_revision: string;
+      reading_revision: string;
+      confirmed_evidence_revision: string;
+    }>(),
+    database.prepare(RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL).bind(space.id).all<ConfirmedRouteEvidenceSnapshot>(),
   ]);
-  const guidanceIdentity = JSON.stringify({
+  const guidanceIdentity = researchGuidanceIdentity({
     tracks: guidanceTracks.results,
     preferenceRevision: guidance?.preference_revision || "",
     feedbackRevision: guidance?.feedback_revision || "",
     readingRevision: guidance?.reading_revision || "",
+    confirmedEvidenceRevision: guidance?.confirmed_evidence_revision || "",
+    confirmedEvidence: confirmedEvidence.results,
   });
   const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(guidanceIdentity));
   const guidanceRevision = Array.from(new Uint8Array(guidanceDigest)).slice(0, 12).map((value) => value.toString(16).padStart(2, "0")).join("");
@@ -1579,6 +1636,7 @@ async function ensureDailyQueryPlan(
               `Explicit and inferred preference evidence: ${JSON.stringify(signals.map((item) => ({ layer: item.layer, kind: item.kind, label: item.labelEn, evidence: item.evidence, confidence: item.effectiveConfidence })))}`,
               `Existing directions and user depth: ${JSON.stringify(tracks.results.map((track) => ({ title: track.title_en, role: track.user_role, depth: track.depth_score, interaction: track.interaction_score, summary: track.summary_en, queries: parseVenues(track.search_queries).slice(0, 4) })))}`,
               `Grounded direction opportunities, watch signals, and evidence gaps that today's search should test: ${JSON.stringify(directionSignals)}`,
+              `Recently confirmed route evidence (use its title and route role to refine queries even while Pi is rebuilding direction intelligence): ${JSON.stringify(confirmedEvidence.results.map((item) => ({ trackId: item.track_id, title: item.title, role: item.map_role, confidence: item.confidence })))}`,
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
               `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,
               `Low-yield or repeatedly covered channels: ${JSON.stringify(recentCoverage.results)}`,
@@ -1760,13 +1818,15 @@ async function quickScreenBatch(
               : "You are Pi Research's fast evidence-disciplined paper triage editor. Return strict JSON." },
             { role: "user", content: prompt },
           ],
-          thinking: { type: deliberate ? "enabled" : "disabled" },
-          reasoning_effort: deliberate ? "medium" : "low",
+          thinking: { type: deliberate && attempt === 0 ? "enabled" : "disabled" },
+          reasoning_effort: deliberate && attempt === 0 ? "medium" : "low",
           response_format: { type: "json_object" },
-          max_tokens: 3600,
+          max_tokens: Math.min(3600, 500 + candidates.length * (deliberate ? 190 : 150)),
           stream: false,
         }),
-        signal: AbortSignal.timeout(deliberate ? 55_000 : 38_000),
+        signal: AbortSignal.timeout(attempt === 0
+          ? deliberate ? QUICK_SCREEN_RESCUE_TIMEOUT_MS : QUICK_SCREEN_FAST_TIMEOUT_MS
+          : QUICK_SCREEN_RETRY_TIMEOUT_MS),
       });
       const data = await response.json() as DeepSeekResponse;
       if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro quick screening failed");
@@ -1842,45 +1902,49 @@ async function quickScreenCandidates(
 }
 
 async function persistQuickScreens(database: D1Database, spaceId: string, screens: QuickScreen[]) {
-  if (!screens.length) return;
+  if (!screens.length) return [] as QuickScreen[];
   const placeholders = screens.map(() => "?").join(", ");
   const rows = await database.prepare(
     `SELECT p.id, p.canonical_id FROM monitored_papers p WHERE p.space_id = ? AND p.canonical_id IN (${placeholders})`,
   ).bind(spaceId, ...screens.map((screen) => screen.canonicalId)).all<{ id: string; canonical_id: string }>();
   const paperIds = new Map(rows.results.map((row) => [row.canonical_id, row.id]));
-  const statements = screens.flatMap((screen) => {
+  const writes = screens.flatMap((screen) => {
     const paperId = paperIds.get(screen.canonicalId);
     if (!paperId) return [];
     const eligible = isPrimaryDeepCandidate(screen) || isRescueDeepCandidate(screen) || isContinuityDeepCandidate(screen);
-    return [database.prepare(
+    return [{ screen, statement: database.prepare(
       `UPDATE paper_insights SET analysis_source = ?, analysis_model = ?, llm_recommended = 0,
        llm_relevance_score = ?, quality_score = MAX(quality_score, ?), screening_reason = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE paper_id = ? AND space_id = ?`,
-    ).bind(eligible ? "deepseek_screened" : "deepseek_rejected", MONITOR_MODEL, screen.relevanceScore, screen.qualityScore, screen.screeningReason, paperId, spaceId)];
+       WHERE paper_id = ? AND space_id = ?
+        AND ${monitorPaperNotDismissedSql("paper_insights.space_id", "paper_insights.paper_id")}`,
+    ).bind(eligible ? "deepseek_screened" : "deepseek_rejected", MONITOR_MODEL, screen.relevanceScore, screen.qualityScore, screen.screeningReason, paperId, spaceId) }];
   });
-  if (statements.length) await database.batch(statements);
+  if (!writes.length) return [] as QuickScreen[];
+  const results = await database.batch(writes.map((write) => write.statement));
+  return retainChangedMonitorWrites(writes.map((write) => write.screen), results);
 }
 
 async function persistReviewBatch(database: D1Database, spaceId: string, scanJobId: string, candidates: Candidate[], reviews: PaperReview[]) {
-  if (!reviews.length) return;
+  if (!reviews.length) return [] as PaperReview[];
   const candidateByCanonical = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
   const placeholders = reviews.map(() => "?").join(", ");
   const paperRows = await database.prepare(
     `SELECT id, canonical_id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`,
   ).bind(spaceId, ...reviews.map((review) => review.canonicalId)).all<{ id: string; canonical_id: string }>();
   const paperIds = new Map(paperRows.results.map((row) => [row.canonical_id, row.id]));
-  const insightStatements = reviews.flatMap((review) => {
+  const insightWrites = reviews.flatMap((review) => {
     const candidate = candidateByCanonical.get(review.canonicalId);
     const paperId = paperIds.get(review.canonicalId);
     if (!candidate || !paperId) return [];
-    return [database.prepare(
+    return [{ review, statement: database.prepare(
       `INSERT INTO paper_insights
        (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en, quality_score,
         priority_venue, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason,
         recommendation_tier, read_minutes, read_depth, problem_zh, problem_en, method_zh, method_en,
         contribution_zh, contribution_en, limitations_zh, limitations_en, reading_focus_zh, reading_focus_en,
         research_questions_zh, research_questions_en)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE ${monitorPaperNotDismissedSql("?", "?")}
        ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text, summary_zh = excluded.summary_zh,
        summary_en = excluded.summary_en, why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
        quality_score = excluded.quality_score, priority_venue = excluded.priority_venue,
@@ -1900,11 +1964,13 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
       review.recommendationTier, review.readMinutes, review.readDepth, review.problemZh, review.problemEn,
       review.methodZh, review.methodEn, review.contributionZh, review.contributionEn, review.limitationsZh,
       review.limitationsEn, review.readingFocusZh, review.readingFocusEn, JSON.stringify(review.researchQuestionsZh),
-      JSON.stringify(review.researchQuestionsEn))];
+      JSON.stringify(review.researchQuestionsEn), spaceId, paperId) }];
   });
-  if (insightStatements.length) await database.batch(insightStatements);
+  if (!insightWrites.length) return [] as PaperReview[];
+  const insightResults = await database.batch(insightWrites.map((write) => write.statement));
+  const persistedReviews = retainChangedMonitorWrites(insightWrites.map((write) => write.review), insightResults);
 
-  const proposals = reviews.flatMap((review) => {
+  const proposals = persistedReviews.flatMap((review) => {
     const candidate = candidateByCanonical.get(review.canonicalId);
     const paperId = paperIds.get(review.canonicalId);
     if (!review.recommended || !review.trackId || !paperId || !review.mapRationaleZh || !review.mapRationaleEn) return [];
@@ -1918,6 +1984,7 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
   });
   await upsertPendingResearchMapEvidence(database, proposals);
   await promoteAlreadyAcceptedResearchMapEvidence(database, spaceId, proposals.map((proposal) => proposal.paperId));
+  return persistedReviews;
 }
 
 function allocatedTokenShare(total: number, count: number, index: number) {
@@ -1945,7 +2012,7 @@ async function persistRecommendationAuditBatch(
     const candidate = candidateByCanonical.get(review.canonicalId);
     const paperId = paperIds.get(review.canonicalId);
     if (!candidate || !paperId) return [];
-    const routeProvenance = candidate.provenance.filter((entry) => Boolean(entry.routeId) || entry.sourceKey.startsWith("research-route:"));
+    const routeProvenance = candidate.provenance.filter(isMonitorRouteProvenance);
     const genericProvenance = candidate.provenance.filter((entry) => !routeProvenance.includes(entry));
     const provenance = [...routeProvenance, ...genericProvenance].slice(0, 16).map((entry) => ({
       sourceKey: entry.sourceKey,
@@ -1953,7 +2020,7 @@ async function persistRecommendationAuditBatch(
       queryKey: entry.queryKey,
       queryText: cleanText(entry.queryText || "").slice(0, 500),
       routeId: entry.routeId || null,
-      originKind: routeOriginKind(entry.sourceKey),
+      originKind: monitorRouteOriginKind(entry.sourceKey, entry.routeId),
       appearances: Math.max(1, entry.appearances || 1),
     }));
     const appearanceCount = provenance.reduce((sum, entry) => sum + entry.appearances, 0) || 1;
@@ -1963,7 +2030,8 @@ async function persistRecommendationAuditBatch(
        (id, space_id, scan_job_id, paper_id, decision, is_paper, recommended, horizon, model,
         relevance_score, quality_score, recommendation_tier, screening_reason, provenance_json,
         appearance_count, allocated_input_tokens, allocated_output_tokens)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE ${monitorPaperNotDismissedSql("?", "?")}
        ON CONFLICT(scan_job_id, paper_id) DO UPDATE SET decision = excluded.decision,
        is_paper = excluded.is_paper, recommended = excluded.recommended, horizon = excluded.horizon,
        model = excluded.model, relevance_score = excluded.relevance_score, quality_score = excluded.quality_score,
@@ -1976,6 +2044,7 @@ async function persistRecommendationAuditBatch(
       candidate.horizon, MONITOR_MODEL, review.relevanceScore, review.qualityScore, review.recommendationTier,
       review.screeningReason, JSON.stringify(provenance), appearanceCount,
       allocatedTokenShare(inputTokens, reviews.length, index), allocatedTokenShare(outputTokens, reviews.length, index),
+      spaceId, paperId,
     )];
   });
   if (statements.length) await database.batch(statements);
@@ -2007,7 +2076,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
 
   for (let start = 0; start < candidates.length; start += REVIEW_BATCH_SIZE) {
     const batch = candidates.slice(start, start + REVIEW_BATCH_SIZE);
-    const completedBefore = completed.length;
+    const batchReviews: PaperReview[] = [];
     let batchInputTokens = 0;
     let batchOutputTokens = 0;
     const prompt = [
@@ -2080,10 +2149,10 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
             thinking: { type: attempt === 0 ? "enabled" : "disabled" },
             reasoning_effort: attempt === 0 ? "medium" : "low",
             response_format: { type: "json_object" },
-            max_tokens: attempt === 0 ? 8500 : 7000,
+            max_tokens: Math.min(attempt === 0 ? 4800 : 3200, 700 + batch.length * (attempt === 0 ? 1800 : 1500)),
             stream: false,
           }),
-          signal: AbortSignal.timeout(attempt === 0 ? 55_000 : 45_000),
+          signal: AbortSignal.timeout(attempt === 0 ? DEEP_REVIEW_PRIMARY_TIMEOUT_MS : DEEP_REVIEW_RETRY_TIMEOUT_MS),
         });
         const data = await response.json() as DeepSeekResponse;
         if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro review failed");
@@ -2140,7 +2209,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       const trackId = recommended && validTrackIds.has(cleanText(item.trackId || "")) ? cleanText(item.trackId || "") : "";
       const mapRationaleZh = trackId ? cleanText(item.mapRationaleZh || "").slice(0, 700) : "";
       const mapRationaleEn = trackId ? cleanText(item.mapRationaleEn || "").slice(0, 900) : "";
-      completed.push({
+      batchReviews.push({
         canonicalId: candidate.canonicalId,
         isPaper: item.isPaper === true,
         recommended,
@@ -2172,10 +2241,10 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         researchQuestionsEn,
       });
     }
-    const batchReviews = completed.slice(completedBefore);
-    await persistReviewBatch(database, space.id, jobId, batch, batchReviews);
+    const persistedBatchReviews = await persistReviewBatch(database, space.id, jobId, batch, batchReviews);
+    completed.push(...persistedBatchReviews);
     try {
-      await persistRecommendationAuditBatch(database, space.id, jobId, batch, batchReviews, batchInputTokens, batchOutputTokens);
+      await persistRecommendationAuditBatch(database, space.id, jobId, batch, persistedBatchReviews, batchInputTokens, batchOutputTokens);
     } catch (auditError) {
       // Internal evaluation must not force another paid LLM review when recommendation persistence succeeded.
       console.error("Failed to persist internal recommendation audit", auditError);
@@ -2768,8 +2837,9 @@ async function persistCandidatePool(database: D1Database, spaceId: string, candi
 
 async function pendingCandidateQueue(database: D1Database, spaceId: string, canonicalIds?: string[]) {
   const restrictedIds = Array.from(new Set(canonicalIds || [])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
-  const candidateCondition = restrictedIds.length
-    ? `p.canonical_id IN (${restrictedIds.map(() => "?").join(", ")})`
+  const explicitlyRestricted = canonicalIds !== undefined;
+  const candidateCondition = explicitlyRestricted
+    ? restrictedIds.length ? `p.canonical_id IN (${restrictedIds.map(() => "?").join(", ")})` : "0 = 1"
     : `(i.analysis_model = ''
        OR i.analysis_source = 'deepseek_screened'
        OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days'))
@@ -2783,12 +2853,17 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
          ))
          OR (length(trim(i.abstract_text)) = 0 AND lower(i.screening_reason) LIKE '%abstract missing%')
        )))`;
-  const candidateParameters = restrictedIds.length ? restrictedIds : [MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT];
+  const candidateParameters = explicitlyRestricted ? restrictedIds : [MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT];
   const rows = await database.prepare(
     `SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
      p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
      WHERE p.space_id = ? AND ${candidateCondition}
+       AND NOT EXISTS (
+         SELECT 1 FROM paper_feedback suppressed
+         WHERE suppressed.space_id = p.space_id AND suppressed.paper_id = p.id
+           AND suppressed.feedback = 'not_relevant'
+       )
      ORDER BY CASE WHEN i.analysis_source = 'deepseek_screened' THEN 1 ELSE 0 END DESC,
        CASE WHEN i.analysis_source = 'deepseek_screened' THEN i.llm_relevance_score ELSE p.relevance_score END DESC,
        p.relevance_score DESC,
@@ -2924,7 +2999,7 @@ function selectCurrentAndBacklogReviewBatch(candidates: Candidate[], currentCand
     // gates. One screening slot per non-empty horizon merely prevents a large
     // generic backlog from starving them before the model can judge their fit.
     const routeCandidate = selectHorizonScreeningCandidates(
-      horizonCandidates.filter((candidate) => candidate.provenance.some((entry) => entry.sourceKey.startsWith("research-route:"))),
+      horizonCandidates.filter((candidate) => candidate.provenance.some(isMonitorRouteProvenance)),
       1,
     )[0];
     const reservedIds = new Set(routeCandidate ? [routeCandidate.canonicalId] : []);
@@ -3062,7 +3137,7 @@ function isPaperDue(paper: PaperRow, now: number) {
 }
 
 function toPaper(paper: PaperRow, now: number) {
-  const originKind = routeOriginKind(paper.discovery_source_key);
+  const originKind = monitorRouteOriginKind(paper.discovery_source_key, paper.discovery_route_id);
   const discoveryType = originKind === "route_gap" ? "gap" as const
     : originKind === "route_network" ? "citation_network" as const
       : originKind ? "route_search" as const : null;
@@ -3140,7 +3215,7 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics] = await Promise.all([
+  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -3165,8 +3240,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
          (SELECT ep.track_id FROM research_map_evidence_proposals ep
           WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending', 'confirmed')
           ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1), '') AS track_id,
-       COALESCE(route_origin.source_key, '') AS discovery_source_key,
-       COALESCE(route_origin.route_id, '') AS discovery_route_id,
+       COALESCE(audit_route_origin.source_key, fallback_route_origin.source_key, '') AS discovery_source_key,
+       COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id, '') AS discovery_route_id,
        COALESCE(route_track.title_zh, '') AS discovery_track_title_zh,
        COALESCE(route_track.title_en, '') AS discovery_track_title_en,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
@@ -3176,27 +3251,13 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        LEFT JOIN paper_delivery_state d ON d.paper_id = p.id AND d.space_id = p.space_id
        LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
        LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
-       LEFT JOIN (
-        SELECT space_id, paper_id, source_key, route_id FROM (
-         SELECT latest.space_id, latest.paper_id,
-          json_extract(origin.value, '$.sourceKey') AS source_key,
-          json_extract(origin.value, '$.routeId') AS route_id,
-          ROW_NUMBER() OVER (
-           PARTITION BY latest.space_id, latest.paper_id ORDER BY CAST(origin.key AS INTEGER)
-          ) AS origin_rank
-         FROM (
-          SELECT ranked.* FROM (
-           SELECT ae.*,
-            ROW_NUMBER() OVER (PARTITION BY ae.space_id, ae.paper_id ORDER BY ae.reviewed_at DESC, ae.rowid DESC) AS audit_rank
-           FROM recommendation_audit_events ae
-          ) ranked WHERE ranked.audit_rank = 1 AND ranked.recommended = 1
-         ) latest
-         JOIN json_each(latest.provenance_json) origin
-         WHERE json_extract(origin.value, '$.sourceKey') LIKE 'research-route:%'
-          AND COALESCE(json_extract(origin.value, '$.routeId'), '') <> ''
-        ) WHERE origin_rank = 1
-       ) route_origin ON route_origin.space_id = p.space_id AND route_origin.paper_id = p.id
-       LEFT JOIN research_tracks route_track ON route_track.id = route_origin.route_id AND route_track.space_id = p.space_id
+       LEFT JOIN ${LATEST_AUDIT_ROUTE_ORIGIN_SUBQUERY} audit_route_origin
+        ON audit_route_origin.space_id = p.space_id AND audit_route_origin.paper_id = p.id
+       LEFT JOIN ${PRE_REVIEW_ROUTE_ORIGIN_SUBQUERY} fallback_route_origin
+        ON fallback_route_origin.space_id = p.space_id AND fallback_route_origin.paper_id = p.id
+       LEFT JOIN research_tracks route_track
+        ON route_track.id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
+        AND route_track.space_id = p.space_id
         WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek'
         ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 300`,
     ).bind(space.id).all<PaperRow>(),
@@ -3204,7 +3265,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     database.prepare(
       `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
        duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-       resume_of_job_id, checkpoint, started_at, completed_at, error, work_queue_json
+       resume_of_job_id, checkpoint, first_recommendation_at, started_at, completed_at, error, work_queue_json
        FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
     ).bind(space.id).first<ScanJobRow>(),
     database.prepare(
@@ -3400,6 +3461,37 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
          COALESCE(SUM(review_tokens_7), 0) AS review_tokens_7
        FROM paper_costs`,
     ).bind(space.id).first<{ accepted_papers_14: number; review_tokens_14: number; accepted_papers_7: number; review_tokens_7: number }>(),
+    database.prepare(
+      `SELECT status, started_at, completed_at, first_recommendation_at, recommended_count, resume_of_job_id, error
+       FROM monitor_scan_jobs WHERE space_id = ? AND started_at >= datetime('now', '-13 days')
+       ORDER BY started_at DESC`,
+    ).bind(space.id).all<{
+      status: string; started_at: string; completed_at: string | null; first_recommendation_at: string | null;
+      recommended_count: number; resume_of_job_id: string | null; error: string | null;
+    }>(),
+    database.prepare(
+      `SELECT source, COUNT(*) AS failures, MAX(message) AS last_error, MAX(created_at) AS last_seen_at
+       FROM monitor_reliability_events WHERE space_id = ? AND kind = 'source_degraded'
+        AND created_at >= datetime('now', '-13 days')
+       GROUP BY source ORDER BY failures DESC, last_seen_at DESC LIMIT 12`,
+    ).bind(space.id).all<{ source: string; failures: number; last_error: string; last_seen_at: string }>(),
+    database.prepare(
+      `WITH outcomes AS (
+         SELECT p.id, COALESCE(f.saved, 0) AS saved, f.feedback, COALESCE(f.reason_code, '') AS reason_code,
+          COALESCE(r.status, 'unread') AS reading_status
+         FROM monitored_papers p
+         LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
+         LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
+         WHERE p.space_id = ?
+       )
+       SELECT
+        SUM(CASE WHEN saved = 1 OR feedback IS NOT NULL OR reading_status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS labels,
+        SUM(CASE WHEN saved = 1 OR feedback = 'relevant' OR reading_status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS accepted,
+        SUM(CASE WHEN feedback = 'not_relevant' AND reason_code <> 'duplicate_known' THEN 1 ELSE 0 END) AS dismissed,
+        SUM(CASE WHEN reason_code = 'duplicate_known' OR reading_status IN ('mastered','cited') THEN 1 ELSE 0 END) AS known,
+        SUM(CASE WHEN reason_code = 'wrong_type' AND feedback = 'not_relevant' THEN 1 ELSE 0 END) AS wrong_type
+       FROM outcomes`,
+    ).bind(space.id).first<{ labels: number; accepted: number; dismissed: number; known: number; wrong_type: number }>(),
   ]);
   const now = Date.now();
   const duePapers = papers.results
@@ -3421,6 +3513,30 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const recommended = scanMetrics?.recommended || 0;
   const decisions = feedbackMetrics?.decisions || 0;
   const accepted = feedbackMetrics?.accepted || 0;
+  const reliabilityProgram = buildReliabilityProgram({
+    jobs: reliabilityJobs.results.map((row) => ({
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      firstRecommendationAt: row.first_recommendation_at,
+      recommendedCount: row.recommended_count,
+      resumeOfJobId: row.resume_of_job_id,
+      error: row.error,
+    })),
+    sourceFailures: reliabilitySources.results.map((row) => ({
+      source: row.source,
+      failures: row.failures,
+      lastError: row.last_error,
+      lastSeenAt: row.last_seen_at,
+    })),
+    calibration: {
+      labels: reliabilityCalibration?.labels || 0,
+      accepted: reliabilityCalibration?.accepted || 0,
+      dismissed: reliabilityCalibration?.dismissed || 0,
+      known: reliabilityCalibration?.known || 0,
+      wrongType: reliabilityCalibration?.wrong_type || 0,
+    },
+  });
   const suggestedAuthors = Array.from(new Set(acceptedAuthorRows.results.flatMap((row) => row.authors.split(",").map((author) => cleanText(author)).filter((author) => author.length >= 4))))
     .filter((author) => !preference.trackedAuthors.some((tracked) => tracked.toLocaleLowerCase() === author.toLocaleLowerCase())).slice(0, 8);
   const dailyUsage = new Map(dailyUsageRows.results.map((row) => [row.usage_date, (row.input_tokens || 0) + (row.output_tokens || 0)]));
@@ -3798,6 +3914,10 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
           totalTokensPerAcceptedPaper: acceptedPapers7 ? Math.round(pilotTotalTokens / acceptedPapers7) : 0,
         },
       },
+      internalReliability: {
+        ...reliabilityProgram,
+        periodDays: MONITOR_RELIABILITY_PERIOD_DAYS,
+      },
       suggestedAuthors,
       papers: selected.map((paper) => toPaper(paper, now)),
       historyPapers,
@@ -3992,6 +4112,42 @@ async function saveScanWorkQueue(database: D1Database, jobId: string, work: Scan
     .bind(JSON.stringify(work), jobId).run();
 }
 
+async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: string, work: ScanWorkQueue) {
+  const queuedIds = Array.from(new Set([
+    ...work.candidateIds,
+    ...work.screens.map((screen) => screen.canonicalId),
+    ...work.deepIds,
+    ...work.deepCompletedIds,
+    ...work.rescueScreenIds,
+  ])).filter(Boolean);
+  if (!queuedIds.length) return false;
+
+  const reviewableIds = new Set<string>();
+  for (let start = 0; start < queuedIds.length; start += 70) {
+    const chunk = queuedIds.slice(start, start + 70);
+    const rows = await database.prepare(reviewableScanCandidateIdsSql(chunk.length))
+      .bind(spaceId, ...chunk).all<{ canonical_id: string }>();
+    for (const row of rows.results) reviewableIds.add(row.canonical_id);
+  }
+
+  const before = JSON.stringify({
+    candidateIds: work.candidateIds,
+    screenIds: work.screens.map((screen) => screen.canonicalId),
+    deepIds: work.deepIds,
+    deepCompletedIds: work.deepCompletedIds,
+    rescueScreenIds: work.rescueScreenIds,
+  });
+  const retained = retainReviewableScanWork(work, reviewableIds);
+  Object.assign(work, retained);
+  return before !== JSON.stringify({
+    candidateIds: work.candidateIds,
+    screenIds: work.screens.map((screen) => screen.canonicalId),
+    deepIds: work.deepIds,
+    deepCompletedIds: work.deepCompletedIds,
+    rescueScreenIds: work.rescueScreenIds,
+  });
+}
+
 function chooseDeepCandidateIds(candidates: Candidate[], screens: QuickScreen[], limit = DEEP_REVIEW_LIMIT) {
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
   const ranked = screens
@@ -4153,8 +4309,10 @@ async function runIncrementalDeepReview(
   const settled = await Promise.all(queue.map(async (candidate) => {
     try {
       const reviews = await reviewCandidates(database, space, userId, priorityVenues, [candidate], jobId, lockToken, apiKey);
-      saveQueue = saveQueue.then(() => onReviewsSaved(reviews));
-      await saveQueue;
+      if (reviews.length) {
+        saveQueue = saveQueue.then(() => onReviewsSaved(reviews));
+        await saveQueue;
+      }
       return { reviews, error: null as unknown };
     } catch (error) {
       return { reviews: [] as PaperReview[], error };
@@ -4351,7 +4509,7 @@ export async function POST(request: Request) {
       const previousJob = await database.prepare(
         `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-         resume_of_job_id, checkpoint, work_queue_json, started_at, completed_at, error
+         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, started_at, completed_at, error
          FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
       ).bind(space.id).first<StagedJobRow>();
       if (trigger !== "manual" && previousJob?.status === "error" && isNonRetryableDeepSeekError(previousJob.error)) {
@@ -4403,7 +4561,16 @@ export async function POST(request: Request) {
         resumable ? previousJob?.duplicate_count || 0 : 0, resumable ? previousJob?.reviewed_count || 0 : 0,
         resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.rejected_count || 0 : 0,
         resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null,
-        initialCheckpoint, JSON.stringify(initialWork)).run();
+         initialCheckpoint, JSON.stringify(initialWork)).run();
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: jobId,
+        kind: resumable ? "scan_resumed" : "scan_started",
+        stage: initialCheckpoint,
+        source: trigger,
+        outcome: "info",
+        metadata: { attempt: resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, resumeOfJobId: resumable ? previousJob?.id || null : null },
+      });
       return Response.json(await readState(database, space, { accepted: true }), { status: 202 });
     }
 
@@ -4411,17 +4578,20 @@ export async function POST(request: Request) {
       ? await database.prepare(
         `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-         resume_of_job_id, checkpoint, work_queue_json, started_at, completed_at, error
+         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, started_at, completed_at, error
          FROM monitor_scan_jobs WHERE id = ? AND space_id = ? LIMIT 1`,
       ).bind(payload.jobId, space.id).first<StagedJobRow>()
       : await database.prepare(
         `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-         resume_of_job_id, checkpoint, work_queue_json, started_at, completed_at, error
+         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, started_at, completed_at, error
          FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
       ).bind(space.id).first<StagedJobRow>();
     if (!job) return Response.json({ error: "No scan job is available" }, { status: 404 });
     const work = parseScanWorkQueue(job.work_queue_json);
+    if (await pruneExplicitlyWithdrawnScanWork(database, space.id, work)) {
+      await saveScanWorkQueue(database, job.id, work);
+    }
     const preference = await ensurePreference(database, space);
     const enrichedSpace = await enrichSpaceWithImportedMemory(database, space);
 
@@ -4463,6 +4633,8 @@ export async function POST(request: Request) {
     await database.prepare(
       "UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
     ).bind(lockToken, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id).run();
+    const stageStartedAt = Date.now();
+    let firstRecommendationAt = job.first_recommendation_at;
 
     const setStage = async (checkpoint: string, status: string, progress: number, source: string, horizon = "") => {
       await database.batch([
@@ -4473,31 +4645,59 @@ export async function POST(request: Request) {
           "UPDATE monitor_scan_jobs SET status = ?, checkpoint = ?, current_horizon = ?, current_source = ?, progress = MAX(progress, ?), error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(status, checkpoint, horizon, source, progress, job.id),
       ]);
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: job.id,
+        kind: checkpoint === job.checkpoint ? "checkpoint_retry" : "checkpoint_completed",
+        stage: job.checkpoint,
+        source: job.current_source,
+        outcome: checkpoint === job.checkpoint ? "degraded" : "success",
+        durationMs: Date.now() - stageStartedAt,
+        metadata: { nextCheckpoint: checkpoint, progress, horizon },
+      });
     };
 
     const finalizeMain = async (candidates: Candidate[], reviews: PaperReview[]) => {
       const completedAt = new Date();
-      const reconciledReviews = await reconcileRecommendedReviewTracks(database, enrichedSpace, user.userId, candidates, reviews, apiKey);
-      if (reconciledReviews.some((review, index) => review.trackId && review.trackId !== reviews[index]?.trackId)) {
-        await persistReviewBatch(database, space.id, job.id, candidates, reconciledReviews);
-      }
-      const recommended = reconciledReviews.filter((review) => review.recommended).length;
+      const reviewableIds = new Set(candidates.map((candidate) => candidate.canonicalId));
+      const reviewableReviews = reviews.filter((review) => reviewableIds.has(review.canonicalId));
+      const reconciledReviews = await reconcileRecommendedReviewTracks(database, enrichedSpace, user.userId, candidates, reviewableReviews, apiKey);
+      // Re-run the guarded persistence even when route reconciliation made no
+      // change: a user may have withdrawn a paper while that LLM call was in flight.
+      const finalizedReviews = await persistReviewBatch(database, space.id, job.id, candidates, reconciledReviews);
+      const recommended = finalizedReviews.filter((review) => review.recommended).length;
       const rejected = Math.max(0, work.screens.length - recommended);
       const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
-      await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, reconciledReviews, {
+      if (recommended && !firstRecommendationAt) {
+        firstRecommendationAt = completedAt.toISOString();
+        await database.prepare(
+          "UPDATE monitor_scan_jobs SET first_recommendation_at = COALESCE(first_recommendation_at, ?) WHERE id = ?",
+        ).bind(firstRecommendationAt, job.id).run();
+        await recordReliabilityEvent(database, {
+          spaceId: space.id,
+          scanJobId: job.id,
+          kind: "first_recommendation_ready",
+          stage: "deep_reviewing",
+          source: MONITOR_MODEL,
+          outcome: "success",
+          durationMs: Math.max(0, completedAt.getTime() - databaseTime(job.started_at)),
+          metadata: { recommended },
+        });
+      }
+      await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, finalizedReviews, {
         scanned: job.discovered_count,
         newCandidates: work.newCandidateCount,
         duplicates: duplicateCount,
-        reviewed: reviews.length,
+        reviewed: finalizedReviews.length,
         screened: work.screens.length,
-        deepReviewed: reviews.length,
+        deepReviewed: finalizedReviews.length,
         recommended,
         rejected,
       }, completedAt, apiKey, true);
       try {
-        await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), reconciledReviews, {
+        await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), finalizedReviews, {
           scanned: job.discovered_count, newCandidates: work.newCandidateCount, duplicates: duplicateCount,
-          reviewed: reviews.length, screened: work.screens.length, deepReviewed: reviews.length, recommended, rejected,
+          reviewed: finalizedReviews.length, screened: work.screens.length, deepReviewed: finalizedReviews.length, recommended, rejected,
         }, Boolean(job.resume_of_job_id));
       } catch (notificationError) {
         console.error("Failed to create staged scan notifications", notificationError);
@@ -4515,6 +4715,22 @@ export async function POST(request: Request) {
            error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         ).bind(work.newCandidateCount, duplicateCount, work.screens.length, recommended, rejected, completedAt.toISOString(), job.id),
       ]);
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: job.id,
+        kind: "scan_completed",
+        stage: "main_complete",
+        outcome: "success",
+        durationMs: Math.max(0, completedAt.getTime() - databaseTime(job.started_at)),
+        metadata: {
+          discovered: job.discovered_count,
+          newCandidates: work.newCandidateCount,
+          screened: work.screens.length,
+          deepReviewed: finalizedReviews.length,
+          recommended,
+          duplicates: duplicateCount,
+        },
+      });
       return Response.json(await readState(database, space, { mainComplete: true }));
     };
 
@@ -4595,12 +4811,23 @@ export async function POST(request: Request) {
             "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
           ).bind(`DeepSeek Pro 正在筛选第 ${batchStart}–${batchEnd} / ${work.candidateIds.length} 篇；本批完成后自动保存`, job.id).run();
           const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey);
-          await persistQuickScreens(database, space.id, result.screens);
+          const persistedScreens = await persistQuickScreens(database, space.id, result.screens);
           const byId = new Map(work.screens.map((screen) => [screen.canonicalId, screen]));
-          for (const screen of result.screens) byId.set(screen.canonicalId, screen);
+          for (const screen of persistedScreens) byId.set(screen.canonicalId, screen);
           work.screens = Array.from(byId.values());
           work.screenFailureCount = result.errors.length && !result.screens.length ? work.screenFailureCount + 1 : 0;
           await saveScanWorkQueue(database, job.id, work);
+          if (result.errors.length) await recordReliabilityEvent(database, {
+            spaceId: space.id,
+            scanJobId: job.id,
+            kind: "llm_stage_degraded",
+            stage: "screening",
+            source: MONITOR_MODEL,
+            outcome: "degraded",
+            errorCode: monitorErrorCode(result.errors[0]),
+            message: normalizedMonitorError(result.errors[0]),
+            metadata: { requested: candidates.length, completed: result.screens.length, failureCount: work.screenFailureCount },
+          });
           const fatalError = result.errors.find((error) => isNonRetryableDeepSeekError(error));
           if (fatalError) throw fatalError;
           if (work.screenFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Quick screening failed twice");
@@ -4638,12 +4865,23 @@ export async function POST(request: Request) {
       } else if (job.checkpoint === "rescue_screening") {
         const candidates = await pendingCandidateQueue(database, space.id, work.rescueScreenIds);
         const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey, "rescue");
-        await persistQuickScreens(database, space.id, result.screens);
+        const persistedScreens = await persistQuickScreens(database, space.id, result.screens);
         const byId = new Map(work.screens.map((screen) => [screen.canonicalId, screen]));
-        for (const screen of result.screens) byId.set(screen.canonicalId, screen);
+        for (const screen of persistedScreens) byId.set(screen.canonicalId, screen);
         work.screens = Array.from(byId.values());
         work.screenFailureCount = result.errors.length && !result.screens.length ? work.screenFailureCount + 1 : 0;
         await saveScanWorkQueue(database, job.id, work);
+        if (result.errors.length) await recordReliabilityEvent(database, {
+          spaceId: space.id,
+          scanJobId: job.id,
+          kind: "llm_stage_degraded",
+          stage: "rescue_screening",
+          source: MONITOR_MODEL,
+          outcome: "degraded",
+          errorCode: monitorErrorCode(result.errors[0]),
+          message: normalizedMonitorError(result.errors[0]),
+          metadata: { requested: candidates.length, completed: result.screens.length, failureCount: work.screenFailureCount },
+        });
         const fatalError = result.errors.find((error) => isNonRetryableDeepSeekError(error));
         if (fatalError) throw fatalError;
         if (work.screenFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Near-miss screening failed twice");
@@ -4679,12 +4917,38 @@ export async function POST(request: Request) {
             const ready = saved.filter((review) => review.recommended).length;
             const progress = Math.min(94, 76 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 18));
             await database.prepare(
-              "UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', recommended_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            ).bind(ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${ready} 篇已可阅读`, progress, job.id).run();
+              `UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', recommended_count = ?,
+               first_recommendation_at = CASE WHEN ? > 0 THEN COALESCE(first_recommendation_at, CURRENT_TIMESTAMP) ELSE first_recommendation_at END,
+               current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            ).bind(ready, ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${ready} 篇已可阅读`, progress, job.id).run();
+            if (ready && !firstRecommendationAt) {
+              firstRecommendationAt = new Date().toISOString();
+              await recordReliabilityEvent(database, {
+                spaceId: space.id,
+                scanJobId: job.id,
+                kind: "first_recommendation_ready",
+                stage: "deep_reviewing",
+                source: MONITOR_MODEL,
+                outcome: "success",
+                durationMs: Math.max(0, Date.now() - databaseTime(job.started_at)),
+                metadata: { completed: work.deepCompletedIds.length, total: work.deepIds.length, ready },
+              });
+            }
           });
           work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...result.reviews.map((review) => review.canonicalId)]));
           work.deepFailureCount = result.errors.length && !result.reviews.length ? work.deepFailureCount + 1 : 0;
           await saveScanWorkQueue(database, job.id, work);
+          if (result.errors.length) await recordReliabilityEvent(database, {
+            spaceId: space.id,
+            scanJobId: job.id,
+            kind: "llm_stage_degraded",
+            stage: "deep_reviewing",
+            source: MONITOR_MODEL,
+            outcome: "degraded",
+            errorCode: monitorErrorCode(result.errors[0]),
+            message: normalizedMonitorError(result.errors[0]),
+            metadata: { requested: candidates.length, completed: result.reviews.length, failureCount: work.deepFailureCount },
+          });
           const fatalError = result.errors.find((error) => isNonRetryableDeepSeekError(error));
           if (fatalError) throw fatalError;
           if (work.deepFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Deep review failed twice");
@@ -4727,6 +4991,23 @@ export async function POST(request: Request) {
           "UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', current_source = '扫描已暂停，已保存当前进度', work_queue_json = ?, error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(JSON.stringify(work), message, failedAt.toISOString(), job.id),
       ]);
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: job.id,
+        kind: "scan_failed",
+        stage: job.checkpoint,
+        source: job.current_source,
+        outcome: "failed",
+        durationMs: Date.now() - stageStartedAt,
+        errorCode: monitorErrorCode(error),
+        message,
+        metadata: {
+          progress: job.progress,
+          screened: work.screens.length,
+          deepCompleted: work.deepCompletedIds.length,
+          resumableCheckpoint: work.resumeCheckpoint,
+        },
+      });
       return Response.json(await readState(database, space), { status: 502 });
     }
   } catch (error) {

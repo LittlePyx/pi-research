@@ -155,12 +155,36 @@ export const monitorScanJobs = sqliteTable(
     resumeOfJobId: text("resume_of_job_id"),
     checkpoint: text("checkpoint").notNull().default("queued"),
     workQueueJson: text("work_queue_json").notNull().default("{}"),
+    firstRecommendationAt: text("first_recommendation_at"),
     error: text("error"),
     startedAt: text("started_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     completedAt: text("completed_at"),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
   (table) => [index("idx_monitor_scan_jobs_space_updated").on(table.spaceId, table.updatedAt)],
+);
+
+export const monitorReliabilityEvents = sqliteTable(
+  "monitor_reliability_events",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    scanJobId: text("scan_job_id").references(() => monitorScanJobs.id, { onDelete: "set null" }),
+    kind: text("kind").notNull(),
+    stage: text("stage").notNull().default(""),
+    source: text("source").notNull().default(""),
+    outcome: text("outcome").notNull().default("info"),
+    durationMs: integer("duration_ms").notNull().default(0),
+    errorCode: text("error_code").notNull().default(""),
+    message: text("message").notNull().default(""),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    index("idx_monitor_reliability_space_created").on(table.spaceId, table.createdAt),
+    index("idx_monitor_reliability_job_created").on(table.scanJobId, table.createdAt),
+    index("idx_monitor_reliability_space_source_created").on(table.spaceId, table.source, table.createdAt),
+  ],
 );
 
 export const monitorDailyBriefs = sqliteTable(
@@ -833,6 +857,7 @@ export const learningPaths = sqliteTable(
     id: text("id").primaryKey(),
     spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
     target: text("target").notNull(),
+    targetTrackId: text("target_track_id").references(() => researchTracks.id, { onDelete: "set null" }),
     titleZh: text("title_zh").notNull(),
     titleEn: text("title_en").notNull(),
     rationaleZh: text("rationale_zh").notNull().default(""),
@@ -843,7 +868,10 @@ export const learningPaths = sqliteTable(
     createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
-  (table) => [index("idx_learning_paths_space_updated").on(table.spaceId, table.updatedAt)],
+  (table) => [
+    index("idx_learning_paths_space_updated").on(table.spaceId, table.updatedAt),
+    index("idx_learning_paths_space_target_updated").on(table.spaceId, table.targetTrackId, table.updatedAt),
+  ],
 );
 
 export const learningPathSteps = sqliteTable(

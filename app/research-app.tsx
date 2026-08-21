@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import type { ResearchDirectionRole, ResearchMapState, ResearchPaperEdge, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../lib/research-map";
-import type { LearningPathState, LearningPathStep, LearningStepKind } from "../lib/learning-path";
+import { learningResourceHref, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
 import { paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
 
@@ -960,7 +960,7 @@ function RouteQualityStatus({ track, locale }: { track: ResearchTrack; locale: L
   const inReview = pipeline.queued + pipeline.reviewing;
   if (!pipeline.hasCounts || (!inReview && !pipeline.recommended && !pipeline.lastQueuedAt)) return null;
   return <p className="v2-route-quality-status"><span>π</span><strong>{inReview > 0
-    ? (locale === "zh" ? `${inReview} 篇候选已进入今日质量评估` : `${inReview} candidates are in today's quality review`)
+    ? (locale === "zh" ? `${inReview} 篇候选已进入共享质量队列` : `${inReview} candidates are in the shared quality queue`)
     : (locale === "zh" ? "当前没有等待质量评估的候选" : "No candidates are awaiting quality review")}</strong>{pipeline.recommended > 0 && <small>{locale === "zh" ? `累计 ${pipeline.recommended} 篇通过并进入推荐` : `${pipeline.recommended} passed in total into recommendations`}</small>}{pipeline.lastQueuedAt && <time>{formatNotificationTime(pipeline.lastQueuedAt, locale)}</time>}</p>;
 }
 
@@ -1067,6 +1067,22 @@ function readingStatusLabel(status: MonitorPaper["readingStatus"], locale: Local
     cited: { zh: "已引用", en: "Cited" },
   };
   return labels[status || "unread"][locale];
+}
+
+function learningResourceSourceLabel(source: LearningResource["source"], locale: Locale) {
+  if (source === "research-map+daily-scan") return locale === "zh" ? "路线证据 · 今日评审" : "Route evidence · Daily review";
+  if (source === "daily-scan") return locale === "zh" ? "今日质量评审" : "Daily quality review";
+  if (source === "research-map") return locale === "zh" ? "研究路线证据" : "Research-route evidence";
+  return locale === "zh" ? "已保存真实论文" : "Saved real paper";
+}
+
+function learningResourceSignals(resource: LearningResource, locale: Locale) {
+  return [
+    learningResourceSourceLabel(resource.source, locale),
+    typeof resource.qualityScore === "number" ? `${locale === "zh" ? "质量" : "Quality"} ${resource.qualityScore}` : "",
+    resource.readingStatus && resource.readingStatus !== "unread" ? readingStatusLabel(resource.readingStatus, locale) : "",
+    resource.suggestedMinutes ? `${resource.suggestedMinutes} min` : "",
+  ].filter(Boolean);
 }
 
 function explorationStatusLabel(status: ExplorationBranch["status"], locale: Locale) {
@@ -1176,7 +1192,7 @@ function pilotCriterionLabel(id: string, locale: Locale) {
   return (labels[id] || { zh: id, en: id })[locale];
 }
 
-function routeChangeKindLabel(kind: string, locale: Locale) {
+function routeChangeKindLabel(kind: string) {
   const labels: Record<string, { zh: string; en: string; symbol: string }> = {
     new_evidence: { zh: "新增证据", en: "New evidence", symbol: "＋" },
     route_initialized: { zh: "新建路线", en: "Route created", symbol: "◎" },
@@ -1588,20 +1604,12 @@ function networkEvidenceLabel(edge: ResearchPaperEdge, locale: Locale) {
 function paperNetworkSourceNotice(network: ResearchMapState["paperNetwork"], locale: Locale) {
   const error = network.error || "";
   const verifiedCount = network.citationEdgeCount + network.similarityEdgeCount;
-  const piCount = network.semanticEdgeCount + network.pathEdgeCount;
   const citationFailed = /citation:|semantic scholar|citation lookup/i.test(error);
-  const piFailed = !citationFailed || /deepseek|empty research map|pi path analysis|insufficient balance/i.test(error);
   const citationCache = network.sources.includes("semantic-scholar-cache");
-  const piCache = network.sources.some((source) => source.includes("deepseek") && source.endsWith("-cache"));
-  if (citationFailed && piFailed) return locale === "zh"
-    ? { title: "部分关系未能刷新", body: `已保留 ${verifiedCount + piCount} 条可用关系；论文节点不受影响。`, action: "稍后重试" }
-    : { title: "Some links could not refresh", body: `${verifiedCount + piCount} available links are preserved; paper nodes are unaffected.`, action: "Retry later" };
-  if (citationFailed) return locale === "zh"
-    ? { title: citationCache ? "引用关系暂沿用上次版本" : "引用关系本轮未更新", body: `Pi 关系已生成 ${piCount} 条；论文节点${citationCache ? "和已保存引用" : ""}仍可浏览。`, action: "重试引用更新" }
-    : { title: citationCache ? "Citations are using the saved version" : "Citations did not update this run", body: `${piCount} Pi links are available; paper nodes${citationCache ? " and saved citations" : ""} remain browsable.`, action: "Retry citations" };
+  if (!citationFailed) return null;
   return locale === "zh"
-    ? { title: piCache ? "Pi 分析暂沿用上次版本" : "Pi 关系本轮未生成", body: `地图累计 ${verifiedCount} 条已保存数据库关系；论文节点${piCache ? "和已保存的语义关系" : ""}不受影响。`, action: "重试 Pi 分析" }
-    : { title: piCache ? "Pi analysis is using the saved version" : "Pi links were not generated this run", body: `The map retains ${verifiedCount} saved database links; paper nodes${piCache ? " and saved semantic links" : ""} are unaffected.`, action: "Retry Pi analysis" };
+    ? { title: citationCache ? "引用关系暂沿用上次版本" : "引用关系本轮未更新", body: `当前仍保留 ${verifiedCount} 条数据库关系；论文节点不受影响。`, action: "重试引用更新" }
+    : { title: citationCache ? "Citations are using the saved version" : "Citations did not update this run", body: `${verifiedCount} database links remain available; paper nodes are unaffected.`, action: "Retry citations" };
 }
 
 function stableNetworkUnit(value: string, salt: number) {
@@ -1976,7 +1984,7 @@ function PaperNetworkGraph({
             const sharedBridge = layout.multiSeedActive && !origin && (layout.seedConnectionCount.get(node.paper.id) || 0) >= 2;
             const showLabel = selected || origin || layout.labelIds.has(node.paper.id);
             const label = node.paper.title.length > 30 ? node.paper.title.slice(0, 29) + "…" : node.paper.title;
-            const step = layout.pathLayout.stepById.get(node.paper.id);
+            const step = mode === "path" ? layout.pathLayout.stepById.get(node.paper.id) : undefined;
             const sharedCount = layout.seedConnectionCount.get(node.paper.id) || 0;
             return <g key={node.paper.id} className={`v2-paper-network-node ${mode === "path" ? "path-step" : ""} ${node.external ? "external-ghost" : ""} ${selected ? "selected" : ""} ${hovered ? "hovered" : ""} ${origin ? "origin" : ""} ${sharedBridge ? "shared-bridge" : ""} ${muted ? "muted" : ""} ${state || ""}`} transform={`translate(${position.x} ${position.y})`} role="button" tabIndex={0} aria-pressed={selected} aria-label={`${step ? `${locale === "zh" ? "第" : "Step "}${step}${locale === "zh" ? "步，" : ", "}` : ""}${node.paper.title}${origin ? (locale === "zh" ? "，起始论文" : ", origin paper") : ""}${selected ? (locale === "zh" ? "，已选中" : ", selected") : ""}${stateLabel ? `，${stateLabel}` : ""}${sharedBridge ? (locale === "zh" ? `，连接 ${sharedCount} 个种子` : `, shared by ${sharedCount} origins`) : ""}`} onPointerEnter={() => onHover(node.paper.id)} onPointerLeave={() => onHover(null)} onFocus={() => onHover(node.paper.id)} onBlur={() => onHover(null)} onClick={() => onSelect(node.paper.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(node.paper.id); } }}>
               {sharedBridge && <circle className="shared-ring" r={position.radius + 10}><title>{locale === "zh" ? `连接 ${sharedCount} 个种子的共同邻居` : `Neighbor shared by ${sharedCount} origins`}</title></circle>}
@@ -1993,6 +2001,166 @@ function PaperNetworkGraph({
       {!layout.nodes.length && <div className="v2-paper-network-empty">{emptyMessage}</div>}
     </div>
   );
+}
+
+function CitationFlowWorkbench({
+  map,
+  trackFilter,
+  locale,
+  selectedPaperId,
+  onSelect,
+  onExpandFocus,
+  expanding,
+}: {
+  map: ResearchMapState;
+  trackFilter: string;
+  locale: Locale;
+  selectedPaperId: string | null;
+  onSelect: (paperId: string) => void;
+  onExpandFocus: (node: NetworkPaperNode) => void;
+  expanding: boolean;
+}) {
+  const model = useMemo(() => {
+    const nodes = buildNetworkPaperNodes(map).filter((node) => trackFilter === "all" || node.trackIds.includes(trackFilter));
+    const nodeById = new Map(nodes.map((node) => [node.paper.id, node]));
+    const edges = map.paperEdges.filter((edge) => edge.kind === "citation"
+      && nodeById.has(edge.sourcePaperId) && nodeById.has(edge.targetPaperId));
+    const connectedIds = new Set(edges.flatMap((edge) => [edge.sourcePaperId, edge.targetPaperId]));
+    const connectedNodes = nodes.filter((node) => connectedIds.has(node.paper.id));
+    const degree = new Map<string, number>();
+    for (const edge of edges) {
+      degree.set(edge.sourcePaperId, (degree.get(edge.sourcePaperId) || 0) + 1);
+      degree.set(edge.targetPaperId, (degree.get(edge.targetPaperId) || 0) + 1);
+    }
+    const focus = selectedPaperId && connectedIds.has(selectedPaperId)
+      ? nodeById.get(selectedPaperId) || null
+      : [...connectedNodes].sort((left, right) => (degree.get(right.paper.id) || 0) - (degree.get(left.paper.id) || 0)
+        || right.paper.citationCount - left.paper.citationCount)[0] || null;
+    const rankRelations = (relations: ResearchPaperEdge[], otherId: (edge: ResearchPaperEdge) => string) => relations
+      .map((edge) => ({ edge, node: nodeById.get(otherId(edge)) }))
+      .filter((item): item is { edge: ResearchPaperEdge; node: NetworkPaperNode } => Boolean(item.node))
+      .sort((left, right) => Number(researchPaperYear(left.node.paper)) - Number(researchPaperYear(right.node.paper))
+        || right.node.paper.citationCount - left.node.paper.citationCount);
+    const priorAll = focus ? rankRelations(edges.filter((edge) => edge.sourcePaperId === focus.paper.id), (edge) => edge.targetPaperId) : [];
+    const laterAll = focus ? rankRelations(edges.filter((edge) => edge.targetPaperId === focus.paper.id), (edge) => edge.sourcePaperId) : [];
+    const years = connectedNodes.map((node) => Number(researchPaperYear(node.paper))).filter(Number.isFinite);
+    const ledger = [...edges].sort((left, right) => {
+      const leftLater = nodeById.get(left.sourcePaperId);
+      const rightLater = nodeById.get(right.sourcePaperId);
+      return (leftLater ? Number(researchPaperYear(leftLater.paper)) : 0) - (rightLater ? Number(researchPaperYear(rightLater.paper)) : 0);
+    });
+    return {
+      focus,
+      prior: priorAll.slice(0, 8),
+      later: laterAll.slice(0, 8),
+      priorAll,
+      laterAll,
+      ledger,
+      nodeById,
+      connectedNodes,
+      yearStart: years.length ? Math.min(...years) : null,
+      yearEnd: years.length ? Math.max(...years) : null,
+    };
+  }, [map, selectedPaperId, trackFilter]);
+
+  useEffect(() => {
+    if (model.focus && selectedPaperId !== model.focus.paper.id) onSelect(model.focus.paper.id);
+  }, [model.focus, onSelect, selectedPaperId]);
+
+  if (!model.focus) return <div className="v2-specialized-network-empty citation"><span>↗</span><div><strong>{locale === "zh" ? "当前范围还没有可核验的引用链" : "No verified citation chain in this scope"}</strong><p>{locale === "zh" ? "先核验已有论文关系。没有数据库证据时，Pi 不会用推断连线代替真实引用。" : "Verify saved paper links first. Pi will not replace missing database evidence with inferred citations."}</p></div></div>;
+
+  const relationCard = (item: { edge: ResearchPaperEdge; node: NetworkPaperNode }, side: "prior" | "later") => <button
+    type="button"
+    className="v2-citation-paper-card"
+    key={item.edge.id}
+    onClick={() => onSelect(item.node.paper.id)}
+  >
+    <small>{side === "prior" ? (locale === "zh" ? "本论文引用" : "Cited by focus") : (locale === "zh" ? "后续引用本论文" : "Cites the focus")}</small>
+    <strong>{item.node.paper.title}</strong>
+    <span className="authors">{item.node.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span>
+    <span>{[researchPaperYear(item.node.paper), item.node.paper.venue, `${item.node.paper.citationCount} ${locale === "zh" ? "次被引" : "citations"}`].filter(Boolean).join(" · ")}</span>
+    <em>{locale === "zh" ? `证据来源：${item.edge.evidenceSource}` : `Evidence source: ${item.edge.evidenceSource}`}</em>
+  </button>;
+
+  return <section className="v2-citation-workbench" aria-label={locale === "zh" ? "知识引用流工作台" : "Citation flow workbench"}>
+    <header className="v2-specialized-network-head"><div><p>{locale === "zh" ? "数据库核验的知识传递" : "DATABASE-VERIFIED KNOWLEDGE TRANSFER"}</p><h3>{locale === "zh" ? "看清一篇论文从哪里来，又影响了谁" : "See where a paper came from and what it influenced"}</h3><span>{locale === "zh" ? "选择任意节点作为焦点；这里只展示当前论文库内已确认的直接引用。" : "Choose any node as the focus. Only direct citations verified inside the current library are shown."}</span></div><dl><div><dt>{locale === "zh" ? "真实引用" : "Verified links"}</dt><dd>{model.ledger.length}</dd></div><div><dt>{locale === "zh" ? "链上论文" : "Papers in flow"}</dt><dd>{model.connectedNodes.length}</dd></div><div><dt>{locale === "zh" ? "时间跨度" : "Coverage"}</dt><dd>{model.yearStart && model.yearEnd ? `${model.yearStart}–${model.yearEnd}` : "—"}</dd></div></dl></header>
+    <div className="v2-citation-lineage-grid">
+      <section className="prior"><header><span>01</span><div><h4>{locale === "zh" ? "前置知识" : "Prior knowledge"}</h4><small>{locale === "zh" ? "焦点论文直接引用的工作" : "Work directly cited by the focus"}</small></div><b>{model.priorAll.length > model.prior.length ? `${model.prior.length}/${model.priorAll.length}` : model.priorAll.length}</b></header><div>{model.prior.length ? <>{model.prior.map((item) => relationCard(item, "prior"))}{model.priorAll.length > model.prior.length && <details className="v2-citation-more"><summary>{locale === "zh" ? `展开其余 ${model.priorAll.length - model.prior.length} 篇` : `Show ${model.priorAll.length - model.prior.length} more`}</summary><div>{model.priorAll.slice(model.prior.length).map((item) => relationCard(item, "prior"))}</div></details>}</> : <p className="v2-citation-gap">{locale === "zh" ? "当前库内尚未核验到它的前置引用。" : "No prior citation has been verified in the current library."}</p>}</div></section>
+      <article className="v2-citation-focus-card"><span>{locale === "zh" ? "当前焦点" : "CURRENT FOCUS"}</span><em>{researchRoleLabel(model.focus.paper.role, locale)} · {researchPaperYear(model.focus.paper)}</em><h4>{model.focus.paper.title}</h4><div className="v2-citation-focus-meta"><span>{model.focus.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span><small>{model.focus.paper.venue || (locale === "zh" ? "来源待核对" : "Venue unavailable")}</small></div><p>{locale === "zh" ? model.focus.paper.rationaleZh : model.focus.paper.rationaleEn}</p><dl><div><dt>{locale === "zh" ? "向前承接" : "Prior"}</dt><dd>{model.priorAll.length}</dd></div><div><dt>{locale === "zh" ? "向后影响" : "Later"}</dt><dd>{model.laterAll.length}</dd></div><div><dt>{locale === "zh" ? "总被引" : "Citations"}</dt><dd>{model.focus.paper.citationCount}</dd></div></dl><button type="button" disabled={expanding} onClick={() => onExpandFocus(model.focus!)}>{expanding ? (locale === "zh" ? "正在寻找前后论文…" : "Discovering nearby papers…") : (locale === "zh" ? "到论文发现扩展前后 1-hop" : "Expand 1-hop in paper discovery")} →</button><small>{locale === "zh" ? "将切换到论文发现；外部候选只有收录后才会进入正式引用流。" : "This opens paper discovery. External candidates enter the formal citation flow only after you add them."}</small></article>
+      <section className="later"><header><span>03</span><div><h4>{locale === "zh" ? "后续发展" : "Later development"}</h4><small>{locale === "zh" ? "直接引用焦点论文的工作" : "Work that directly cites the focus"}</small></div><b>{model.laterAll.length > model.later.length ? `${model.later.length}/${model.laterAll.length}` : model.laterAll.length}</b></header><div>{model.later.length ? <>{model.later.map((item) => relationCard(item, "later"))}{model.laterAll.length > model.later.length && <details className="v2-citation-more"><summary>{locale === "zh" ? `展开其余 ${model.laterAll.length - model.later.length} 篇` : `Show ${model.laterAll.length - model.later.length} more`}</summary><div>{model.laterAll.slice(model.later.length).map((item) => relationCard(item, "later"))}</div></details>}</> : <p className="v2-citation-gap">{locale === "zh" ? "当前库内尚未核验到后续引用。" : "No later citation has been verified in the current library."}</p>}</div></section>
+    </div>
+    <section className="v2-citation-ledger"><header><div><strong>{locale === "zh" ? "完整已核验引用清单" : "Complete verified citation ledger"}</strong><small>{locale === "zh" ? "箭头始终表示知识流向：被引工作 → 后续论文" : "Arrows always show knowledge flow: cited work → later paper"}</small></div><span>{model.ledger.length}</span></header><div>{model.ledger.map((edge) => { const prior = model.nodeById.get(edge.targetPaperId); const later = model.nodeById.get(edge.sourcePaperId); if (!prior || !later) return null; return <article key={edge.id}><button type="button" onClick={() => onSelect(prior.paper.id)}><small>{researchPaperYear(prior.paper)}</small><strong>{prior.paper.title}</strong></button><span aria-label={locale === "zh" ? "知识流向" : "knowledge flows to"}>→</span><button type="button" onClick={() => onSelect(later.paper.id)}><small>{researchPaperYear(later.paper)}</small><strong>{later.paper.title}</strong></button></article>; })}</div></section>
+  </section>;
+}
+
+function ReadingOrderWorkbench({
+  map,
+  trackFilter,
+  locale,
+  selectedPaperId,
+  learningState,
+  learningLoading,
+  learningError,
+  learningAction,
+  onSelect,
+  onToggleStep,
+  onGenerate,
+  onRetry,
+}: {
+  map: ResearchMapState;
+  trackFilter: string;
+  locale: Locale;
+  selectedPaperId: string | null;
+  learningState: LearningPathState;
+  learningLoading: boolean;
+  learningError: string;
+  learningAction: string | null;
+  onSelect: (paperId: string) => void;
+  onToggleStep: (step: LearningPathStep) => void;
+  onGenerate: (track: ResearchTrack | null) => void;
+  onRetry: () => void;
+}) {
+  const allNodes = useMemo(() => buildNetworkPaperNodes(map), [map]);
+  const nodes = useMemo(() => allNodes.filter((node) => trackFilter === "all" || node.trackIds.includes(trackFilter)), [allNodes, trackFilter]);
+  const nodeByTrackPaperId = useMemo(() => new Map(allNodes.map((node) => [`track:${node.paper.id}`, node])), [allNodes]);
+  const nodeByCanonicalId = useMemo(() => new Map(allNodes.map((node) => [node.paper.canonicalId.trim().toLocaleLowerCase(), node])), [allNodes]);
+  const nodeByTitleKey = useMemo(() => {
+    const unique = new Map<string, NetworkPaperNode | null>();
+    for (const node of allNodes) {
+      const key = learningResourceTitleKey(node.paper.title);
+      if (!key) continue;
+      unique.set(key, unique.has(key) ? null : node);
+    }
+    return new Map(Array.from(unique).filter((entry): entry is [string, NetworkPaperNode] => Boolean(entry[1])));
+  }, [allNodes]);
+  const selectedTrack = trackFilter === "all" ? null : map.tracks.find((track) => track.id === trackFilter) || null;
+  const path = learningState.path;
+  const pathTrack = path?.targetTrackId ? map.tracks.find((track) => track.id === path.targetTrackId) || null : null;
+  const pathDirectionMismatch = Boolean(path && selectedTrack && path.targetTrackId !== selectedTrack.id);
+
+  if (learningLoading && !path) return <div className="v2-specialized-network-empty path loading"><span>π</span><div><strong>{locale === "zh" ? "正在载入已保存的学习路径" : "Loading the saved learning path"}</strong><p>{locale === "zh" ? "路线论文仍然可浏览，进度载入不会重建路径。" : "Route papers remain available; loading progress will not rebuild the path."}</p></div></div>;
+
+  if (learningError && !path) return <div className="v2-specialized-network-empty path error" role="alert"><span>!</span><div><strong>{locale === "zh" ? "学习路径暂时无法载入" : "The learning path could not be loaded"}</strong><p>{learningError}</p><button type="button" onClick={onRetry}>{locale === "zh" ? "重新载入" : "Retry"}</button></div></div>;
+
+  if (!path) {
+    const roleGroups = (["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => ({ role, nodes: nodes.filter((node) => node.paper.role === role) }));
+    return <section className="v2-reading-order-workbench fallback" aria-label={locale === "zh" ? "尚未生成个性化阅读顺序" : "Personalized reading order not generated"}>
+      <header className="v2-specialized-network-head"><div><p>{locale === "zh" ? "真实论文的阶段整理" : "STAGE-BASED ORGANIZATION OF REAL PAPERS"}</p><h3>{locale === "zh" ? "尚未形成个性化阅读顺序" : "No personalized reading order yet"}</h3><span>{locale === "zh" ? "下面只按路线角色整理真实论文，不表示严格先后，也不会把 Pi 图谱边冒充可执行计划。" : "The papers below are grouped by route role only. This is not a strict order, and graph hints are not presented as an executable plan."}</span></div><dl><div><dt>{locale === "zh" ? "可用论文" : "Available"}</dt><dd>{nodes.length}</dd></div><div><dt>{locale === "zh" ? "建议阶段" : "Suggested stages"}</dt><dd>{roleGroups.filter((group) => group.nodes.length).length}</dd></div><div><dt>{locale === "zh" ? "状态" : "Status"}</dt><dd>—</dd></div></dl></header>
+      <div className="v2-reading-fallback-groups">{roleGroups.map((group) => <section key={group.role}><header><strong>{researchRoleLabel(group.role, locale)}</strong><small>{group.role === "foundation" ? (locale === "zh" ? "定义问题与基础工具" : "Problems and foundational tools") : group.role === "milestone" ? (locale === "zh" ? "理解关键转折与方法" : "Key turns and methods") : (locale === "zh" ? "接近当前问题与前沿" : "Current problems and frontier")}</small><b>{group.nodes.length}</b></header><div>{group.nodes.slice(0, 6).map((node) => <button type="button" className={selectedPaperId === node.paper.id ? "selected" : ""} key={node.paper.id} onClick={() => onSelect(node.paper.id)}><small>{researchPaperYear(node.paper)} · {node.paper.venue}</small><strong>{node.paper.title}</strong><span>{locale === "zh" ? node.paper.rationaleZh : node.paper.rationaleEn}</span></button>)}{!group.nodes.length && <p>{locale === "zh" ? "这一阶段还缺少真实代表作。" : "This stage still lacks a real representative work."}</p>}</div></section>)}</div>
+      <footer className="v2-reading-order-create"><div><strong>{selectedTrack ? (locale === "zh" ? "让 Pi 生成可跟踪的阶段式路径" : "Ask Pi for a trackable stage-based path") : (locale === "zh" ? "先在上方选择一个研究方向" : "Choose one research direction above")}</strong><p>{locale === "zh" ? "将使用真实论文、你的研究方向与已有知识，生成“为什么现在读、重点读什么、如何检查掌握”的持久计划。" : "Pi will use real papers, your direction, and prior knowledge to create a persistent plan with rationale, reading focus, and mastery checks."}</p></div><button type="button" disabled={Boolean(learningAction) || learningState.availablePaperCount < 3 || !selectedTrack} onClick={() => onGenerate(selectedTrack)}>{learningAction ? (locale === "zh" ? "Pi 正在规划…" : "Pi is planning…") : (locale === "zh" ? "生成个性化阅读路径" : "Generate personalized path")}</button></footer>
+    </section>;
+  }
+
+  const completedPercent = Math.round(path.completedSteps / Math.max(1, path.steps.length) * 100);
+  const activeStep = path.steps.find((step) => step.status === "active") || path.steps.find((step) => step.status !== "completed") || null;
+  return <section className="v2-reading-order-workbench" aria-label={locale === "zh" ? "建议阅读顺序工作台" : "Suggested reading order workbench"}>
+    {learningError && <div className="v2-reading-order-warning" role="status"><span>!</span><p>{locale === "zh" ? "上次更新没有完成；下面仍是已保存版本。" : "The last update did not finish; the saved version remains below."} {learningError}</p><button type="button" onClick={onRetry}>{locale === "zh" ? "重新载入" : "Reload"}</button></div>}
+    {pathDirectionMismatch && <div className="v2-reading-order-warning direction" role="status"><span>↔</span><p>{locale === "zh" ? `当前保存路径属于“${pathTrack?.titleZh || path.target}”，上方筛选的是“${selectedTrack?.titleZh}”。重新规划前不会把旧路径冒充为当前方向。` : `The saved path belongs to “${pathTrack?.titleEn || path.target}”, while “${selectedTrack?.titleEn}” is selected above. The saved path will not be presented as this direction until you replan.`}</p><button type="button" disabled={Boolean(learningAction)} onClick={() => onGenerate(selectedTrack)}>{locale === "zh" ? "按当前方向规划" : "Plan this direction"}</button></div>}
+    <header className="v2-specialized-network-head"><div><p>{locale === "zh" ? "已保存的个性化学习路径" : "SAVED PERSONALIZED LEARNING PATH"}</p><h3>{locale === "zh" ? path.titleZh : path.titleEn}</h3><span>{locale === "zh" ? path.rationaleZh : path.rationaleEn}</span></div><dl><div><dt>{locale === "zh" ? "阶段" : "Stages"}</dt><dd>{path.steps.length}</dd></div><div><dt>{locale === "zh" ? "已完成" : "Completed"}</dt><dd>{path.completedSteps}</dd></div><div><dt>{locale === "zh" ? "预计投入" : "Estimated"}</dt><dd>{path.estimatedMinutes} min</dd></div></dl></header>
+    <div className="v2-reading-progress"><div><strong>{locale === "zh" ? `目标：${path.target}` : `Target: ${path.target}`}</strong><span>{activeStep ? (locale === "zh" ? `当前阶段：${activeStep.titleZh}` : `Current stage: ${activeStep.titleEn}`) : (locale === "zh" ? "当前路径已完成" : "Path completed")}</span></div><i><b style={{ width: `${completedPercent}%` }} /></i><button type="button" disabled={Boolean(learningAction)} onClick={() => onGenerate(selectedTrack)}>{selectedTrack ? (locale === "zh" ? "按当前方向重新规划" : "Replan for this direction") : (locale === "zh" ? "按原目标重新规划" : "Replan the saved target")}</button></div>
+    <div className="v2-reading-stage-list">{path.steps.map((step, stepIndex) => <section className={`${step.status} ${learningAction === step.id ? "updating" : ""}`} key={step.id}><header><span>{String(stepIndex + 1).padStart(2, "0")}</span><div><h4>{locale === "zh" ? step.titleZh : step.titleEn}</h4><small>{locale === "zh" ? step.goalZh : step.goalEn}</small></div><b>{step.status === "completed" ? (locale === "zh" ? "已完成" : "Completed") : step.status === "active" ? (locale === "zh" ? "当前阶段" : "Current") : (locale === "zh" ? "下一阶段" : "Upcoming")}</b></header><div className="v2-learning-stage-body"><div className="v2-learning-stage-guidance"><article><small>{locale === "zh" ? "为什么现在读" : "WHY NOW"}</small><p>{locale === "zh" ? step.whyZh : step.whyEn}</p></article><article><small>{locale === "zh" ? "重点读什么" : "READING FOCUS"}</small><p>{locale === "zh" ? step.readFocusZh : step.readFocusEn}</p></article><article><small>{locale === "zh" ? "完成检查" : "MASTERY CHECK"}</small><p>{locale === "zh" ? step.checkpointZh : step.checkpointEn}</p></article></div><div className="v2-learning-stage-resources">{step.resources.map((resource) => { const canonicalKey = resource.canonicalId?.trim().toLocaleLowerCase(); const node = (canonicalKey ? nodeByCanonicalId.get(canonicalKey) : undefined) || nodeByTrackPaperId.get(resource.id) || nodeByTitleKey.get(learningResourceTitleKey(resource.title)); const href = learningResourceHref(resource); const signals = learningResourceSignals(resource, locale); const content = <><small>{node ? researchPaperYear(node.paper) : resource.publishedAt?.slice(0, 4) || "—"} · {resource.venue}</small><strong>{resource.title}</strong>{signals.length > 0 && <em className="v2-learning-resource-signals">{signals.map((signal) => <i key={signal}>{signal}</i>)}</em>}<span>{node ? (locale === "zh" ? "查看论文与路线关系 →" : "Inspect paper and route context →") : href ? (locale === "zh" ? "打开原文 ↗" : "Open paper ↗") : (locale === "zh" ? "原文链接待补全" : "Original link unavailable")}</span></>; return node ? <button type="button" className={selectedPaperId === node.paper.id ? "selected" : ""} key={resource.id} onClick={() => onSelect(node.paper.id)}>{content}</button> : href ? <a href={href} target="_blank" rel="noreferrer" key={resource.id}>{content}</a> : <div className="unavailable" key={resource.id}>{content}</div>; })}</div></div><footer><span>{step.estimatedMinutes} min · {step.resources.length} {locale === "zh" ? "篇真实论文" : "real papers"}</span><button type="button" disabled={Boolean(learningAction)} onClick={() => onToggleStep(step)}>{learningAction === step.id ? "…" : step.status === "completed" ? (locale === "zh" ? "恢复为待学习" : "Return to queue") : (locale === "zh" ? "标记本阶段完成" : "Mark stage complete")}</button></footer></section>)}</div>
+    <footer className="v2-reading-order-disclaimer"><span>π</span><p>{locale === "zh" ? "这是可保存进度的学习计划；每个阶段内的多篇论文是并行材料，不再被强行编号。真实引用请切换到“知识引用流”。" : "This is a progress-tracked learning plan. Multiple papers within a stage are parallel resources, not artificially numbered; use Citation flow for verified citations."}</p></footer>
+  </section>;
 }
 
 async function requestPaperNetworkBuildPhase(spaceId: string, phase: Exclude<PaperNetworkBuildPhase, null>, force: boolean) {
@@ -2158,17 +2326,23 @@ export default function ResearchApp({ user }: { user: User }) {
   const researchNetworkExpandRequestRef = useRef(0);
   const researchNetworkDecisionSequenceRef = useRef(0);
   const researchNetworkDecisionRequestsRef = useRef(new Map<string, number>());
-  paperNetworkSpaceRef.current = activeSpaceId;
   const [mapLoading, setMapLoading] = useState(false);
   const [mapAction, setMapAction] = useState<string | null>(null);
   const [mapOutlinePhase, setMapOutlinePhase] = useState(0);
   const [mapBuildTrackId, setMapBuildTrackId] = useState<string | null>(null);
-  const [mapBuildErrors, setMapBuildErrors] = useState<Record<string, boolean>>({});
+  const [, setMapBuildErrors] = useState<Record<string, boolean>>({});
   const [mapIntelligenceTrackId, setMapIntelligenceTrackId] = useState<string | null>(null);
   const [learningState, setLearningState] = useState<LearningPathState>({ path: null, suggestedTarget: "", availablePaperCount: 0, model: "deepseek-v4-pro" });
   const [learningTarget, setLearningTarget] = useState("");
+  const [learningTargetTrackId, setLearningTargetTrackId] = useState<string | null>(null);
+  const [learningScopeDirty, setLearningScopeDirty] = useState(false);
   const [learningLoading, setLearningLoading] = useState(false);
   const [learningAction, setLearningAction] = useState<string | null>(null);
+  const [learningLoadedSpaceId, setLearningLoadedSpaceId] = useState<string | null>(null);
+  const [learningError, setLearningError] = useState("");
+  const [learningReloadNonce, setLearningReloadNonce] = useState(0);
+  const learningRequestRef = useRef(0);
+  const learningIntentRef = useRef<{ spaceId: string; trackId: string; target: string } | null>(null);
   const [modelConfigured, setModelConfigured] = useState(false);
   const [connectedModel, setConnectedModel] = useState<string | null>(null);
   const [modelCredentialSource, setModelCredentialSource] = useState<"browser" | "server" | null>(null);
@@ -2220,7 +2394,20 @@ export default function ResearchApp({ user }: { user: User }) {
   const reportedImpressions = useRef(new Set<string>());
 
   const t = copy[locale];
+  useEffect(() => { paperNetworkSpaceRef.current = activeSpaceId; }, [activeSpaceId]);
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
+  const activeSpaceSupportsLearning = !activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-");
+  const activeLearningReady = learningLoadedSpaceId === activeSpace.id;
+  const activeLearningState: LearningPathState = activeLearningReady
+    ? learningState
+    : { path: null, suggestedTarget: "", availablePaperCount: 0, model: "deepseek-v4-pro" };
+  const activeLearningLoading = learningLoading || (activeSpaceSupportsLearning && !activeLearningReady);
+  const activeLearningError = activeLearningReady ? learningError : "";
+  const activeLearningTargetTrack = learningTargetTrackId ? researchMap.tracks.find((track) => track.id === learningTargetTrackId) || null : null;
+  const activeLearningPathDirectionMismatch = Boolean(activeLearningState.path
+    && (learningTargetTrackId
+      ? activeLearningState.path.targetTrackId !== learningTargetTrackId
+      : learningScopeDirty && activeLearningState.path.targetTrackId !== null));
   const mapViewActive = view === "threads" || view === "thread-detail";
   const rankedMonitorPapers = useMemo(
     () => {
@@ -2376,6 +2563,10 @@ export default function ResearchApp({ user }: { user: User }) {
     () => allNetworkPaperNodes.filter((node) => paperNetworkTrackId === "all" || node.trackIds.includes(paperNetworkTrackId)),
     [allNetworkPaperNodes, paperNetworkTrackId],
   );
+  const visibleCitationEdgeCount = useMemo(() => {
+    const visibleIds = new Set(eligibleNetworkPaperNodes.filter((node) => !node.external).map((node) => node.paper.id));
+    return researchMap.paperEdges.filter((edge) => edge.kind === "citation" && visibleIds.has(edge.sourcePaperId) && visibleIds.has(edge.targetPaperId)).length;
+  }, [eligibleNetworkPaperNodes, researchMap.paperEdges]);
   const explicitNetworkOriginNodes = useMemo(() => {
     const nodeByCanonicalId = new Map(eligibleNetworkPaperNodes.map((node) => [node.paper.canonicalId, node]));
     return paperNetworkOriginCanonicalIds.map((canonicalId) => nodeByCanonicalId.get(canonicalId))
@@ -2390,18 +2581,6 @@ export default function ResearchApp({ user }: { user: User }) {
   const effectiveNetworkOriginCanonicalIds = useMemo(() => effectiveNetworkOriginNodes.map((node) => node.paper.canonicalId), [effectiveNetworkOriginNodes]);
   const researchNetworkIsPartial = Boolean(researchNetworkResponse && (researchNetworkResponse.externalUnavailable
     || Object.values(researchNetworkResponse.sourceStatus).some((status) => status === "partial" || status === "unavailable")));
-  const citationLineage = useMemo(() => {
-    if (!selectedNetworkPaperId) return { prior: [], derivative: [] };
-    const nodeById = new Map(allNetworkPaperNodes.map((node) => [node.paper.id, node]));
-    const citationEdges = researchMap.paperEdges.filter((edge) => edge.kind === "citation");
-    const rank = (ids: string[]) => Array.from(new Set(ids)).map((id) => nodeById.get(id))
-      .filter((node): node is NetworkPaperNode => Boolean(node))
-      .sort((left, right) => right.paper.citationCount - left.paper.citationCount).slice(0, 3);
-    return {
-      prior: rank(citationEdges.filter((edge) => edge.sourcePaperId === selectedNetworkPaperId).map((edge) => edge.targetPaperId)),
-      derivative: rank(citationEdges.filter((edge) => edge.targetPaperId === selectedNetworkPaperId).map((edge) => edge.sourcePaperId)),
-    };
-  }, [allNetworkPaperNodes, researchMap.paperEdges, selectedNetworkPaperId]);
   const selectedNetworkNode = useMemo(
     () => allNetworkPaperNodes.find((node) => node.paper.id === selectedNetworkPaperId) || null,
     [allNetworkPaperNodes, selectedNetworkPaperId],
@@ -2417,6 +2596,9 @@ export default function ResearchApp({ user }: { user: User }) {
       .slice(0, 6) : [],
     [externalResearchNetworkEdges, researchMap.paperEdges, selectedNetworkNode],
   );
+  const selectedModeNetworkRelations = useMemo(() => selectedNetworkRelations.filter((edge) => paperNetworkMode === "citations"
+    ? edge.kind === "citation"
+    : paperNetworkMode === "path" ? false : true), [paperNetworkMode, selectedNetworkRelations]);
   const networkDiscoveryNodesByTab = useMemo(() => {
     const originIds = new Set(effectiveNetworkOriginIds);
     const citationEdges = researchMap.paperEdges.filter((edge) => edge.kind === "citation");
@@ -2463,7 +2645,7 @@ export default function ResearchApp({ user }: { user: User }) {
       title: locale === "zh" ? "点击只查看，不会改变图谱" : "Select to inspect without changing the graph",
       body: locale === "zh" ? "需要缩小范围时，再单独使用“聚焦邻域”；相似图不显示引用箭头。" : "Use Focus neighborhood only when needed; citation arrows stay out of the similarity map.",
     };
-  }, [effectiveNetworkOriginNodes.length, locale, multiOriginIntent, paperNetworkMode, paperNetworkScope]);
+  }, [locale, multiOriginIntent, paperNetworkMode, paperNetworkScope]);
 
   function resetResearchNetworkExpansion(originCanonicalIds: string[] = [], spaceId = paperNetworkSpaceRef.current) {
     researchNetworkContextRef.current = {
@@ -2627,8 +2809,11 @@ export default function ResearchApp({ user }: { user: User }) {
   useEffect(() => {
     if (paperNetworkScope !== "multi-seed" || explicitNetworkOriginNodes.length >= 2) return;
     const fallback = explicitNetworkOriginNodes[0] || effectiveNetworkOriginNodes[0];
-    setSelectedNetworkPaperId(fallback?.paper.id || null);
-    setPaperNetworkScope(fallback ? "one-hop" : "all");
+    const timer = window.setTimeout(() => {
+      setSelectedNetworkPaperId(fallback?.paper.id || null);
+      setPaperNetworkScope(fallback ? "one-hop" : "all");
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [effectiveNetworkOriginNodes, explicitNetworkOriginNodes, paperNetworkScope]);
 
   useEffect(() => {
@@ -2898,10 +3083,12 @@ export default function ResearchApp({ user }: { user: User }) {
   }, [mapLoading]);
 
   useEffect(() => {
-    if (view !== "learn" || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    const needsLearningPath = view === "learn" || (view === "threads" && researchMapMode === "papers" && paperNetworkMode === "path");
+    if (!needsLearningPath || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setLearningLoading(true);
+      setLearningError("");
       fetch("/api/learning-path?spaceId=" + encodeURIComponent(activeSpace.id))
         .then(async (response) => {
           const data = await response.json() as LearningPathState & { error?: string };
@@ -2911,15 +3098,36 @@ export default function ResearchApp({ user }: { user: User }) {
         .then((data) => {
           if (cancelled) return;
           setLearningState(data);
-          setLearningTarget(data.path?.target || data.suggestedTarget);
+          const pendingIntent = learningIntentRef.current;
+          if (pendingIntent?.spaceId === activeSpace.id) {
+            setLearningTarget(pendingIntent.target);
+            setLearningTargetTrackId(pendingIntent.trackId);
+          } else {
+            setLearningTarget(data.path?.target || data.suggestedTarget);
+            setLearningTargetTrackId(data.path?.targetTrackId || null);
+            setLearningScopeDirty(false);
+          }
+          setLearningLoadedSpaceId(activeSpace.id);
         })
         .catch(() => {
-          if (!cancelled) setToast(locale === "zh" ? "学习路径暂时无法载入" : "The learning path could not be loaded");
+          if (cancelled) return;
+          setLearningState({ path: null, suggestedTarget: "", availablePaperCount: 0, model: "deepseek-v4-pro" });
+          const pendingIntent = learningIntentRef.current;
+          if (pendingIntent?.spaceId === activeSpace.id) {
+            setLearningTarget(pendingIntent.target);
+            setLearningTargetTrackId(pendingIntent.trackId);
+          } else {
+            setLearningTarget("");
+            setLearningTargetTrackId(null);
+            setLearningScopeDirty(false);
+          }
+          setLearningLoadedSpaceId(activeSpace.id);
+          setLearningError(locale === "zh" ? "当前空间的学习路径没有载入，已停止显示旧空间内容。" : "The path for this space did not load, so content from the previous space is hidden.");
         })
         .finally(() => { if (!cancelled) setLearningLoading(false); });
     }, 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [activeSpace.id, locale, view]);
+  }, [activeSpace.id, learningReloadNonce, locale, paperNetworkMode, researchMapMode, view]);
 
   useEffect(() => {
     if (view !== "today" || !monitor?.papers.length || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
@@ -2996,6 +3204,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const switchSpace = (space: Space) => {
     paperNetworkSpaceRef.current = space.id;
+    learningRequestRef.current += 1;
     resetResearchNetworkExpansion([], space.id);
     setActiveSpaceId(space.id);
     setPaperNetworkLoading(false);
@@ -3008,6 +3217,15 @@ export default function ResearchApp({ user }: { user: User }) {
     setPaperNetworkTrackId("all");
     setPaperNetworkOriginCanonicalIds([]);
     setDirectionOverviewId(null);
+    setLearningState({ path: null, suggestedTarget: "", availablePaperCount: 0, model: "deepseek-v4-pro" });
+    setLearningTarget("");
+    setLearningTargetTrackId(null);
+    setLearningScopeDirty(false);
+    learningIntentRef.current = null;
+    setLearningLoadedSpaceId(null);
+    setLearningError("");
+    setLearningLoading(false);
+    setLearningAction(null);
     window.localStorage.setItem("pi-active-space", space.id);
     setSpaceDialog(false);
     navigate("today");
@@ -3034,7 +3252,7 @@ export default function ResearchApp({ user }: { user: User }) {
       switchSpace(data.space);
     } catch {
       const localSpace: Space = {
-        id: "local-" + Date.now(),
+        id: "local-" + crypto.randomUUID(),
         name: newSpace.name,
         memberName: newSpace.memberName || user.displayName,
         description: newSpace.description,
@@ -3503,23 +3721,31 @@ export default function ResearchApp({ user }: { user: User }) {
     }).catch(() => undefined);
   };
 
-  const refreshPaperNetwork = async () => {
+  const refreshPaperNetwork = async (refreshMode: "all" | "verified" | "pi" = "all") => {
     if (paperNetworkLoading || researchMap.paperNetwork.paperCount < 2) return;
     const spaceId = activeSpace.id;
     paperNetworkAutoAttemptRef.current.add(`${spaceId}:${researchMap.paperNetwork.paperRevision || researchMap.paperNetwork.paperCount}:deepseek-v4-pro+coupling-v2`);
-    let failedPhase: Exclude<PaperNetworkBuildPhase, null> = "verified";
+    let failedPhase: Exclude<PaperNetworkBuildPhase, null> = refreshMode === "pi" ? "pi" : "verified";
     setPaperNetworkLoading(true);
     try {
-      setPaperNetworkBuildPhase("verified");
-      const verified = await requestPaperNetworkBuildPhase(spaceId, "verified", true);
-      if (paperNetworkSpaceRef.current !== spaceId) return;
-      setResearchMap(verified);
-      failedPhase = "pi";
-      setPaperNetworkBuildPhase("pi");
-      const curated = await requestPaperNetworkBuildPhase(spaceId, "pi", true);
-      if (paperNetworkSpaceRef.current !== spaceId) return;
-      setResearchMap(curated);
-      setToast(locale === "zh" ? "论文网络已根据当前真实论文更新" : "The paper network now reflects the current real papers");
+      if (refreshMode !== "pi") {
+        setPaperNetworkBuildPhase("verified");
+        const verified = await requestPaperNetworkBuildPhase(spaceId, "verified", true);
+        if (paperNetworkSpaceRef.current !== spaceId) return;
+        setResearchMap(verified);
+      }
+      if (refreshMode !== "verified") {
+        failedPhase = "pi";
+        setPaperNetworkBuildPhase("pi");
+        const curated = await requestPaperNetworkBuildPhase(spaceId, "pi", true);
+        if (paperNetworkSpaceRef.current !== spaceId) return;
+        setResearchMap(curated);
+      }
+      setToast(refreshMode === "verified"
+        ? (locale === "zh" ? "已核验当前论文库中的真实引用" : "Verified citations in the current paper library")
+        : refreshMode === "pi"
+          ? (locale === "zh" ? "Pi 已重新分析论文关系" : "Pi re-analyzed the paper relationships")
+          : (locale === "zh" ? "论文网络已根据当前真实论文更新" : "The paper network now reflects the current real papers"));
     } catch {
       if (paperNetworkSpaceRef.current === spaceId) {
         setResearchMap((current) => ({ ...current, paperNetwork: { ...current.paperNetwork, status: "partial", error: `${failedPhase === "verified" ? "citation" : "pi"}: network request interrupted` } }));
@@ -3559,12 +3785,20 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const openRouteLearningPath = (thread: ResearchTrack) => {
-    setLearningTarget(locale === "zh" ? thread.titleZh : thread.titleEn);
+    const target = locale === "zh" ? thread.titleZh : thread.titleEn;
+    learningIntentRef.current = { spaceId: activeSpace.id, trackId: thread.id, target };
+    setLearningTarget(target);
+    setLearningTargetTrackId(thread.id);
+    setLearningScopeDirty(false);
     navigate("learn");
   };
 
   const addNetworkPaperToLearningPath = (node: NetworkPaperNode) => {
-    setLearningTarget(locale === "zh" ? node.track.titleZh : node.track.titleEn);
+    const target = locale === "zh" ? node.track.titleZh : node.track.titleEn;
+    learningIntentRef.current = { spaceId: activeSpace.id, trackId: node.track.id, target };
+    setLearningTarget(target);
+    setLearningTargetTrackId(node.track.id);
+    setLearningScopeDirty(false);
     setSelectedNetworkPaperId(null);
     navigate("learn");
   };
@@ -3606,8 +3840,8 @@ export default function ResearchApp({ user }: { user: User }) {
       setSelectedThread(updated);
       setMapBuildErrors((current) => { const next = { ...current }; delete next[thread.id]; return next; });
       setToast(locale === "zh"
-        ? (data.reviewQueuedCount ? `已找到 ${data.reviewQueuedCount} 篇候选并送入今日质量评估` : "本轮没有新的候选进入质量评估，探索位置已保存")
-        : (data.reviewQueuedCount ? `Sent ${data.reviewQueuedCount} candidates to today's quality review` : "No new candidate entered quality review; the exploration position was saved"));
+        ? (data.reviewQueuedCount ? `已找到 ${data.reviewQueuedCount} 篇候选，将在下一次质量评估中审阅` : "本轮没有新的候选进入质量队列，探索位置已保存")
+        : (data.reviewQueuedCount ? `${data.reviewQueuedCount} candidates will be reviewed in the next quality pass` : "No new candidate entered the quality queue; the exploration position was saved"));
     } catch {
       setToast(locale === "zh" ? "继续挖掘失败，请稍后重试" : "Could not continue mining this direction");
     } finally {
@@ -3630,8 +3864,8 @@ export default function ResearchApp({ user }: { user: User }) {
       setResearchMap(data);
       setSelectedThread(data.tracks.find((item) => item.id === thread.id) || thread);
       setToast(locale === "zh"
-        ? (data.reviewQueuedCount ? `沿缺口发现的 ${data.reviewQueuedCount} 篇候选已进入今日质量评估` : "本轮没有新的缺口候选进入质量评估，检索位置已保存")
-        : (data.reviewQueuedCount ? `${data.reviewQueuedCount} gap candidates entered today's quality review` : "No new gap candidate entered quality review; the search position was saved"));
+        ? (data.reviewQueuedCount ? `沿缺口发现的 ${data.reviewQueuedCount} 篇候选已进入共享质量队列，将在下一轮审阅` : "本轮没有新的缺口候选进入质量队列，检索位置已保存")
+        : (data.reviewQueuedCount ? `${data.reviewQueuedCount} gap candidates entered the shared queue for the next review pass` : "No new gap candidate entered the quality queue; the search position was saved"));
     } catch {
       setToast(locale === "zh" ? "证据缺口扫描暂时未完成，请稍后重试" : "The evidence-gap scan could not finish just now");
     } finally {
@@ -3660,45 +3894,64 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
-  const generateLearningPath = async () => {
-    if (learningAction || !learningTarget.trim() || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+  const generateLearningPath = async (targetOverride?: string, trackIdOverride: string | null | undefined = undefined) => {
+    const target = targetOverride?.trim() || learningTarget.trim();
+    if (learningAction || !target || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    const spaceId = activeSpace.id;
+    const targetTrackId = trackIdOverride === undefined ? learningTargetTrackId : trackIdOverride;
+    const requestId = ++learningRequestRef.current;
     setLearningAction("generate");
+    setLearningError("");
     try {
       const response = await fetch("/api/learning-path", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, target: learningTarget.trim() }),
+        body: JSON.stringify({ spaceId, target, trackId: targetTrackId }),
       });
       const data = await response.json() as LearningPathState & { error?: string };
       if (!response.ok || !data.path) throw new Error(data.error || "path generation failed");
+      if (learningRequestRef.current !== requestId || paperNetworkSpaceRef.current !== spaceId) return;
       setLearningState(data);
       setLearningTarget(data.path.target);
+      setLearningTargetTrackId(data.path.targetTrackId);
+      setLearningScopeDirty(false);
+      learningIntentRef.current = data.path.targetTrackId ? { spaceId, trackId: data.path.targetTrackId, target: data.path.target } : null;
+      setLearningLoadedSpaceId(spaceId);
       setToast(locale === "zh" ? `已用 ${data.availablePaperCount} 篇真实论文构建学习路径` : `Built from ${data.availablePaperCount} real papers`);
     } catch (error) {
+      if (learningRequestRef.current !== requestId || paperNetworkSpaceRef.current !== spaceId) return;
+      setLearningError(locale === "zh" ? "Pi 没有完成这次重新规划；已保存的旧路径不会被覆盖。" : "Pi did not finish this replan; the saved path was not replaced.");
       setToast(error instanceof Error && error.message ? error.message : locale === "zh" ? "学习路径生成失败，请稍后重试" : "Could not build the learning path");
     } finally {
-      setLearningAction(null);
+      if (learningRequestRef.current === requestId && paperNetworkSpaceRef.current === spaceId) setLearningAction(null);
     }
   };
 
   const updateLearningStep = async (step: LearningPathStep) => {
-    const path = learningState.path;
+    const path = activeLearningState.path;
     if (!path || learningAction) return;
+    const spaceId = activeSpace.id;
+    const requestId = ++learningRequestRef.current;
     setLearningAction(step.id);
+    setLearningError("");
     try {
       const response = await fetch("/api/learning-path", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, pathId: path.id, stepId: step.id, completed: step.status !== "completed" }),
+        body: JSON.stringify({ spaceId, pathId: path.id, stepId: step.id, completed: step.status !== "completed" }),
       });
       const data = await response.json() as LearningPathState & { error?: string };
       if (!response.ok || !data.path) throw new Error(data.error || "progress update failed");
+      if (learningRequestRef.current !== requestId || paperNetworkSpaceRef.current !== spaceId) return;
       setLearningState(data);
+      setLearningLoadedSpaceId(spaceId);
       setToast(step.status === "completed" ? (locale === "zh" ? "已恢复为待学习" : "Returned to the learning queue") : (locale === "zh" ? "进度已保存到当前研究空间" : "Progress saved to this research space"));
     } catch {
+      if (learningRequestRef.current !== requestId || paperNetworkSpaceRef.current !== spaceId) return;
+      setLearningError(locale === "zh" ? "进度没有保存成功；当前显示仍以服务器中的已保存版本为准。" : "Progress was not saved; the view still reflects the last saved server version.");
       setToast(locale === "zh" ? "学习进度暂时无法保存" : "Could not save learning progress");
     } finally {
-      setLearningAction(null);
+      if (learningRequestRef.current === requestId && paperNetworkSpaceRef.current === spaceId) setLearningAction(null);
     }
   };
 
@@ -3957,7 +4210,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
             {SHOW_INTERNAL_QUALITY_UI && monitor?.operationsDashboard && <section className="v2-operations-dashboard"><header><div><p className="v2-kicker">π {locale === "zh" ? "发现质量" : "DISCOVERY QUALITY"}</p><h2>{locale === "zh" ? "每次扫描是否真的带来新的、有用的论文" : "Whether each scan finds genuinely new, useful work"}</h2></div><small>{locale === "zh" ? `近 ${monitor.operationsDashboard.periodDays} 天真实运行数据` : `Last ${monitor.operationsDashboard.periodDays} days of real activity`}</small></header><div className="v2-operations-metrics"><article><span>{locale === "zh" ? "新候选" : "New candidates"}</span><strong>{monitor.operationsDashboard.totals.newCandidates}</strong><small>{monitor.operationsDashboard.totals.candidates} {locale === "zh" ? "篇独立候选" : "unique candidates"}</small></article><article><span>{locale === "zh" ? "去重节省" : "Duplicates avoided"}</span><strong>{monitor.operationsDashboard.totals.duplicatesAvoided}</strong><small>{monitor.operationsDashboard.totals.duplicateAvoidanceRate}% {locale === "zh" ? "无需重复交给 LLM" : "kept away from the LLM"}</small></article><article><span>{locale === "zh" ? "深审入选率" : "Review yield"}</span><strong>{monitor.operationsDashboard.totals.recommendationYield}%</strong><small>{monitor.operationsDashboard.totals.recommended} / {monitor.operationsDashboard.totals.reviewed} {locale === "zh" ? "篇入选" : "selected"}</small></article><article><span>{locale === "zh" ? "用户接受率" : "Acceptance"}</span><strong>{monitor.operationsDashboard.totals.acceptanceRate}%</strong><small>{monitor.operationsDashboard.totals.tokensPerRecommendation ? `${Math.round(monitor.operationsDashboard.totals.tokensPerRecommendation / 100) / 10}k token / ${locale === "zh" ? "推荐" : "recommendation"}` : (locale === "zh" ? "等待更多反馈" : "Awaiting feedback")}</small></article></div><div className="v2-operations-body"><div className="v2-scan-trend"><h3>{locale === "zh" ? "每日发现趋势" : "Daily discovery trend"}</h3>{monitor.operationsDashboard.daily.length ? monitor.operationsDashboard.daily.map((day) => <div key={day.date}><time>{day.date.slice(5)}</time><i><b style={{ width: `${Math.max(3, day.candidates / operationsMaxCandidates * 100)}%` }} /></i><span>+{day.newCandidates}</span><em>{day.recommended} {locale === "zh" ? "入选" : "selected"}</em></div>) : <p>{locale === "zh" ? "完成第一轮新版本扫描后，这里会开始记录趋势。" : "Trend data will appear after the first scan on this version."}</p>}</div><div className="v2-horizon-performance"><h3>{locale === "zh" ? "三层覆盖效率" : "Three-horizon efficiency"}</h3>{monitor.operationsDashboard.horizons.map((item) => <article key={item.horizon}><span>{item.horizon === "days" ? t.daysHorizon : item.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><strong>{item.discoveryYield}%</strong><small>{item.branches} {locale === "zh" ? "条分支" : "branches"} · {item.cooling} {locale === "zh" ? "条降频" : "cooling"}</small></article>)}</div></div>{Boolean(monitor.explorationLedger?.length) && <details className="v2-exploration-ledger"><summary><span><b>{locale === "zh" ? "持续探索账本" : "Continuous exploration ledger"}</b><small>{locale === "zh" ? "Pi 记录每条检索分支的位置；低收益分支自动降频，之后再回访。" : "Pi remembers each branch position, cools low-yield paths, and revisits them later."}</small></span><strong>{monitor.explorationLedger?.length} →</strong></summary><div>{monitor.explorationLedger?.slice(0, 16).map((branch) => <article className={branch.status} key={`${branch.horizon}:${branch.id}`}><header><span>{branch.horizon === "days" ? t.daysHorizon : branch.horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {branch.channel}</span><b>{explorationStatusLabel(branch.status, locale)}</b></header><p>{branch.queryText || branch.sourceKey.replace(/_/g, " ")}</p><footer><span>{locale === "zh" ? "游标" : "cursor"} {branch.nextCursor}</span><span>{branch.attempts} {locale === "zh" ? "轮" : "rounds"}</span><span>{branch.newCandidates}/{branch.candidates} {locale === "zh" ? "新发现" : "new"}</span><strong>{branch.discoveryYield}%</strong></footer></article>)}</div></details>}</section>}
 
-            {!!monitor?.mapChanges?.length && <section className="v2-route-changes"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究路线变化" : "Research route changes"}</p><h2>{locale === "zh" ? "路线、证据与论文节点最近发生了什么" : "What changed across routes, evidence, and paper nodes"}</h2></div><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "打开地图" : "Open map"} →</button></header><div>{monitor.mapChanges.slice(0, 3).map((change) => { const kind = routeChangeKindLabel(change.kind, locale); return <article key={change.id}><span>{kind.symbol}</span><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {locale === "zh" ? kind.zh : kind.en}{change.kind === "new_evidence" ? ` · ${change.confidence}%` : ""}</small><h3>{change.kind === "new_evidence" ? change.paperTitle : locale === "zh" ? change.titleZh : change.titleEn}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>; })}</div></section>}
+            {!!monitor?.mapChanges?.length && <section className="v2-route-changes"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "研究路线变化" : "Research route changes"}</p><h2>{locale === "zh" ? "路线、证据与论文节点最近发生了什么" : "What changed across routes, evidence, and paper nodes"}</h2></div><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "打开地图" : "Open map"} →</button></header><div>{monitor.mapChanges.slice(0, 3).map((change) => { const kind = routeChangeKindLabel(change.kind); return <article key={change.id}><span>{kind.symbol}</span><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {locale === "zh" ? kind.zh : kind.en}{change.kind === "new_evidence" ? ` · ${change.confidence}%` : ""}</small><h3>{change.kind === "new_evidence" ? change.paperTitle : locale === "zh" ? change.titleZh : change.titleEn}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>; })}</div></section>}
 
             {Boolean(additionalTodayPapers.length) && <section className="v2-today-more">
               <header><div><p className="v2-kicker warm">{locale === "zh" ? "更多推荐" : "MORE RECOMMENDATIONS"}</p><h2>{locale === "zh" ? "不在今日主队列，但仍值得保留" : "Worth keeping beyond the main queue"}</h2></div><span>{additionalTodayPapers.length} {locale === "zh" ? "篇" : "papers"}</span></header>
@@ -3988,7 +4241,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   </section>
 
                   <section className="v2-route-groups">
-                    <header><div><p className="v2-kicker">{locale === "zh" ? "我的研究布局" : "MY RESEARCH PORTFOLIO"}</p><h2>{locale === "zh" ? "主攻、辅助与探索方向" : "Core, supporting, and exploratory directions"}</h2></div><p>{locale === "zh" ? "路线深挖不会直接写入正式研究图；候选通过质量评估后，才会进入今日推荐和待确认证据。" : "Route mining never writes directly to the formal map. Candidates enter recommendations and pending evidence only after quality review."}</p></header>
+                    <header><div><p className="v2-kicker">{locale === "zh" ? "我的研究布局" : "MY RESEARCH PORTFOLIO"}</p><h2>{locale === "zh" ? "主攻、辅助与探索方向" : "Core, supporting, and exploratory directions"}</h2></div><p>{locale === "zh" ? "路线深挖候选统一进入共享质量队列；Pi 策展的代表作只作为路线背景，通过评审并由你确认后才成为已确认证据。" : "Route discoveries enter the shared quality queue. Pi-curated papers remain route context until they pass review and you confirm them as evidence."}</p></header>
                     <div className="v2-route-review-policy"><span><b>01</b>{locale === "zh" ? "路线深挖" : "Route mining"}</span><i>→</i><span><b>02</b>{locale === "zh" ? "今日质量评估" : "Today's quality review"}</span><i>→</i><span><b>03</b>{locale === "zh" ? "通过后推荐" : "Recommend after passing"}</span><small>{locale === "zh" ? "未通过的候选不会占用阅读队列，也不会自动成为路线证据。" : "Candidates that fail review never enter the reading queue or become route evidence automatically."}</small></div>
                     {(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => researchTracksByRole[role].length ? <section className={`v2-route-group ${role}`} key={role}>
                       <header><span>{directionRoleLabel(role, locale)}</span><small>{role === "core" ? (locale === "zh" ? "你投入最深、需要持续维护的主线" : "Your deepest, continuously maintained work") : role === "support" ? (locale === "zh" ? "为主线提供方法、理论或证据" : "Methods, theory, or evidence that supports the core") : (locale === "zh" ? "保留少量预算验证的新方向" : "New directions receiving a bounded exploration budget")}</small><b>{researchTracksByRole[role].length}</b></header>
@@ -4020,20 +4273,19 @@ export default function ResearchApp({ user }: { user: User }) {
                   <section className="v2-route-explorer-entry"><div><span>◎</span><div><small>{locale === "zh" ? "高级工具" : "ADVANCED TOOL"}</small><h2>{locale === "zh" ? "需要追溯引用、寻找相似工作或比较多篇论文？" : "Need citation tracing, similar work, or multi-paper comparison?"}</h2><p>{locale === "zh" ? "论文图谱保留为按需使用的探索空间，不干扰日常路线管理。" : "The paper graph remains an on-demand exploration space, separate from daily route management."}</p></div></div><dl><div><dt>{locale === "zh" ? "论文" : "Papers"}</dt><dd>{researchMap.paperNetwork.paperCount || networkPaperNodes.length}</dd></div><div><dt>{locale === "zh" ? "真实关系" : "Verified links"}</dt><dd>{researchMap.paperNetwork.citationEdgeCount + researchMap.paperNetwork.similarityEdgeCount}</dd></div></dl><button type="button" onClick={() => { setResearchMapMode("papers"); setSelectedNetworkPaperId(null); }}>{locale === "zh" ? "打开高级图谱探索" : "Open advanced graph explorer"} →</button></section>
                 </> : <section className="v2-paper-network-panel">
                   <header className="v2-paper-network-toolbar">
-                    <div className="v2-paper-network-mode" role="tablist" aria-label={locale === "zh" ? "论文网络模式" : "Paper network mode"}>
-                      <button type="button" role="tab" aria-selected={paperNetworkMode === "similarity"} className={paperNetworkMode === "similarity" ? "active" : ""} onClick={() => { setPaperNetworkMode("similarity"); setPaperNetworkScope("all"); }}><span>{locale === "zh" ? "相似论文" : "Similar papers"}</span><b>{researchMap.paperNetwork.similarityEdgeCount + rankedResearchNetworkCandidates.length}</b></button>
-                      <button type="button" role="tab" aria-selected={paperNetworkMode === "citations"} className={paperNetworkMode === "citations" ? "active" : ""} onClick={() => { setPaperNetworkMode("citations"); setSelectedNetworkPaperId(null); setPaperNetworkScope("all"); }}><span>{locale === "zh" ? "知识引用流" : "Citation flow"}</span><b>{researchMap.paperNetwork.citationEdgeCount}</b></button>
-                      <button type="button" role="tab" aria-selected={paperNetworkMode === "path"} className={paperNetworkMode === "path" ? "active" : ""} onClick={() => { setPaperNetworkMode("path"); setSelectedNetworkPaperId(null); setPaperNetworkScope("all"); }}><span>{locale === "zh" ? "建议阅读顺序" : "Reading order"}</span><b>{researchMap.paperNetwork.pathEdgeCount}</b></button>
+                    <div className="v2-paper-network-mode" role="group" aria-label={locale === "zh" ? "论文网络模式" : "Paper network mode"}>
+                      <button type="button" aria-pressed={paperNetworkMode === "similarity"} className={paperNetworkMode === "similarity" ? "active" : ""} onClick={() => { setPaperNetworkMode("similarity"); setPaperNetworkScope("all"); }}><span>{locale === "zh" ? "相似论文" : "Similar papers"}</span><b>{researchMap.paperNetwork.similarityEdgeCount + rankedResearchNetworkCandidates.length}</b></button>
+                      <button type="button" aria-pressed={paperNetworkMode === "citations"} className={paperNetworkMode === "citations" ? "active" : ""} onClick={() => { setPaperNetworkMode("citations"); setPaperNetworkScope("all"); }}><span>{locale === "zh" ? "知识引用流" : "Citation flow"}</span><b>{visibleCitationEdgeCount}</b></button>
+                      <button type="button" aria-pressed={paperNetworkMode === "path"} className={paperNetworkMode === "path" ? "active" : ""} onClick={() => { setPaperNetworkMode("path"); setPaperNetworkScope("all"); }}><span>{locale === "zh" ? "建议阅读顺序" : "Reading order"}</span><b>{activeLearningState.path?.steps.length || 0}</b></button>
                     </div>
-                    <div className="v2-paper-network-filters"><div className="v2-paper-network-scope" role="group" aria-label={locale === "zh" ? "网络范围" : "Network scope"}><button type="button" className={paperNetworkScope === "all" ? "active" : ""} onClick={() => setPaperNetworkScope("all")}>{locale === "zh" ? "完整图谱" : "Full graph"}</button><button type="button" className={paperNetworkScope === "one-hop" ? "active" : ""} disabled={!selectedNetworkPaperId} onClick={() => setPaperNetworkScope("one-hop")}>{locale === "zh" ? "聚焦邻域" : "Focus neighborhood"}</button>{paperNetworkMode === "similarity" && explicitNetworkOriginNodes.length >= 2 && <button type="button" className={paperNetworkScope === "multi-seed" ? "active" : ""} onClick={() => setPaperNetworkScope("multi-seed")}>{locale === "zh" ? "联合种子" : "Multi-origin"}</button>}</div><label><span>{locale === "zh" ? "方向" : "Direction"}</span><select value={paperNetworkTrackId} onChange={(event) => { setPaperNetworkTrackId(event.target.value); setSelectedNetworkPaperId(null); setPaperNetworkOriginCanonicalIds([]); resetResearchNetworkExpansion([]); setPaperNetworkScope("all"); }}><option value="all">{locale === "zh" ? "全部方向" : "All directions"}</option>{researchMap.tracks.map((track) => <option value={track.id} key={track.id}>{locale === "zh" ? track.titleZh : track.titleEn}</option>)}</select></label>{paperNetworkMode === "similarity" && <button type="button" className="primary" onClick={() => void expandResearchNetwork(undefined, true)} disabled={researchNetworkLoading || !effectiveNetworkOriginNodes.length}>{researchNetworkLoading ? (locale === "zh" ? "寻找中…" : "Discovering…") : researchNetworkCandidates.length ? (locale === "zh" ? "继续发现" : "Discover more") : (locale === "zh" ? "发现更多论文" : "Discover papers")}</button>}<button type="button" onClick={() => void refreshPaperNetwork()} disabled={paperNetworkLoading || researchMap.paperNetwork.paperCount < 2}>{paperNetworkLoading ? (locale === "zh" ? "核验中…" : "Verifying…") : (locale === "zh" ? "核验已有关系" : "Verify saved links")}</button></div>
+                    <div className="v2-paper-network-filters">{paperNetworkMode === "similarity" && <div className="v2-paper-network-scope" role="group" aria-label={locale === "zh" ? "网络范围" : "Network scope"}><button type="button" className={paperNetworkScope === "all" ? "active" : ""} onClick={() => setPaperNetworkScope("all")}>{locale === "zh" ? "完整图谱" : "Full graph"}</button><button type="button" className={paperNetworkScope === "one-hop" ? "active" : ""} disabled={!selectedNetworkPaperId} onClick={() => setPaperNetworkScope("one-hop")}>{locale === "zh" ? "聚焦邻域" : "Focus neighborhood"}</button>{explicitNetworkOriginNodes.length >= 2 && <button type="button" className={paperNetworkScope === "multi-seed" ? "active" : ""} onClick={() => setPaperNetworkScope("multi-seed")}>{locale === "zh" ? "联合种子" : "Multi-origin"}</button>}</div>}<label><span>{locale === "zh" ? "方向" : "Direction"}</span><select value={paperNetworkTrackId} onChange={(event) => { setPaperNetworkTrackId(event.target.value); setSelectedNetworkPaperId(null); setPaperNetworkOriginCanonicalIds([]); resetResearchNetworkExpansion([]); setPaperNetworkScope("all"); }}><option value="all">{locale === "zh" ? "全部方向" : "All directions"}</option>{researchMap.tracks.map((track) => <option value={track.id} key={track.id}>{locale === "zh" ? track.titleZh : track.titleEn}</option>)}</select></label>{paperNetworkMode === "similarity" && <button type="button" className="primary" onClick={() => void expandResearchNetwork(undefined, true)} disabled={researchNetworkLoading || !effectiveNetworkOriginNodes.length}>{researchNetworkLoading ? (locale === "zh" ? "寻找中…" : "Discovering…") : researchNetworkCandidates.length ? (locale === "zh" ? "继续发现" : "Discover more") : (locale === "zh" ? "发现更多论文" : "Discover papers")}</button>}{paperNetworkMode !== "path" && <button type="button" onClick={() => void refreshPaperNetwork("verified")} disabled={paperNetworkLoading || researchMap.paperNetwork.paperCount < 2}>{paperNetworkLoading ? (locale === "zh" ? "核验中…" : "Verifying…") : paperNetworkMode === "citations" ? (locale === "zh" ? "核验引用关系" : "Verify citations") : (locale === "zh" ? "核验耦合与引用" : "Verify coupling and citations")}</button>}</div>
                   </header>
-                  <div className={`v2-paper-network-context ${paperNetworkMode} ${paperNetworkScope}`}><strong>{paperNetworkContext.title}</strong><span>{paperNetworkContext.body}</span></div>
+                  {paperNetworkMode === "similarity" && <div className={`v2-paper-network-context ${paperNetworkMode} ${paperNetworkScope}`}><strong>{paperNetworkContext.title}</strong><span>{paperNetworkContext.body}</span></div>}
                   {paperNetworkMode === "similarity" && <><div className="v2-network-origin-bar"><span>{locale === "zh" ? "起始论文" : "Origin papers"}<b>{effectiveNetworkOriginNodes.length}/3</b></span><div>{effectiveNetworkOriginNodes.map((node, index) => <span className="v2-network-origin-chip" key={node.paper.canonicalId}><button className="v2-network-origin-select" type="button" aria-pressed={selectedNetworkPaperId === node.paper.id} onClick={() => setSelectedNetworkPaperId(node.paper.id)}><b>{index + 1}</b><span>{node.paper.title.slice(0, 44)}</span></button>{explicitNetworkOriginNodes.length > 0 && <button className="v2-network-origin-remove" type="button" onClick={() => removeNetworkOrigin(node.paper.canonicalId)} aria-label={locale === "zh" ? `移除种子：${node.paper.title}` : `Remove origin: ${node.paper.title}`}>×</button>}</span>)}</div><small>{locale === "zh" ? "点击种子只查看详情；生成新图是独立操作。" : "Selecting an origin only opens details; rebuilding is a separate action."}</small></div>{explicitNetworkOriginNodes.length >= 2 && <div className="v2-multi-origin-intents" role="group" aria-label={locale === "zh" ? "多种子意图" : "Multi-origin intent"}>{(["shared", "bridge", "union"] as MultiOriginIntent[]).map((intent) => <button type="button" key={intent} className={multiOriginIntent === intent ? "active" : ""} onClick={() => { setMultiOriginIntent(intent); setPaperNetworkScope("multi-seed"); }}>{intent === "shared" ? (locale === "zh" ? "共同领域" : "Shared territory") : intent === "bridge" ? (locale === "zh" ? "跨域桥接" : "Bridges") : (locale === "zh" ? "并集比较" : "Union comparison")}</button>)}</div>}</>}
-                  {paperNetworkMode === "citations" && (citationLineage.prior.length > 0 || citationLineage.derivative.length > 0) && <div className="v2-network-lineage"><section><span>{locale === "zh" ? "它承接的前置工作" : "Prior work it builds on"}</span>{citationLineage.prior.map((node) => <button type="button" key={node.paper.id} onClick={() => { setSelectedNetworkPaperId(node.paper.id); setPaperNetworkScope("one-hop"); }}>{node.paper.title}</button>)}</section><section><span>{locale === "zh" ? "后续引用它的工作" : "Later work citing it"}</span>{citationLineage.derivative.map((node) => <button type="button" key={node.paper.id} onClick={() => { setSelectedNetworkPaperId(node.paper.id); setPaperNetworkScope("one-hop"); }}>{node.paper.title}</button>)}</section></div>}
-                  {(paperNetworkLoading || researchMap.paperNetwork.status === "building") && <div className="v2-paper-network-progress" role="status"><span><i /></span><div><strong>{paperNetworkBuildPhase === "pi" ? (locale === "zh" ? "真实关系已可浏览" : "Verified links are ready") : (locale === "zh" ? "正在核验真实引用" : "Verifying real citations")}</strong><p>{paperNetworkBuildPhase === "pi" ? (locale === "zh" ? `Pi 正在逐条补充语义关系与阅读路径；当前已有 ${researchMap.paperNetwork.citationEdgeCount + researchMap.paperNetwork.similarityEdgeCount} 条真实关系。` : `Pi is adding semantic links and reading paths; ${researchMap.paperNetwork.citationEdgeCount + researchMap.paperNetwork.similarityEdgeCount} verified links are already visible.`) : (locale === "zh" ? "真实引用与文献耦合一旦核验完成，就会先出现在图上。" : "Verified citations and coupling links will appear before Pi analysis finishes.")}</p></div></div>}
-                  {!paperNetworkLoading && ["partial", "error"].includes(researchMap.paperNetwork.status) && (() => { const notice = paperNetworkSourceNotice(researchMap.paperNetwork, locale); return <div className="v2-paper-network-note" role="status"><span /><div><strong>{notice.title}</strong><p>{notice.body}</p></div><button type="button" onClick={() => void refreshPaperNetwork()}>{notice.action}</button></div>; })()}
-                  {researchNetworkLoading && <div className="v2-paper-network-progress v2-external-network-progress" role="status"><span><i /></span><div><strong>{locale === "zh" ? "正在围绕起始论文寻找新邻域" : "Discovering a new neighborhood around the origins"}</strong><p>{locale === "zh" ? "现有图谱仍可浏览；候选返回后会作为浅色节点加入。" : "The current graph remains usable; candidates will arrive as lightweight ghost nodes."}</p></div></div>}
-                  {researchNetworkResponse && (() => {
+                  {paperNetworkMode !== "path" && (paperNetworkLoading || researchMap.paperNetwork.status === "building") && <div className="v2-paper-network-progress" role="status"><span><i /></span><div><strong>{paperNetworkBuildPhase === "pi" ? (locale === "zh" ? "真实关系已可浏览" : "Verified links are ready") : (locale === "zh" ? "正在核验真实引用" : "Verifying real citations")}</strong><p>{paperNetworkBuildPhase === "pi" ? (locale === "zh" ? `Pi 正在逐条补充语义关系与阅读路径；当前已有 ${researchMap.paperNetwork.citationEdgeCount + researchMap.paperNetwork.similarityEdgeCount} 条真实关系。` : `Pi is adding semantic links and reading paths; ${researchMap.paperNetwork.citationEdgeCount + researchMap.paperNetwork.similarityEdgeCount} verified links are already visible.`) : (locale === "zh" ? "真实引用与文献耦合一旦核验完成，就会先出现在图上。" : "Verified citations and coupling links will appear before Pi analysis finishes.")}</p></div></div>}
+                  {paperNetworkMode !== "path" && !paperNetworkLoading && ["partial", "error"].includes(researchMap.paperNetwork.status) && (() => { const notice = paperNetworkSourceNotice(researchMap.paperNetwork, locale); return notice ? <div className="v2-paper-network-note" role="status"><span /><div><strong>{notice.title}</strong><p>{notice.body}</p></div><button type="button" onClick={() => void refreshPaperNetwork("verified")}>{notice.action}</button></div> : null; })()}
+                  {paperNetworkMode === "similarity" && researchNetworkLoading && <div className="v2-paper-network-progress v2-external-network-progress" role="status"><span><i /></span><div><strong>{locale === "zh" ? "正在围绕起始论文寻找新邻域" : "Discovering a new neighborhood around the origins"}</strong><p>{locale === "zh" ? "现有图谱仍可浏览；候选返回后会作为浅色节点加入。" : "The current graph remains usable; candidates will arrive as lightweight ghost nodes."}</p></div></div>}
+                  {paperNetworkMode === "similarity" && researchNetworkResponse && (() => {
                     const issueSummary = researchNetworkIssueSummary(researchNetworkResponse, locale);
                     const savedDatabaseRelationCount = researchMap.paperNetwork.citationEdgeCount + researchMap.paperNetwork.similarityEdgeCount;
                     const batchCandidateCount = researchNetworkResponse.candidates.length;
@@ -4057,15 +4309,14 @@ export default function ResearchApp({ user }: { user: User }) {
                       {issueSummary && <p className="v2-research-network-issue">{issueSummary}</p>}
                     </div>;
                   })()}
-                  {researchNetworkError && <div className="v2-paper-network-note" role="status"><span /><div><strong>{locale === "zh" ? "外部论文发现暂时不可用" : "External discovery is temporarily unavailable"}</strong><p>{researchNetworkError}</p></div><button type="button" onClick={() => setResearchNetworkError("")}>{locale === "zh" ? "关闭" : "Dismiss"}</button></div>}
+                  {paperNetworkMode === "similarity" && researchNetworkError && <div className="v2-paper-network-note" role="status"><span /><div><strong>{locale === "zh" ? "外部论文发现暂时不可用" : "External discovery is temporarily unavailable"}</strong><p>{researchNetworkError}</p></div><button type="button" onClick={() => setResearchNetworkError("")}>{locale === "zh" ? "关闭" : "Dismiss"}</button></div>}
                   <div className={`v2-paper-network-stage ${paperNetworkMode === "similarity" ? "discovery-mode" : "analysis-mode"} ${selectedNetworkNode ? "has-drawer" : ""}`}>
                     {paperNetworkMode === "similarity" && <aside className="v2-paper-discovery-list" aria-label={locale === "zh" ? "论文发现列表" : "Paper discovery list"}>
-                      <nav role="tablist" aria-label={locale === "zh" ? "发现类型" : "Discovery type"}>{(["similar", "prior", "derivative"] as PaperDiscoveryTab[]).map((tab) => <button type="button" role="tab" key={tab} aria-selected={paperDiscoveryTab === tab} className={paperDiscoveryTab === tab ? "active" : ""} onClick={() => setPaperDiscoveryTab(tab)}><span>{tab === "similar" ? (locale === "zh" ? "相似论文" : "Similar") : tab === "prior" ? (locale === "zh" ? "前置奠基" : "Prior") : (locale === "zh" ? "后续发展" : "Derivative")}</span><b>{networkDiscoveryNodesByTab[tab].length}</b></button>)}</nav>
+                      <div className="v2-paper-discovery-tabs" role="group" aria-label={locale === "zh" ? "发现类型" : "Discovery type"}>{(["similar", "prior", "derivative"] as PaperDiscoveryTab[]).map((tab) => <button type="button" key={tab} aria-pressed={paperDiscoveryTab === tab} className={paperDiscoveryTab === tab ? "active" : ""} onClick={() => setPaperDiscoveryTab(tab)}><span>{tab === "similar" ? (locale === "zh" ? "相似论文" : "Similar") : tab === "prior" ? (locale === "zh" ? "前置奠基" : "Prior") : (locale === "zh" ? "后续发展" : "Derivative")}</span><b>{networkDiscoveryNodesByTab[tab].length}</b></button>)}</div>
                       <div className="v2-paper-discovery-scroll">{networkDiscoveryNodes.length ? networkDiscoveryNodes.map((node) => { const candidate = node.external; const decision = candidate ? researchNetworkDecisions[candidate.canonicalId] : undefined; const origin = effectiveNetworkOriginIds.includes(node.paper.id); const evidenceCount = candidate ? currentOriginEvidenceCount(candidate, effectiveNetworkOriginCanonicalIds) : 0; return <article key={node.paper.id} className={`${selectedNetworkPaperId === node.paper.id ? "selected" : ""} ${candidate ? "ghost" : "saved"}`} onPointerEnter={() => setHoveredNetworkPaperId(node.paper.id)} onPointerLeave={() => setHoveredNetworkPaperId(null)}><button type="button" className="v2-paper-discovery-select" onClick={() => setSelectedNetworkPaperId(node.paper.id)}><span>{origin ? (locale === "zh" ? "起点" : "Origin") : candidate ? decision === "accepted" ? (locale === "zh" ? "已收录" : "Added") : (locale === "zh" ? "待收录" : "Candidate") : (locale === "zh" ? "地图内" : "In map")}</span><strong>{node.paper.title}</strong><small>{[node.paper.authors, researchPaperYear(node.paper), node.paper.venue].filter(Boolean).join(" · ")}</small>{candidate && <em>{networkCandidateFitLabel(candidate.score, locale)} · {locale === "zh" ? `${evidenceCount} 个当前起点有独立关系证据` : `${evidenceCount} active origin(s) with independent relation evidence`}</em>}</button>{candidate && decision !== "accepted" && <footer><button type="button" disabled={decision === "saving"} onClick={() => void decideResearchNetworkCandidate(candidate, "accept")}>{decision === "saving" ? "…" : (locale === "zh" ? "收录" : "Add")}</button><button type="button" disabled={decision === "saving"} onClick={() => void decideResearchNetworkCandidate(candidate, "dismiss")}>{locale === "zh" ? "忽略" : "Dismiss"}</button></footer>}</article>; }) : <div className="v2-paper-discovery-empty"><strong>{researchNetworkResponse && researchNetworkHasNoNewCandidates(researchNetworkResponse) ? (locale === "zh" ? "本轮没有新的可推荐论文" : "No new papers to recommend in this pass") : paperDiscoveryTab === "prior" ? (locale === "zh" ? "暂无共同前置工作" : "No common prior works yet") : paperDiscoveryTab === "derivative" ? (locale === "zh" ? "暂无共同后续工作" : "No common derivative works yet") : (locale === "zh" ? "尚未发现外部候选" : "No external candidates yet")}</strong><p>{researchNetworkResponse && researchNetworkHasNoNewCandidates(researchNetworkResponse) ? (locale === "zh" ? "Pi 已检查当前起点周边；现有图谱和历史论文不会因此丢失。" : "Pi checked the current neighborhood; saved map papers remain available.") : (locale === "zh" ? "可以从起始论文继续发现，现有论文不会丢失。" : "Discover from an origin; saved papers remain intact.")}</p></div>}</div>
                     </aside>}
                     <div className="v2-paper-network-main">
-                      <PaperNetworkGraph map={researchMap} mode={paperNetworkMode} scope={paperNetworkScope} multiOriginIntent={multiOriginIntent} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} hoveredPaperId={hoveredNetworkPaperId} originPaperIds={paperNetworkMode === "similarity" ? effectiveNetworkOriginIds : []} externalNodes={externalNetworkPaperNodes} externalSimilarityEdges={researchNetworkSimilarityEdges} paperStates={paperStateByCanonicalId} onSelect={(paperId) => setSelectedNetworkPaperId(paperId)} onHover={setHoveredNetworkPaperId} />
-                      <footer className="v2-paper-network-legend">{paperNetworkMode === "similarity" ? <><span><i className="similarity" />{locale === "zh" ? "距离 / 线宽：文献耦合强度" : "Distance / line width: bibliographic coupling"}</span><span><i className="discovery-fallback" />{locale === "zh" ? "中性虚线：引用或推荐发现线索（非耦合）" : "Neutral dashed line: citation or recommendation lead (not coupling)"}</span><span><i className="node-size" />{locale === "zh" ? "节点大小：被引量" : "Node size: citations"}</span><span><i className="year" />{locale === "zh" ? "颜色：发表年份（旧 → 新）" : "Color: publication year (older → newer)"}</span><span><i className="origin" />{locale === "zh" ? "金环：起始论文" : "Gold ring: origin paper"}</span><span><i className="ghost" />{locale === "zh" ? "虚边节点：尚未收录" : "Dashed node: not yet added"}</span>{paperNetworkScope === "multi-seed" && <span><i className="shared-neighbor" />{locale === "zh" ? "双环：多个种子的共同邻居" : "Double ring: neighbor shared by multiple origins"}</span>}</> : paperNetworkMode === "citations" ? <span><i className="citation" />{locale === "zh" ? "数据库确认的引用 · 被引论文 → 后续论文" : "Database-verified citation · cited paper → later paper"}</span> : <><span><i className="path" />{locale === "zh" ? "金线：Pi 推荐的先读 → 再读" : "Gold: Pi recommends read first → read next"}</span><span><i className="path-step-legend" />{locale === "zh" ? "圆内数字：阅读步骤" : "Number in node: reading step"}</span></>}</footer>
+                      {paperNetworkMode === "similarity" ? <><PaperNetworkGraph map={researchMap} mode="similarity" scope={paperNetworkScope} multiOriginIntent={multiOriginIntent} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} hoveredPaperId={hoveredNetworkPaperId} originPaperIds={effectiveNetworkOriginIds} externalNodes={externalNetworkPaperNodes} externalSimilarityEdges={researchNetworkSimilarityEdges} paperStates={paperStateByCanonicalId} onSelect={(paperId) => setSelectedNetworkPaperId(paperId)} onHover={setHoveredNetworkPaperId} /><footer className="v2-paper-network-legend"><span><i className="similarity" />{locale === "zh" ? "距离 / 线宽：文献耦合强度" : "Distance / line width: bibliographic coupling"}</span><span><i className="discovery-fallback" />{locale === "zh" ? "中性虚线：引用或推荐发现线索（非耦合）" : "Neutral dashed line: citation or recommendation lead (not coupling)"}</span><span><i className="node-size" />{locale === "zh" ? "节点大小：被引量" : "Node size: citations"}</span><span><i className="year" />{locale === "zh" ? "颜色：发表年份（旧 → 新）" : "Color: publication year (older → newer)"}</span><span><i className="origin" />{locale === "zh" ? "金环：起始论文" : "Gold ring: origin paper"}</span><span><i className="ghost" />{locale === "zh" ? "虚边节点：尚未收录" : "Dashed node: not yet added"}</span>{paperNetworkScope === "multi-seed" && <span><i className="shared-neighbor" />{locale === "zh" ? "双环：多个种子的共同邻居" : "Double ring: neighbor shared by multiple origins"}</span>}</footer></> : paperNetworkMode === "citations" ? <CitationFlowWorkbench map={researchMap} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} onSelect={setSelectedNetworkPaperId} onExpandFocus={(node) => void generateResearchNetworkFrom(node)} expanding={researchNetworkLoading} /> : <ReadingOrderWorkbench map={researchMap} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} learningState={activeLearningState} learningLoading={activeLearningLoading} learningError={activeLearningError} learningAction={learningAction} onSelect={setSelectedNetworkPaperId} onToggleStep={(step) => void updateLearningStep(step)} onGenerate={(track) => void (track ? generateLearningPath(locale === "zh" ? track.titleZh : track.titleEn, track.id) : activeLearningState.path ? generateLearningPath(activeLearningState.path.target, activeLearningState.path.targetTrackId) : generateLearningPath(learningTarget))} onRetry={() => setLearningReloadNonce((current) => current + 1)} />}
                     </div>
                     {selectedNetworkNode && <aside className="v2-paper-network-drawer" aria-label={locale === "zh" ? "论文详情" : "Paper details"}>
                       <button className="v2-paper-drawer-close" type="button" onClick={() => setSelectedNetworkPaperId(null)} aria-label={t.close}>×</button>
@@ -4074,9 +4325,9 @@ export default function ResearchApp({ user }: { user: User }) {
                       <small>{[selectedNetworkNode.paper.authors, selectedNetworkNode.paper.venue, `${selectedNetworkNode.paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</small>
                       <div className="v2-paper-drawer-copy"><b>{t.introLabel}</b><p>{locale === "zh" ? selectedNetworkNode.paper.summaryZh : selectedNetworkNode.paper.summaryEn}</p><b>{locale === "zh" ? "路线位置" : "Place in the route"}</b><p>{locale === "zh" ? selectedNetworkNode.paper.rationaleZh : selectedNetworkNode.paper.rationaleEn}</p></div>
                       {selectedNetworkNode.external && <div className="v2-paper-candidate-decision"><span>{networkCandidateFitLabel(selectedNetworkNode.external.score, locale)} · {locale === "zh" ? `${currentOriginEvidenceCount(selectedNetworkNode.external, effectiveNetworkOriginCanonicalIds)} 个当前起点有独立关系证据` : `${currentOriginEvidenceCount(selectedNetworkNode.external, effectiveNetworkOriginCanonicalIds)} active origin(s) with independent relation evidence`}</span><div><button type="button" disabled={researchNetworkDecisions[selectedNetworkNode.external.canonicalId] === "saving" || researchNetworkDecisions[selectedNetworkNode.external.canonicalId] === "accepted"} onClick={() => void decideResearchNetworkCandidate(selectedNetworkNode.external!, "accept")}>{researchNetworkDecisions[selectedNetworkNode.external.canonicalId] === "accepted" ? (locale === "zh" ? "已收录" : "Added") : (locale === "zh" ? "收录到地图" : "Add to map")}</button><button type="button" disabled={researchNetworkDecisions[selectedNetworkNode.external.canonicalId] === "saving"} onClick={() => void decideResearchNetworkCandidate(selectedNetworkNode.external!, "dismiss")}>{locale === "zh" ? "忽略" : "Dismiss"}</button></div></div>}
-                      {selectedNetworkRelations.length > 0 && <div className="v2-paper-drawer-relations"><b>{locale === "zh" ? "关键关系" : "Key relationships"}</b>{selectedNetworkRelations.map((edge) => { const outgoingCitation = edge.kind === "citation" && edge.sourcePaperId === selectedNetworkNode.paper.id; const otherId = edge.sourcePaperId === selectedNetworkNode.paper.id ? edge.targetPaperId : edge.sourcePaperId; const other = allNetworkPaperNodes.find((node) => node.paper.id === otherId); if (!other) return null; const relationLabel = edge.kind === "citation" ? outgoingCitation ? (locale === "zh" ? "本论文引用了" : "This paper cites") : (locale === "zh" ? "后续论文引用了本论文" : "Later paper cites this work") : networkRelationLabel(edge, locale); return <button type="button" key={edge.id} onClick={() => setSelectedNetworkPaperId(other.paper.id)}><span>{relationLabel} · {networkEvidenceLabel(edge, locale)}</span><strong>{other.paper.title}</strong><small>{locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</small></button>; })}</div>}
+                      {selectedModeNetworkRelations.length > 0 && <div className="v2-paper-drawer-relations"><b>{paperNetworkMode === "citations" ? (locale === "zh" ? "已核验引用" : "Verified citations") : (locale === "zh" ? "关键关系" : "Key relationships")}</b>{selectedModeNetworkRelations.map((edge) => { const outgoingCitation = edge.kind === "citation" && edge.sourcePaperId === selectedNetworkNode.paper.id; const otherId = edge.sourcePaperId === selectedNetworkNode.paper.id ? edge.targetPaperId : edge.sourcePaperId; const other = allNetworkPaperNodes.find((node) => node.paper.id === otherId); if (!other) return null; const relationLabel = edge.kind === "citation" ? outgoingCitation ? (locale === "zh" ? "本论文引用了" : "This paper cites") : (locale === "zh" ? "后续论文引用了本论文" : "Later paper cites this work") : networkRelationLabel(edge, locale); return <button type="button" key={edge.id} onClick={() => setSelectedNetworkPaperId(other.paper.id)}><span>{relationLabel} · {networkEvidenceLabel(edge, locale)}</span><strong>{other.paper.title}</strong><small>{locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</small></button>; })}</div>}
                       {paperNetworkMode === "similarity" && <div className="v2-paper-origin-actions"><button type="button" className={paperNetworkScope === "one-hop" ? "active" : ""} onClick={() => setPaperNetworkScope(paperNetworkScope === "one-hop" ? "all" : "one-hop")}>{paperNetworkScope === "one-hop" ? (locale === "zh" ? "返回完整图谱" : "Back to full graph") : (locale === "zh" ? "聚焦邻域" : "Focus neighborhood")}</button><button type="button" onClick={() => void generateResearchNetworkFrom(selectedNetworkNode)} disabled={researchNetworkLoading || Boolean(selectedNetworkNode.external && researchNetworkDecisions[selectedNetworkNode.external.canonicalId] !== "accepted")}>{selectedNetworkNode.external && researchNetworkDecisions[selectedNetworkNode.external.canonicalId] !== "accepted" ? (locale === "zh" ? "收录后可生成新图" : "Add before rebuilding") : (locale === "zh" ? "以此生成新图" : "Build new graph from this")}</button><button type="button" onClick={() => addMultiNetworkOrigin(selectedNetworkNode)} disabled={effectiveNetworkOriginIds.includes(selectedNetworkNode.paper.id) || explicitNetworkOriginNodes.length >= 3 || Boolean(selectedNetworkNode.external && researchNetworkDecisions[selectedNetworkNode.external.canonicalId] !== "accepted")}>{effectiveNetworkOriginIds.includes(selectedNetworkNode.paper.id) ? (locale === "zh" ? "已是起点" : "Already an origin") : (locale === "zh" ? "加入联合种子" : "Add as origin")}</button></div>}
-                      <footer><a href={selectedNetworkNode.paper.url || (selectedNetworkNode.paper.doi ? "https://doi.org/" + selectedNetworkNode.paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedNetworkNode.track.id)}>{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutNetworkPaper(selectedNetworkNode)}>{locale === "zh" ? "让 Pi 解释" : "Ask Pi"}</button><button type="button" onClick={() => addNetworkPaperToLearningPath(selectedNetworkNode)}>{locale === "zh" ? "加入学习路径" : "Add to learning path"}</button></footer>
+                      <footer><a href={selectedNetworkNode.paper.url || (selectedNetworkNode.paper.doi ? "https://doi.org/" + selectedNetworkNode.paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedNetworkNode.track.id)}>{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutNetworkPaper(selectedNetworkNode)}>{locale === "zh" ? "让 Pi 解释" : "Ask Pi"}</button><button type="button" onClick={() => addNetworkPaperToLearningPath(selectedNetworkNode)}>{locale === "zh" ? "以此方向规划路径" : "Plan from this direction"}</button></footer>
                     </aside>}
                   </div>
                 </section>}
@@ -4093,36 +4344,38 @@ export default function ResearchApp({ user }: { user: User }) {
 
               <section className={`v2-route-role-strip ${selectedThread.userRole}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级。" : "This role changes future discovery budget and route priority."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
 
-              <nav className="v2-route-workspace-tabs" role="tablist" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" role="tab" aria-selected={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{tab === "assessment" ? "01" : tab === "evidence" ? "02" : tab === "gaps" ? "03" : "04"}</span><strong>{tab === "assessment" ? (locale === "zh" ? "当前研判" : "Assessment") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</nav>
+              <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{tab === "assessment" ? "01" : tab === "evidence" ? "02" : tab === "gaps" ? "03" : "04"}</span><strong>{tab === "assessment" ? (locale === "zh" ? "当前研判" : "Assessment") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
 
               {researchRouteTab === "assessment" && <section className="v2-route-workspace-panel" role="tabpanel"><header><div><p className="v2-kicker">π {locale === "zh" ? "基于当前证据" : "GROUNDED IN CURRENT EVIDENCE"}</p><h2>{locale === "zh" ? "这条路线目前可以怎样判断" : "What the current evidence lets us conclude"}</h2></div><div><span>{selectedThread.intelligence?.confidence || 0}%<small>{locale === "zh" ? "证据置信度" : "confidence"}</small></span><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || mapIntelligenceTrackId || !selectedThread.papers.length)}>{mapAction === `interpret:${selectedThread.id}` ? (locale === "zh" ? "更新中…" : "Refreshing…") : (locale === "zh" ? "重新研判" : "Refresh assessment")}</button></div></header>{selectedThread.intelligence ? <div className="v2-route-assessment-layout"><div className="v2-route-assessment-cards"><article className="lead"><small>{locale === "zh" ? "当前判断" : "CURRENT ASSESSMENT"}</small><p>{locale === "zh" ? selectedThread.intelligence.assessmentZh : selectedThread.intelligence.assessmentEn}</p></article><article><small>{locale === "zh" ? "关键机会" : "KEY OPPORTUNITY"}</small><p>{locale === "zh" ? selectedThread.intelligence.opportunityZh : selectedThread.intelligence.opportunityEn}</p></article><article><small>{locale === "zh" ? "观察信号" : "WATCH SIGNAL"}</small><p>{locale === "zh" ? selectedThread.intelligence.watchSignalZh : selectedThread.intelligence.watchSignalEn}</p></article></div><aside><header><strong>{locale === "zh" ? "本次判断使用的论文" : "Papers used for this assessment"}</strong><span>{selectedThreadEvidencePapers.length}</span></header>{selectedThreadEvidencePapers.map((paper) => <article key={paper.id}><span>{researchPaperYear(paper)}</span><button type="button" onClick={() => askAboutRoutePaper(selectedThread, paper)}><strong>{paper.title}</strong><small>{paper.venue || paper.authors}</small></button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)} aria-label={`${t.openOriginal}: ${paper.title}`}>↗</a></article>)}</aside></div> : <div className="v2-route-panel-empty"><span>π</span><div><strong>{locale === "zh" ? "这条路线还没有形成可追溯研判" : "No traceable assessment exists for this route yet"}</strong><p>{locale === "zh" ? "先补充真实论文，再让 Pi 基于证据形成判断。" : "Add real papers first, then ask Pi to form a grounded assessment."}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)}>{locale === "zh" ? "补充路线" : "Fill route"} →</button></div>}</section>}
 
               {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-evidence-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "路线证据与代表作" : "ROUTE EVIDENCE & REPRESENTATIVE WORK"}</p><h2>{locale === "zh" ? "从奠基、转折走到当前前沿" : "From foundations and turning points to the frontier"}</h2></div><div className="v2-route-stage-counts">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span className={role} key={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</div></header><div className="v2-route-evidence-chain">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role, roleIndex) => <section className={role} key={role}><header><span>{String(roleIndex + 1).padStart(2, "0")}</span><div><strong>{researchRoleLabel(role, locale)}</strong><small>{role === "foundation" ? (locale === "zh" ? "定义问题与基本工具" : "Defines the question and core tools") : role === "milestone" ? (locale === "zh" ? "改变路线走向的关键节点" : "Turning points that changed the route") : (locale === "zh" ? "当前活跃问题与方法" : "Current active questions and methods")}</small></div></header><div>{selectedThread.papers.filter((paper) => paper.role === role).map((paper) => <article key={paper.id}><header><span>{researchPaperYear(paper)}</span><small>{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</small></header><em className={`v2-route-provenance ${paper.provenance || "system_curated"}`}>{paper.provenance === "user_confirmed" ? (locale === "zh" ? "用户已确认" : "User confirmed") : (locale === "zh" ? "Pi 策展代表作" : "Pi-curated representative")}</em><h3>{paper.title}</h3><p>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p><footer><button type="button" onClick={() => askAboutRoutePaper(selectedThread, paper)}>{locale === "zh" ? "让 Pi 解释位置" : "Ask Pi about its place"}</button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)}>{t.openOriginal} ↗</a></footer></article>)}{!selectedThread.papers.some((paper) => paper.role === role) && <div className="v2-route-chain-empty"><span>＋</span><p>{locale === "zh" ? "这个阶段仍缺少有代表性的真实论文。" : "This stage still lacks a representative real paper."}</p><button type="button" onClick={() => { setResearchRouteTab("gaps"); }}>{locale === "zh" ? "去补证据" : "Fill the gap"} →</button></div>}</div></section>)}</div></section>}
 
-              {researchRouteTab === "gaps" && <section className="v2-route-workspace-panel v2-route-gap-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "证据缺口驱动发现" : "EVIDENCE-GAP DISCOVERY"}</p><h2>{locale === "zh" ? "只沿当前路线真正缺少的证据继续找" : "Search only for evidence this route genuinely lacks"}</h2></div><div className="v2-route-evidence-status"><span><strong>{confirmedRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "已确认" : "confirmed"}</span><span className={pendingRouteEvidenceCount(selectedThread) ? "pending" : ""}><strong>{pendingRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "待确认" : "pending"}</span></div></header><RouteQualityFlow track={selectedThread} locale={locale} />{selectedThread.intelligence ? <div className="v2-route-gap-layout"><article className="v2-route-gap-primary"><small>{locale === "zh" ? "Pi 识别的主要缺口" : "PRIMARY GAP IDENTIFIED BY PI"}</small><h3>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</h3>{selectedThread.intelligence.nextSearchQuery && <div><span>{locale === "zh" ? "下一轮定向检索" : "NEXT TARGETED SEARCH"}</span><code>{selectedThread.intelligence.nextSearchQuery}</code></div>}<p>{locale === "zh" ? "扫描候选会先进入今日质量评估；只有深度评审通过后，才会进入今日推荐与待确认证据，不会自动改变正式研究路线。" : "Candidates first enter today's quality review. Only those that pass deep review enter today's recommendations and pending evidence; the formal route never changes automatically."}</p><footer><button type="button" onClick={() => void scanResearchRouteGap(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || !selectedThread.intelligence.nextSearchQuery)}>{mapAction === `gap:${selectedThread.id}` ? (locale === "zh" ? "正在扫描缺口…" : "Scanning gap…") : (locale === "zh" ? "立即扫描此缺口" : "Scan this gap now")} →</button><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "gap")}>{locale === "zh" ? "先让 Pi 解释缺什么" : "Ask Pi what is missing"}</button></footer></article><aside><header><strong>{locale === "zh" ? "当前前沿证据" : "Current frontier evidence"}</strong><span>{selectedThread.papers.filter((paper) => paper.role === "frontier").length}</span></header>{selectedThread.papers.filter((paper) => paper.role === "frontier").slice(0, 5).map((paper) => <button type="button" key={paper.id} onClick={() => askAboutRoutePaper(selectedThread, paper)}><span>{researchPaperYear(paper)}</span><strong>{paper.title}</strong><small>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</small></button>)}{!selectedThread.papers.some((paper) => paper.role === "frontier") && <p>{locale === "zh" ? "当前还没有已确认的前沿论文。" : "No confirmed frontier paper yet."}</p>}</aside></div> : <div className="v2-route-panel-empty"><span>◎</span><div><strong>{locale === "zh" ? "还没有可执行的证据缺口" : "No actionable evidence gap yet"}</strong><p>{locale === "zh" ? "先刷新方向研判，Pi 会从真实论文中识别缺口并生成定向检索。" : "Refresh the direction assessment to identify a gap and targeted query from real papers."}</p></div><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={!selectedThread.papers.length}>{locale === "zh" ? "形成研判" : "Build assessment"} →</button></div>}</section>}
+              {researchRouteTab === "gaps" && <section className="v2-route-workspace-panel v2-route-gap-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "证据缺口驱动发现" : "EVIDENCE-GAP DISCOVERY"}</p><h2>{locale === "zh" ? "只沿当前路线真正缺少的证据继续找" : "Search only for evidence this route genuinely lacks"}</h2></div><div className="v2-route-evidence-status"><span><strong>{confirmedRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "已确认" : "confirmed"}</span><span className={pendingRouteEvidenceCount(selectedThread) ? "pending" : ""}><strong>{pendingRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "待确认" : "pending"}</span></div></header><RouteQualityFlow track={selectedThread} locale={locale} />{selectedThread.intelligence ? <div className="v2-route-gap-layout"><article className="v2-route-gap-primary"><small>{locale === "zh" ? "Pi 识别的主要缺口" : "PRIMARY GAP IDENTIFIED BY PI"}</small><h3>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</h3>{selectedThread.intelligence.nextSearchQuery && <div><span>{locale === "zh" ? "下一轮定向检索" : "NEXT TARGETED SEARCH"}</span><code>{selectedThread.intelligence.nextSearchQuery}</code></div>}<p>{locale === "zh" ? "候选会先进入共享质量队列，在下一轮扫描中深度评审；通过后才进入今日推荐与待确认证据，不会自动改变正式路线。" : "Candidates enter the shared quality queue for the next scan. Only deep-review passes enter Today and pending evidence; the formal route never changes automatically."}</p><footer><button type="button" onClick={() => void scanResearchRouteGap(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || !selectedThread.intelligence.nextSearchQuery)}>{mapAction === `gap:${selectedThread.id}` ? (locale === "zh" ? "正在扫描缺口…" : "Scanning gap…") : (locale === "zh" ? "立即扫描此缺口" : "Scan this gap now")} →</button><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "gap")}>{locale === "zh" ? "先让 Pi 解释缺什么" : "Ask Pi what is missing"}</button></footer></article><aside><header><strong>{locale === "zh" ? "当前前沿证据" : "Current frontier evidence"}</strong><span>{selectedThread.papers.filter((paper) => paper.role === "frontier").length}</span></header>{selectedThread.papers.filter((paper) => paper.role === "frontier").slice(0, 5).map((paper) => <button type="button" key={paper.id} onClick={() => askAboutRoutePaper(selectedThread, paper)}><span>{researchPaperYear(paper)}</span><strong>{paper.title}</strong><small>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</small></button>)}{!selectedThread.papers.some((paper) => paper.role === "frontier") && <p>{locale === "zh" ? "当前还没有已确认的前沿论文。" : "No confirmed frontier paper yet."}</p>}</aside></div> : <div className="v2-route-panel-empty"><span>◎</span><div><strong>{locale === "zh" ? "还没有可执行的证据缺口" : "No actionable evidence gap yet"}</strong><p>{locale === "zh" ? "先刷新方向研判，Pi 会从真实论文中识别缺口并生成定向检索。" : "Refresh the direction assessment to identify a gap and targeted query from real papers."}</p></div><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={!selectedThread.papers.length}>{locale === "zh" ? "形成研判" : "Build assessment"} →</button></div>}</section>}
 
-              {researchRouteTab === "agenda" && <section className="v2-route-workspace-panel v2-route-agenda-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "由当前证据生成" : "GENERATED FROM CURRENT EVIDENCE"}</p><h2>{locale === "zh" ? "接下来可以阅读、追踪和验证什么" : "What to read, track, and verify next"}</h2></div><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "agenda")}>{locale === "zh" ? "让 Pi 拆解成行动" : "Ask Pi to break it into actions"} →</button></header>{selectedThread.intelligence ? <div className="v2-route-agenda-grid"><article><span>01</span><small>{locale === "zh" ? "深入机会" : "DEEPEN"}</small><h3>{locale === "zh" ? selectedThread.intelligence.opportunityZh : selectedThread.intelligence.opportunityEn}</h3><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId)}>{locale === "zh" ? "继续深挖这条路线" : "Mine this route deeper"} →</button></article><article><span>02</span><small>{locale === "zh" ? "持续观察" : "WATCH"}</small><h3>{locale === "zh" ? selectedThread.intelligence.watchSignalZh : selectedThread.intelligence.watchSignalEn}</h3><button type="button" onClick={() => navigate("today")}>{locale === "zh" ? "去今日发现" : "Open today's discovery"} →</button></article><article><span>03</span><small>{locale === "zh" ? "补齐基础" : "BUILD KNOWLEDGE"}</small><h3>{locale === "zh" ? "把当前路线整理成循序渐进的真实论文学习路径" : "Turn this route into a progressive learning path of real papers"}</h3><button type="button" onClick={() => openRouteLearningPath(selectedThread)}>{locale === "zh" ? "生成学习路径" : "Build learning path"} →</button></article></div> : <div className="v2-route-panel-empty"><span>π</span><div><strong>{locale === "zh" ? "研判完成后才会生成研究议程" : "A research agenda appears after assessment"}</strong><p>{locale === "zh" ? "Pi 不会在没有路线证据时填充通用任务。" : "Pi will not fill this space with generic tasks without route evidence."}</p></div><button type="button" onClick={() => setResearchRouteTab("assessment")}>{locale === "zh" ? "回到当前研判" : "Open assessment"} →</button></div>}{selectedThreadChanges.length > 0 && <section className="v2-route-change-log"><header><strong>{locale === "zh" ? "这条路线最近的已确认变化" : "Recent confirmed changes in this route"}</strong><span>{selectedThreadChanges.length}</span></header>{selectedThreadChanges.map((change) => <article key={change.id}><span>{routeChangeKindLabel(change.kind, locale).symbol}</span><div><small>{formatNotificationTime(change.createdAt, locale)}</small><strong>{change.kind === "new_evidence" ? change.paperTitle : (locale === "zh" ? change.titleZh : change.titleEn)}</strong><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>)}</section>}</section>}
+              {researchRouteTab === "agenda" && <section className="v2-route-workspace-panel v2-route-agenda-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "由当前证据生成" : "GENERATED FROM CURRENT EVIDENCE"}</p><h2>{locale === "zh" ? "接下来可以阅读、追踪和验证什么" : "What to read, track, and verify next"}</h2></div><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "agenda")}>{locale === "zh" ? "让 Pi 拆解成行动" : "Ask Pi to break it into actions"} →</button></header>{selectedThread.intelligence ? <div className="v2-route-agenda-grid"><article><span>01</span><small>{locale === "zh" ? "深入机会" : "DEEPEN"}</small><h3>{locale === "zh" ? selectedThread.intelligence.opportunityZh : selectedThread.intelligence.opportunityEn}</h3><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId)}>{locale === "zh" ? "继续深挖这条路线" : "Mine this route deeper"} →</button></article><article><span>02</span><small>{locale === "zh" ? "持续观察" : "WATCH"}</small><h3>{locale === "zh" ? selectedThread.intelligence.watchSignalZh : selectedThread.intelligence.watchSignalEn}</h3><button type="button" onClick={() => navigate("today")}>{locale === "zh" ? "去今日发现" : "Open today's discovery"} →</button></article><article><span>03</span><small>{locale === "zh" ? "补齐基础" : "BUILD KNOWLEDGE"}</small><h3>{locale === "zh" ? "把当前路线整理成循序渐进的真实论文学习路径" : "Turn this route into a progressive learning path of real papers"}</h3><button type="button" onClick={() => openRouteLearningPath(selectedThread)}>{locale === "zh" ? "生成学习路径" : "Build learning path"} →</button></article></div> : <div className="v2-route-panel-empty"><span>π</span><div><strong>{locale === "zh" ? "研判完成后才会生成研究议程" : "A research agenda appears after assessment"}</strong><p>{locale === "zh" ? "Pi 不会在没有路线证据时填充通用任务。" : "Pi will not fill this space with generic tasks without route evidence."}</p></div><button type="button" onClick={() => setResearchRouteTab("assessment")}>{locale === "zh" ? "回到当前研判" : "Open assessment"} →</button></div>}{selectedThreadChanges.length > 0 && <section className="v2-route-change-log"><header><strong>{locale === "zh" ? "这条路线最近的已确认变化" : "Recent confirmed changes in this route"}</strong><span>{selectedThreadChanges.length}</span></header>{selectedThreadChanges.map((change) => <article key={change.id}><span>{routeChangeKindLabel(change.kind).symbol}</span><div><small>{formatNotificationTime(change.createdAt, locale)}</small><strong>{change.kind === "new_evidence" ? change.paperTitle : (locale === "zh" ? change.titleZh : change.titleEn)}</strong><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>)}</section>}</section>}
             </> : <section className="v2-map-loading"><span>π</span><div><strong>{locale === "zh" ? "正在载入研究路线" : "Loading the research route"}</strong></div></section>}
           </main>
         )}
 
         {view === "learn" && (
           <main className="v2-page v2-learn-page">
-            <section className="v2-learn-head"><p className="v2-kicker">PERSONAL RAMP-UP · {defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.learnTitle}</h1><p>{t.learnIntro}</p><div><input value={learningTarget} onChange={(event) => setLearningTarget(event.target.value)} placeholder={learningState.suggestedTarget || (locale === "zh" ? "输入想进入的方向" : "Enter a research direction")} aria-label={t.learnTitle} /><button type="button" onClick={() => void generateLearningPath()} disabled={Boolean(learningAction) || learningLoading || !learningTarget.trim()}>{learningAction === "generate" ? (locale === "zh" ? "Pi 正在规划…" : "Pi is planning…") : learningState.path ? (locale === "zh" ? "重新规划" : "Rebuild") : t.buildPath} →</button></div><small>{locale === "zh" ? `可使用 ${learningState.availablePaperCount} 篇当前空间的真实论文；Pi 会跳过你已经掌握的部分。` : `${learningState.availablePaperCount} real papers are available in this space; Pi will skip what you already know.`}</small></section>
-            {learningLoading ? <section className="v2-learning-loading" role="status"><span>π</span><div><strong>{locale === "zh" ? "正在读取你的研究基础" : "Reading your research foundation"}</strong><p>{locale === "zh" ? "核对研究画像、方向深度与已收录论文。" : "Checking your research profile, direction depth, and collected papers."}</p><i><b /></i></div></section> : learningState.path ? (
+            <section className="v2-learn-head"><p className="v2-kicker">PERSONAL RAMP-UP · {defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.learnTitle}</h1><p>{t.learnIntro}</p><div className="v2-learning-target-form"><input value={learningTarget} onChange={(event) => setLearningTarget(event.target.value)} placeholder={activeLearningState.suggestedTarget || (locale === "zh" ? "输入想进入的方向" : "Enter a research direction")} aria-label={t.learnTitle} /><button type="button" onClick={() => void generateLearningPath()} disabled={Boolean(learningAction) || activeLearningLoading || !learningTarget.trim()}>{learningAction === "generate" ? (locale === "zh" ? "Pi 正在规划…" : "Pi is planning…") : activeLearningState.path ? (locale === "zh" ? "重新规划" : "Rebuild") : t.buildPath} →</button></div>{learningTargetTrackId && <div className="v2-learning-target-scope"><span>{locale === "zh" ? "当前按研究方向限定候选" : "Candidates scoped to one research direction"}</span><strong>{researchMap.tracks.find((track) => track.id === learningTargetTrackId)?.[locale === "zh" ? "titleZh" : "titleEn"] || learningTarget}</strong><button type="button" onClick={() => { setLearningTargetTrackId(null); setLearningScopeDirty(true); learningIntentRef.current = null; }}>{locale === "zh" ? "改为全空间规划" : "Use the full workspace"}</button></div>}<small>{locale === "zh" ? `可使用 ${activeLearningState.availablePaperCount} 篇当前空间的真实论文；Pi 会跳过你已经掌握的部分。` : `${activeLearningState.availablePaperCount} real papers are available in this space; Pi will skip what you already know.`}</small></section>
+            {activeLearningLoading ? <section className="v2-learning-loading" role="status"><span>π</span><div><strong>{locale === "zh" ? "正在读取你的研究基础" : "Reading your research foundation"}</strong><p>{locale === "zh" ? "核对研究画像、方向深度与已收录论文。" : "Checking your research profile, direction depth, and collected papers."}</p><i><b /></i></div></section> : activeLearningError && !activeLearningState.path ? <div className="v2-learning-empty error" role="alert"><span>!</span><h2>{locale === "zh" ? "当前空间的学习路径没有载入" : "This space's learning path did not load"}</h2><p>{activeLearningError}</p><button type="button" onClick={() => setLearningReloadNonce((current) => current + 1)}>{locale === "zh" ? "重新载入" : "Retry"} →</button></div> : activeLearningState.path ? (
               <section className="v2-learning-path">
-                <header className="v2-learning-summary"><div><p className="v2-kicker">{t.suggested} · {modelDisplayName(learningState.path.model)}</p><h2>{locale === "zh" ? learningState.path.titleZh : learningState.path.titleEn}</h2><p>{locale === "zh" ? learningState.path.rationaleZh : learningState.path.rationaleEn}</p></div><div><strong>{learningState.path.completedSteps}<small>/{learningState.path.steps.length}</small></strong><span>{locale === "zh" ? "阶段完成" : "stages complete"}</span><i><b style={{ width: `${learningState.path.steps.length ? Math.round(learningState.path.completedSteps / learningState.path.steps.length * 100) : 0}%` }} /></i><small>{learningTime(learningState.path.estimatedMinutes, locale)}</small></div></header>
+                {activeLearningPathDirectionMismatch && <div className="v2-reading-order-warning direction" role="status"><span>↔</span><p>{!learningTargetTrackId && learningScopeDirty ? (locale === "zh" ? `下面的旧路径限定于“${activeLearningState.path.target}”；你已切换为从全空间论文中规划。重新规划前，旧进度不会被冒充为全空间结果。` : `The saved path below is scoped to “${activeLearningState.path.target}”; you have switched to planning from the full workspace. Existing progress will not be presented as a workspace-wide result before replanning.`) : (locale === "zh" ? `下面是此前保存的“${activeLearningState.path.target}”路径；你现在准备规划“${activeLearningTargetTrack?.titleZh || learningTarget}”。点击重新规划前，旧进度不会被冒充为当前范围。` : `The path below was saved for “${activeLearningState.path.target}”; you are now preparing “${activeLearningTargetTrack?.titleEn || learningTarget}”. Existing progress will not be presented as the selected scope before replanning.`)}</p><button type="button" disabled={Boolean(learningAction)} onClick={() => void generateLearningPath(undefined, learningTargetTrackId)}>{learningTargetTrackId ? (locale === "zh" ? "按当前方向重新规划" : "Replan this direction") : (locale === "zh" ? "按全空间重新规划" : "Replan across the workspace")}</button></div>}
+                {activeLearningError && <div className="v2-reading-order-warning" role="status"><span>!</span><p>{locale === "zh" ? "上次更新没有完成；下面仍是当前空间中已保存的版本。" : "The last update did not finish; the saved version for this space remains below."} {activeLearningError}</p><button type="button" onClick={() => setLearningReloadNonce((current) => current + 1)}>{locale === "zh" ? "重新载入" : "Reload"}</button></div>}
+                <header className="v2-learning-summary"><div><p className="v2-kicker">{t.suggested} · {modelDisplayName(activeLearningState.path.model)}</p><h2>{locale === "zh" ? activeLearningState.path.titleZh : activeLearningState.path.titleEn}</h2><p>{locale === "zh" ? activeLearningState.path.rationaleZh : activeLearningState.path.rationaleEn}</p></div><div><strong>{activeLearningState.path.completedSteps}<small>/{activeLearningState.path.steps.length}</small></strong><span>{locale === "zh" ? "阶段完成" : "stages complete"}</span><i><b style={{ width: `${activeLearningState.path.steps.length ? Math.round(activeLearningState.path.completedSteps / activeLearningState.path.steps.length * 100) : 0}%` }} /></i><small>{learningTime(activeLearningState.path.estimatedMinutes, locale)}</small></div></header>
                 <div className="v2-learning-stages">
-                  {learningState.path.steps.map((step, index) => (
+                  {activeLearningState.path.steps.map((step, index) => (
                     <article className={`${step.status} ${step.kind}`} key={step.id}>
-                      <div className="v2-path-marker"><button type="button" onClick={() => void updateLearningStep(step)} disabled={Boolean(learningAction)} aria-label={step.status === "completed" ? (locale === "zh" ? "恢复这一阶段" : "Restore this stage") : (locale === "zh" ? "标记这一阶段完成" : "Mark this stage complete")}>{step.status === "completed" ? "✓" : String(index + 1).padStart(2, "0")}</button>{index < learningState.path!.steps.length - 1 && <i />}</div>
-                      <div className="v2-learning-stage-body"><header><span>{learningKindLabel(step.kind, locale)}</span><small>{learningTime(step.estimatedMinutes, locale)}</small>{step.status === "active" && <b>{locale === "zh" ? "当前阶段" : "Now"}</b>}</header><h3>{locale === "zh" ? step.titleZh : step.titleEn}</h3><p className="v2-learning-goal">{locale === "zh" ? step.goalZh : step.goalEn}</p><div className="v2-learning-guidance"><p><b>{locale === "zh" ? "为什么现在学" : "Why now"}</b>{locale === "zh" ? step.whyZh : step.whyEn}</p><p><b>{locale === "zh" ? "阅读重点" : "Reading focus"}</b>{locale === "zh" ? step.readFocusZh : step.readFocusEn}</p><p><b>{locale === "zh" ? "完成检查" : "Checkpoint"}</b>{locale === "zh" ? step.checkpointZh : step.checkpointEn}</p></div><div className="v2-learning-resources"><small>{locale === "zh" ? "真实学习材料" : "Real reading materials"}</small>{step.resources.map((resource) => <a key={resource.id} href={resource.url || "#"} target="_blank" rel="noreferrer"><span><strong>{resource.title}</strong><small>{[resource.authors, resource.venue, resource.publishedAt?.slice(0, 4)].filter(Boolean).join(" · ")}</small></span><b>↗</b></a>)}</div></div>
+                      <div className="v2-path-marker"><button type="button" onClick={() => void updateLearningStep(step)} disabled={Boolean(learningAction)} aria-label={step.status === "completed" ? (locale === "zh" ? "恢复这一阶段" : "Restore this stage") : (locale === "zh" ? "标记这一阶段完成" : "Mark this stage complete")}>{step.status === "completed" ? "✓" : String(index + 1).padStart(2, "0")}</button>{index < activeLearningState.path!.steps.length - 1 && <i />}</div>
+                      <div className="v2-learning-stage-body"><header><span>{learningKindLabel(step.kind, locale)}</span><small>{learningTime(step.estimatedMinutes, locale)}</small>{step.status === "active" && <b>{locale === "zh" ? "当前阶段" : "Now"}</b>}</header><h3>{locale === "zh" ? step.titleZh : step.titleEn}</h3><p className="v2-learning-goal">{locale === "zh" ? step.goalZh : step.goalEn}</p><div className="v2-learning-guidance"><p><b>{locale === "zh" ? "为什么现在学" : "Why now"}</b>{locale === "zh" ? step.whyZh : step.whyEn}</p><p><b>{locale === "zh" ? "阅读重点" : "Reading focus"}</b>{locale === "zh" ? step.readFocusZh : step.readFocusEn}</p><p><b>{locale === "zh" ? "完成检查" : "Checkpoint"}</b>{locale === "zh" ? step.checkpointZh : step.checkpointEn}</p></div><div className="v2-learning-resources"><small>{locale === "zh" ? "真实学习材料" : "Real reading materials"}</small>{step.resources.map((resource) => { const signals = learningResourceSignals(resource, locale); const href = learningResourceHref(resource); const content = <><span><strong>{resource.title}</strong><small>{[resource.authors, resource.venue, resource.publishedAt?.slice(0, 4)].filter(Boolean).join(" · ")}</small>{signals.length > 0 && <em className="v2-learning-resource-signals">{signals.map((signal) => <i key={signal}>{signal}</i>)}</em>}</span><b>{href ? "↗" : "—"}</b></>; return href ? <a key={resource.id} href={href} target="_blank" rel="noreferrer">{content}</a> : <div className="unavailable" key={resource.id}>{content}<small>{locale === "zh" ? "原文链接待补全" : "Original link unavailable"}</small></div>; })}</div></div>
                     </article>
                   ))}
                 </div>
                 <footer className="v2-learning-footer"><span>{locale === "zh" ? "完成阶段会保存进度，并加深对应研究方向的用户信号。" : "Completing a stage saves progress and strengthens the corresponding direction signal."}</span><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "查看领域地图" : "Open field map"} →</button></footer>
               </section>
-            ) : <section className="v2-learning-empty"><span>◎</span><h2>{locale === "zh" ? "还没有真实学习路径" : "No real learning path yet"}</h2><p>{learningState.availablePaperCount >= 3 ? (locale === "zh" ? "输入一个研究方向，Pi 会结合研究画像、方向深度和真实论文生成路径，不会填充演示内容。" : "Enter a direction and Pi will build a path from your profile, direction depth, and real papers—without demo content.") : (locale === "zh" ? "当前空间的真实论文还不够。先完成扫描或在领域地图中继续深挖，再回来构建路径。" : "This space does not have enough real papers yet. Scan or deepen the field map first.")}</p>{learningState.availablePaperCount < 3 && <button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "去深挖研究路线" : "Mine the research map"} →</button>}</section>}
+            ) : <section className="v2-learning-empty"><span>◎</span><h2>{locale === "zh" ? "还没有真实学习路径" : "No real learning path yet"}</h2><p>{activeLearningState.availablePaperCount >= 3 ? (locale === "zh" ? "输入一个研究方向，Pi 会结合研究画像、方向深度和真实论文生成路径，不会填充演示内容。" : "Enter a direction and Pi will build a path from your profile, direction depth, and real papers—without demo content.") : (locale === "zh" ? "当前空间的真实论文还不够。先完成扫描或在领域地图中继续深挖，再回来构建路径。" : "This space does not have enough real papers yet. Scan or deepen the field map first.")}</p>{activeLearningState.availablePaperCount < 3 && <button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "去深挖研究路线" : "Mine the research map"} →</button>}</section>}
           </main>
         )}
 

@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("route, gap, and citation-network discoveries share the daily quality queue", async () => {
-  const [monitor, mapRoute, networkRoute, queue] = await Promise.all([
+  const [monitor, mapRoute, networkRoute, queue, app] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-network/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/monitor-candidate-queue.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(monitor, /await enqueueMonitorCandidates\(database, spaceId, candidates\)/);
@@ -20,27 +21,33 @@ test("route, gap, and citation-network discoveries share the daily quality queue
   assert.match(queue, /never marks a paper recommended and never/);
   assert.match(queue, /WHERE paper_insights\.analysis_source IN \('metadata', 'route-gap'\)/);
   assert.doesNotMatch(queue, /llm_recommended[^\n]+VALUES[^\n]+1/);
+  assert.match(mapRoute, /RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL/);
+  assert.match(queue, /dismissed\.feedback = 'not_relevant'/);
+  assert.match(app, /const inReview = pipeline\.queued \+ pipeline\.reviewing/);
+  assert.match(app, /累计 \$\{pipeline\.recommended\} 篇已通过/);
 });
 
 test("route candidates cannot starve and Today exposes explicit route provenance only after recommendation", async () => {
-  const [monitor, mapRoute] = await Promise.all([
+  const [monitor, planning, queue] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/monitor-route-planning.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/monitor-candidate-queue.ts", import.meta.url), "utf8"),
   ]);
   assert.match(monitor, /One screening slot per non-empty horizon/);
-  assert.match(monitor, /entry\.sourceKey\.startsWith\("research-route:"\)/);
+  assert.match(monitor, /candidate\.provenance\.some\(isMonitorRouteProvenance\)/);
   assert.match(monitor, /i\.llm_recommended = 1 AND i\.analysis_source = 'deepseek'/);
   assert.match(monitor, /discoveryOrigin/);
   assert.match(monitor, /discoveryType/);
   assert.match(monitor, /discoveryTrack/);
   assert.match(monitor, /qualityStage: "recommended"/);
   assert.match(monitor, /routeId: entry\.routeId \|\| null/);
-  assert.match(monitor, /originKind: routeOriginKind/);
-  assert.match(monitor, /FROM recommendation_audit_events ae/);
-  assert.match(monitor, /JOIN json_each\(latest\.provenance_json\) origin/);
-  assert.match(monitor, /ranked\.audit_rank = 1 AND ranked\.recommended = 1/);
-  assert.doesNotMatch(monitor, /FROM recommendation_audit_events ae WHERE ae\.recommended = 1/);
-  assert.doesNotMatch(monitor, /ROW_NUMBER\(\) OVER \(PARTITION BY cs\.paper_id ORDER BY cs\.last_seen_at/);
+  assert.match(monitor, /originKind: monitorRouteOriginKind/);
+  assert.match(planning, /FROM recommendation_audit_events ae/);
+  assert.match(planning, /JOIN json_each\(latest\.provenance_json\) origin/);
+  assert.match(planning, /ranked\.audit_rank = 1 AND ranked\.recommended = 1/);
+  assert.doesNotMatch(planning, /FROM recommendation_audit_events ae WHERE ae\.recommended = 1/);
+  assert.match(planning, /datetime\(cs\.first_seen_at\) <= datetime\(insight\.updated_at\)/);
+  assert.doesNotMatch(planning, /ROW_NUMBER\(\) OVER \(PARTITION BY cs\.paper_id ORDER BY cs\.last_seen_at/);
   assert.match(monitor, /routeOrigins: routeReviewOrigins\(paper, routeTitles\)/);
   assert.match(monitor, /Route origins are discovery context only/);
   assert.match(monitor, /Route-origin metadata explains why Pi surfaced a candidate/);
@@ -48,12 +55,12 @@ test("route candidates cannot starve and Today exposes explicit route provenance
   assert.match(monitor, /\[\.\.\.routeProvenance, \.\.\.genericProvenance\]\.slice\(0, 16\)/);
   assert.match(monitor, /row\.source === "research-route" \? "research-route"/);
   assert.match(monitor, /row\.source === "research-network" \? "research-network"/);
-  assert.match(mapRoute, /FROM recommendation_audit_events audit/);
-  assert.match(mapRoute, /ROW_NUMBER\(\) OVER \(PARTITION BY audit\.space_id, audit\.paper_id ORDER BY audit\.reviewed_at DESC, audit\.rowid DESC\)/);
-  assert.match(mapRoute, /WHERE audit_rank = 1 AND recommended = 1/);
-  assert.doesNotMatch(mapRoute, /WHERE audit\.space_id = \? AND audit\.recommended = 1/);
-  assert.match(mapRoute, /json_extract\(origin\.value, '\$\.originKind'\) IN/);
-  assert.doesNotMatch(mapRoute, /i\.analysis_source = 'deepseek' AND i\.llm_recommended = 1 THEN cs\.paper_id/);
+  assert.match(queue, /FROM recommendation_audit_events audit/);
+  assert.match(queue, /ROW_NUMBER\(\) OVER \(PARTITION BY audit\.space_id, audit\.paper_id ORDER BY audit\.reviewed_at DESC, audit\.rowid DESC\)/);
+  assert.match(queue, /WHERE audit_rank = 1 AND recommended = 1/);
+  assert.doesNotMatch(queue, /WHERE audit\.space_id = \? AND audit\.recommended = 1/);
+  assert.match(queue, /json_extract\(origin\.value, '\$\.originKind'\) IN/);
+  assert.doesNotMatch(queue, /i\.analysis_source = 'deepseek' AND i\.llm_recommended = 1 THEN cs\.paper_id/);
 });
 
 test("system-curated map context has a separate, non-destructive confirmation path", async () => {

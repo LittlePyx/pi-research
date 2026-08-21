@@ -21,6 +21,7 @@ import {
 import { reserveSemanticScholarUsage } from "../lib/semantic-scholar-quota.ts";
 
 const routePath = new URL("../app/api/research-network/route.ts", import.meta.url);
+const dismissalPath = new URL("../lib/research-network-dismissal.ts", import.meta.url);
 const schemaPath = new URL("../db/schema.ts", import.meta.url);
 const repositoryPath = new URL("../db/repository.ts", import.meta.url);
 const semanticScholarPath = new URL("../lib/semantic-scholar.ts", import.meta.url);
@@ -33,6 +34,7 @@ const openAlexCursorMigrationPath = new URL("../drizzle/0025_chilly_mariko_yashi
 
 test("research-network expansion uses verified external relations, cache, and coupling", async () => {
   const route = await readFile(routePath, "utf8");
+  const dismissal = await readFile(dismissalPath, "utf8");
   assert.match(route, /\/references|\["references", "citations"\]/);
   assert.match(route, /recommendations\/v1\/papers/);
   assert.match(route, /references\.paperId,references\.externalIds/);
@@ -43,8 +45,10 @@ test("research-network expansion uses verified external relations, cache, and co
   assert.match(route, /fetchSemanticScholar/);
   assert.match(route, /maxRetries: 1/);
   assert.match(route, /recommendation_offset/);
-  assert.match(route, /status = 'dismissed'/);
-  assert.match(route, /status = 'accepted'/);
+  assert.match(route, /researchNetworkDismissalStatements/);
+  assert.match(dismissal, /status = 'dismissed'/);
+  assert.match(dismissal, /status <> 'accepted'/);
+  assert.match(dismissal, /status = 'accepted'/);
   assert.match(route, /confirmedExternalResearchMapEvidenceStatements/);
   assert.match(route, /statements\.push[\s\S]*confirmedExternalResearchMapEvidenceStatements[\s\S]*await database\.batch\(statements\)/);
 });
@@ -60,6 +64,9 @@ test("candidate acceptance uses stable conflict-safe identities and one atomic w
   assert.match(patchBlock, /ON CONFLICT DO UPDATE SET/);
   assert.doesNotMatch(patchBlock, /existingFormal|existingMonitoredPaper|position = await|crypto\.randomUUID\(\)/);
   assert.match(patchBlock, /paperCanonicalId: acceptedCanonicalId/);
+  assert.match(patchBlock, /researchNetworkDismissalReversalStatements/);
+  assert.match(patchBlock, /const statements: D1PreparedStatement\[\] = \[[\s\S]*researchNetworkDismissalReversalStatements/);
+  assert.match(patchBlock, /researchNetworkDismissalReversalStatements[\s\S]*confirmedExternalResearchMapEvidenceStatements[\s\S]*database\.batch\(statements\)/);
   assert.match(patchBlock, /formalized: true/);
   assert.doesNotMatch(patchBlock, /formalized: false/);
   assert.match(patchBlock, /await database\.batch\(statements\)/);

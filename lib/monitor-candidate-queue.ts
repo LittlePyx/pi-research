@@ -64,6 +64,56 @@ type InsightStageRow = {
 
 const MAX_BATCH_SIZE = 70;
 
+/**
+ * Current route-pipeline workload plus the durable history of recommendations
+ * that originated from a route. Explicitly dismissed papers leave the live
+ * queue immediately, while recommendation audit history remains intact.
+ */
+export const RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL = `WITH queue_counts AS (
+  SELECT coverage.route_id AS track_id,
+   COUNT(DISTINCT CASE WHEN i.analysis_source = 'metadata' OR i.analysis_model = '' THEN cs.paper_id END) AS queued_count,
+   COUNT(DISTINCT CASE WHEN i.analysis_source = 'deepseek_screened' THEN cs.paper_id END) AS reviewing_count,
+   MAX(cs.last_seen_at) AS last_queued_at
+  FROM monitor_candidate_sources cs
+  JOIN monitored_papers p ON p.id = cs.paper_id AND p.space_id = cs.space_id
+  JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+  JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id AND coverage.horizon = p.horizon
+   AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
+  WHERE cs.space_id = ? AND COALESCE(coverage.route_id, '') <> ''
+   AND NOT EXISTS (
+    SELECT 1 FROM paper_feedback dismissed
+    WHERE dismissed.space_id = cs.space_id AND dismissed.paper_id = cs.paper_id
+     AND dismissed.feedback = 'not_relevant'
+   )
+  GROUP BY coverage.route_id
+ ), latest_recommended AS (
+  SELECT * FROM (
+   SELECT audit.*,
+    ROW_NUMBER() OVER (PARTITION BY audit.space_id, audit.paper_id ORDER BY audit.reviewed_at DESC, audit.rowid DESC) AS audit_rank
+   FROM recommendation_audit_events audit
+   WHERE audit.space_id = ?
+  ) WHERE audit_rank = 1 AND recommended = 1
+ ), recommended_counts AS (
+  SELECT json_extract(origin.value, '$.routeId') AS track_id,
+   COUNT(DISTINCT audit.paper_id) AS recommended_count
+  FROM latest_recommended audit
+  JOIN json_each(audit.provenance_json) origin
+  WHERE json_extract(origin.value, '$.routeId') IS NOT NULL
+   AND json_extract(origin.value, '$.originKind') IN
+    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_network', 'route_search')
+  GROUP BY json_extract(origin.value, '$.routeId')
+ ), track_ids AS (
+  SELECT track_id FROM queue_counts UNION SELECT track_id FROM recommended_counts
+ )
+ SELECT track_ids.track_id,
+  COALESCE(queue_counts.queued_count, 0) AS queued_count,
+  COALESCE(queue_counts.reviewing_count, 0) AS reviewing_count,
+  COALESCE(recommended_counts.recommended_count, 0) AS recommended_count,
+  queue_counts.last_queued_at
+ FROM track_ids
+ LEFT JOIN queue_counts ON queue_counts.track_id = track_ids.track_id
+ LEFT JOIN recommended_counts ON recommended_counts.track_id = track_ids.track_id`;
+
 function boundedScore(value: number) {
   return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
 }
@@ -385,7 +435,12 @@ export async function enqueueMonitorCandidates(
     const rows = await database.prepare(
       `SELECT p.canonical_id, i.analysis_source, i.analysis_model, i.llm_recommended
        FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
-       WHERE p.space_id = ? AND p.canonical_id IN (${chunk.map(() => "?").join(", ")})`,
+       WHERE p.space_id = ? AND p.canonical_id IN (${chunk.map(() => "?").join(", ")})
+        AND NOT EXISTS (
+         SELECT 1 FROM paper_feedback dismissed
+         WHERE dismissed.space_id = p.space_id AND dismissed.paper_id = p.id
+          AND dismissed.feedback = 'not_relevant'
+        )`,
     ).bind(spaceId, ...chunk).all<InsightStageRow>();
     stageRows.push(...rows.results);
   }

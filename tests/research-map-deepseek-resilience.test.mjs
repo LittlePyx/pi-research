@@ -44,6 +44,17 @@ test("paper-network Pi analysis retries a smaller balanced input and preserves u
   assert.match(rebuild, /if \(curatedEdges\.length\) sources\.push\(`\$\{MODEL\}-cache`\)/);
 });
 
+test("paper-network path hints are typed, acyclic, and optional", async () => {
+  const route = await readFile(routePath, "utf8");
+  const generator = section(route, "async function generatePaperNetworkEdges", "type PaperNetworkBuildPhase");
+
+  assert.match(route, /const PAPER_PATH_RELATION_KINDS = new Set\(\["prepares", "advances"\]\)/);
+  assert.match(generator, /PAPER_PATH_RELATION_KINDS\.has\(rawRelationKind\)/);
+  assert.match(generator, /const canReach = \(start: string, target: string\)/);
+  assert.match(generator, /if \(canReach\(edge\.targetPaperId, edge\.sourcePaperId\)\) continue/);
+  assert.doesNotMatch(generator, /returned no defensible reading path/);
+});
+
 test("recommendation reconciliation consumes confirmed evidence without another LLM routing pass", async () => {
   const [route, evidence] = await Promise.all([
     readFile(routePath, "utf8"),

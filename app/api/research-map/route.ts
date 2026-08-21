@@ -1,6 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
-import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
+import { enqueueMonitorCandidates, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
 import { reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
@@ -223,6 +223,7 @@ const ROLES = new Set<ResearchTrackRole>(["foundation", "milestone", "frontier"]
 const DIRECTION_ROLES = new Set<ResearchDirectionRole>(["core", "support", "explore"]);
 const EDGE_KINDS = new Set(["builds_on", "bridges", "supports"]);
 const PAPER_RELATION_KINDS = new Set(["extends", "challenges", "applies", "unifies", "bridges", "reframes", "prepares", "advances"]);
+const PAPER_PATH_RELATION_KINDS = new Set(["prepares", "advances"]);
 const NETWORK_PAPER_LIMIT = 40;
 const GLOBAL_DAILY_LIMIT = 240;
 const WORKSPACE_DAILY_LIMIT = 32;
@@ -890,7 +891,7 @@ async function generatePaperNetworkEdges(
     retriedWithReducedInput = true;
     parsed = await requestEdges(reduced, 4400, "low");
   }
-  if ((!(parsed.edges || []).length || !(parsed.edges || []).some((edge) => edge.kind === "path")) && !retriedWithReducedInput) {
+  if (!(parsed.edges || []).length && !retriedWithReducedInput) {
     requestedInput = reduced;
     parsed = await requestEdges(reduced, 4400, "low");
   }
@@ -904,7 +905,10 @@ async function generatePaperNetworkEdges(
     const kind = item.kind === "path" ? "path" : "semantic";
     if (!validIds.has(sourcePaperId) || !validIds.has(targetPaperId) || sourcePaperId === targetPaperId) continue;
     if (kind === "semantic" && citationPairs.has(sourcePaperId + ":" + targetPaperId)) continue;
-    const relationKind = PAPER_RELATION_KINDS.has(String(item.relationKind)) ? String(item.relationKind) : kind === "path" ? "advances" : "extends";
+    const rawRelationKind = String(item.relationKind || "");
+    const relationKind = kind === "path"
+      ? PAPER_PATH_RELATION_KINDS.has(rawRelationKind) ? rawRelationKind : "advances"
+      : PAPER_RELATION_KINDS.has(rawRelationKind) ? rawRelationKind : "extends";
     const relationshipZh = cleanText(item.relationshipZh || "").slice(0, 320);
     const relationshipEn = cleanText(item.relationshipEn || "").slice(0, 440);
     if (!relationshipZh || !relationshipEn || counts[kind] >= (kind === "semantic" ? 14 : 8)) continue;
@@ -920,7 +924,28 @@ async function generatePaperNetworkEdges(
       evidenceSource: MODEL,
     });
   }
-  return { edges: Array.from(unique.values()), coveredPaperIds: requestedInput.map((paper) => paper.id) };
+  const generatedEdges = Array.from(unique.values());
+  const semanticEdges = generatedEdges.filter((edge) => edge.kind === "semantic");
+  const acceptedPathEdges: Array<Omit<ResearchPaperEdge, "id">> = [];
+  const pathAdjacency = new Map<string, string[]>();
+  const canReach = (start: string, target: string) => {
+    const queue = [start];
+    const visited = new Set<string>();
+    while (queue.length) {
+      const current = queue.shift()!;
+      if (current === target) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      queue.push(...(pathAdjacency.get(current) || []));
+    }
+    return false;
+  };
+  for (const edge of generatedEdges.filter((item) => item.kind === "path").sort((left, right) => right.confidence - left.confidence)) {
+    if (canReach(edge.targetPaperId, edge.sourcePaperId)) continue;
+    acceptedPathEdges.push(edge);
+    pathAdjacency.set(edge.sourcePaperId, [...(pathAdjacency.get(edge.sourcePaperId) || []), edge.targetPaperId]);
+  }
+  return { edges: [...semanticEdges, ...acceptedPathEdges], coveredPaperIds: requestedInput.map((paper) => paper.id) };
 }
 
 type PaperNetworkBuildPhase = "all" | "verified" | "pi";
@@ -1089,7 +1114,6 @@ async function rebuildPaperNetwork(
         scholarlyEdges.filter((edge) => edge.kind === "citation"), apiKey);
       const freshEdges = generated.edges;
       if (!freshEdges.length) throw new Error("DeepSeek Pro returned no defensible paper relations");
-      if (!freshEdges.some((edge) => edge.kind === "path")) throw new Error("DeepSeek Pro returned no defensible reading path");
       const refreshedIds = new Set(generated.coveredPaperIds);
       curatedEdges = [
         ...curatedEdges.filter((edge) => !refreshedIds.has(edge.sourcePaperId) || !refreshedIds.has(edge.targetPaperId)),
@@ -1207,47 +1231,8 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
         FROM research_map_changes WHERE space_id = ?
        ) WHERE change_rank = 1`,
     ).bind(spaceId).all<TrackLatestChangeRow>(),
-    database.prepare(
-      `WITH queue_counts AS (
-        SELECT coverage.route_id AS track_id,
-         COUNT(DISTINCT CASE WHEN i.analysis_source = 'metadata' OR i.analysis_model = '' THEN cs.paper_id END) AS queued_count,
-         COUNT(DISTINCT CASE WHEN i.analysis_source = 'deepseek_screened' THEN cs.paper_id END) AS reviewing_count,
-         MAX(cs.last_seen_at) AS last_queued_at
-        FROM monitor_candidate_sources cs
-        JOIN monitored_papers p ON p.id = cs.paper_id AND p.space_id = cs.space_id
-        JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
-        JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id AND coverage.horizon = p.horizon
-         AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
-        WHERE cs.space_id = ? AND coverage.route_id IS NOT NULL AND cs.source_key LIKE 'research-route:%'
-        GROUP BY coverage.route_id
-       ), latest_recommended AS (
-        SELECT * FROM (
-         SELECT audit.*,
-          ROW_NUMBER() OVER (PARTITION BY audit.space_id, audit.paper_id ORDER BY audit.reviewed_at DESC, audit.rowid DESC) AS audit_rank
-         FROM recommendation_audit_events audit
-         WHERE audit.space_id = ?
-        ) WHERE audit_rank = 1 AND recommended = 1
-       ), recommended_counts AS (
-        SELECT json_extract(origin.value, '$.routeId') AS track_id,
-         COUNT(DISTINCT audit.paper_id) AS recommended_count
-        FROM latest_recommended audit
-        JOIN json_each(audit.provenance_json) origin
-        WHERE json_extract(origin.value, '$.routeId') IS NOT NULL
-         AND json_extract(origin.value, '$.originKind') IN
-          ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_network')
-        GROUP BY json_extract(origin.value, '$.routeId')
-       ), track_ids AS (
-        SELECT track_id FROM queue_counts UNION SELECT track_id FROM recommended_counts
-       )
-       SELECT track_ids.track_id,
-        COALESCE(queue_counts.queued_count, 0) AS queued_count,
-        COALESCE(queue_counts.reviewing_count, 0) AS reviewing_count,
-        COALESCE(recommended_counts.recommended_count, 0) AS recommended_count,
-        queue_counts.last_queued_at
-       FROM track_ids
-       LEFT JOIN queue_counts ON queue_counts.track_id = track_ids.track_id
-       LEFT JOIN recommended_counts ON recommended_counts.track_id = track_ids.track_id`,
-    ).bind(spaceId, spaceId).all<TrackReviewQueueCountRow>(),
+    database.prepare(RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL)
+      .bind(spaceId, spaceId).all<TrackReviewQueueCountRow>(),
   ]);
   const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
   const reviewQueueCountsByTrack = new Map(reviewQueueCountsResult.results.map((row) => [row.track_id, row]));

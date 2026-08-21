@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { enqueueMonitorCandidates } from "../lib/monitor-candidate-queue.ts";
+import { enqueueMonitorCandidates, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../lib/monitor-candidate-queue.ts";
 import {
   confirmedExternalResearchMapEvidenceStatements,
   dismissResearchMapEvidence,
@@ -156,7 +156,16 @@ function createFixture() {
       space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE,
       paper_id TEXT NOT NULL,
       saved INTEGER NOT NULL DEFAULT 0,
-      feedback TEXT
+      feedback TEXT,
+      reason_code TEXT
+    );
+    CREATE TABLE recommendation_audit_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE,
+      paper_id TEXT NOT NULL,
+      recommended INTEGER NOT NULL DEFAULT 0,
+      provenance_json TEXT NOT NULL DEFAULT '[]',
+      reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE paper_reading_progress (
       id TEXT PRIMARY KEY NOT NULL,
@@ -279,6 +288,103 @@ function proposal(overrides = {}) {
 function count(sqlite, table) {
   return Number(sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count);
 }
+
+function queueCandidate(overrides = {}) {
+  return {
+    canonicalId: "doi:10.1000/a",
+    doi: "10.1000/a",
+    title: "A useful theorem",
+    authors: "Ada Researcher",
+    venue: "Journal A",
+    url: "https://example.test/a",
+    publishedAt: "2026-08-01",
+    abstractText: "A useful theorem for the active research route.",
+    horizon: "years",
+    citationCount: 17,
+    relevanceScore: 70,
+    qualityScore: 72,
+    priorityVenue: false,
+    source: "research-route",
+    provenance: [{
+      sourceKey: "research-route:gap",
+      channel: "topic",
+      queryKey: "track-a:gap:1",
+      routeId: "track-a",
+    }],
+    ...overrides,
+  };
+}
+
+test("explicit negative feedback removes a paper from shared-queue stage counts without erasing its review decision", async () => {
+  const { sqlite, database } = createFixture();
+  try {
+    const queued = await enqueueMonitorCandidates(database, "space-a", [queueCandidate()]);
+    assert.equal(queued.queuedForReviewCount, 1);
+
+    sqlite.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, feedback, reason_code) VALUES (?, ?, ?, 'not_relevant', 'network_dismissed')")
+      .run("feedback-a", "space-a", "paper-a");
+    const dismissedQueued = await enqueueMonitorCandidates(database, "space-a", [queueCandidate()]);
+    assert.deepEqual(
+      {
+        queued: dismissedQueued.queuedForReviewCount,
+        reviewing: dismissedQueued.reviewingCount,
+        recommended: dismissedQueued.recommendedCount,
+        reviewed: dismissedQueued.alreadyReviewedCount,
+      },
+      { queued: 0, reviewing: 0, recommended: 0, reviewed: 0 },
+    );
+
+    sqlite.prepare("DELETE FROM paper_feedback WHERE paper_id = 'paper-a'").run();
+    sqlite.prepare("UPDATE paper_insights SET analysis_source = 'deepseek_screened', analysis_model = 'deepseek-v4-pro' WHERE paper_id = 'paper-a'").run();
+    assert.equal((await enqueueMonitorCandidates(database, "space-a", [queueCandidate()])).reviewingCount, 1);
+    sqlite.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, feedback, reason_code) VALUES (?, ?, ?, 'not_relevant', 'network_dismissed')")
+      .run("feedback-a", "space-a", "paper-a");
+    assert.equal((await enqueueMonitorCandidates(database, "space-a", [queueCandidate()])).reviewingCount, 0);
+
+    sqlite.prepare("DELETE FROM paper_feedback WHERE paper_id = 'paper-a'").run();
+    sqlite.prepare("UPDATE paper_insights SET analysis_source = 'deepseek', analysis_model = 'deepseek-v4-pro', llm_recommended = 1 WHERE paper_id = 'paper-a'").run();
+    const recommended = await enqueueMonitorCandidates(database, "space-a", [queueCandidate()]);
+    assert.equal(recommended.recommendedCount, 1);
+    assert.equal(recommended.alreadyReviewedCount, 1);
+    sqlite.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, feedback, reason_code) VALUES (?, ?, ?, 'not_relevant', 'network_dismissed')")
+      .run("feedback-a", "space-a", "paper-a");
+    const dismissedRecommended = await enqueueMonitorCandidates(database, "space-a", [queueCandidate()]);
+    assert.equal(dismissedRecommended.recommendedCount, 0);
+    assert.equal(dismissedRecommended.alreadyReviewedCount, 0);
+    assert.deepEqual(
+      { ...sqlite.prepare("SELECT analysis_source, analysis_model, llm_recommended FROM paper_insights WHERE paper_id = 'paper-a'").get() },
+      { analysis_source: "deepseek", analysis_model: "deepseek-v4-pro", llm_recommended: 1 },
+    );
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("route pipeline excludes dismissed live work while retaining cumulative recommendation history", async () => {
+  const { sqlite, database } = createFixture();
+  try {
+    await enqueueMonitorCandidates(database, "space-a", [queueCandidate()], { recordDiscoveryCoverage: true });
+    const counts = () => sqlite.prepare(RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL).all("space-a", "space-a").map((row) => ({ ...row }));
+    assert.deepEqual(counts().map(({ track_id, queued_count, reviewing_count, recommended_count }) => ({ track_id, queued_count, reviewing_count, recommended_count })), [
+      { track_id: "track-a", queued_count: 1, reviewing_count: 0, recommended_count: 0 },
+    ]);
+
+    sqlite.prepare("UPDATE paper_insights SET analysis_source = 'deepseek_screened', analysis_model = 'deepseek-v4-pro' WHERE paper_id = 'paper-a'").run();
+    assert.equal(counts()[0].reviewing_count, 1);
+    sqlite.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, feedback, reason_code) VALUES (?, ?, ?, 'not_relevant', 'network_dismissed')")
+      .run("feedback-a", "space-a", "paper-a");
+    assert.deepEqual(counts(), []);
+
+    sqlite.prepare(
+      "INSERT INTO recommendation_audit_events (id, space_id, paper_id, recommended, provenance_json) VALUES (?, ?, ?, 1, ?)",
+    ).run("audit-a", "space-a", "paper-a", JSON.stringify([{ routeId: "track-a", originKind: "route_gap" }]));
+    assert.deepEqual(counts().map(({ track_id, queued_count, reviewing_count, recommended_count }) => ({ track_id, queued_count, reviewing_count, recommended_count })), [
+      { track_id: "track-a", queued_count: 0, reviewing_count: 0, recommended_count: 1 },
+    ]);
+  } finally {
+    sqlite.close();
+  }
+});
 
 test("legacy reconcile never promotes a pending model proposal", async () => {
   const { sqlite, database } = createFixture();

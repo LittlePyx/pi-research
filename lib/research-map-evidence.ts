@@ -150,6 +150,11 @@ export async function upsertPendingResearchMapEvidence(
          SELECT 1 FROM research_map_evidence_proposals confirmed
          WHERE confirmed.space_id = ? AND confirmed.paper_id = ? AND confirmed.status = 'confirmed'
        )
+       AND NOT EXISTS (
+         SELECT 1 FROM paper_feedback suppressed
+         WHERE suppressed.space_id = ? AND suppressed.paper_id = ?
+          AND suppressed.feedback = 'not_relevant'
+       )
        ON CONFLICT(space_id, track_id, paper_id) DO UPDATE SET
          scan_job_id = CASE WHEN research_map_evidence_proposals.status = 'pending'
           OR (research_map_evidence_proposals.status = 'dismissed' AND research_map_evidence_proposals.decided_at IS NULL)
@@ -175,6 +180,7 @@ export async function upsertPendingResearchMapEvidence(
       input.id || crypto.randomUUID(), input.spaceId, input.trackId, input.paperId, input.scanJobId || null,
       normalizedRole(input.mapRole), input.rationaleZh, input.rationaleEn, normalizedConfidence(input.confidence),
       systemCuratedReview, input.spaceId, input.trackId, input.paperId,
+      input.spaceId, input.paperId,
       input.spaceId, input.paperId,
     ),
     ];

@@ -39,6 +39,7 @@ export const FEEDBACK_REASONS = {
   weak_evidence: { kind: "exclusion", zh: "证据或方法不够可靠", en: "Weak evidence or method", polarity: "negative" },
   duplicate_known: { kind: "mastery", zh: "内容有价值，但我已经掌握", en: "Valuable, but already mastered", polarity: "negative" },
   wrong_type: { kind: "exclusion", zh: "不是我需要的论文类型", en: "Wrong kind of paper", polarity: "negative" },
+  network_dismissed: { kind: "exclusion", zh: "已在论文网络中忽略", en: "Dismissed from the research network", polarity: "negative" },
 } as const;
 
 export type FeedbackReasonCode = keyof typeof FEEDBACK_REASONS;

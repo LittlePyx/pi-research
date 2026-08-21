@@ -32,7 +32,8 @@ import {
   researchWorkIdentitySignature,
   type MonitorCandidateQueueResult,
 } from "../../../lib/monitor-candidate-queue";
-import { confirmedExternalResearchMapEvidenceStatements, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
+import { researchNetworkDismissalReversalStatements, researchNetworkDismissalStatements } from "../../../lib/research-network-dismissal";
+import { confirmedExternalResearchMapEvidenceStatements, reconcileResearchMapEvidenceStatements, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar, SemanticScholarQuotaError, SemanticScholarRateLimitError } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string };
@@ -1749,8 +1750,41 @@ export async function PATCH(request: Request) {
   if (!candidate) return Response.json({ error: "Network candidate not found" }, { status: 404 });
   if (action === "dismiss") {
     if (candidate.status === "accepted") return Response.json({ error: "An accepted paper cannot be dismissed from the candidate queue" }, { status: 409 });
-    await database.prepare("UPDATE research_network_candidates SET status = 'dismissed', last_seen_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
-      .bind(candidateId, spaceId).run();
+    // Reuse the shared identity resolver before the atomic decision batch. A
+    // legacy graph candidate may predate the monitor queue or use a provider ID
+    // for a DOI-less work, so its graph canonical is not always the durable
+    // monitored-paper canonical.
+    const dismissalQueue = await enqueueMonitorCandidates(database, spaceId, [{
+      canonicalId: candidate.canonicalId,
+      doi: candidate.doi || null,
+      title: candidate.title,
+      authors: candidate.authors,
+      venue: candidate.venue,
+      url: candidate.url,
+      publishedAt: candidate.publishedAt,
+      abstractText: candidate.abstractText,
+      horizon: researchEvidenceHorizon(candidate.publishedAt),
+      citationCount: candidate.citationCount,
+      relevanceScore: Math.min(68, 46 + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 3)),
+      qualityScore: Math.min(74, 48 + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 4)),
+      priorityVenue: false,
+      source: "research-network",
+      provenance: [],
+    }]);
+    const monitoredCanonicalId = dismissalQueue.canonicalIds[0];
+    const monitoredPaper = monitoredCanonicalId ? await database.prepare(
+      "SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id = ? LIMIT 1",
+    ).bind(spaceId, monitoredCanonicalId).first<{ id: string }>() : null;
+    if (!monitoredPaper) return Response.json({ error: "Dismissed paper could not be linked to the daily quality queue" }, { status: 500 });
+    const results = await database.batch([
+      ...researchNetworkDismissalStatements(database, {
+        spaceId, candidateId, paperId: monitoredPaper.id, paperTitle: candidate.title,
+      }),
+      ...reconcileResearchMapEvidenceStatements(database, spaceId, monitoredPaper.id),
+    ]);
+    if ((results[0]?.meta.changes || 0) !== 1) {
+      return Response.json({ error: "An accepted paper cannot be dismissed from the candidate queue" }, { status: 409 });
+    }
     return Response.json({ action: "dismiss", candidate: await candidateWithRelations(database, spaceId, candidateId) });
   }
 
@@ -1812,7 +1846,11 @@ export async function PATCH(request: Request) {
   if (!queuedPaper) return Response.json({ error: "Accepted paper could not be queued for quality review" }, { status: 500 });
   const acceptedCanonicalId = acceptanceQueue.canonicalIds[0] || candidate.canonicalId;
   const monitoredPaperId = queuedPaper.id;
-  const statements: D1PreparedStatement[] = [];
+  const statements: D1PreparedStatement[] = [
+    ...researchNetworkDismissalReversalStatements(database, {
+      spaceId, candidateId, paperId: monitoredPaperId,
+    }),
+  ];
   statements.push(database.prepare(
     `INSERT INTO research_track_papers
      (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role,
@@ -1854,7 +1892,6 @@ export async function PATCH(request: Request) {
       verifiedByOpenAlex ? "openalex" : "semantic-scholar", trackId, acceptedCanonicalId, edge.seed_paper_id));
   }
   statements.push(
-    database.prepare("UPDATE research_network_candidates SET status = 'accepted', last_seen_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?").bind(candidateId, spaceId),
     ...confirmedExternalResearchMapEvidenceStatements(database, {
       id: `network-accept:${trackId}:${candidateId}`,
       spaceId, trackId, paperId: monitoredPaperId, paperCanonicalId: acceptedCanonicalId,

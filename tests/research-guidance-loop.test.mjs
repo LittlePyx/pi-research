@@ -24,16 +24,22 @@ test("direction evidence gaps guide daily retrieval without replacing every hori
 });
 
 test("daily plans are regenerated only when durable research guidance changes", async () => {
-  const monitor = await readFile(monitorPath, "utf8");
+  const [monitor, planning] = await Promise.all([
+    readFile(monitorPath, "utf8"),
+    readFile(new URL("../lib/monitor-route-planning.ts", import.meta.url), "utf8"),
+  ]);
   const plannerStart = monitor.indexOf("async function ensureDailyQueryPlan");
   const plannerEnd = monitor.indexOf("async function enrichSpaceWithImportedMemory", plannerStart);
   const planner = monitor.slice(plannerStart, plannerEnd);
   assert.ok(plannerStart >= 0 && plannerEnd > plannerStart);
   assert.match(planner, /guidanceRevision/);
-  assert.match(planner, /user_role, depth_score, support_score, intelligence_json/);
-  assert.match(planner, /MAX\(updated_at\) FROM research_preference_signals/);
-  assert.match(planner, /MAX\(updated_at\) FROM paper_feedback/);
-  assert.match(planner, /MAX\(updated_at\) FROM paper_reading_progress/);
+  assert.match(planner, /researchGuidanceIdentity/);
+  assert.match(planner, /Recently confirmed route evidence/);
+  assert.match(planning, /user_role, depth_score, support_score, interaction_score, intelligence_json/);
+  assert.match(planning, /MAX\(updated_at\) FROM research_preference_signals/);
+  assert.match(planning, /MAX\(updated_at\) FROM paper_feedback/);
+  assert.match(planning, /MAX\(updated_at\) FROM paper_reading_progress/);
+  assert.match(planning, /MAX\(updated_at\) FROM research_map_evidence_proposals/);
   assert.match(planner, /crypto\.subtle\.digest\("SHA-256"/);
   assert.doesNotMatch(planner, /MAX\(updated_at\) FROM research_tracks/);
   assert.match(monitor, /frozenQueryPlan/);
@@ -65,8 +71,9 @@ test("the interface explains the research-route and daily-discovery loop", async
   assert.match(app, /研究线索驱动的今日检索/);
   assert.match(app, /研究线索 → 今日发现 → 你的判断 → 路线更新/);
   assert.match(app, /只有接受、保存或完成阅读后才确认进入路线/);
-  assert.match(app, /扫描候选会先进入今日质量评估/);
-  assert.match(app, /只有深度评审通过后，才会进入今日推荐与待确认证据/);
+  assert.match(app, /路线深挖候选统一进入共享质量队列/);
+  assert.match(app, /通过评审并由你确认后才成为已确认证据/);
+  assert.match(app, /通过后才进入今日推荐与待确认证据/);
   assert.match(app, /discoveryOrigin/);
   assert.match(app, /RouteDiscoveryBadge/);
   assert.match(app, /if \(!origin && !\(track && paper\.discoveryType\)\) return null/);
