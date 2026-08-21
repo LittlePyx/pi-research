@@ -182,7 +182,7 @@ type MonitorState = {
   automation?: {
     enabled: boolean;
     paused?: boolean;
-    pauseReason?: "pending_backlog" | "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable" | null;
+    pauseReason?: "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable" | null;
     pauseMessageZh?: string;
     pauseMessageEn?: string;
     pausedAt?: string | null;
@@ -191,7 +191,7 @@ type MonitorState = {
     pendingRecommendations?: number;
     dailyRequests?: number;
     dailyTokens?: number;
-    limits?: { pendingRecommendations: number; scheduledRunsWithoutActivity: number; inactiveDays: number; dailyRequests: number; dailyTokens: number };
+    limits?: { scheduledRunsWithoutActivity: number; inactiveDays: number; dailyRequests: number; dailyTokens: number };
     cadenceHours: number;
     schedulerCheckMinutes: number;
     errorRetryMinutes: number;
@@ -4210,8 +4210,8 @@ export default function ResearchApp({ user }: { user: User }) {
                     <dt>{locale === "zh" ? "自动监控" : "Automatic monitoring"}</dt>
                     <dd title={locale === "zh" ? monitor?.automation?.pauseMessageZh : monitor?.automation?.pauseMessageEn}>
                       {monitor?.automation?.paused
-                        ? `${locale === "zh" ? "已待机" : "On standby"} · ${monitor.automation.pauseReason === "pending_backlog" ? `${monitor.automation.pendingRecommendations || 0}/${monitor.automation.limits?.pendingRecommendations || 12} ${locale === "zh" ? "篇待处理" : "pending"}` : monitor.automation.pauseReason === "daily_budget" ? (locale === "zh" ? "今日预算已用完" : "daily budget used") : monitor.automation.pauseReason === "model_unavailable" ? (locale === "zh" ? "模型待恢复" : "model unavailable") : (locale === "zh" ? "下次打开后恢复" : "resumes next visit")}`
-                        : `${locale === "zh" ? "每日" : "Daily"} · ${monitor?.automation?.pendingRecommendations || 0}/${monitor?.automation?.limits?.pendingRecommendations || 12} ${locale === "zh" ? "篇待处理" : "pending"}`}
+                        ? `${locale === "zh" ? "已待机" : "On standby"} · ${monitor.automation.pauseReason === "daily_budget" ? (locale === "zh" ? "今日预算已用完" : "daily budget used") : monitor.automation.pauseReason === "model_unavailable" ? (locale === "zh" ? "模型待恢复" : "model unavailable") : (locale === "zh" ? "下次打开后恢复" : "resumes next visit")}`
+                        : `${locale === "zh" ? "每日继续发现" : "Daily discovery"} · ${monitor?.automation?.pendingRecommendations || 0} ${locale === "zh" ? "篇待浏览" : "to browse"}`}
                     </dd>
                   </div>
                   <div><dt>{locale === "zh" ? "上次触发" : "Last trigger"}</dt><dd>{monitor?.lastTrigger === "scheduled" ? (locale === "zh" ? "后台定时" : "Scheduled") : monitor?.lastTrigger === "manual" ? (locale === "zh" ? "手动深挖" : "Manual deep dive") : (locale === "zh" ? "打开时补扫" : "Catch-up on visit")}</dd></div>

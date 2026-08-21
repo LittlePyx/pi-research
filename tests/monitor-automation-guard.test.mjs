@@ -20,11 +20,11 @@ const healthy = {
 
 test("automatic monitoring pauses before unattended research spending can accumulate", () => {
   assert.equal(monitorAutomationPauseReason(healthy), null);
-  assert.equal(monitorAutomationPauseReason({ ...healthy, pendingRecommendations: MONITOR_AUTOMATION_LIMITS.pendingRecommendations }), "pending_backlog");
+  assert.equal(monitorAutomationPauseReason({ ...healthy, pendingRecommendations: 120 }), null);
   assert.equal(monitorAutomationPauseReason({ ...healthy, scheduledRunsSinceActivity: MONITOR_AUTOMATION_LIMITS.scheduledRunsWithoutActivity }), "unattended_runs");
   assert.equal(monitorAutomationPauseReason({ ...healthy, lastUserActivityAt: "2026-08-13T08:00:00.000Z" }), "inactive");
   assert.equal(monitorAutomationPauseReason({ ...healthy, dailyTokens: MONITOR_AUTOMATION_LIMITS.dailyTokens }), "daily_budget");
-  assert.match(monitorAutomationPauseCopy("pending_backlog", 12).zh, /12 篇推荐等待处理/);
+  assert.match(monitorAutomationPauseCopy("unattended_runs").zh, /3 轮扫描/);
 });
 
 test("scheduled monitoring persists heartbeats and advances only a bounded checkpoint slice", async () => {

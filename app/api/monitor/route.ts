@@ -1453,7 +1453,7 @@ async function usageCount(database: D1Database, scope: string, date: string) {
   return row?.request_count || 0;
 }
 
-type AutomationPauseReason = "pending_backlog" | "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable";
+type AutomationPauseReason = "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable";
 
 async function readAutomationCounters(database: D1Database, spaceId: string) {
   const usageDate = shanghaiDateKey(new Date());
@@ -3553,7 +3553,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     .map((paper) => toPaper(paper, now));
   const pendingPapers = historyPapers.filter((paper) => paper.userState !== "accepted" && paper.userState !== "dismissed");
   const automationPauseReason = (run?.automation_pause_reason || "") as AutomationPauseReason | "";
-  const automationPauseCopy = monitorAutomationPauseCopy(automationPauseReason || null, automationCounters.pendingRecommendations);
+  const automationPauseCopy = monitorAutomationPauseCopy(automationPauseReason || null);
   let latestQueries: Partial<Record<Horizon, string[]>> = {};
   try { latestQueries = queryPlanRow ? JSON.parse(queryPlanRow.queries_json) as Partial<Record<Horizon, string[]>> : {}; } catch { latestQueries = {}; }
   const reviewed = scanMetrics?.reviewed || 0;
