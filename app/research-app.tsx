@@ -222,6 +222,34 @@ type ResearchProblemAction = {
   position: number;
   completedAt: string | null;
   updatedAt: string;
+  run: null | {
+    id: string;
+    status: "queued" | "running" | "ready" | "failed";
+    progress: number;
+    stage: string;
+    inputRevision: string;
+    headlineZh: string;
+    headlineEn: string;
+    resultZh: string;
+    resultEn: string;
+    decisionZh: string;
+    decisionEn: string;
+    limitationsZh: string;
+    limitationsEn: string;
+    searchQuery: string;
+    deliverable: {
+      steps?: Array<{ titleZh: string; titleEn: string; detailZh: string; detailEn: string; paperIds: string[]; claimIds: string[] }>;
+      comparisonRows?: Array<{ dimensionZh: string; dimensionEn: string; findingZh: string; findingEn: string; paperIds: string[]; claimIds: string[] }>;
+    };
+    sourcePaperIds: string[];
+    sourceClaimIds: string[];
+    sourcePapers: Array<{ id: string; title: string; authors: string; venue: string; publishedAt: string | null; url: string }>;
+    model: string;
+    error: string | null;
+    startedAt: string;
+    completedAt: string | null;
+    updatedAt: string;
+  };
 };
 type ResearchProblemStage = "literature" | "theory" | "method" | "experiment" | "writing";
 type ResearchProblemState = {
@@ -2540,8 +2568,38 @@ function researchProblemRelationLabel(relation: ResearchProblemAssessment["hypot
   return labels[relation][locale];
 }
 
+function researchActionStageLabel(stage: string, locale: Locale) {
+  const labels: Record<string, Localized> = {
+    queued: { zh: "正在排队", en: "Queued" },
+    collecting_evidence: { zh: "正在整理证据", en: "Collecting evidence" },
+    reasoning: { zh: "正在深入研判", en: "Reasoning" },
+    verifying_sources: { zh: "正在核对来源", en: "Verifying sources" },
+    ready: { zh: "研究产物已完成", en: "Deliverable ready" },
+    interrupted: { zh: "上次执行已中断", en: "Previous run interrupted" },
+    failed: { zh: "本次执行未完成", en: "Run failed" },
+  };
+  return (labels[stage] || labels.reasoning)[locale];
+}
+
+function ResearchActionRunOutput({ item, locale, busy, completed, onExecute, onDone }: {
+  item: ResearchProblemAction;
+  locale: Locale;
+  busy: boolean;
+  completed: boolean;
+  onExecute: () => void;
+  onDone: () => void;
+}) {
+  const run = item.run;
+  if (!run) return <button className="v2-action-execute" type="button" disabled={busy} onClick={onExecute}>{locale === "zh" ? "让 Pi 执行" : "Ask Pi to execute"} →</button>;
+  if (run.status === "queued" || run.status === "running") return <section className="v2-action-run-progress" role="status" aria-live="polite"><div><span>π</span><strong>{researchActionStageLabel(run.stage, locale)}</strong><b>{Math.max(8, run.progress)}%</b></div><i><b style={{ width: `${Math.max(8, run.progress)}%` }} /></i><small>{locale === "zh" ? "执行状态已保存；离开页面后回来仍可继续查看。" : "Progress is saved and remains available after you leave this page."}</small></section>;
+  if (run.status === "failed") return <section className="v2-action-run-failed"><div><strong>{researchActionStageLabel(run.stage, locale)}</strong><p>{run.error || (locale === "zh" ? "已有研究内容没有受到影响。" : "Existing research content was not affected.")}</p></div><button type="button" disabled={busy} onClick={onExecute}>{locale === "zh" ? "重新执行" : "Retry"}</button></section>;
+  const steps = run.deliverable.steps || [];
+  const rows = run.deliverable.comparisonRows || [];
+  return <section className="v2-action-run-ready"><header><div><small>π {locale === "zh" ? "Pi 已执行" : "PI EXECUTED"}</small><h4>{locale === "zh" ? run.headlineZh : run.headlineEn}</h4></div><span>✓</span></header><p>{locale === "zh" ? run.resultZh : run.resultEn}</p>{rows.length > 0 && <div className="v2-action-comparison">{rows.map((row, index) => <article key={`${row.dimensionEn}:${index}`}><strong>{locale === "zh" ? row.dimensionZh : row.dimensionEn}</strong><p>{locale === "zh" ? row.findingZh : row.findingEn}</p><small>{row.paperIds.length} {locale === "zh" ? "篇论文" : "papers"} · {row.claimIds.length} {locale === "zh" ? "条证据" : "claims"}</small></article>)}</div>}{steps.length > 0 && <ol className="v2-action-steps">{steps.map((step, index) => <li key={`${step.titleEn}:${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{locale === "zh" ? step.titleZh : step.titleEn}</strong><p>{locale === "zh" ? step.detailZh : step.detailEn}</p></div></li>)}</ol>}<div className="v2-action-run-judgment"><article><small>{locale === "zh" ? "现在可以作出的判断" : "DECISION NOW"}</small><strong>{locale === "zh" ? run.decisionZh : run.decisionEn}</strong></article><article><small>{locale === "zh" ? "证据边界" : "EVIDENCE BOUNDARY"}</small><p>{locale === "zh" ? run.limitationsZh : run.limitationsEn}</p></article></div>{run.searchQuery && <code className="v2-action-query">{run.searchQuery}</code>}{run.sourcePapers.length > 0 && <details className="v2-action-sources"><summary>{locale === "zh" ? `${run.sourcePapers.length} 篇来源论文` : `${run.sourcePapers.length} source papers`} ＋</summary><div>{run.sourcePapers.map((paper) => <a href={paper.url || "#"} target={paper.url ? "_blank" : undefined} rel="noreferrer" key={paper.id}><strong>{paper.title}</strong><small>{[paper.authors, paper.publishedAt?.slice(0, 4), paper.venue].filter(Boolean).join(" · ")}</small></a>)}</div></details>}<footer>{completed ? <em>✓ {locale === "zh" ? "已形成长期研究记录" : "Saved to research history"}</em> : <button type="button" disabled={busy} onClick={onDone}>{locale === "zh" ? "确认完成" : "Mark complete"}</button>}{!completed && <button type="button" disabled={busy} onClick={onExecute}>{locale === "zh" ? "按最新证据重做" : "Rerun with latest evidence"}</button>}</footer></section>;
+}
+
 function ResearchProblemWorkbench({
-  state, loading, action, error, locale, onDraft, onConfirm, onAssess, onUpdateAction,
+  state, loading, action, error, locale, onDraft, onConfirm, onAssess, onUpdateAction, onExecuteAction,
 }: {
   state: ResearchProblemState | null;
   loading: boolean;
@@ -2552,6 +2610,7 @@ function ResearchProblemWorkbench({
   onConfirm: (draft: { question: string; objective: string; scope: string; successCriteria: string; stage: ResearchProblemStage; hypotheses: Array<{ statement: string; rationale: string; confidence: number; sourceStatementIds: string[] }> }) => void;
   onAssess: () => void;
   onUpdateAction: (actionId: string, status: "accepted" | "done" | "dismissed") => void;
+  onExecuteAction: (action: ResearchProblemAction) => void;
 }) {
   const [draft, setDraft] = useState(() => ({
     question: state?.problem?.question || "",
@@ -2574,7 +2633,17 @@ function ResearchProblemWorkbench({
   if (!active) return <section className="v2-route-workspace-panel v2-research-problem" role="tabpanel"><header><div><p className="v2-kicker">π {locale === "zh" ? "Pi 起草 · 用户确认后生效" : "PI DRAFT · ACTIVE ONLY AFTER CONFIRMATION"}</p><h2>{locale === "zh" ? "把研究方向写成可检验的工作问题" : "Shape the direction into a testable working problem"}</h2></div><span>{locale === "zh" ? "草稿" : "Draft"}</span></header><div className="v2-problem-editor"><label className="question"><span>{locale === "zh" ? "当前要回答的问题" : "Question to answer"}</span><textarea value={draft.question} maxLength={520} onChange={(event) => setDraft((current) => ({ ...current, question: event.target.value }))} /></label><label><span>{locale === "zh" ? "研究目标" : "Objective"}</span><textarea value={draft.objective} maxLength={700} onChange={(event) => setDraft((current) => ({ ...current, objective: event.target.value }))} /></label><label><span>{locale === "zh" ? "范围与边界" : "Scope and boundary"}</span><textarea value={draft.scope} maxLength={700} onChange={(event) => setDraft((current) => ({ ...current, scope: event.target.value }))} /></label><label><span>{locale === "zh" ? "怎样才算推进" : "Success criterion"}</span><textarea value={draft.successCriteria} maxLength={700} onChange={(event) => setDraft((current) => ({ ...current, successCriteria: event.target.value }))} /></label><label className="stage"><span>{locale === "zh" ? "当前阶段" : "Current stage"}</span><select value={draft.stage} onChange={(event) => setDraft((current) => ({ ...current, stage: event.target.value as typeof current.stage }))}>{(["literature", "theory", "method", "experiment", "writing"] as const).map((stage) => <option value={stage} key={stage}>{researchProblemStageLabel(stage, locale)}</option>)}</select></label></div><section className="v2-problem-hypotheses"><header><strong>{locale === "zh" ? "待确认假设" : "Hypotheses to confirm"}</strong><small>{locale === "zh" ? "你可以直接修改；Pi 只保留提案身份" : "Edit freely; Pi keeps these as proposals until confirmation"}</small></header>{hypotheses.map((hypothesis, index) => <article key={index}><span>H{index + 1}</span><div><textarea value={hypothesis.statement} maxLength={520} onChange={(event) => setHypotheses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, statement: event.target.value } : item))} /><p>{hypothesis.rationale}</p></div><button type="button" onClick={() => setHypotheses((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></article>)}<button className="add" type="button" onClick={() => setHypotheses((current) => [...current, { statement: "", rationale: "", confidence: 0, sourceStatementIds: [] }])}>＋ {locale === "zh" ? "增加一个自己的假设" : "Add your own hypothesis"}</button></section><footer className="v2-problem-confirm"><div><strong>{locale === "zh" ? "确认后才会指导扫描" : "Guides discovery only after confirmation"}</strong><p>{locale === "zh" ? "之后 Pi 可以提出证据影响和修改建议，但不会自动改写这些内容。" : "Pi may suggest evidence impacts and revisions later, but never silently rewrites these fields."}</p></div><button type="button" disabled={Boolean(action) || !draft.question.trim() || !draft.objective.trim() || !draft.scope.trim() || !draft.successCriteria.trim()} onClick={() => onConfirm({ ...draft, hypotheses: hypotheses.filter((item) => item.statement.trim()) })}>{action === "confirm" ? (locale === "zh" ? "正在确认…" : "Confirming…") : (locale === "zh" ? "确认并用于研究" : "Confirm for research")} →</button></footer></section>;
   const assessment = state.assessment;
   const acceptedActions = state.actions.filter((item) => item.status === "accepted");
-  return <section className="v2-route-workspace-panel v2-research-problem active" role="tabpanel"><header><div><p className="v2-kicker">π {locale === "zh" ? "用户确认的研究问题" : "USER-CONFIRMED RESEARCH PROBLEM"}</p><h2>{state.problem.question}</h2></div><span>{researchProblemStageLabel(state.problem.stage, locale)}</span></header><div className="v2-problem-definition"><article><small>{locale === "zh" ? "当前目标" : "OBJECTIVE"}</small><p>{state.problem.objective}</p></article><article><small>{locale === "zh" ? "范围边界" : "SCOPE"}</small><p>{state.problem.scope}</p></article><article><small>{locale === "zh" ? "推进标准" : "SUCCESS CRITERION"}</small><p>{state.problem.successCriteria}</p></article></div><section className="v2-problem-confirmed-hypotheses"><header><strong>{locale === "zh" ? "当前假设" : "Current hypotheses"}</strong><span>{state.hypotheses.filter((item) => item.status === "confirmed").length}</span></header>{state.hypotheses.filter((item) => item.status === "confirmed").map((hypothesis, index) => { const impacts = assessment?.hypothesisImpacts.filter((item) => item.hypothesisId === hypothesis.id) || []; return <article key={hypothesis.id}><span>H{index + 1}</span><div><h3>{hypothesis.statement}</h3><p>{hypothesis.rationale}</p>{impacts.map((impact) => <aside className={impact.relation} key={`${impact.hypothesisId}:${impact.relation}`}><b>{researchProblemRelationLabel(impact.relation, locale)}</b><span>{locale === "zh" ? impact.explanationZh : impact.explanationEn}</span><em>{impact.confidence}%</em></aside>)}</div></article>; })}</section>{assessment ? <section className={`v2-problem-assessment ${assessment.stale ? "stale" : ""}`}><header><div><small>{locale === "zh" ? "最新证据对问题的影响" : "LATEST EVIDENCE IMPACT"}</small><strong>{assessment.confidence}% {locale === "zh" ? "当前判断置信度" : "current confidence"}</strong></div><button type="button" disabled={Boolean(action)} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : assessment.stale ? (locale === "zh" ? "按最新证据更新" : "Refresh from evidence") : (locale === "zh" ? "重新研判" : "Reassess")}</button></header><p>{locale === "zh" ? assessment.summaryZh : assessment.summaryEn}</p>{(locale === "zh" ? assessment.changeZh : assessment.changeEn) && <blockquote><b>↗</b><span><strong>{locale === "zh" ? "本次改变" : "What changed"}</strong>{locale === "zh" ? assessment.changeZh : assessment.changeEn}</span></blockquote>}<div><article><small>{locale === "zh" ? "最关键的不确定性" : "KEY UNCERTAINTY"}</small><p>{locale === "zh" ? assessment.uncertaintyZh : assessment.uncertaintyEn}</p></article><article><small>{locale === "zh" ? "下一项需要作出的判断" : "NEXT DECISION"}</small><p>{locale === "zh" ? assessment.nextDecisionZh : assessment.nextDecisionEn}</p></article></div></section> : <section className="v2-problem-assessment empty"><div><strong>{locale === "zh" ? "问题已经确认，等待第一次证据研判" : "The problem is confirmed and ready for its first evidence assessment"}</strong><p>{locale === "zh" ? "Pi 会把跨论文证据映射到你的假设，只提出影响，不修改问题。" : "Pi maps cross-paper evidence to your hypotheses and suggests impacts without changing the problem."}</p></div><button type="button" disabled={Boolean(action) || !state.evidence.canAssess} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : (locale === "zh" ? "开始证据研判" : "Assess evidence")} →</button></section>}<section className="v2-problem-actions"><header><div><strong>{locale === "zh" ? "接下来推进什么" : "What moves the problem forward"}</strong><small>{locale === "zh" ? "建议需要你接受；完成后成为长期研究记录" : "Suggestions need your acceptance and become durable research history when completed"}</small></div><span>{acceptedActions.length} {locale === "zh" ? "进行中" : "active"}</span></header>{state.actions.map((item, index) => <article className={item.status} key={item.id}><span>{item.status === "done" ? "✓" : String(index + 1).padStart(2, "0")}</span><div><small>{item.kind.toUpperCase()}</small><strong>{locale === "zh" ? item.titleZh : item.titleEn}</strong><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p></div>{item.status === "proposed" ? <footer><button type="button" onClick={() => onUpdateAction(item.id, "accepted")}>{locale === "zh" ? "接受" : "Accept"}</button><button type="button" onClick={() => onUpdateAction(item.id, "dismissed")}>{locale === "zh" ? "暂不做" : "Dismiss"}</button></footer> : item.status === "accepted" ? <button type="button" onClick={() => onUpdateAction(item.id, "done")}>{locale === "zh" ? "标记完成" : "Mark done"}</button> : <em>{locale === "zh" ? "已完成" : "Completed"}</em>}</article>)}{!state.actions.length && <p className="v2-problem-no-actions">{locale === "zh" ? "完成一次证据研判后，Pi 会提出 1–3 项具体行动。" : "After an evidence assessment, Pi will propose 1–3 concrete moves."}</p>}</section>{error && <div className="v2-problem-error">{error}</div>}</section>;
+  return <section className="v2-route-workspace-panel v2-research-problem active" role="tabpanel">
+    <header><div><p className="v2-kicker">π {locale === "zh" ? "用户确认的研究问题" : "USER-CONFIRMED RESEARCH PROBLEM"}</p><h2>{state.problem.question}</h2></div><span>{researchProblemStageLabel(state.problem.stage, locale)}</span></header>
+    <div className="v2-problem-definition"><article><small>{locale === "zh" ? "当前目标" : "OBJECTIVE"}</small><p>{state.problem.objective}</p></article><article><small>{locale === "zh" ? "范围边界" : "SCOPE"}</small><p>{state.problem.scope}</p></article><article><small>{locale === "zh" ? "推进标准" : "SUCCESS CRITERION"}</small><p>{state.problem.successCriteria}</p></article></div>
+    <section className="v2-problem-confirmed-hypotheses"><header><strong>{locale === "zh" ? "当前假设" : "Current hypotheses"}</strong><span>{state.hypotheses.filter((item) => item.status === "confirmed").length}</span></header>{state.hypotheses.filter((item) => item.status === "confirmed").map((hypothesis, index) => { const impacts = assessment?.hypothesisImpacts.filter((item) => item.hypothesisId === hypothesis.id) || []; return <article key={hypothesis.id}><span>H{index + 1}</span><div><h3>{hypothesis.statement}</h3><p>{hypothesis.rationale}</p>{impacts.map((impact) => <aside className={impact.relation} key={`${impact.hypothesisId}:${impact.relation}`}><b>{researchProblemRelationLabel(impact.relation, locale)}</b><span>{locale === "zh" ? impact.explanationZh : impact.explanationEn}</span><em>{impact.confidence}%</em></aside>)}</div></article>; })}</section>
+    {assessment ? <section className={`v2-problem-assessment ${assessment.stale ? "stale" : ""}`}><header><div><small>{locale === "zh" ? "最新证据对问题的影响" : "LATEST EVIDENCE IMPACT"}</small><strong>{assessment.confidence}% {locale === "zh" ? "当前判断置信度" : "current confidence"}</strong></div><button type="button" disabled={Boolean(action)} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : assessment.stale ? (locale === "zh" ? "按最新证据更新" : "Refresh from evidence") : (locale === "zh" ? "重新研判" : "Reassess")}</button></header><p>{locale === "zh" ? assessment.summaryZh : assessment.summaryEn}</p>{(locale === "zh" ? assessment.changeZh : assessment.changeEn) && <blockquote><b>↗</b><span><strong>{locale === "zh" ? "本次改变" : "What changed"}</strong>{locale === "zh" ? assessment.changeZh : assessment.changeEn}</span></blockquote>}<div><article><small>{locale === "zh" ? "最关键的不确定性" : "KEY UNCERTAINTY"}</small><p>{locale === "zh" ? assessment.uncertaintyZh : assessment.uncertaintyEn}</p></article><article><small>{locale === "zh" ? "下一项需要作出的判断" : "NEXT DECISION"}</small><p>{locale === "zh" ? assessment.nextDecisionZh : assessment.nextDecisionEn}</p></article></div></section> : <section className="v2-problem-assessment empty"><div><strong>{locale === "zh" ? "问题已经确认，等待第一次证据研判" : "The problem is confirmed and ready for its first evidence assessment"}</strong><p>{locale === "zh" ? "Pi 会把跨论文证据映射到你的假设，只提出影响，不修改问题。" : "Pi maps cross-paper evidence to your hypotheses and suggests impacts without changing the problem."}</p></div><button type="button" disabled={Boolean(action) || !state.evidence.canAssess} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : (locale === "zh" ? "开始证据研判" : "Assess evidence")} →</button></section>}
+    <section className="v2-problem-actions"><header><div><strong>{locale === "zh" ? "接下来推进什么" : "What moves the problem forward"}</strong><small>{locale === "zh" ? "接受后由 Pi 执行；结果带来源并长期保存" : "Pi executes accepted actions and saves source-linked results"}</small></div><span>{acceptedActions.length} {locale === "zh" ? "进行中" : "active"}</span></header>
+      {state.actions.map((item, index) => <article className={`${item.status} ${item.run?.status || "not-run"}`} key={item.id}><span>{item.status === "done" ? "✓" : String(index + 1).padStart(2, "0")}</span><div className="v2-action-body"><small>{item.kind.toUpperCase()}</small><strong>{locale === "zh" ? item.titleZh : item.titleEn}</strong><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p>{item.status !== "proposed" && <ResearchActionRunOutput item={item} locale={locale} busy={Boolean(action)} completed={item.status === "done"} onExecute={() => onExecuteAction(item)} onDone={() => onUpdateAction(item.id, "done")} />}</div>{item.status === "proposed" && <footer><button type="button" disabled={Boolean(action)} onClick={() => onExecuteAction(item)}>{locale === "zh" ? "接受并让 Pi 执行" : "Accept & execute"}</button><button type="button" disabled={Boolean(action)} onClick={() => onUpdateAction(item.id, "dismissed")}>{locale === "zh" ? "暂不做" : "Dismiss"}</button></footer>}</article>)}
+      {!state.actions.length && <p className="v2-problem-no-actions">{locale === "zh" ? "完成一次证据研判后，Pi 会提出 1–3 项具体行动。" : "After an evidence assessment, Pi will propose 1–3 concrete moves."}</p>}
+    </section>
+    {error && <div className="v2-problem-error">{error}</div>}
+  </section>;
 }
 
 export default function ResearchApp({ user }: { user: User }) {
@@ -4570,6 +4639,64 @@ export default function ResearchApp({ user }: { user: User }) {
     } finally { setResearchProblemAction(null); }
   };
 
+  const executeResearchProblemAction = async (item: ResearchProblemAction) => {
+    if (!selectedThread || researchProblemAction) return;
+    const trackId = selectedThread.id;
+    setResearchProblemAction(`execute:${item.id}`);
+    setResearchProblemError("");
+    let pollTimer: number | null = null;
+    const refreshActionState = async () => {
+      const response = await fetch(`/api/research-problem?spaceId=${encodeURIComponent(activeSpace.id)}&trackId=${encodeURIComponent(trackId)}`);
+      const data = await response.json() as { problemState?: ResearchProblemState };
+      if (response.ok && data.problemState) setResearchProblemState(data.problemState);
+    };
+    try {
+      if (item.status === "proposed") {
+        const acceptResponse = await fetch("/api/research-problem", {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spaceId: activeSpace.id, trackId, actionId: item.id, status: "accepted" }),
+        });
+        const accepted = await acceptResponse.json() as { problemState?: ResearchProblemState; error?: string };
+        if (!acceptResponse.ok || !accepted.problemState) throw new Error(accepted.error || "research action acceptance failed");
+        setResearchProblemState(accepted.problemState);
+      }
+      pollTimer = window.setInterval(() => { void refreshActionState(); }, 1400);
+      const response = await fetch("/api/research-actions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId, actionId: item.id, force: Boolean(item.run) }),
+      });
+      const data = await response.json() as { runId?: string; kind?: ResearchProblemAction["kind"]; searchQuery?: string; error?: string };
+      if (!response.ok || !data.runId) throw new Error(data.error || "research action execution failed");
+      let queued = 0;
+      if (item.kind === "search" && data.searchQuery) {
+        const discoveryResponse = await fetch("/api/research-map", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spaceId: activeSpace.id, trackId, action: "expand-action", actionRunId: data.runId }),
+        });
+        const discoveryData = await discoveryResponse.json() as ResearchMapState & { reviewQueuedCount?: number; error?: string };
+        if (discoveryResponse.ok) {
+          queued = discoveryData.reviewQueuedCount || 0;
+          setResearchMap(discoveryData);
+          setSelectedThread(discoveryData.tracks.find((track) => track.id === trackId) || selectedThread);
+        } else {
+          setToast(locale === "zh" ? "检索方案已完成；外部候选发现可稍后重试" : "The search plan is ready; external discovery can be retried later");
+        }
+      }
+      await refreshActionState();
+      setToast(item.kind === "read"
+        ? (locale === "zh" ? "阅读计划已完成，选中的论文已进入阅读队列" : "The reading plan is ready and selected papers entered your queue")
+        : item.kind === "search"
+          ? (locale === "zh" ? `定向检索已执行，${queued} 篇候选进入质量队列` : `Targeted discovery ran; ${queued} candidates entered quality review`)
+          : (locale === "zh" ? "Pi 已完成这项研究行动，并保留全部来源" : "Pi completed the action and retained its sources"));
+    } catch (error) {
+      await refreshActionState().catch(() => undefined);
+      setResearchProblemError(error instanceof Error ? error.message : "research action execution failed");
+    } finally {
+      if (pollTimer !== null) window.clearInterval(pollTimer);
+      setResearchProblemAction(null);
+    }
+  };
+
   const generateLearningPath = async (targetOverride?: string, trackIdOverride: string | null | undefined = undefined) => {
     const target = targetOverride?.trim() || learningTarget.trim();
     if (learningAction || !target || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
@@ -5036,7 +5163,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
               <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["problem", "assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab, tabIndex) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{String(tabIndex + 1).padStart(2, "0")}</span><strong>{tab === "problem" ? (locale === "zh" ? "研究问题" : "Research problem") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
 
-              {researchRouteTab === "problem" && <ResearchProblemWorkbench key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} loading={researchProblemLoading} action={researchProblemAction} error={researchProblemError} locale={locale} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} />}
+              {researchRouteTab === "problem" && <ResearchProblemWorkbench key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} loading={researchProblemLoading} action={researchProblemAction} error={researchProblemError} locale={locale} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} onExecuteAction={(item) => void executeResearchProblemAction(item)} />}
               {researchRouteTab === "assessment" && <ResearchSynthesisWorkbench track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} error={researchSynthesisError} locale={locale} onRefresh={() => void refreshResearchSynthesis(selectedThread)} onScanGap={() => void scanResearchRouteGap(selectedThread)} onExplain={() => askAboutResearchRoute(selectedThread, "gap")} />}
 
               {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-evidence-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "路线证据与代表作" : "ROUTE EVIDENCE & REPRESENTATIVE WORK"}</p><h2>{locale === "zh" ? "从奠基、转折走到当前前沿" : "From foundations and turning points to the frontier"}</h2></div><div className="v2-route-stage-counts">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span className={role} key={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</div></header><div className="v2-route-evidence-chain">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role, roleIndex) => <section className={role} key={role}><header><span>{String(roleIndex + 1).padStart(2, "0")}</span><div><strong>{researchRoleLabel(role, locale)}</strong><small>{role === "foundation" ? (locale === "zh" ? "定义问题与基本工具" : "Defines the question and core tools") : role === "milestone" ? (locale === "zh" ? "改变路线走向的关键节点" : "Turning points that changed the route") : (locale === "zh" ? "当前活跃问题与方法" : "Current active questions and methods")}</small></div></header><div>{selectedThread.papers.filter((paper) => paper.role === role).map((paper) => <article key={paper.id}><header><span>{researchPaperYear(paper)}</span><small>{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</small></header><em className={`v2-route-provenance ${paper.provenance || "system_curated"}`}>{paper.provenance === "user_confirmed" ? (locale === "zh" ? "用户已确认" : "User confirmed") : (locale === "zh" ? "Pi 策展代表作" : "Pi-curated representative")}</em><h3>{paper.title}</h3><p>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p><footer><button type="button" onClick={() => askAboutRoutePaper(selectedThread, paper)}>{locale === "zh" ? "让 Pi 解释位置" : "Ask Pi about its place"}</button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)}>{t.openOriginal} ↗</a></footer></article>)}{!selectedThread.papers.some((paper) => paper.role === role) && <div className="v2-route-chain-empty"><span>＋</span><p>{locale === "zh" ? "这个阶段仍缺少有代表性的真实论文。" : "This stage still lacks a representative real paper."}</p><button type="button" onClick={() => { setResearchRouteTab("gaps"); }}>{locale === "zh" ? "去补证据" : "Fill the gap"} →</button></div>}</div></section>)}</div></section>}

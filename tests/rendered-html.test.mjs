@@ -155,13 +155,13 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /const hydrating = payload\.action === "hydrate"/);
   assert.match(mapRoute, /const gapExpanding = payload\.action === "expand-gap"/);
   assert.match(mapRoute, /parseStoredIntelligence\(track\)\?\.nextSearchQuery/);
-  assert.match(mapRoute, /searchQueries: gapExpanding \? \[gapQuery\] : queries/);
+  assert.match(mapRoute, /searchQueries: targetedExpanding \? \[targetedQuery\] : queries/);
   assert.match(mapRoute, /buildProgress/);
   assert.match(mapRoute, /directionIntelligence/);
   assert.match(mapRoute, /interpretDirection/);
   assert.match(mapRoute, /evidenceCanonicalIds/);
   assert.match(mapRoute, /Distinguish metadata-supported statements from your synthesis/);
-  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "interpret"/);
+  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret"/);
   assert.match(mapRoute, /structureExistingTracks/);
   assert.match(mapRoute, /research_track_edges/);
   assert.match(mapRoute, /userRole \(core\|support\|explore\)/);
@@ -169,7 +169,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /last14Days \* 30 \+ last6Months \* 10/);
   assert.match(mapRoute, /recentPaperCount/);
   assert.match(mapRoute, /api\.semanticscholar\.org\/graph\/v1\/paper\/batch/);
-  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "interpret" \| "structure" \| "activity" \| "network" \| "reconcile"/);
+  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret" \| "structure" \| "activity" \| "network" \| "reconcile"/);
   assert.match(mapRoute, /reconcileConfirmedResearchMapEvidence/);
   assert.match(mapRoute, /ep\.status = 'confirmed'/);
   assert.match(mapRoute, /system_curated/);

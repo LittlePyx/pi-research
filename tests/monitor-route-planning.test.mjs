@@ -183,7 +183,7 @@ test("review persistence is atomically suppressed before dismissal and later dis
 
 function guidanceSnapshot(sqlite) {
   const tracks = sqlite.prepare(RESEARCH_GUIDANCE_TRACKS_SQL).all("space-a");
-  const revisions = sqlite.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).get("space-a", "space-a", "space-a", "space-a", "space-a", "space-a", "space-a");
+  const revisions = sqlite.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).get("space-a", "space-a", "space-a", "space-a", "space-a", "space-a", "space-a", "space-a");
   const confirmedEvidence = sqlite.prepare(RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL).all("space-a");
   return {
     identity: researchGuidanceIdentity({
@@ -195,6 +195,7 @@ function guidanceSnapshot(sqlite) {
       synthesisRevision: revisions.synthesis_revision,
       problemRevision: revisions.problem_revision,
       problemAssessmentRevision: revisions.problem_assessment_revision,
+      actionRunRevision: revisions.action_run_revision,
       confirmedEvidence,
     }),
     confirmedEvidence,
@@ -220,6 +221,7 @@ test("interaction and confirmed route evidence change the durable guidance ident
       CREATE TABLE research_syntheses (space_id TEXT, status TEXT, updated_at TEXT);
       CREATE TABLE research_problems (space_id TEXT, status TEXT, updated_at TEXT);
       CREATE TABLE research_problem_assessments (space_id TEXT, created_at TEXT);
+      CREATE TABLE research_action_runs (space_id TEXT, status TEXT, updated_at TEXT);
       INSERT INTO research_tracks VALUES
         ('track-a', 'space-a', 'core', 70, 25, 1, '{}', NULL);
       INSERT INTO monitored_papers VALUES
@@ -246,6 +248,11 @@ test("interaction and confirmed route evidence change the durable guidance ident
       .run("space-a", "2026-08-21 09:20:00");
     const problemAssessed = guidanceSnapshot(sqlite);
     assert.notEqual(problemAssessed.identity, problemDefined.identity);
+
+    sqlite.prepare("INSERT INTO research_action_runs VALUES (?, ?, ?)")
+      .run("space-a", "ready", "2026-08-21 09:30:00");
+    const actionExecuted = guidanceSnapshot(sqlite);
+    assert.notEqual(actionExecuted.identity, problemAssessed.identity);
 
     sqlite.prepare("INSERT INTO research_map_evidence_proposals VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run("confirmed-a", "space-a", "track-a", "paper-a", "foundation", 91, "confirmed", "2026-08-21 10:00:00");

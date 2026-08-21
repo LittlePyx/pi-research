@@ -69,13 +69,13 @@ test("recommendation reconciliation consumes confirmed evidence without another 
   assert.doesNotMatch(reconcile, /llm_recommended|callDeepSeek|paper_insights[^]*analysis_source/);
 });
 
-test("targeted gap expansion queues reviewable evidence instead of writing formal route papers", async () => {
+test("targeted gap and research-action expansion queue reviewable evidence instead of writing formal route papers", async () => {
   const route = await readFile(routePath, "utf8");
-  const gapBranch = section(route, "if (gapExpanding) {", "} else {");
+  const targetedBranch = section(route, "if (targetedExpanding) {", "} else {");
 
-  assert.match(gapBranch, /queueResult\.queuedForReviewCount/);
+  assert.match(targetedBranch, /queueResult\.queuedForReviewCount/);
   assert.match(route, /enqueueMonitorCandidates/);
-  assert.match(gapBranch, /addedCount = queueResult\.queuedForReviewCount/);
-  assert.doesNotMatch(gapBranch, /INSERT (?:OR IGNORE )?INTO research_track_papers/);
-  assert.match(route, /if \(!gapExpanding\) await saveDirectionIntelligence/);
+  assert.match(targetedBranch, /addedCount = queueResult\.queuedForReviewCount/);
+  assert.doesNotMatch(targetedBranch, /INSERT (?:OR IGNORE )?INTO research_track_papers/);
+  assert.match(route, /if \(!targetedExpanding\) await saveDirectionIntelligence/);
 });

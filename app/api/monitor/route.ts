@@ -957,6 +957,9 @@ async function routeDiscoveryQueries(
      COALESCE(problem.question, '') AS research_problem_question,
      COALESCE((SELECT assessment.next_search_query FROM research_problem_assessments assessment
        WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS problem_next_search_query,
+     COALESCE((SELECT run.search_query FROM research_action_runs run
+       WHERE run.problem_id = problem.id AND run.status = 'ready' AND run.search_query != ''
+       ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS action_next_search_query,
      MAX(c.last_scanned_at) AS last_scanned_at
      FROM research_tracks t
      LEFT JOIN monitor_discovery_coverage c ON c.space_id = t.space_id AND c.route_id = t.id AND c.horizon = ?
@@ -979,7 +982,7 @@ async function routeDiscoveryQueries(
       synthesis.overview_en, synthesis.next_search_query, synthesis.confidence, problem.id, problem.question
      ORDER BY CASE WHEN MAX(c.last_scanned_at) IS NULL THEN 0 ELSE 1 END, MAX(c.last_scanned_at),
      CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, t.interaction_score DESC, t.depth_score DESC`,
-  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; research_problem_id: string; research_problem_question: string; problem_next_search_query: string; last_scanned_at: string | null }>();
+  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; research_problem_id: string; research_problem_question: string; problem_next_search_query: string; action_next_search_query: string; last_scanned_at: string | null }>();
   const coreBudget = mode === "focused" ? 2 : 2;
   const adjacentBudget = mode === "focused" ? 0 : mode === "open" ? 2 : 1;
   const chooseRoutes = (pool: typeof rows.results, budget: number) => {
@@ -1013,6 +1016,8 @@ async function routeDiscoveryQueries(
     }).filter((plan) => plan.query.length >= 4);
   const gapRows = selectedRows.flatMap(({ row, role }) => {
     const intelligence = directionDiscoverySignal(row.intelligence_json, row.intelligence_updated_at);
+    const actionQuery = cleanText(row.action_next_search_query || "");
+    if (actionQuery && asciiOnly(actionQuery)) return [{ row, role, intelligence: { nextSearchQuery: actionQuery, confidence: 100 } }];
     const problemQuery = cleanText(row.problem_next_search_query || "");
     if (problemQuery && asciiOnly(problemQuery)) return [{ row, role, intelligence: { nextSearchQuery: problemQuery, confidence: 96 } }];
     const synthesisQuery = cleanText(row.synthesis_next_search_query || "");
@@ -1673,7 +1678,7 @@ async function ensureDailyQueryPlan(
       plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null; created_at: string;
     }>(),
     database.prepare(RESEARCH_GUIDANCE_TRACKS_SQL).bind(space.id).all<ResearchGuidanceTrackSnapshot>(),
-    database.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).bind(space.id, space.id, space.id, space.id, space.id, space.id, space.id).first<{
+    database.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).bind(space.id, space.id, space.id, space.id, space.id, space.id, space.id, space.id).first<{
       preference_revision: string;
       feedback_revision: string;
       reading_revision: string;
@@ -1681,6 +1686,7 @@ async function ensureDailyQueryPlan(
       synthesis_revision: string;
       problem_revision: string;
       problem_assessment_revision: string;
+      action_run_revision: string;
     }>(),
     database.prepare(RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL).bind(space.id).all<ConfirmedRouteEvidenceSnapshot>(),
   ]);
@@ -1693,6 +1699,7 @@ async function ensureDailyQueryPlan(
     synthesisRevision: guidance?.synthesis_revision || "",
     problemRevision: guidance?.problem_revision || "",
     problemAssessmentRevision: guidance?.problem_assessment_revision || "",
+    actionRunRevision: guidance?.action_run_revision || "",
     confirmedEvidence: confirmedEvidence.results,
   });
   const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(guidanceIdentity));
@@ -1749,9 +1756,15 @@ async function ensureDailyQueryPlan(
           WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS next_decision_en,
         COALESCE((SELECT assessment.next_search_query FROM research_problem_assessments assessment
           WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS next_search_query
+        ,COALESCE((SELECT run.result_en FROM research_action_runs run
+          WHERE run.problem_id = problem.id AND run.status = 'ready' ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS latest_action_result_en
+        ,COALESCE((SELECT run.decision_en FROM research_action_runs run
+          WHERE run.problem_id = problem.id AND run.status = 'ready' ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS latest_action_decision_en
+        ,COALESCE((SELECT run.search_query FROM research_action_runs run
+          WHERE run.problem_id = problem.id AND run.status = 'ready' AND run.search_query != '' ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS latest_action_search_query
        FROM research_problems problem WHERE problem.space_id = ? AND problem.status = 'active'
        ORDER BY problem.updated_at DESC LIMIT 8`,
-    ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; next_search_query: string }>(),
+    ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; next_search_query: string; latest_action_result_en: string; latest_action_decision_en: string; latest_action_search_query: string }>(),
   ]);
   const directionSignals = tracks.results.flatMap((track) => {
     const intelligence = directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at);
@@ -2277,9 +2290,13 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS uncertainty_en,
       COALESCE((SELECT assessment.next_decision_en FROM research_problem_assessments assessment
         WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS next_decision_en
+      ,COALESCE((SELECT run.result_en FROM research_action_runs run
+        WHERE run.problem_id = problem.id AND run.status = 'ready' ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS latest_action_result_en
+      ,COALESCE((SELECT run.decision_en FROM research_action_runs run
+        WHERE run.problem_id = problem.id AND run.status = 'ready' ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS latest_action_decision_en
      FROM research_problems problem WHERE problem.space_id = ? AND problem.status = 'active'
      ORDER BY problem.updated_at DESC LIMIT 10`,
-  ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string }>();
+  ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; latest_action_result_en: string; latest_action_decision_en: string }>();
   const validTrackIds = new Set(mapTracks.results.map((track) => track.id));
   const validProblemIds = new Set(activeProblems.results.map((problem) => problem.id));
   const problemByTrackId = new Map(activeProblems.results.map((problem) => [problem.track_id, problem]));

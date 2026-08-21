@@ -1350,7 +1350,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "expand-gap" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -1409,6 +1409,8 @@ export async function POST(request: Request) {
 
     const hydrating = payload.action === "hydrate";
     const gapExpanding = payload.action === "expand-gap";
+    const actionExpanding = payload.action === "expand-action";
+    const targetedExpanding = gapExpanding || actionExpanding;
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
       "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
@@ -1420,9 +1422,17 @@ export async function POST(request: Request) {
     const synthesisGap = gapExpanding ? await database.prepare(
       "SELECT next_search_query FROM research_syntheses WHERE space_id = ? AND track_id = ? AND status IN ('ready', 'partial') AND next_search_query != '' LIMIT 1",
     ).bind(space.id, track.id).first<{ next_search_query: string }>() : null;
-    const gapQuery = gapExpanding ? synthesisGap?.next_search_query.trim() || parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
-    if (gapExpanding && !gapQuery) {
-      return Response.json({ error: "Refresh Pi's direction assessment before scanning this evidence gap" }, { status: 422 });
+    const actionQuery = actionExpanding ? await database.prepare(
+      `SELECT run.search_query FROM research_action_runs run
+       JOIN research_problem_actions action ON action.id = run.action_id AND action.status = 'accepted' AND action.kind = 'search'
+       WHERE run.id = ? AND run.space_id = ? AND run.track_id = ? AND run.status = 'ready' AND run.search_query != '' LIMIT 1`,
+    ).bind(payload.actionRunId?.trim() || "", space.id, track.id).first<{ search_query: string }>() : null;
+    const targetedQuery = actionExpanding ? actionQuery?.search_query.trim() || ""
+      : gapExpanding ? synthesisGap?.next_search_query.trim() || parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
+    if (targetedExpanding && !targetedQuery) {
+      return Response.json({ error: actionExpanding
+        ? "Run a valid search action before targeted discovery"
+        : "Refresh Pi's direction assessment before scanning this evidence gap" }, { status: 422 });
     }
     const direction: DirectionDraft = {
       key: track.id,
@@ -1430,7 +1440,7 @@ export async function POST(request: Request) {
       titleEn: track.title_en,
       summaryZh: track.summary_zh,
       summaryEn: track.summary_en,
-      searchQueries: gapExpanding ? [gapQuery] : queries,
+      searchQueries: targetedExpanding ? [targetedQuery] : queries,
       userRole: track.user_role,
       depthScore: track.depth_score,
       supportScore: track.support_score,
@@ -1482,7 +1492,7 @@ export async function POST(request: Request) {
       const candidate = candidateById.get(selection.canonicalId);
       if (!candidate || inserted.has(selection.canonicalId)) return [];
       inserted.add(selection.canonicalId);
-      const sourceKind = gapExpanding ? "gap" : selection.role;
+      const sourceKind = actionExpanding ? "action" : gapExpanding ? "gap" : selection.role;
       return [{
         canonicalId: candidate.canonicalId,
         doi: candidate.doi,
@@ -1503,14 +1513,14 @@ export async function POST(request: Request) {
         provenance: [{
           sourceKey: `research-route:${sourceKind}`,
           channel: "topic" as const,
-          queryKey: `${track.id}:${gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}`}`,
-          queryText: gapExpanding ? gapQuery : queries.join(" | "),
+          queryKey: `${track.id}:${actionExpanding ? `action:${payload.actionRunId}` : gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}`}`,
+          queryText: targetedExpanding ? targetedQuery : queries.join(" | "),
           routeId: track.id,
         }],
       }];
     });
     const queueResult = await enqueueMonitorCandidates(database, space.id, queueCandidates, { recordDiscoveryCoverage: true });
-    if (gapExpanding) {
+    if (targetedExpanding) {
       // Gap discovery is only a review candidate. Deep review creates the
       // pending evidence proposal if and only if it passes the quality gate.
       addedCount = queueResult.queuedForReviewCount;
@@ -1536,7 +1546,7 @@ export async function POST(request: Request) {
       await database.prepare("UPDATE research_tracks SET expansion_count = expansion_count + 1, interaction_score = MIN(35, interaction_score + 5), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
         .bind(track.id, space.id).run();
     }
-    if (!gapExpanding) await saveDirectionIntelligence(database, space.id, track.id, reviewed.intelligence[0] || null);
+    if (!targetedExpanding) await saveDirectionIntelligence(database, space.id, track.id, reviewed.intelligence[0] || null);
     return Response.json(await readMap(database, space.id, {
       cached: false,
       addedCount,
@@ -1545,7 +1555,8 @@ export async function POST(request: Request) {
       alreadyReviewedCount: queueResult.alreadyReviewedCount,
       hydratedTrackId: hydrating ? track.id : null,
       gapExpanded: gapExpanding,
-      gapQuery: gapExpanding ? gapQuery : undefined,
+      actionExpanded: actionExpanding,
+      gapQuery: targetedExpanding ? targetedQuery : undefined,
     }));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to build the research map" }, { status: 502 });

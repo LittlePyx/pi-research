@@ -37,6 +37,16 @@ type ActionRow = {
   id: string; assessment_id: string | null; kind: string; title_zh: string; title_en: string;
   rationale_zh: string; rationale_en: string; status: string; position: number; completed_at: string | null; updated_at: string;
 };
+type ActionRunRow = {
+  id: string; action_id: string; status: string; progress: number; stage: string; input_revision: string;
+  headline_zh: string; headline_en: string; result_zh: string; result_en: string; decision_zh: string; decision_en: string;
+  limitations_zh: string; limitations_en: string; search_query: string; deliverable_json: string;
+  source_paper_ids: string; source_claim_ids: string; model: string; error: string | null;
+  started_at: string; completed_at: string | null; updated_at: string;
+};
+type ActionSourcePaperRow = {
+  id: string; title: string; authors: string; venue: string; published_at: string | null; url: string;
+};
 type DeepSeekResponse = {
   choices?: Array<{ message?: { content?: string } }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -56,6 +66,13 @@ function parseObject(value: string) {
   const end = normalized.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error("Pi returned an incomplete research problem response");
   return JSON.parse(normalized.slice(start, end + 1)) as Record<string, unknown>;
+}
+
+function parseStoredObject(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
 }
 
 async function ownedContext(request: Request, spaceId: string, trackId: string) {
@@ -112,6 +129,20 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
       completed_at, updated_at FROM research_problem_actions WHERE problem_id = ? AND status != 'dismissed'
      ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'proposed' THEN 1 WHEN 'done' THEN 2 ELSE 3 END, position, updated_at DESC`,
   ).bind(problem.id).all<ActionRow>()).results : [];
+  const runs = problem ? (await database.prepare(
+    `SELECT id, action_id, status, progress, stage, input_revision, headline_zh, headline_en, result_zh,
+      result_en, decision_zh, decision_en, limitations_zh, limitations_en, search_query, deliverable_json,
+      source_paper_ids, source_claim_ids, model, error, started_at, completed_at, updated_at
+     FROM research_action_runs WHERE problem_id = ? ORDER BY started_at DESC, rowid DESC`,
+  ).bind(problem.id).all<ActionRunRow>()).results : [];
+  const latestRunByAction = new Map<string, ActionRunRow>();
+  for (const run of runs) if (!latestRunByAction.has(run.action_id)) latestRunByAction.set(run.action_id, run);
+  const sourcePaperIds = Array.from(new Set(runs.flatMap((run) => parseArray(run.source_paper_ids)).map(String))).slice(0, 80);
+  const sourcePapers = sourcePaperIds.length ? (await database.prepare(
+    `SELECT id, title, authors, venue, published_at, url FROM monitored_papers
+     WHERE space_id = ? AND id IN (${sourcePaperIds.map(() => "?").join(",")})`,
+  ).bind(spaceId, ...sourcePaperIds).all<ActionSourcePaperRow>()).results : [];
+  const sourcePaperById = new Map(sourcePapers.map((paper) => [paper.id, paper]));
   return {
     problem: problem ? {
       id: problem.id, status: problem.status, workingLanguage: problem.working_language,
@@ -138,6 +169,23 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
       id: item.id, assessmentId: item.assessment_id, kind: item.kind, titleZh: item.title_zh, titleEn: item.title_en,
       rationaleZh: item.rationale_zh, rationaleEn: item.rationale_en, status: item.status,
       position: item.position, completedAt: item.completed_at, updatedAt: item.updated_at,
+      run: latestRunByAction.has(item.id) ? (() => {
+        const run = latestRunByAction.get(item.id)!;
+        const paperIds = parseArray(run.source_paper_ids).map(String);
+        return {
+          id: run.id, status: run.status, progress: run.progress, stage: run.stage, inputRevision: run.input_revision,
+          headlineZh: run.headline_zh, headlineEn: run.headline_en, resultZh: run.result_zh, resultEn: run.result_en,
+          decisionZh: run.decision_zh, decisionEn: run.decision_en, limitationsZh: run.limitations_zh,
+          limitationsEn: run.limitations_en, searchQuery: run.search_query, deliverable: parseStoredObject(run.deliverable_json),
+          sourcePaperIds: paperIds, sourceClaimIds: parseArray(run.source_claim_ids).map(String), model: run.model,
+          error: run.error, startedAt: run.started_at, completedAt: run.completed_at, updatedAt: run.updated_at,
+          sourcePapers: paperIds.flatMap((paperId) => {
+            const paper = sourcePaperById.get(paperId);
+            return paper ? [{ id: paper.id, title: paper.title, authors: paper.authors, venue: paper.venue,
+              publishedAt: paper.published_at, url: paper.url }] : [];
+          }),
+        };
+      })() : null,
     })),
     evidence: {
       synthesisReady: Boolean(synthesis.synthesis), statementCount: synthesis.statements.length,
@@ -376,6 +424,13 @@ export async function PATCH(request: Request) {
     if (!spaceId || !trackId || !actionId || !["accepted", "done", "dismissed"].includes(status)) return Response.json({ error: "Invalid action update" }, { status: 400 });
     const context = await ownedContext(request, spaceId, trackId);
     if ("error" in context) return context.error;
+    if (status === "done") {
+      const completedRun = await context.database.prepare(
+        `SELECT run.id FROM research_action_runs run JOIN research_problem_actions action ON action.id = run.action_id
+         WHERE run.action_id = ? AND run.space_id = ? AND run.track_id = ? AND run.status = 'ready' LIMIT 1`,
+      ).bind(actionId, spaceId, trackId).first<{ id: string }>();
+      if (!completedRun) return Response.json({ error: "Pi must finish this research action before it can be marked complete" }, { status: 422 });
+    }
     const updated = await context.database.prepare(
       `UPDATE research_problem_actions SET status = ?, completed_at = CASE WHEN ? = 'done' THEN CURRENT_TIMESTAMP ELSE NULL END,
         updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND track_id = ?`,

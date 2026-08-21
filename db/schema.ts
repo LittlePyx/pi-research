@@ -845,6 +845,47 @@ export const researchProblemActions = sqliteTable(
   ],
 );
 
+export const researchActionRuns = sqliteTable(
+  "research_action_runs",
+  {
+    id: text("id").primaryKey(),
+    actionId: text("action_id").notNull().references(() => researchProblemActions.id, { onDelete: "cascade" }),
+    problemId: text("problem_id").notNull().references(() => researchProblems.id, { onDelete: "cascade" }),
+    assessmentId: text("assessment_id").references(() => researchProblemAssessments.id, { onDelete: "set null" }),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("queued"),
+    progress: integer("progress").notNull().default(0),
+    stage: text("stage").notNull().default("queued"),
+    inputRevision: text("input_revision").notNull().default(""),
+    headlineZh: text("headline_zh").notNull().default(""),
+    headlineEn: text("headline_en").notNull().default(""),
+    resultZh: text("result_zh").notNull().default(""),
+    resultEn: text("result_en").notNull().default(""),
+    decisionZh: text("decision_zh").notNull().default(""),
+    decisionEn: text("decision_en").notNull().default(""),
+    limitationsZh: text("limitations_zh").notNull().default(""),
+    limitationsEn: text("limitations_en").notNull().default(""),
+    searchQuery: text("search_query").notNull().default(""),
+    deliverableJson: text("deliverable_json").notNull().default("{}"),
+    sourcePaperIds: text("source_paper_ids").notNull().default("[]"),
+    sourceClaimIds: text("source_claim_ids").notNull().default("[]"),
+    model: text("model").notNull().default(""),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    error: text("error"),
+    startedAt: text("started_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    completedAt: text("completed_at"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    index("idx_research_action_runs_action_created").on(table.actionId, table.startedAt),
+    index("idx_research_action_runs_problem_created").on(table.problemId, table.startedAt),
+    index("idx_research_action_runs_space_status").on(table.spaceId, table.status, table.updatedAt),
+    check("research_action_runs_status_check", sql`${table.status} in ('queued', 'running', 'ready', 'failed')`),
+  ],
+);
+
 export const researchProblemBootstrapSql = [
   "CREATE TABLE IF NOT EXISTS research_problems (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'paused', 'resolved')), working_language TEXT NOT NULL DEFAULT 'zh', question TEXT NOT NULL DEFAULT '', objective TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL DEFAULT '', success_criteria TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL DEFAULT 'literature' CHECK (stage IN ('literature', 'theory', 'method', 'experiment', 'writing')), model TEXT NOT NULL DEFAULT '', source_revision TEXT NOT NULL DEFAULT '', confirmed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_problems_space_track ON research_problems(space_id, track_id)",
@@ -858,6 +899,10 @@ export const researchProblemBootstrapSql = [
   "CREATE TABLE IF NOT EXISTS research_problem_actions (id TEXT PRIMARY KEY NOT NULL, problem_id TEXT NOT NULL REFERENCES research_problems(id) ON DELETE CASCADE, assessment_id TEXT REFERENCES research_problem_assessments(id) ON DELETE SET NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, kind TEXT NOT NULL DEFAULT 'verify', title_zh TEXT NOT NULL, title_en TEXT NOT NULL, rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'accepted', 'done', 'dismissed')), position INTEGER NOT NULL DEFAULT 0, completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS idx_research_problem_actions_problem_status ON research_problem_actions(problem_id, status, position)",
   "CREATE INDEX IF NOT EXISTS idx_research_problem_actions_space_updated ON research_problem_actions(space_id, updated_at)",
+  "CREATE TABLE IF NOT EXISTS research_action_runs (id TEXT PRIMARY KEY NOT NULL, action_id TEXT NOT NULL REFERENCES research_problem_actions(id) ON DELETE CASCADE, problem_id TEXT NOT NULL REFERENCES research_problems(id) ON DELETE CASCADE, assessment_id TEXT REFERENCES research_problem_assessments(id) ON DELETE SET NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'ready', 'failed')), progress INTEGER NOT NULL DEFAULT 0, stage TEXT NOT NULL DEFAULT 'queued', input_revision TEXT NOT NULL DEFAULT '', headline_zh TEXT NOT NULL DEFAULT '', headline_en TEXT NOT NULL DEFAULT '', result_zh TEXT NOT NULL DEFAULT '', result_en TEXT NOT NULL DEFAULT '', decision_zh TEXT NOT NULL DEFAULT '', decision_en TEXT NOT NULL DEFAULT '', limitations_zh TEXT NOT NULL DEFAULT '', limitations_en TEXT NOT NULL DEFAULT '', search_query TEXT NOT NULL DEFAULT '', deliverable_json TEXT NOT NULL DEFAULT '{}', source_paper_ids TEXT NOT NULL DEFAULT '[]', source_claim_ids TEXT NOT NULL DEFAULT '[]', model TEXT NOT NULL DEFAULT '', input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, error TEXT, started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS idx_research_action_runs_action_created ON research_action_runs(action_id, started_at)",
+  "CREATE INDEX IF NOT EXISTS idx_research_action_runs_problem_created ON research_action_runs(problem_id, started_at)",
+  "CREATE INDEX IF NOT EXISTS idx_research_action_runs_space_status ON research_action_runs(space_id, status, updated_at)",
 ] as const;
 
 export const monitorCandidateSources = sqliteTable(
