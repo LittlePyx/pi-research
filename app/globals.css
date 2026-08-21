@@ -19,6 +19,53 @@
   --shadow: 0 12px 36px rgba(35, 34, 28, 0.08);
 }
 
+/* Pi Research V68 — quiet, source-grounded paper reading */
+.v2-evidence-badge { width: fit-content; min-height: 24px; padding: 0 8px; border: 1px solid #d4ddd8; border-radius: 999px; background: #f8faf8; color: #607168; display: inline-flex; align-items: center; gap: 6px; font-size: 9px; font-style: normal; font-weight: 760; letter-spacing: .01em; white-space: nowrap; }
+.v2-evidence-badge i { width: 6px; height: 6px; border-radius: 50%; background: #9aa69f; }
+.v2-evidence-badge.fulltext { border-color: #b9cec1; background: #edf5f0; color: #315f49; }
+.v2-evidence-badge.fulltext i,.v2-evidence-badge.ready i { background: #438063; }
+.v2-evidence-badge.fetching { border-color: #cbd8df; background: #eff5f7; color: #456b7d; }
+.v2-evidence-badge.fetching i { background: #4d7d92; animation: v2-evidence-pulse 1.2s ease-in-out infinite; }
+@keyframes v2-evidence-pulse { 50% { opacity: .32; transform: scale(.75); } }
+.v2-evidence-grounding { margin-top: 18px; padding: 20px; border: 1px solid #d7dfda; border-radius: 12px; background: linear-gradient(135deg,rgba(248,250,248,.98),rgba(242,247,244,.84)); }
+.v2-evidence-grounding > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.v2-evidence-grounding > header h2 { margin: 5px 0 0; color: #354a3e; font: 400 22px/1.3 Georgia,serif; }
+.v2-evidence-grounding > header > span { padding-top: 3px; color: #718078; display: inline-flex; align-items: center; gap: 7px; font-size: 10px; }
+.v2-evidence-grounding > header > span i { width: 7px; height: 7px; border-radius: 50%; background: #668a75; }
+.v2-evidence-explainer { max-width: 780px; margin: 12px 0 0; color: #6c7770; font-size: 11px; line-height: 1.65; }
+.v2-evidence-summary { margin: 16px 0 0; padding: 11px 0; border-top: 1px solid #d9e1dc; border-bottom: 1px solid #d9e1dc; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
+.v2-evidence-summary div { min-width: 0; padding: 0 12px; }
+.v2-evidence-summary div:first-child { padding-left: 0; }
+.v2-evidence-summary div + div { border-left: 1px solid #dde4df; }
+.v2-evidence-summary dt { color: #8a958e; font-size: 9px; }
+.v2-evidence-summary dd { margin: 5px 0 0; color: #43544a; overflow: hidden; font: 12px/1.4 Georgia,serif; text-overflow: ellipsis; white-space: nowrap; }
+.v2-evidence-summary a { color: #35644e; text-decoration: none; }
+.v2-evidence-claims { margin-top: 14px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+.v2-evidence-claims article { min-width: 0; padding: 14px; border: 1px solid #d6e0d9; border-radius: 9px; background: rgba(255,255,255,.72); }
+.v2-evidence-claims article.inference { border-style: dashed; background: rgba(249,247,243,.72); }
+.v2-evidence-claims article > header,.v2-evidence-claims article > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.v2-evidence-claims article > header span { color: #456755; font-size: 9px; font-weight: 800; letter-spacing: .05em; }
+.v2-evidence-claims article > header b { color: #7e8d84; font-size: 8px; }
+.v2-evidence-claims article > p { margin: 9px 0 0; color: #3f4e46; font: 13px/1.6 Georgia,serif; }
+.v2-evidence-claims blockquote { margin: 10px 0 0; padding: 9px 10px; border-left: 2px solid #789982; background: #f1f6f2; color: #66736b; font: 10px/1.55 Georgia,serif; }
+.v2-evidence-claims article > footer { margin-top: 10px; color: #88938c; font-size: 8px; }
+.v2-evidence-claims article > footer em { font-style: normal; }
+.v2-evidence-empty { margin-top: 14px; padding: 12px; border-radius: 8px; background: #f2f5f2; color: #6f7c74; display: flex; align-items: center; gap: 10px; }
+.v2-evidence-empty p { margin: 0; font-size: 10px; line-height: 1.55; }
+.v2-evidence-note { margin-top: 12px; padding-top: 11px; border-top: 1px solid #dce3de; display: flex; align-items: center; gap: 10px; }
+.v2-evidence-note span { color: #8b6e59; font-size: 9px; font-weight: 760; }
+.v2-evidence-note p { flex: 1; margin: 0; color: #7b746e; font-size: 9px; line-height: 1.45; }
+.v2-evidence-note button { padding: 6px 9px; border: 1px solid #c8d5cd; border-radius: 6px; background: white; color: #416452; font-size: 9px; cursor: pointer; }
+@media (max-width: 760px) {
+  .v2-evidence-grounding { padding: 16px; }
+  .v2-evidence-grounding > header { display: block; }
+  .v2-evidence-grounding > header > span { margin-top: 8px; }
+  .v2-evidence-summary { grid-template-columns: repeat(2,minmax(0,1fr)); row-gap: 12px; }
+  .v2-evidence-summary div:nth-child(3) { padding-left: 0; border-left: 0; }
+  .v2-evidence-claims { grid-template-columns: 1fr; }
+  .v2-evidence-note { align-items: flex-start; flex-wrap: wrap; }
+}
+
 /* Pi Research V10 — grounded, persistent learning paths */
 .v2-learn-head { max-width: 860px; padding-bottom: 34px; }
 .v2-learn-head > small { display: block; margin-top: 10px; color: #7d847c; font-size: 11px; }

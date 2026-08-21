@@ -260,6 +260,13 @@ type PaperRow = {
   reading_focus_en: string;
   research_questions_zh: string;
   research_questions_en: string;
+  evidence_status: string;
+  evidence_level: string;
+  evidence_source_kind: string;
+  evidence_source_url: string;
+  evidence_claim_count: number;
+  evidence_grounded_claim_count: number;
+  evidence_coverage_score: number;
   track_id: string;
   discovery_source_key: string;
   discovery_route_id: string;
@@ -683,7 +690,8 @@ async function normalizeSemanticScholarItem(item: SemanticScholarPaper, horizon:
     title,
     authors: (item.authors || []).slice(0, 8).map((author) => cleanText(author.name || "")).filter(Boolean).join(", "),
     venue: cleanText(item.venue || ""),
-    url: item.url || (doi ? "https://doi.org/" + doi : item.externalIds?.ArXiv ? "https://arxiv.org/abs/" + item.externalIds.ArXiv : ""),
+    url: item.externalIds?.ArXiv ? "https://arxiv.org/abs/" + item.externalIds.ArXiv
+      : item.url || (doi ? "https://doi.org/" + doi : ""),
     publishedAt,
     abstractText: cleanText(item.abstract || "").slice(0, 2200),
     horizon,
@@ -1776,7 +1784,7 @@ async function ensureDailyQueryPlan(
 }
 
 async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceRow): Promise<SpaceRow> {
-  const [rows, tracks, feedbackRows, readingRows] = await Promise.all([
+  const [rows, tracks, feedbackRows, readingRows, groundedEvidenceRows] = await Promise.all([
     database.prepare(
       "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 6",
     ).bind(space.id).all<{ analysis_json: string }>(),
@@ -1794,6 +1802,21 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
        FROM paper_reading_memories WHERE space_id = ? AND analysis_status = 'ready'
        ORDER BY updated_at DESC LIMIT 16`,
     ).bind(space.id).all<{ takeaway_en: string; methods_en: string; questions_en: string; connections_en: string; topics_en: string }>(),
+    database.prepare(
+      `SELECT p.title, claim.kind, claim.claim_en, claim.section_label
+       FROM paper_evidence_claims claim
+       JOIN paper_evidence_documents document ON document.id = claim.document_id
+        AND document.space_id = claim.space_id AND document.paper_id = claim.paper_id
+       JOIN monitored_papers p ON p.id = claim.paper_id AND p.space_id = claim.space_id
+       LEFT JOIN paper_feedback feedback ON feedback.paper_id = p.id AND feedback.space_id = p.space_id
+       LEFT JOIN paper_reading_progress reading ON reading.paper_id = p.id AND reading.space_id = p.space_id
+       WHERE claim.space_id = ? AND claim.grounded = 1 AND document.status = 'ready'
+        AND document.evidence_level = 'fulltext'
+        AND (feedback.saved = 1 OR feedback.feedback = 'relevant' OR reading.status IN ('read','mastered','cited')
+         OR EXISTS (SELECT 1 FROM research_map_evidence_proposals proposal
+          WHERE proposal.space_id = p.space_id AND proposal.paper_id = p.id AND proposal.status = 'confirmed'))
+       ORDER BY document.analyzed_at DESC, claim.position LIMIT 18`,
+    ).bind(space.id).all<{ title: string; kind: string; claim_en: string; section_label: string }>(),
   ]);
   const context: string[] = [];
   for (const row of rows.results) {
@@ -1823,6 +1846,9 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
     context.push(cleanText(memory.takeaway_en).slice(0, 320), ...parseVenues(memory.methods_en).slice(0, 4),
       ...parseVenues(memory.questions_en).slice(0, 4), ...parseVenues(memory.connections_en).slice(0, 4),
       ...parseVenues(memory.topics_en).slice(0, 5));
+  }
+  for (const evidence of groundedEvidenceRows.results) {
+    context.push(cleanText(`${evidence.title} — grounded ${evidence.kind}: ${evidence.claim_en}${evidence.section_label ? ` [${evidence.section_label}]` : ""}`).slice(0, 520));
   }
   const positive = feedbackRows.results
     .filter((row) => row.saved || row.feedback === "relevant")
@@ -2060,6 +2086,20 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
   if (!insightWrites.length) return [] as PaperReview[];
   const insightResults = await database.batch(insightWrites.map((write) => write.statement));
   const persistedReviews = retainChangedMonitorWrites(insightWrites.map((write) => write.review), insightResults);
+
+  const evidenceQueueWrites = persistedReviews.flatMap((review) => {
+    const paperId = paperIds.get(review.canonicalId);
+    if (!review.recommended || !paperId) return [];
+    return [database.prepare(
+      `INSERT INTO paper_evidence_documents (id, space_id, paper_id, status)
+       VALUES (?, ?, ?, 'queued')
+       ON CONFLICT(space_id, paper_id) DO UPDATE SET
+        status = CASE WHEN paper_evidence_documents.status = 'ready' THEN 'ready' ELSE 'queued' END,
+        error = CASE WHEN paper_evidence_documents.status = 'ready' THEN paper_evidence_documents.error ELSE NULL END,
+        updated_at = CURRENT_TIMESTAMP`,
+    ).bind(crypto.randomUUID(), spaceId, paperId)];
+  });
+  if (evidenceQueueWrites.length) await database.batch(evidenceQueueWrites);
 
   const proposals = persistedReviews.flatMap((review) => {
     const candidate = candidateByCanonical.get(review.canonicalId);
@@ -3283,6 +3323,13 @@ function toPaper(paper: PaperRow, now: number) {
     readingFocusEn: paper.reading_focus_en,
     researchQuestionsZh: parseVenues(paper.research_questions_zh),
     researchQuestionsEn: parseVenues(paper.research_questions_en),
+    evidenceStatus: paper.evidence_status,
+    evidenceLevel: paper.evidence_level,
+    evidenceSourceKind: paper.evidence_source_kind,
+    evidenceSourceUrl: paper.evidence_source_url,
+    evidenceClaimCount: paper.evidence_claim_count,
+    evidenceGroundedClaimCount: paper.evidence_grounded_claim_count,
+    evidenceCoverageScore: paper.evidence_coverage_score,
     trackId: paper.track_id || null,
     qualityStage: "recommended" as const,
     ...(originKind && paper.discovery_route_id && sourceLabels ? {
@@ -3325,6 +3372,13 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.limitations_en, '') AS limitations_en, COALESCE(i.reading_focus_zh, '') AS reading_focus_zh,
        COALESCE(i.reading_focus_en, '') AS reading_focus_en, COALESCE(i.research_questions_zh, '[]') AS research_questions_zh,
        COALESCE(i.research_questions_en, '[]') AS research_questions_en,
+       COALESCE(ed.status, 'unavailable') AS evidence_status,
+       COALESCE(ed.evidence_level, CASE WHEN LENGTH(COALESCE(i.abstract_text, '')) > 0 THEN 'abstract' ELSE 'metadata' END) AS evidence_level,
+       COALESCE(ed.source_kind, CASE WHEN LENGTH(COALESCE(i.abstract_text, '')) > 0 THEN 'abstract' ELSE 'metadata' END) AS evidence_source_kind,
+       COALESCE(ed.source_url, '') AS evidence_source_url,
+       COALESCE(ed.claim_count, 0) AS evidence_claim_count,
+       COALESCE(ed.grounded_claim_count, 0) AS evidence_grounded_claim_count,
+       COALESCE(ed.coverage_score, 0) AS evidence_coverage_score,
        COALESCE((SELECT tp.track_id FROM research_track_papers tp
          WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
          ORDER BY tp.position LIMIT 1),
@@ -3357,6 +3411,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        LEFT JOIN paper_delivery_state d ON d.paper_id = p.id AND d.space_id = p.space_id
        LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
        LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
+       LEFT JOIN paper_evidence_documents ed ON ed.paper_id = p.id AND ed.space_id = p.space_id
        LEFT JOIN ${LATEST_AUDIT_ROUTE_ORIGIN_SUBQUERY} audit_route_origin
         ON audit_route_origin.space_id = p.space_id AND audit_route_origin.paper_id = p.id
        LEFT JOIN ${PRE_REVIEW_ROUTE_ORIGIN_SUBQUERY} fallback_route_origin

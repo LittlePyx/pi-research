@@ -566,6 +566,84 @@ export const paperInsights = sqliteTable(
   ],
 );
 
+export const paperEvidenceDocuments = sqliteTable(
+  "paper_evidence_documents",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("queued"),
+    evidenceLevel: text("evidence_level").notNull().default("metadata"),
+    sourceKind: text("source_kind").notNull().default("metadata"),
+    sourceUrl: text("source_url").notNull().default(""),
+    license: text("license").notNull().default(""),
+    textHash: text("text_hash").notNull().default(""),
+    extractedChars: integer("extracted_chars").notNull().default(0),
+    sectionCount: integer("section_count").notNull().default(0),
+    claimCount: integer("claim_count").notNull().default(0),
+    groundedClaimCount: integer("grounded_claim_count").notNull().default(0),
+    unsupportedClaimCount: integer("unsupported_claim_count").notNull().default(0),
+    coverageScore: integer("coverage_score").notNull().default(0),
+    model: text("model").notNull().default(""),
+    error: text("error"),
+    lockToken: text("lock_token"),
+    lockExpiresAt: text("lock_expires_at"),
+    fetchedAt: text("fetched_at"),
+    analyzedAt: text("analyzed_at"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_evidence_documents_space_paper").on(table.spaceId, table.paperId),
+    index("idx_paper_evidence_documents_space_status").on(table.spaceId, table.status, table.updatedAt),
+  ],
+);
+
+export const paperEvidenceClaims = sqliteTable(
+  "paper_evidence_claims",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id").notNull().references(() => paperEvidenceDocuments.id, { onDelete: "cascade" }),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    claimZh: text("claim_zh").notNull().default(""),
+    claimEn: text("claim_en").notNull().default(""),
+    evidenceQuote: text("evidence_quote").notNull().default(""),
+    sectionLabel: text("section_label").notNull().default(""),
+    locator: text("locator").notNull().default(""),
+    sourceUrl: text("source_url").notNull().default(""),
+    confidence: integer("confidence").notNull().default(0),
+    grounded: integer("grounded", { mode: "boolean" }).notNull().default(false),
+    position: integer("position").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_evidence_claims_document_position").on(table.documentId, table.position),
+    index("idx_paper_evidence_claims_paper_kind").on(table.paperId, table.kind),
+  ],
+);
+
+export const paperEvidenceAudits = sqliteTable(
+  "paper_evidence_audits",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id").notNull().references(() => paperEvidenceDocuments.id, { onDelete: "cascade" }),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    evidenceLevel: text("evidence_level").notNull().default("metadata"),
+    groundingRate: integer("grounding_rate").notNull().default(0),
+    locatorCoverage: integer("locator_coverage").notNull().default(0),
+    unsupportedClaims: integer("unsupported_claims").notNull().default(0),
+    abstractConflictCount: integer("abstract_conflict_count").notNull().default(0),
+    model: text("model").notNull().default(""),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_evidence_audits_document").on(table.documentId),
+    index("idx_paper_evidence_audits_space_level").on(table.spaceId, table.evidenceLevel, table.createdAt),
+  ],
+);
+
 export const monitorCandidateSources = sqliteTable(
   "monitor_candidate_sources",
   {
