@@ -2409,6 +2409,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const reportedImpressions = useRef(new Set<string>());
+  const reportedEngagements = useRef(new Set<string>());
+  const engagementSessionRef = useRef("");
 
   const t = copy[locale];
   useEffect(() => { paperNetworkSpaceRef.current = activeSpaceId; }, [activeSpaceId]);
@@ -2435,6 +2437,32 @@ export default function ResearchApp({ user }: { user: User }) {
     [monitor?.papers],
   );
   const historyPapers = useMemo(() => monitor?.historyPapers || monitor?.papers || [], [monitor?.historyPapers, monitor?.papers]);
+  const todayPaperIdentity = useMemo(() => (monitor?.papers || []).map((paper) => paper.id).join("|"), [monitor?.papers]);
+  const selectedMonitorPaperId = selectedMonitorPaper?.id || "";
+  const engagementEventKey = (paperId: string, kind: string) => {
+    if (!engagementSessionRef.current) engagementSessionRef.current = crypto.randomUUID();
+    return `${engagementSessionRef.current}:${paperId}:${kind}`;
+  };
+  const recordPaperEngagement = (
+    paper: MonitorPaper,
+    kind: "detail_dwell" | "original_click" | "share" | "ask_pi",
+    options: { dwellMs?: number; context?: string } = {},
+  ) => {
+    if (activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        spaceId: activeSpace.id,
+        paperId: paper.id,
+        kind,
+        value: true,
+        eventKey: engagementEventKey(paper.id, kind),
+        dwellMs: options.dwellMs || 0,
+        context: options.context || "paper_detail",
+      }),
+    }).catch(() => undefined);
+  };
   const libraryPapers = useMemo(() => {
     const query = librarySearch.trim().toLocaleLowerCase();
     const stateRank: Record<MonitorPaper["userState"], number> = { unseen: 0, seen: 1, snoozed: 2, accepted: 3, dismissed: 4 };
@@ -3196,6 +3224,76 @@ export default function ResearchApp({ user }: { user: User }) {
   }, [activeSpace.id, monitor?.papers, view]);
 
   useEffect(() => {
+    if (view !== "today" || !todayPaperIdentity || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    const dwellTimers = new Map<Element, number>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const paperId = entry.target.getAttribute("data-paper-impression");
+        if (!paperId) continue;
+        const key = `${activeSpace.id}:${paperId}:engaged_view`;
+        const existingTimer = dwellTimers.get(entry.target);
+        if ((!entry.isIntersecting || entry.intersectionRatio < 0.55) && existingTimer) {
+          window.clearTimeout(existingTimer);
+          dwellTimers.delete(entry.target);
+          continue;
+        }
+        if (!entry.isIntersecting || entry.intersectionRatio < 0.55 || existingTimer || reportedEngagements.current.has(key)) continue;
+        const timer = window.setTimeout(() => {
+          dwellTimers.delete(entry.target);
+          if (document.visibilityState !== "visible" || reportedEngagements.current.has(key)) return;
+          reportedEngagements.current.add(key);
+          fetch("/api/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              spaceId: activeSpace.id,
+              paperId,
+              kind: "engaged_view",
+              value: true,
+              eventKey: engagementEventKey(paperId, "engaged_view"),
+              dwellMs: 8_000,
+              context: "today",
+            }),
+          }).catch(() => reportedEngagements.current.delete(key));
+        }, 8_000);
+        dwellTimers.set(entry.target, timer);
+      }
+    }, { threshold: [0.55] });
+    const elements = document.querySelectorAll("[data-paper-impression]");
+    elements.forEach((element) => observer.observe(element));
+    return () => {
+      observer.disconnect();
+      dwellTimers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [activeSpace.id, todayPaperIdentity, view]);
+
+  useEffect(() => {
+    if (view !== "paper-detail" || !selectedMonitorPaperId || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    const paperId = selectedMonitorPaperId;
+    const key = `${activeSpace.id}:${paperId}:detail_dwell`;
+    if (reportedEngagements.current.has(key)) return;
+    const timer = window.setTimeout(() => {
+      if (document.visibilityState !== "visible" || reportedEngagements.current.has(key)) return;
+      reportedEngagements.current.add(key);
+      if (!engagementSessionRef.current) engagementSessionRef.current = crypto.randomUUID();
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spaceId: activeSpace.id,
+          paperId,
+          kind: "detail_dwell",
+          value: true,
+          eventKey: `${engagementSessionRef.current}:${paperId}:detail_dwell`,
+          dwellMs: 12_000,
+          context: "paper_detail",
+        }),
+      }).catch(() => reportedEngagements.current.delete(key));
+    }, 12_000);
+    return () => window.clearTimeout(timer);
+  }, [activeSpace.id, selectedMonitorPaperId, view]);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -3560,7 +3658,14 @@ export default function ResearchApp({ user }: { user: User }) {
     fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, kind: "open", value: true }),
+      body: JSON.stringify({
+        spaceId: activeSpace.id,
+        paperId: paper.id,
+        kind: "open",
+        value: true,
+        eventKey: engagementEventKey(paper.id, "detail_open"),
+        context: view === "library" ? "library" : "today",
+      }),
     }).catch(() => undefined);
     navigate("paper-detail");
   };
@@ -3577,6 +3682,7 @@ export default function ResearchApp({ user }: { user: User }) {
       });
       const data = await response.json() as { url?: string; title?: string; error?: string };
       if (!response.ok || !data.url) throw new Error(data.error || "share failed");
+      if (kind === "paper" && papers[0]) recordPaperEngagement(papers[0], "share", { context: "paper_detail" });
 
       if (navigator.share) {
         try {
@@ -3715,6 +3821,7 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const askAboutMonitorPaper = (paper: MonitorPaper) => {
+    recordPaperEngagement(paper, "ask_pi", { context: "paper_detail" });
     setQuestion(locale === "zh" ? `请结合当前研究空间分析这篇论文：${paper.title}` : `Analyze this paper in the context of the current research space: ${paper.title}`);
     setAskOpen(true);
   };
@@ -4461,7 +4568,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-import-safety-inline"><b>!</b><span><strong>{t.importSafetyTitle}</strong><small>{t.importSafetyBody}</small></span></div>
               <button type="button" onClick={openResearchImport}>{confirmedProfile ? (locale === "zh" ? "继续导入资料" : "Import more materials") : t.importResearch} →</button>
             </section>
-            <section className="v2-layered-memory"><header><div><p className="v2-kicker">π {locale === "zh" ? "分层研究记忆" : "Layered research memory"}</p><h2>{locale === "zh" ? "你说过的，与 Pi 推断的，分开保存" : "What you said and what Pi inferred stay separate"}</h2></div><small>{locale === "zh" ? "推断会随时间衰减，也可以随时停用" : "Inferences decay over time and can be disabled"}</small></header><div><section><h3>{locale === "zh" ? "明确偏好" : "Explicit evidence"}<span>{explicitPreferenceSignals.length}</span></h3>{explicitPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><small>{signal.evidence}</small></div><b>{signal.effectiveConfidence}%</b></article>)}{!explicitPreferenceSignals.length && <p>{locale === "zh" ? "对论文标记“适合”或“不相关”时选择原因，这里会形成长期偏好。" : "Choose a reason when accepting or dismissing a paper to build durable preferences."}</p>}</section><section><h3>{locale === "zh" ? "Pi 的推断" : "Pi inferences"}<span>{inferredPreferenceSignals.length}</span></h3>{inferredPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><small>{signal.evidence}</small></div><b>{signal.effectiveConfidence}%</b><button type="button" onClick={() => dismissInferredSignal(signal.id)} aria-label={locale === "zh" ? "停用这条推断" : "Disable this inference"}>×</button></article>)}{!inferredPreferenceSignals.length && <p>{locale === "zh" ? "确认导入研究资料后，Pi 会把有证据的兴趣与问题放在这里。" : "After a research import is confirmed, grounded interests and questions appear here."}</p>}</section></div></section>
+            <section className="v2-layered-memory"><header><div><p className="v2-kicker">π {locale === "zh" ? "分层研究记忆" : "Layered research memory"}</p><h2>{locale === "zh" ? "你说过的，与 Pi 推断的，分开保存" : "What you said and what Pi inferred stay separate"}</h2></div><small>{locale === "zh" ? "有效阅读行为会形成可撤销假设；单纯曝光不计入" : "Qualified reading behavior forms revisable hypotheses; exposure alone does not count"}</small></header><div><section><h3>{locale === "zh" ? "明确偏好" : "Explicit evidence"}<span>{explicitPreferenceSignals.length}</span></h3>{explicitPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><small>{signal.evidence}</small></div><b>{signal.effectiveConfidence}%</b></article>)}{!explicitPreferenceSignals.length && <p>{locale === "zh" ? "对论文标记“适合”或“不相关”时选择原因，这里会形成长期偏好。" : "Choose a reason when accepting or dismissing a paper to build durable preferences."}</p>}</section><section><h3>{locale === "zh" ? "Pi 的推断" : "Pi inferences"}<span>{inferredPreferenceSignals.length}</span></h3>{inferredPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><small>{signal.evidence}</small></div><b>{signal.effectiveConfidence}%</b><button type="button" onClick={() => dismissInferredSignal(signal.id)} aria-label={locale === "zh" ? "停用这条推断" : "Disable this inference"}>×</button></article>)}{!inferredPreferenceSignals.length && <p>{locale === "zh" ? "深读、访问原文、向 Pi 提问或确认导入资料后，有证据的兴趣假设会出现在这里。" : "Grounded interest hypotheses appear after deeper reading, original-paper visits, questions to Pi, or confirmed imports."}</p>}</section></div></section>
             <section className="v2-reading-memory"><header><div><p className="v2-kicker warm">π {locale === "zh" ? "从阅读中沉淀" : "LEARNING FROM READING"}</p><h2>{locale === "zh" ? "读过的论文正在改变后续推荐" : "What you read is shaping future discovery"}</h2><p>{locale === "zh" ? "Pi 只在你主动保存阅读笔记时提取结论、方法、问题和研究连接；原笔记与 AI 推断分开保存。" : "Pi extracts conclusions, methods, questions, and research links only when you explicitly save a note. Your note remains separate from AI inference."}</p></div><strong>{monitor?.readingMemories?.filter((memory) => memory.analysisStatus === "ready").length || 0}</strong></header><div>{monitor?.readingMemories?.map((memory) => { const methods = locale === "zh" ? memory.methodsZh : memory.methodsEn; const questions = locale === "zh" ? memory.questionsZh : memory.questionsEn; const connections = locale === "zh" ? memory.connectionsZh : memory.connectionsEn; return <article className={memory.analysisStatus} key={memory.paperId}><header><span>{readingStatusLabel(memory.readingStatus as MonitorPaper["readingStatus"], locale)}</span><b>{memory.analysisStatus === "ready" ? "π " + modelDisplayName(memory.model) : memory.analysisStatus === "error" ? (locale === "zh" ? "待重试" : "Retry needed") : (locale === "zh" ? "等待分析" : "Pending")}</b></header><h3>{memory.title}</h3>{memory.analysisStatus === "ready" ? <><p>{locale === "zh" ? memory.takeawayZh : memory.takeawayEn}</p>{Boolean(methods.length) && <dl><dt>{locale === "zh" ? "可复用方法" : "Reusable methods"}</dt><dd>{methods.slice(0, 3).map((item) => <i key={item}>{item}</i>)}</dd></dl>}{Boolean(questions.length) && <dl><dt>{locale === "zh" ? "仍待解决" : "Open questions"}</dt><dd>{questions.slice(0, 2).map((item) => <i key={item}>{item}</i>)}</dd></dl>}{Boolean(connections.length) && <small>{locale === "zh" ? "与当前研究的连接：" : "Connection to your work: "}{connections[0]}</small>}</> : <p>{memory.noteExcerpt || (locale === "zh" ? "笔记已保存。配置可用模型后可重新沉淀。" : "The note is saved and can be synthesized when the model is available.")}</p>}<footer><span>{memory.venue}</span><button type="button" onClick={() => { const paper = historyPapers.find((item) => item.id === memory.paperId); if (paper) openMonitorPaper(paper); }}>{locale === "zh" ? "打开论文" : "Open paper"} →</button></footer></article>; })}{!monitor?.readingMemories?.length && <div className="v2-reading-memory-empty"><span>◎</span><p>{locale === "zh" ? "在论文详情中写下具体阅读笔记并点击“保存并沉淀”，这里就会形成可持续使用的研究记忆。" : "Write a concrete note in a paper detail and choose “Save to research memory” to build durable memory here."}</p></div>}</div></section>
             <div className="v2-memory-grid">
               <section><span>01</span><h2>{t.interestMemory}</h2><p>{locale === "zh" ? "由用户确认的持续关注、子方向与检索主题。" : "User-confirmed sustained interests, subdirections, and discovery topics."}</p><div className="v2-tags">{confirmedProfile ? [...confirmedProfile.subdirections, ...confirmedProfile.interests].slice(0, 10).map((item, index) => <i key={index}>{locale === "zh" ? item.labelZh : item.labelEn}</i>) : <small>{locale === "zh" ? "尚未导入已确认的研究资料" : "No confirmed research materials yet"}</small>}</div></section>
@@ -4478,7 +4585,7 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
             <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "library" ? t.library : t.paperBack}</button>
-            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.recommendationTier || "browse"}`}>{recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale)}</span><span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span><RouteDiscoveryBadge paper={selectedMonitorPaper} locale={locale} /></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a></div></section>
+            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.recommendationTier || "browse"}`}>{recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale)}</span><span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span><RouteDiscoveryBadge paper={selectedMonitorPaper} locale={locale} /></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a></div></section>
             <div className="v2-paper-detail-grid">
               <div>
                 <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><span>{t.qualityScore}</span><strong>{selectedMonitorPaper.qualityScore}</strong></div></section>
@@ -4492,7 +4599,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 </div>{Boolean((locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn)?.length) && <footer><small>{locale === "zh" ? "可以继续追问" : "Questions to pursue"}</small><ol>{(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn).map((question) => <li key={question}>{question}</li>)}</ol></footer>}</section>
                 <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div><div><dt>{t.qualityScore}</dt><dd>{selectedMonitorPaper.qualityScore}</dd></div><div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
               </div>
-              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{locale === "zh" ? "保存时 Pi 会提取可复用结论、方法、问题与研究连接；相同笔记不会重复消耗 Token。" : "When saved, Pi extracts reusable conclusions, methods, questions, and research links. Identical notes are not analyzed twice."}</small><button className="v2-save-note" type="button" disabled={readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "Pi 正在沉淀…" : "Pi is synthesizing…") : (locale === "zh" ? "保存并沉淀到研究记忆" : "Save to research memory")}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</dd></div><div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer">{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
+              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{locale === "zh" ? "保存时 Pi 会提取可复用结论、方法、问题与研究连接；相同笔记不会重复消耗 Token。" : "When saved, Pi extracts reusable conclusions, methods, questions, and research links. Identical notes are not analyzed twice."}</small><button className="v2-save-note" type="button" disabled={readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "Pi 正在沉淀…" : "Pi is synthesizing…") : (locale === "zh" ? "保存并沉淀到研究记忆" : "Save to research memory")}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</dd></div><div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
             </div>
           </main>
         )}

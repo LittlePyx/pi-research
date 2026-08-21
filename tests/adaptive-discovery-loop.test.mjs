@@ -129,7 +129,7 @@ test("today and its daily brief are capped at six and reranked across directions
 
   assert.match(monitor, /function selectDiverseItems/);
   assert.match(monitor, /groupCounts/);
-  assert.match(monitor, /track_id \|\| `horizon:/);
+  assert.match(monitor, /track_id \|\| paper\.discovery_route_id \|\| `horizon:/);
   assert.match(monitor, /rankedReviews,/);
   assert.match(monitor, /Never mention section, page, figure, or theorem numbers/);
   assert.match(monitor, /must each contain exactly \$\{records\.length\} items in the supplied paper order/);

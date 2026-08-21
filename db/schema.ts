@@ -375,6 +375,28 @@ export const paperDeliveryState = sqliteTable(
   ],
 );
 
+export const paperEngagementEvents = sqliteTable(
+  "paper_engagement_events",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+    eventKey: text("event_key").notNull(),
+    kind: text("kind").notNull(),
+    weight: integer("weight").notNull().default(0),
+    dwellMs: integer("dwell_ms").notNull().default(0),
+    context: text("context").notNull().default("today"),
+    routeId: text("route_id"),
+    occurredAt: text("occurred_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_paper_engagement_space_event").on(table.spaceId, table.eventKey),
+    index("idx_paper_engagement_space_paper_time").on(table.spaceId, table.paperId, table.occurredAt),
+    index("idx_paper_engagement_space_route_time").on(table.spaceId, table.routeId, table.occurredAt),
+  ],
+);
+
 export const paperReadingProgress = sqliteTable(
   "paper_reading_progress",
   {

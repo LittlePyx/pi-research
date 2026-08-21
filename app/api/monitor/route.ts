@@ -9,6 +9,7 @@ import {
   isRescueDeepCandidate,
   selectBalancedByGroup,
 } from "../../../lib/discovery/candidate-selection.mjs";
+import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import {
@@ -262,6 +263,7 @@ type PaperRow = {
   track_id: string;
   discovery_source_key: string;
   discovery_route_id: string;
+  discovery_route_interaction: number;
   discovery_track_title_zh: string;
   discovery_track_title_en: string;
 };
@@ -341,6 +343,8 @@ type DiscoveryBranchScore = {
   dismissed: number;
   known: number;
   wrongType: number;
+  engagedPapers: number;
+  engagementWeight: number;
   attempts: number;
   candidates: number;
   newCandidates: number;
@@ -831,6 +835,7 @@ function adaptiveBranchScore(input: Omit<DiscoveryBranchScore, "score">) {
   const discoveryYield = input.candidates ? input.newCandidates / input.candidates : 0;
   let score = 55;
   if (decisions) score += acceptanceRate * 30 - dismissalRate * 28 - wrongTypeRate * 16;
+  score += passiveBranchBoost(input);
   if (input.known) score += Math.min(6, input.known * 2);
   if (input.candidates) score += Math.min(15, discoveryYield * 15);
   if (input.attempts >= 2 && input.newCandidates === 0) score -= Math.min(20, input.attempts * 4);
@@ -838,7 +843,7 @@ function adaptiveBranchScore(input: Omit<DiscoveryBranchScore, "score">) {
 }
 
 async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) {
-  const [feedbackRows, coverageRows] = await Promise.all([
+  const [feedbackRows, engagementRows, coverageRows] = await Promise.all([
     database.prepare(
       `SELECT cs.source_key, cs.query_key, COUNT(DISTINCT cs.paper_id) AS papers,
        SUM(CASE WHEN f.saved = 1 OR f.feedback = 'relevant' OR r.status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS accepted,
@@ -851,6 +856,22 @@ async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) 
        WHERE cs.space_id = ? GROUP BY cs.source_key, cs.query_key`,
     ).bind(spaceId).all<{ source_key: string; query_key: string; papers: number; accepted: number; dismissed: number; wrong_type: number; known: number }>(),
     database.prepare(
+      `SELECT cs.source_key, cs.query_key, COUNT(DISTINCT cs.paper_id) AS engaged_papers,
+       SUM(CASE WHEN engagement.paper_weight > 18 THEN 18 ELSE engagement.paper_weight END) AS engagement_weight
+       FROM monitor_candidate_sources cs
+       JOIN (
+         SELECT event.space_id, event.paper_id, SUM(event.weight) AS paper_weight FROM paper_engagement_events event
+         WHERE event.occurred_at >= datetime('now', '-90 days')
+          AND NOT EXISTS (
+            SELECT 1 FROM research_preference_signals disabled
+            WHERE disabled.space_id = event.space_id AND disabled.source_type = 'passive_engagement'
+             AND disabled.source_id = event.route_id AND disabled.active = 0
+          )
+         GROUP BY event.space_id, event.paper_id
+       ) engagement ON engagement.space_id = cs.space_id AND engagement.paper_id = cs.paper_id
+       WHERE cs.space_id = ? GROUP BY cs.source_key, cs.query_key`,
+    ).bind(spaceId).all<{ source_key: string; query_key: string; engaged_papers: number; engagement_weight: number }>(),
+    database.prepare(
       `SELECT source_key, query_key, SUM(attempt_count) AS attempts,
        SUM(CASE WHEN total_candidate_count = 0 THEN candidate_count ELSE total_candidate_count END) AS candidates,
        SUM(new_candidate_count) AS new_candidates
@@ -862,13 +883,16 @@ async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) 
     const key = `${sourceKey}|${queryKey}`;
     const existing = rows.get(key);
     if (existing) return existing;
-    const created = { sourceKey, queryKey, papers: 0, accepted: 0, dismissed: 0, known: 0, wrongType: 0, attempts: 0, candidates: 0, newCandidates: 0 };
+    const created = { sourceKey, queryKey, papers: 0, accepted: 0, dismissed: 0, known: 0, wrongType: 0, engagedPapers: 0, engagementWeight: 0, attempts: 0, candidates: 0, newCandidates: 0 };
     rows.set(key, created);
     return created;
   };
   for (const row of feedbackRows.results) Object.assign(ensure(row.source_key, row.query_key), {
     papers: Number(row.papers || 0), accepted: Number(row.accepted || 0), dismissed: Number(row.dismissed || 0),
     known: Number(row.known || 0), wrongType: Number(row.wrong_type || 0),
+  });
+  for (const row of engagementRows.results) Object.assign(ensure(row.source_key, row.query_key), {
+    engagedPapers: Number(row.engaged_papers || 0), engagementWeight: Number(row.engagement_weight || 0),
   });
   for (const row of coverageRows.results) Object.assign(ensure(row.source_key, row.query_key), {
     attempts: Number(row.attempts || 0), candidates: Number(row.candidates || 0), newCandidates: Number(row.new_candidates || 0),
@@ -900,19 +924,42 @@ async function routeDiscoveryQueries(
 ) {
   const rows = await database.prepare(
     `SELECT t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score, t.interaction_score,
+     COALESCE(behavior.passive_engagement, 0) AS passive_engagement,
      t.intelligence_json, t.intelligence_updated_at,
      MAX(c.last_scanned_at) AS last_scanned_at
      FROM research_tracks t
      LEFT JOIN monitor_discovery_coverage c ON c.space_id = t.space_id AND c.route_id = t.id AND c.horizon = ?
+     LEFT JOIN (
+       SELECT event.space_id, event.route_id, MIN(18, SUM(event.weight)) AS passive_engagement
+       FROM paper_engagement_events event
+       WHERE event.occurred_at >= datetime('now', '-90 days') AND event.route_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM research_preference_signals disabled
+          WHERE disabled.space_id = event.space_id AND disabled.source_type = 'passive_engagement'
+           AND disabled.source_id = event.route_id AND disabled.active = 0
+        )
+       GROUP BY event.space_id, event.route_id
+     ) behavior ON behavior.space_id = t.space_id AND behavior.route_id = t.id
       WHERE t.space_id = ? GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score,
-      t.interaction_score, t.intelligence_json, t.intelligence_updated_at
+      t.interaction_score, behavior.passive_engagement, t.intelligence_json, t.intelligence_updated_at
      ORDER BY CASE WHEN MAX(c.last_scanned_at) IS NULL THEN 0 ELSE 1 END, MAX(c.last_scanned_at),
      CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, t.interaction_score DESC, t.depth_score DESC`,
-  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; intelligence_json: string; intelligence_updated_at: string | null; last_scanned_at: string | null }>();
+  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; last_scanned_at: string | null }>();
   const coreBudget = mode === "focused" ? 2 : 2;
   const adjacentBudget = mode === "focused" ? 0 : mode === "open" ? 2 : 1;
-  const coreRows = rows.results.filter((row) => row.user_role !== "explore").slice(0, coreBudget);
-  const adjacentRows = rows.results.filter((row) => row.user_role === "explore").slice(0, adjacentBudget);
+  const chooseRoutes = (pool: typeof rows.results, budget: number) => {
+    const chosen: typeof rows.results = [];
+    const engaged = [...pool].filter((row) => row.passive_engagement > 0)
+      .sort((left, right) => right.passive_engagement - left.passive_engagement || right.interaction_score - left.interaction_score)[0];
+    if (engaged) chosen.push(engaged);
+    for (const row of pool) {
+      if (chosen.length >= budget) break;
+      if (!chosen.some((item) => item.id === row.id)) chosen.push(row);
+    }
+    return chosen.slice(0, budget);
+  };
+  const coreRows = chooseRoutes(rows.results.filter((row) => row.user_role !== "explore"), coreBudget);
+  const adjacentRows = chooseRoutes(rows.results.filter((row) => row.user_role === "explore"), adjacentBudget);
   const selectedRows = [...coreRows.map((row) => ({ row, role: "core" as const })), ...adjacentRows.map((row) => ({ row, role: "adjacent" as const }))];
   const basePlans = selectedRows.map(({ row, role }) => {
       const queries = parseVenues(row.search_queries).filter(asciiOnly);
@@ -926,7 +973,7 @@ async function routeDiscoveryQueries(
         channel: "topic" as const,
         routeId: row.id,
         explorationRole: role,
-        routeUrgency: 0,
+        routeUrgency: Math.min(10, Math.round(row.passive_engagement / 2)),
       };
     }).filter((plan) => plan.query.length >= 4);
   const gapRows = selectedRows.flatMap(({ row, role }) => {
@@ -944,7 +991,7 @@ async function routeDiscoveryQueries(
     channel: "topic",
     routeId: gap.row.id,
     explorationRole: gap.role,
-    routeUrgency: Math.min(20, 10 + Math.round(gap.intelligence.confidence / 10)),
+    routeUrgency: Math.min(24, 10 + Math.round(gap.intelligence.confidence / 10) + Math.round(gap.row.passive_engagement / 3)),
   }] : [];
   return [...basePlans, ...gapPlan].filter((plan, index, plans) => plan.query.length >= 4
     && plans.findIndex((candidate) => candidate.routeId === plan.routeId && candidate.query === plan.query) === index);
@@ -1684,7 +1731,7 @@ async function ensureDailyQueryPlan(
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
               `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,
               `Low-yield or repeatedly covered channels: ${JSON.stringify(recentCoverage.results)}`,
-              `Retrieval branches learned from explicit feedback (higher scores should be deepened; lower scores should be reworded or deprioritized): ${JSON.stringify([...branchPerformance.ranked.slice(0, 4), ...branchPerformance.ranked.slice(-4)].map((branch) => ({ source: branch.sourceKey, score: branch.score, accepted: branch.accepted, dismissed: branch.dismissed, known: branch.known, yield: branch.candidates ? Math.round(branch.newCandidates / branch.candidates * 100) : 0 })))}`,
+              `Retrieval branches learned from explicit outcomes and qualified passive engagement. Treat passive behavior as a revisable hypothesis, never as stronger evidence than explicit feedback: ${JSON.stringify([...branchPerformance.ranked.slice(0, 4), ...branchPerformance.ranked.slice(-4)].map((branch) => ({ source: branch.sourceKey, score: branch.score, accepted: branch.accepted, dismissed: branch.dismissed, known: branch.known, engagedPapers: branch.engagedPapers, engagementWeight: branch.engagementWeight, yield: branch.candidates ? Math.round(branch.newCandidates / branch.candidates * 100) : 0 })))}`,
             ].join("\n") },
           ],
           thinking: { type: "enabled" },
@@ -3286,6 +3333,21 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
           ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1), '') AS track_id,
        COALESCE(audit_route_origin.source_key, fallback_route_origin.source_key, '') AS discovery_source_key,
        COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id, '') AS discovery_route_id,
+       COALESCE(route_track.interaction_score,
+         (SELECT t.interaction_score FROM research_track_papers tp JOIN research_tracks t ON t.id = tp.track_id AND t.space_id = tp.space_id
+          WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), 0)
+       + COALESCE((
+         SELECT MIN(18, COALESCE(SUM(event.weight), 0)) FROM paper_engagement_events event
+         WHERE event.space_id = p.space_id AND event.occurred_at >= datetime('now', '-90 days')
+          AND event.route_id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id,
+            (SELECT tp.track_id FROM research_track_papers tp
+             WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1))
+          AND NOT EXISTS (
+            SELECT 1 FROM research_preference_signals disabled
+            WHERE disabled.space_id = event.space_id AND disabled.source_type = 'passive_engagement'
+             AND disabled.source_id = event.route_id AND disabled.active = 0
+          )
+       ), 0) AS discovery_route_interaction,
        COALESCE(route_track.title_zh, '') AS discovery_track_title_zh,
        COALESCE(route_track.title_en, '') AS discovery_track_title_en,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
@@ -3541,10 +3603,11 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const now = Date.now();
   const duePapers = papers.results
     .filter((paper) => paper.analysis_model === MONITOR_MODEL && isPaperDue(paper, now))
-    .sort((left, right) => left.show_count - right.show_count || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at));
+    .sort((left, right) => left.show_count - right.show_count || right.discovery_route_interaction - left.discovery_route_interaction
+      || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at));
   const selected = selectDiverseItems(
     duePapers,
-    (paper) => paper.track_id || `horizon:${paper.horizon}`,
+    (paper) => paper.track_id || paper.discovery_route_id || `horizon:${paper.horizon}`,
     (paper) => paper.horizon,
     6,
   );
