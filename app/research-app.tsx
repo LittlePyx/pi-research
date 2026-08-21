@@ -92,6 +92,8 @@ type MonitorPaper = {
   evidenceClaimCount: number;
   evidenceGroundedClaimCount: number;
   evidenceCoverageScore: number;
+  verificationStatus: "not_required" | "verified" | "revised" | "degraded";
+  verificationCoverageScore: number;
   discoveryOrigin?: {
     kind: RouteDiscoveryKind;
     trackId: string;
@@ -245,6 +247,8 @@ type ResearchProblemAction = {
     sourceClaimIds: string[];
     sourcePapers: Array<{ id: string; title: string; authors: string; venue: string; publishedAt: string | null; url: string }>;
     model: string;
+    verificationStatus: "pending" | "verified" | "revised" | "degraded";
+    verificationCoverageScore: number;
     error: string | null;
     startedAt: string;
     completedAt: string | null;
@@ -1149,9 +1153,13 @@ function RouteDiscoveryBadge({ paper, locale }: { paper: MonitorPaper; locale: L
 
 function PaperEvidenceBadge({ paper, locale, processing = false }: { paper: MonitorPaper; locale: Locale; processing?: boolean }) {
   const status = processing ? "fetching" : paper.evidenceStatus;
-  return <span className={`v2-evidence-badge ${paper.evidenceLevel} ${status}`} title={evidenceStatusLabel(status, locale)}>
+  const verificationLabel = paper.verificationStatus === "verified"
+    ? (locale === "zh" ? "推荐内容已核验" : "Recommendation verified")
+    : paper.verificationStatus === "revised"
+      ? (locale === "zh" ? "核验后已修订" : "Verified and revised") : "";
+  return <><span className={`v2-evidence-badge ${paper.evidenceLevel} ${status}`} title={evidenceStatusLabel(status, locale)}>
     <i />{processing ? evidenceStatusLabel("fetching", locale) : evidenceLevelLabel(paper.evidenceLevel, locale)}
-  </span>;
+  </span>{verificationLabel && <span className={`v2-verification-badge ${paper.verificationStatus}`} title={locale === "zh" ? `关键表述证据覆盖 ${paper.verificationCoverageScore}%` : `${paper.verificationCoverageScore}% evidence coverage for substantive statements`}><i />{verificationLabel}</span>}</>;
 }
 
 function monitorPaperHorizonLabel(paper: MonitorPaper, locale: Locale) {
@@ -2595,7 +2603,11 @@ function ResearchActionRunOutput({ item, locale, busy, completed, onExecute, onD
   if (run.status === "failed") return <section className="v2-action-run-failed"><div><strong>{researchActionStageLabel(run.stage, locale)}</strong><p>{run.error || (locale === "zh" ? "已有研究内容没有受到影响。" : "Existing research content was not affected.")}</p></div><button type="button" disabled={busy} onClick={onExecute}>{locale === "zh" ? "重新执行" : "Retry"}</button></section>;
   const steps = run.deliverable.steps || [];
   const rows = run.deliverable.comparisonRows || [];
-  return <section className="v2-action-run-ready"><header><div><small>π {locale === "zh" ? "Pi 已执行" : "PI EXECUTED"}</small><h4>{locale === "zh" ? run.headlineZh : run.headlineEn}</h4></div><span>✓</span></header><p>{locale === "zh" ? run.resultZh : run.resultEn}</p>{rows.length > 0 && <div className="v2-action-comparison">{rows.map((row, index) => <article key={`${row.dimensionEn}:${index}`}><strong>{locale === "zh" ? row.dimensionZh : row.dimensionEn}</strong><p>{locale === "zh" ? row.findingZh : row.findingEn}</p><small>{row.paperIds.length} {locale === "zh" ? "篇论文" : "papers"} · {row.claimIds.length} {locale === "zh" ? "条证据" : "claims"}</small></article>)}</div>}{steps.length > 0 && <ol className="v2-action-steps">{steps.map((step, index) => <li key={`${step.titleEn}:${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{locale === "zh" ? step.titleZh : step.titleEn}</strong><p>{locale === "zh" ? step.detailZh : step.detailEn}</p></div></li>)}</ol>}<div className="v2-action-run-judgment"><article><small>{locale === "zh" ? "现在可以作出的判断" : "DECISION NOW"}</small><strong>{locale === "zh" ? run.decisionZh : run.decisionEn}</strong></article><article><small>{locale === "zh" ? "证据边界" : "EVIDENCE BOUNDARY"}</small><p>{locale === "zh" ? run.limitationsZh : run.limitationsEn}</p></article></div>{run.searchQuery && <code className="v2-action-query">{run.searchQuery}</code>}{run.sourcePapers.length > 0 && <details className="v2-action-sources"><summary>{locale === "zh" ? `${run.sourcePapers.length} 篇来源论文` : `${run.sourcePapers.length} source papers`} ＋</summary><div>{run.sourcePapers.map((paper) => <a href={paper.url || "#"} target={paper.url ? "_blank" : undefined} rel="noreferrer" key={paper.id}><strong>{paper.title}</strong><small>{[paper.authors, paper.publishedAt?.slice(0, 4), paper.venue].filter(Boolean).join(" · ")}</small></a>)}</div></details>}<footer>{completed ? <em>✓ {locale === "zh" ? "已形成长期研究记录" : "Saved to research history"}</em> : <button type="button" disabled={busy} onClick={onDone}>{locale === "zh" ? "确认完成" : "Mark complete"}</button>}{!completed && <button type="button" disabled={busy} onClick={onExecute}>{locale === "zh" ? "按最新证据重做" : "Rerun with latest evidence"}</button>}</footer></section>;
+  const trustworthy = run.verificationStatus === "verified" || run.verificationStatus === "revised";
+  const verificationLabel = run.verificationStatus === "verified" ? (locale === "zh" ? "内容已逐条核验" : "Evidence verified")
+    : run.verificationStatus === "revised" ? (locale === "zh" ? "核验后已自动修订" : "Verified after revision")
+      : (locale === "zh" ? "证据不足，原结论未发布" : "Insufficient evidence; draft withheld");
+  return <section className={`v2-action-run-ready verification-${run.verificationStatus}`}><header><div><small>π {locale === "zh" ? "Pi 已执行" : "PI EXECUTED"} · {verificationLabel}</small><h4>{locale === "zh" ? run.headlineZh : run.headlineEn}</h4></div><span>{trustworthy ? "✓" : "!"}</span></header><p>{locale === "zh" ? run.resultZh : run.resultEn}</p>{rows.length > 0 && <div className="v2-action-comparison">{rows.map((row, index) => <article key={`${row.dimensionEn}:${index}`}><strong>{locale === "zh" ? row.dimensionZh : row.dimensionEn}</strong><p>{locale === "zh" ? row.findingZh : row.findingEn}</p><small>{row.paperIds.length} {locale === "zh" ? "篇论文" : "papers"} · {row.claimIds.length} {locale === "zh" ? "条证据" : "claims"}</small></article>)}</div>}{steps.length > 0 && <ol className="v2-action-steps">{steps.map((step, index) => <li key={`${step.titleEn}:${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{locale === "zh" ? step.titleZh : step.titleEn}</strong><p>{locale === "zh" ? step.detailZh : step.detailEn}</p></div></li>)}</ol>}<div className="v2-action-run-judgment"><article><small>{locale === "zh" ? "现在可以作出的判断" : "DECISION NOW"}</small><strong>{locale === "zh" ? run.decisionZh : run.decisionEn}</strong></article><article><small>{locale === "zh" ? "证据边界" : "EVIDENCE BOUNDARY"}</small><p>{locale === "zh" ? run.limitationsZh : run.limitationsEn}</p></article></div>{run.searchQuery && <code className="v2-action-query">{run.searchQuery}</code>}{run.sourcePapers.length > 0 && <details className="v2-action-sources"><summary>{locale === "zh" ? `${run.sourcePapers.length} 篇来源论文` : `${run.sourcePapers.length} source papers`} ＋</summary><div>{run.sourcePapers.map((paper) => <a href={paper.url || "#"} target={paper.url ? "_blank" : undefined} rel="noreferrer" key={paper.id}><strong>{paper.title}</strong><small>{[paper.authors, paper.publishedAt?.slice(0, 4), paper.venue].filter(Boolean).join(" · ")}</small></a>)}</div></details>}<footer>{completed ? <em>✓ {locale === "zh" ? "已形成长期研究记录" : "Saved to research history"}</em> : trustworthy && <button type="button" disabled={busy} onClick={onDone}>{locale === "zh" ? "确认完成" : "Mark complete"}</button>}{!completed && <button type="button" disabled={busy} onClick={onExecute}>{trustworthy ? (locale === "zh" ? "按最新证据重做" : "Rerun with latest evidence") : (locale === "zh" ? "补证据后重试" : "Retry after adding evidence")}</button>}</footer></section>;
 }
 
 function ResearchProblemWorkbench({

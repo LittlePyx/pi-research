@@ -42,6 +42,7 @@ type ActionRunRow = {
   headline_zh: string; headline_en: string; result_zh: string; result_en: string; decision_zh: string; decision_en: string;
   limitations_zh: string; limitations_en: string; search_query: string; deliverable_json: string;
   source_paper_ids: string; source_claim_ids: string; model: string; error: string | null;
+  verification_status: string; verification_coverage_score: number; verification_json: string;
   started_at: string; completed_at: string | null; updated_at: string;
 };
 type ActionSourcePaperRow = {
@@ -132,7 +133,8 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
   const runs = problem ? (await database.prepare(
     `SELECT id, action_id, status, progress, stage, input_revision, headline_zh, headline_en, result_zh,
       result_en, decision_zh, decision_en, limitations_zh, limitations_en, search_query, deliverable_json,
-      source_paper_ids, source_claim_ids, model, error, started_at, completed_at, updated_at
+      source_paper_ids, source_claim_ids, model, verification_status, verification_coverage_score,
+      verification_json, error, started_at, completed_at, updated_at
      FROM research_action_runs WHERE problem_id = ? ORDER BY started_at DESC, rowid DESC`,
   ).bind(problem.id).all<ActionRunRow>()).results : [];
   const latestRunByAction = new Map<string, ActionRunRow>();
@@ -178,6 +180,7 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
           decisionZh: run.decision_zh, decisionEn: run.decision_en, limitationsZh: run.limitations_zh,
           limitationsEn: run.limitations_en, searchQuery: run.search_query, deliverable: parseStoredObject(run.deliverable_json),
           sourcePaperIds: paperIds, sourceClaimIds: parseArray(run.source_claim_ids).map(String), model: run.model,
+          verificationStatus: run.verification_status, verificationCoverageScore: run.verification_coverage_score,
           error: run.error, startedAt: run.started_at, completedAt: run.completed_at, updatedAt: run.updated_at,
           sourcePapers: paperIds.flatMap((paperId) => {
             const paper = sourcePaperById.get(paperId);
@@ -427,7 +430,8 @@ export async function PATCH(request: Request) {
     if (status === "done") {
       const completedRun = await context.database.prepare(
         `SELECT run.id FROM research_action_runs run JOIN research_problem_actions action ON action.id = run.action_id
-         WHERE run.action_id = ? AND run.space_id = ? AND run.track_id = ? AND run.status = 'ready' LIMIT 1`,
+         WHERE run.action_id = ? AND run.space_id = ? AND run.track_id = ? AND run.status = 'ready'
+          AND run.verification_status IN ('verified', 'revised') LIMIT 1`,
       ).bind(actionId, spaceId, trackId).first<{ id: string }>();
       if (!completedRun) return Response.json({ error: "Pi must finish this research action before it can be marked complete" }, { status: 422 });
     }

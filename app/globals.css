@@ -4641,3 +4641,12 @@ main { min-width: 0; }
   .v2-action-run-judgment,.v2-action-sources > div { grid-template-columns: 1fr; }
   .v2-action-run-failed { align-items: flex-start; flex-direction: column; }
 }
+
+/* V72 — quiet evidence-verification signals */
+.v2-verification-badge { display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid #c8d9ce;border-radius:999px;background:#f3f8f5;color:#315f49;font-size:11px;font-weight:700;line-height:1;white-space:nowrap; }
+.v2-verification-badge i { width:6px;height:6px;border-radius:50%;background:#438063; }
+.v2-verification-badge.revised { border-color:#d7cfb8;background:#faf7ef;color:#735f30; }
+.v2-verification-badge.revised i { background:#a88b43; }
+.v2-action-run-ready.verification-degraded { border-color:#dec7bf;background:#fffaf8; }
+.v2-action-run-ready.verification-degraded > header > span { background:#f3e4df;color:#8c4d3d; }
+.v2-action-run-ready.verification-degraded > header small { color:#8c4d3d; }

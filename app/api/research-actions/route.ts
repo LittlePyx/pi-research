@@ -1,6 +1,11 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import {
+  evidenceVerificationReport,
+  sanitizeEvidenceVerificationDraft,
+  type EvidenceVerificationStatus,
+} from "../../../lib/evidence-verification";
+import {
   researchActionInputRevision,
   researchActionKind,
   sanitizeResearchActionDraft,
@@ -78,14 +83,14 @@ async function usageCount(database: D1Database, scope: string, date: string) {
   return row?.request_count || 0;
 }
 
-async function reserveBudget(database: D1Database, userId: string) {
+async function reserveBudget(database: D1Database, userId: string, expectedRequests = 3) {
   const date = new Date().toISOString().slice(0, 10);
   const workspaceScope = `research-action-workspace:${userId.replace(/^anonymous:/, "")}`;
   const [globalCount, workspaceCount] = await Promise.all([
     usageCount(database, "research-action:global", date),
     usageCount(database, workspaceScope, date),
   ]);
-  if (globalCount >= GLOBAL_DAILY_LIMIT || workspaceCount >= WORKSPACE_DAILY_LIMIT) {
+  if (globalCount + expectedRequests > GLOBAL_DAILY_LIMIT || workspaceCount + expectedRequests > WORKSPACE_DAILY_LIMIT) {
     throw new Error("Today's research-action budget is complete; existing results remain available");
   }
   return { date, workspaceScope };
@@ -121,6 +126,149 @@ async function callDeepSeek(apiKey: string, prompt: string) {
   const data = await response.json() as DeepSeekResponse;
   if (!response.ok) throw new Error(data.error?.message || "Pi research action failed");
   return { parsed: parseObject(data.choices?.[0]?.message?.content || ""), usage: data.usage };
+}
+
+async function callEvidenceVerifier(apiKey: string, prompt: string) {
+  const response = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        { role: "system", content: "You are Pi Research's independent evidence verifier. Audit every substantive statement against the supplied evidence. Do not reward plausible wording, do not rubber-stamp the drafting model, and return strict JSON only." },
+        { role: "user", content: prompt },
+      ],
+      thinking: { type: "enabled" },
+      reasoning_effort: "high",
+      response_format: { type: "json_object" },
+      max_tokens: 4200,
+      stream: false,
+    }),
+    signal: AbortSignal.timeout(55_000),
+  });
+  const data = await response.json() as DeepSeekResponse;
+  if (!response.ok) throw new Error(data.error?.message || "Pi evidence verification failed");
+  return { parsed: parseObject(data.choices?.[0]?.message?.content || ""), usage: data.usage };
+}
+
+function actionDraftPayload(result: ReturnType<typeof sanitizeResearchActionDraft>) {
+  return {
+    headlineZh: result.headlineZh,
+    headlineEn: result.headlineEn,
+    resultZh: result.resultZh,
+    resultEn: result.resultEn,
+    decisionZh: result.decisionZh,
+    decisionEn: result.decisionEn,
+    limitationsZh: result.limitationsZh,
+    limitationsEn: result.limitationsEn,
+    searchQuery: result.searchQuery,
+    paperIds: result.paperIds,
+    claimIds: result.claimIds,
+    steps: result.deliverable.steps,
+    comparisonRows: result.deliverable.comparisonRows,
+  };
+}
+
+async function verifyResearchAction(input: {
+  apiKey: string;
+  database: D1Database;
+  budget: { date: string; workspaceScope: string };
+  kind: ResearchActionKind;
+  result: ReturnType<typeof sanitizeResearchActionDraft>;
+  papers: PaperRow[];
+  claims: ClaimRow[];
+}) {
+  const allowedFields = ["headline", "result", "decision", "limitations", "steps",
+    ...(input.kind === "compare" ? ["comparisonRows"] : []), ...(input.kind === "search" ? ["searchQuery"] : [])];
+  const allowedEvidenceIds = new Set(input.claims.map((claim) => claim.id));
+  const evidenceById = new Map(input.claims.map((claim) => [claim.id, claim.evidence_quote]));
+  let verificationInputTokens = 0;
+  let verificationOutputTokens = 0;
+  const request = async (candidate: ReturnType<typeof sanitizeResearchActionDraft>, allowCorrection: boolean) => {
+    const response = await callEvidenceVerifier(input.apiKey, [
+      `Action kind: ${input.kind}`,
+      `Candidate deliverable: ${JSON.stringify(actionDraftPayload(candidate))}`,
+      `Permitted paper metadata: ${JSON.stringify(input.papers)}`,
+      `Grounded evidence claims: ${JSON.stringify(input.claims)}`,
+      "Audit headline, result, decision, limitations, every step, every comparison row, and any factual premise behind the search query.",
+      "A paper ID proves only identity. A claim ID supports only what its quote and locator entail. Plausibility, title similarity, citation count, and the drafting model's confidence are not evidence.",
+      "Flag absolute novelty, proof, optimality, completeness, causal, empirical-validation, convergence, or contradiction claims unless the supplied grounded claim explicitly entails them.",
+      `Return {verdict:"verified|revise|insufficient",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,evidenceQuote,verdict:"supported|qualified|unsupported",reason}],reason${allowCorrection ? ",corrected:{headlineZh,headlineEn,resultZh,resultEn,decisionZh,decisionEn,limitationsZh,limitationsEn,searchQuery,paperIds,claimIds,steps,comparisonRows}" : ""}}.`,
+      `claimChecks must cover every substantive field in: ${allowedFields.join(", ")}. evidenceId must be an exact supplied claim ID and evidenceQuote must be an exact contiguous quote from that claim's evidence_quote.`,
+      allowCorrection
+        ? "For revise, corrected must be one complete conservative replacement grounded only in supplied evidence. For insufficient, omit corrected."
+        : "This is the post-revision check. Do not propose another rewrite; use insufficient when any substantive issue remains.",
+    ].join("\n"));
+    verificationInputTokens += response.usage?.prompt_tokens || 0;
+    verificationOutputTokens += response.usage?.completion_tokens || 0;
+    await Promise.all([
+      recordUsage(input.database, "research-action:global", input.budget.date, response.usage?.prompt_tokens || 0, response.usage?.completion_tokens || 0),
+      recordUsage(input.database, input.budget.workspaceScope, input.budget.date, response.usage?.prompt_tokens || 0, response.usage?.completion_tokens || 0),
+    ]);
+    return response;
+  };
+  const firstResponse = await request(input.result, true);
+  const initial = sanitizeEvidenceVerificationDraft(firstResponse.parsed, { allowedFields, allowedEvidenceIds, evidenceById, requireAllFields: true });
+  if (initial.clean) return {
+    result: input.result,
+    status: "verified" as EvidenceVerificationStatus,
+    report: evidenceVerificationReport({ initial }),
+    verificationInputTokens,
+    verificationOutputTokens,
+  };
+  const correctedDraft = firstResponse.parsed.corrected;
+  if (initial.verdict !== "revise" || !correctedDraft || typeof correctedDraft !== "object") return {
+    result: null,
+    status: "degraded" as EvidenceVerificationStatus,
+    report: evidenceVerificationReport({ initial }),
+    verificationInputTokens,
+    verificationOutputTokens,
+  };
+  let corrected: ReturnType<typeof sanitizeResearchActionDraft>;
+  try {
+    corrected = sanitizeResearchActionDraft(correctedDraft, input.kind, new Set(input.papers.map((paper) => paper.id)), allowedEvidenceIds);
+  } catch {
+    return {
+      result: null,
+      status: "degraded" as EvidenceVerificationStatus,
+      report: evidenceVerificationReport({ initial }),
+      verificationInputTokens,
+      verificationOutputTokens,
+    };
+  }
+  const secondResponse = await request(corrected, false);
+  const revised = sanitizeEvidenceVerificationDraft(secondResponse.parsed, { allowedFields, allowedEvidenceIds, evidenceById, requireAllFields: true });
+  const report = evidenceVerificationReport({ initial, revised });
+  return {
+    result: revised.clean ? corrected : null,
+    status: report.status,
+    report,
+    verificationInputTokens,
+    verificationOutputTokens,
+  };
+}
+
+function degradedResearchAction(kind: ResearchActionKind, report: ReturnType<typeof evidenceVerificationReport>) {
+  const issue = [...report.unsupportedFields, ...report.overstatements, ...report.contradictionRisks].slice(0, 3).join("；");
+  return {
+    headlineZh: "当前证据不足以可靠完成这项行动",
+    headlineEn: "Current evidence is insufficient for a reliable deliverable",
+    resultZh: "Pi 已完成独立核验，但当前材料仍不足以支持原拟交付内容，因此没有把未经支持的判断交给你。",
+    resultEn: "Pi completed an independent verification pass, but the current material does not support the proposed deliverable, so unsupported conclusions were withheld.",
+    decisionZh: kind === "search" ? "先补充可核验来源，再生成定向检索。" : "先补充摘要或开放全文证据，再重新执行这项行动。",
+    decisionEn: kind === "search" ? "Add verifiable sources before generating a targeted query." : "Add abstract or open-full-text evidence, then rerun this action.",
+    limitationsZh: issue || report.reason || "缺少能够逐条支持结论的证据。",
+    limitationsEn: report.reason || "Claim-level supporting evidence is still missing.",
+    searchQuery: "",
+    paperIds: [] as string[],
+    claimIds: [] as string[],
+    deliverable: { steps: [{
+      titleZh: "补齐证据后重试", titleEn: "Rerun after grounding the evidence",
+      detailZh: "优先获取相关论文的摘要或开放全文，并形成可定位的证据判断。",
+      detailEn: "First obtain abstracts or open full text and produce source-located evidence claims.",
+      paperIds: [] as string[], claimIds: [] as string[],
+    }], comparisonRows: [] as Array<never> },
+  };
 }
 
 function kindInstruction(kind: ResearchActionKind) {
@@ -272,27 +420,56 @@ export async function POST(request: Request) {
     await database.prepare(
       "UPDATE research_action_runs SET progress = 82, stage = 'verifying_sources', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     ).bind(runId).run();
-    const result = sanitizeResearchActionDraft(
+    const draftedResult = sanitizeResearchActionDraft(
       llm.parsed,
       kind,
       new Set(evidence.papers.map((paper) => paper.id)),
       new Set(evidence.claims.map((claim) => claim.id)),
     );
+    let verified: Awaited<ReturnType<typeof verifyResearchAction>>;
+    try {
+      verified = await verifyResearchAction({
+        apiKey: credential.apiKey,
+        database,
+        budget,
+        kind,
+        result: draftedResult,
+        papers: evidence.papers,
+        claims: evidence.claims,
+      });
+    } catch (verificationError) {
+      const initial = sanitizeEvidenceVerificationDraft({
+        verdict: "insufficient",
+        coverageScore: 0,
+        reason: verificationError instanceof Error ? verificationError.message : "Independent verification was unavailable",
+      }, { allowedFields: ["headline", "result", "decision", "limitations", "steps", "comparisonRows", "searchQuery"] });
+      verified = {
+        result: null,
+        status: "degraded",
+        report: evidenceVerificationReport({ initial }),
+        verificationInputTokens: 0,
+        verificationOutputTokens: 0,
+      };
+    }
+    const result = verified.result || degradedResearchAction(kind, verified.report);
     await database.prepare(
       `UPDATE research_action_runs SET status = 'ready', progress = 100, stage = 'ready', headline_zh = ?,
         headline_en = ?, result_zh = ?, result_en = ?, decision_zh = ?, decision_en = ?, limitations_zh = ?,
         limitations_en = ?, search_query = ?, deliverable_json = ?, source_paper_ids = ?, source_claim_ids = ?,
-        input_tokens = ?, output_tokens = ?, error = NULL, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        input_tokens = ?, output_tokens = ?, verification_status = ?, verification_coverage_score = ?, verification_json = ?,
+        verification_model = ?, verification_input_tokens = ?, verification_output_tokens = ?, error = NULL,
+        completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
     ).bind(result.headlineZh, result.headlineEn, result.resultZh, result.resultEn, result.decisionZh, result.decisionEn,
       result.limitationsZh, result.limitationsEn, result.searchQuery, JSON.stringify(result.deliverable),
       JSON.stringify(result.paperIds), JSON.stringify(result.claimIds), llm.usage?.prompt_tokens || 0,
-      llm.usage?.completion_tokens || 0, runId).run();
-    if (kind === "read") await enqueueReading(database, context.action, result.paperIds, result.decisionZh);
-    if (kind === "search") await database.prepare(
+      llm.usage?.completion_tokens || 0, verified.status, verified.report.coverageScore, JSON.stringify(verified.report),
+      MODEL, verified.verificationInputTokens, verified.verificationOutputTokens, runId).run();
+    if (kind === "read" && verified.result) await enqueueReading(database, context.action, result.paperIds, result.decisionZh);
+    if (kind === "search" && verified.result) await database.prepare(
       "DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = ?",
     ).bind(spaceId, new Date().toISOString().slice(0, 10)).run();
-    return Response.json({ runId, kind, searchQuery: result.searchQuery });
+    return Response.json({ runId, kind, searchQuery: result.searchQuery, verificationStatus: verified.status });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to execute this research action";
     if (database && runId) await database.prepare(

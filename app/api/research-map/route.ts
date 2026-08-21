@@ -1425,7 +1425,8 @@ export async function POST(request: Request) {
     const actionQuery = actionExpanding ? await database.prepare(
       `SELECT run.search_query FROM research_action_runs run
        JOIN research_problem_actions action ON action.id = run.action_id AND action.status = 'accepted' AND action.kind = 'search'
-       WHERE run.id = ? AND run.space_id = ? AND run.track_id = ? AND run.status = 'ready' AND run.search_query != '' LIMIT 1`,
+       WHERE run.id = ? AND run.space_id = ? AND run.track_id = ? AND run.status = 'ready'
+        AND run.verification_status IN ('verified', 'revised') AND run.search_query != '' LIMIT 1`,
     ).bind(payload.actionRunId?.trim() || "", space.id, track.id).first<{ search_query: string }>() : null;
     const targetedQuery = actionExpanding ? actionQuery?.search_query.trim() || ""
       : gapExpanding ? synthesisGap?.next_search_query.trim() || parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
