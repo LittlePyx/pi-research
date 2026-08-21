@@ -232,6 +232,13 @@
       "when": 1787303464101,
       "tag": "0032_sharp_unicorn",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1787305195067,
+      "tag": "0033_mixed_iron_fist",
+      "breakpoints": true
     }
   ]
 }

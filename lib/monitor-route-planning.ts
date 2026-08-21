@@ -58,7 +58,9 @@ export const RESEARCH_GUIDANCE_REVISIONS_SQL = `SELECT
  COALESCE((SELECT MAX(updated_at) FROM paper_feedback WHERE space_id = ?), '') AS feedback_revision,
  COALESCE((SELECT MAX(updated_at) FROM paper_reading_progress WHERE space_id = ?), '') AS reading_revision,
  COALESCE((SELECT MAX(updated_at) FROM research_map_evidence_proposals WHERE space_id = ? AND status = 'confirmed'), '') AS confirmed_evidence_revision,
- COALESCE((SELECT MAX(updated_at) FROM research_syntheses WHERE space_id = ? AND status IN ('ready', 'partial')), '') AS synthesis_revision`;
+ COALESCE((SELECT MAX(updated_at) FROM research_syntheses WHERE space_id = ? AND status IN ('ready', 'partial')), '') AS synthesis_revision,
+ COALESCE((SELECT MAX(updated_at) FROM research_problems WHERE space_id = ? AND status IN ('active', 'paused')), '') AS problem_revision,
+ COALESCE((SELECT MAX(created_at) FROM research_problem_assessments WHERE space_id = ?), '') AS problem_assessment_revision`;
 
 export const RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL = `SELECT ep.track_id, p.canonical_id, p.title, ep.map_role, ep.confidence, ep.updated_at
  FROM research_map_evidence_proposals ep
@@ -278,6 +280,8 @@ export function researchGuidanceIdentity(input: {
   readingRevision: string;
   confirmedEvidenceRevision: string;
   synthesisRevision: string;
+  problemRevision: string;
+  problemAssessmentRevision: string;
   confirmedEvidence: ConfirmedRouteEvidenceSnapshot[];
 }) {
   return JSON.stringify({
@@ -287,6 +291,8 @@ export function researchGuidanceIdentity(input: {
     readingRevision: input.readingRevision,
     confirmedEvidenceRevision: input.confirmedEvidenceRevision,
     synthesisRevision: input.synthesisRevision,
+    problemRevision: input.problemRevision,
+    problemAssessmentRevision: input.problemAssessmentRevision,
     confirmedEvidence: input.confirmedEvidence,
   });
 }

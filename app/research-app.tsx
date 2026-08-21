@@ -14,7 +14,7 @@ type LibraryFilter = "inbox" | "accepted" | "all" | "dismissed";
 type InboxFilter = "all" | "unseen" | "seen" | "snoozed";
 type LibrarySort = "priority" | "newest" | "quality";
 type ResearchMapMode = "directions" | "papers";
-type ResearchRouteTab = "assessment" | "evidence" | "gaps" | "agenda";
+type ResearchRouteTab = "problem" | "assessment" | "evidence" | "gaps" | "agenda";
 type PaperNetworkMode = "similarity" | "citations" | "path";
 type PaperNetworkScope = "all" | "one-hop" | "multi-seed";
 type PaperDiscoveryTab = "similar" | "prior" | "derivative";
@@ -77,6 +77,14 @@ type MonitorPaper = {
   readingFocusEn: string;
   researchQuestionsZh: string[];
   researchQuestionsEn: string[];
+  researchProblemId: string;
+  problemFitScore: number;
+  uncertaintyReductionScore: number;
+  actionabilityScore: number;
+  researchProblemImpactZh: string;
+  researchProblemImpactEn: string;
+  researchDecisionZh: string;
+  researchDecisionEn: string;
   evidenceStatus: "unavailable" | "queued" | "fetching" | "ready" | "partial" | "error";
   evidenceLevel: "metadata" | "abstract" | "fulltext";
   evidenceSourceKind: string;
@@ -173,6 +181,69 @@ type ResearchSynthesis = {
   analyzedAt: string | null;
   updatedAt: string | null;
   statements: ResearchSynthesisStatement[];
+};
+type ResearchProblemHypothesis = {
+  id: string;
+  statement: string;
+  rationale: string;
+  status: "proposed" | "confirmed" | "rejected";
+  confidence: number;
+  sourceStatementIds: string[];
+  position: number;
+};
+type ResearchProblemAssessment = {
+  id: string;
+  inputRevision: string;
+  summaryZh: string;
+  summaryEn: string;
+  changeZh: string;
+  changeEn: string;
+  uncertaintyZh: string;
+  uncertaintyEn: string;
+  nextDecisionZh: string;
+  nextDecisionEn: string;
+  nextSearchQuery: string;
+  hypothesisImpacts: Array<{ hypothesisId: string; relation: "supports" | "challenges" | "qualifies" | "method" | "gap"; explanationZh: string; explanationEn: string; confidence: number; sourceStatementIds: string[] }>;
+  sourceStatementIds: string[];
+  confidence: number;
+  model: string;
+  createdAt: string;
+  stale: boolean;
+};
+type ResearchProblemAction = {
+  id: string;
+  assessmentId: string | null;
+  kind: "read" | "compare" | "verify" | "search" | "decide";
+  titleZh: string;
+  titleEn: string;
+  rationaleZh: string;
+  rationaleEn: string;
+  status: "proposed" | "accepted" | "done" | "dismissed";
+  position: number;
+  completedAt: string | null;
+  updatedAt: string;
+};
+type ResearchProblemStage = "literature" | "theory" | "method" | "experiment" | "writing";
+type ResearchProblemState = {
+  problem: null | {
+    id: string;
+    status: "draft" | "active" | "paused" | "resolved";
+    workingLanguage: "zh" | "en";
+    question: string;
+    objective: string;
+    scope: string;
+    successCriteria: string;
+    stage: ResearchProblemStage;
+    model: string;
+    sourceRevision: string;
+    confirmedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  hypotheses: ResearchProblemHypothesis[];
+  assessment: ResearchProblemAssessment | null;
+  actions: ResearchProblemAction[];
+  evidence: { synthesisReady: boolean; statementCount: number; synthesisRevision: string; canDraft: boolean; canAssess: boolean };
 };
 type MonitorPreferences = {
   profileKey: string;
@@ -2453,6 +2524,59 @@ function ResearchSynthesisWorkbench({
   </section>;
 }
 
+function researchProblemStageLabel(stage: ResearchProblemStage, locale: Locale) {
+  const labels = {
+    literature: { zh: "文献界定", en: "Literature framing" }, theory: { zh: "理论推导", en: "Theory" },
+    method: { zh: "方法设计", en: "Method design" }, experiment: { zh: "实验验证", en: "Experiment" }, writing: { zh: "论文写作", en: "Writing" },
+  };
+  return labels[stage][locale];
+}
+
+function researchProblemRelationLabel(relation: ResearchProblemAssessment["hypothesisImpacts"][number]["relation"], locale: Locale) {
+  const labels = {
+    supports: { zh: "支持", en: "Supports" }, challenges: { zh: "挑战", en: "Challenges" },
+    qualifies: { zh: "限定", en: "Qualifies" }, method: { zh: "方法支撑", en: "Method support" }, gap: { zh: "仍有缺口", en: "Evidence gap" },
+  };
+  return labels[relation][locale];
+}
+
+function ResearchProblemWorkbench({
+  state, loading, action, error, locale, onDraft, onConfirm, onAssess, onUpdateAction,
+}: {
+  state: ResearchProblemState | null;
+  loading: boolean;
+  action: string | null;
+  error: string;
+  locale: Locale;
+  onDraft: () => void;
+  onConfirm: (draft: { question: string; objective: string; scope: string; successCriteria: string; stage: ResearchProblemStage; hypotheses: Array<{ statement: string; rationale: string; confidence: number; sourceStatementIds: string[] }> }) => void;
+  onAssess: () => void;
+  onUpdateAction: (actionId: string, status: "accepted" | "done" | "dismissed") => void;
+}) {
+  const [draft, setDraft] = useState(() => ({
+    question: state?.problem?.question || "",
+    objective: state?.problem?.objective || "",
+    scope: state?.problem?.scope || "",
+    successCriteria: state?.problem?.successCriteria || "",
+    stage: state?.problem?.stage || "literature" as "literature" | "theory" | "method" | "experiment" | "writing",
+  }));
+  const [hypotheses, setHypotheses] = useState<Array<{ statement: string; rationale: string; confidence: number; sourceStatementIds: string[] }>>(() =>
+    state?.hypotheses.filter((item) => item.status !== "rejected").map((item) => ({
+      statement: item.statement,
+      rationale: item.rationale,
+      confidence: item.confidence,
+      sourceStatementIds: item.sourceStatementIds,
+    })) || [],
+  );
+  if (loading && !state) return <section className="v2-route-workspace-panel v2-route-panel-empty v2-problem-loading" role="tabpanel"><span>π</span><div><strong>{locale === "zh" ? "Pi 正在读取当前研究问题" : "Pi is reading the current research problem"}</strong><p>{locale === "zh" ? "核对已确认问题、假设和最新证据变化。" : "Checking the confirmed problem, hypotheses, and latest evidence changes."}</p></div></section>;
+  if (!state?.problem) return <section className="v2-route-workspace-panel v2-route-panel-empty v2-problem-empty" role="tabpanel"><span>◎</span><div><strong>{locale === "zh" ? "把宽泛方向收紧为一个能被推进的问题" : "Turn this broad direction into an answerable problem"}</strong><p>{state?.evidence.canDraft ? (locale === "zh" ? "Pi 会依据当前跨论文证据起草问题、范围、成功标准和可检验假设；确认前不会影响推荐。" : "Pi will draft a question, scope, success criteria, and testable hypotheses from the current synthesis. Nothing guides recommendations until you confirm it.") : (locale === "zh" ? "先形成跨论文综合，Pi 才会依据真实证据起草研究问题。" : "Build the cross-paper synthesis before Pi drafts a problem from real evidence.")}</p>{error && <em>{error}</em>}</div><button type="button" disabled={Boolean(action) || !state?.evidence.canDraft} onClick={onDraft}>{action === "draft" ? (locale === "zh" ? "Pi 正在起草…" : "Drafting…") : (locale === "zh" ? "让 Pi 起草" : "Ask Pi to draft")} →</button></section>;
+  const active = state.problem.status === "active";
+  if (!active) return <section className="v2-route-workspace-panel v2-research-problem" role="tabpanel"><header><div><p className="v2-kicker">π {locale === "zh" ? "Pi 起草 · 用户确认后生效" : "PI DRAFT · ACTIVE ONLY AFTER CONFIRMATION"}</p><h2>{locale === "zh" ? "把研究方向写成可检验的工作问题" : "Shape the direction into a testable working problem"}</h2></div><span>{locale === "zh" ? "草稿" : "Draft"}</span></header><div className="v2-problem-editor"><label className="question"><span>{locale === "zh" ? "当前要回答的问题" : "Question to answer"}</span><textarea value={draft.question} maxLength={520} onChange={(event) => setDraft((current) => ({ ...current, question: event.target.value }))} /></label><label><span>{locale === "zh" ? "研究目标" : "Objective"}</span><textarea value={draft.objective} maxLength={700} onChange={(event) => setDraft((current) => ({ ...current, objective: event.target.value }))} /></label><label><span>{locale === "zh" ? "范围与边界" : "Scope and boundary"}</span><textarea value={draft.scope} maxLength={700} onChange={(event) => setDraft((current) => ({ ...current, scope: event.target.value }))} /></label><label><span>{locale === "zh" ? "怎样才算推进" : "Success criterion"}</span><textarea value={draft.successCriteria} maxLength={700} onChange={(event) => setDraft((current) => ({ ...current, successCriteria: event.target.value }))} /></label><label className="stage"><span>{locale === "zh" ? "当前阶段" : "Current stage"}</span><select value={draft.stage} onChange={(event) => setDraft((current) => ({ ...current, stage: event.target.value as typeof current.stage }))}>{(["literature", "theory", "method", "experiment", "writing"] as const).map((stage) => <option value={stage} key={stage}>{researchProblemStageLabel(stage, locale)}</option>)}</select></label></div><section className="v2-problem-hypotheses"><header><strong>{locale === "zh" ? "待确认假设" : "Hypotheses to confirm"}</strong><small>{locale === "zh" ? "你可以直接修改；Pi 只保留提案身份" : "Edit freely; Pi keeps these as proposals until confirmation"}</small></header>{hypotheses.map((hypothesis, index) => <article key={index}><span>H{index + 1}</span><div><textarea value={hypothesis.statement} maxLength={520} onChange={(event) => setHypotheses((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, statement: event.target.value } : item))} /><p>{hypothesis.rationale}</p></div><button type="button" onClick={() => setHypotheses((current) => current.filter((_, itemIndex) => itemIndex !== index))}>×</button></article>)}<button className="add" type="button" onClick={() => setHypotheses((current) => [...current, { statement: "", rationale: "", confidence: 0, sourceStatementIds: [] }])}>＋ {locale === "zh" ? "增加一个自己的假设" : "Add your own hypothesis"}</button></section><footer className="v2-problem-confirm"><div><strong>{locale === "zh" ? "确认后才会指导扫描" : "Guides discovery only after confirmation"}</strong><p>{locale === "zh" ? "之后 Pi 可以提出证据影响和修改建议，但不会自动改写这些内容。" : "Pi may suggest evidence impacts and revisions later, but never silently rewrites these fields."}</p></div><button type="button" disabled={Boolean(action) || !draft.question.trim() || !draft.objective.trim() || !draft.scope.trim() || !draft.successCriteria.trim()} onClick={() => onConfirm({ ...draft, hypotheses: hypotheses.filter((item) => item.statement.trim()) })}>{action === "confirm" ? (locale === "zh" ? "正在确认…" : "Confirming…") : (locale === "zh" ? "确认并用于研究" : "Confirm for research")} →</button></footer></section>;
+  const assessment = state.assessment;
+  const acceptedActions = state.actions.filter((item) => item.status === "accepted");
+  return <section className="v2-route-workspace-panel v2-research-problem active" role="tabpanel"><header><div><p className="v2-kicker">π {locale === "zh" ? "用户确认的研究问题" : "USER-CONFIRMED RESEARCH PROBLEM"}</p><h2>{state.problem.question}</h2></div><span>{researchProblemStageLabel(state.problem.stage, locale)}</span></header><div className="v2-problem-definition"><article><small>{locale === "zh" ? "当前目标" : "OBJECTIVE"}</small><p>{state.problem.objective}</p></article><article><small>{locale === "zh" ? "范围边界" : "SCOPE"}</small><p>{state.problem.scope}</p></article><article><small>{locale === "zh" ? "推进标准" : "SUCCESS CRITERION"}</small><p>{state.problem.successCriteria}</p></article></div><section className="v2-problem-confirmed-hypotheses"><header><strong>{locale === "zh" ? "当前假设" : "Current hypotheses"}</strong><span>{state.hypotheses.filter((item) => item.status === "confirmed").length}</span></header>{state.hypotheses.filter((item) => item.status === "confirmed").map((hypothesis, index) => { const impacts = assessment?.hypothesisImpacts.filter((item) => item.hypothesisId === hypothesis.id) || []; return <article key={hypothesis.id}><span>H{index + 1}</span><div><h3>{hypothesis.statement}</h3><p>{hypothesis.rationale}</p>{impacts.map((impact) => <aside className={impact.relation} key={`${impact.hypothesisId}:${impact.relation}`}><b>{researchProblemRelationLabel(impact.relation, locale)}</b><span>{locale === "zh" ? impact.explanationZh : impact.explanationEn}</span><em>{impact.confidence}%</em></aside>)}</div></article>; })}</section>{assessment ? <section className={`v2-problem-assessment ${assessment.stale ? "stale" : ""}`}><header><div><small>{locale === "zh" ? "最新证据对问题的影响" : "LATEST EVIDENCE IMPACT"}</small><strong>{assessment.confidence}% {locale === "zh" ? "当前判断置信度" : "current confidence"}</strong></div><button type="button" disabled={Boolean(action)} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : assessment.stale ? (locale === "zh" ? "按最新证据更新" : "Refresh from evidence") : (locale === "zh" ? "重新研判" : "Reassess")}</button></header><p>{locale === "zh" ? assessment.summaryZh : assessment.summaryEn}</p>{(locale === "zh" ? assessment.changeZh : assessment.changeEn) && <blockquote><b>↗</b><span><strong>{locale === "zh" ? "本次改变" : "What changed"}</strong>{locale === "zh" ? assessment.changeZh : assessment.changeEn}</span></blockquote>}<div><article><small>{locale === "zh" ? "最关键的不确定性" : "KEY UNCERTAINTY"}</small><p>{locale === "zh" ? assessment.uncertaintyZh : assessment.uncertaintyEn}</p></article><article><small>{locale === "zh" ? "下一项需要作出的判断" : "NEXT DECISION"}</small><p>{locale === "zh" ? assessment.nextDecisionZh : assessment.nextDecisionEn}</p></article></div></section> : <section className="v2-problem-assessment empty"><div><strong>{locale === "zh" ? "问题已经确认，等待第一次证据研判" : "The problem is confirmed and ready for its first evidence assessment"}</strong><p>{locale === "zh" ? "Pi 会把跨论文证据映射到你的假设，只提出影响，不修改问题。" : "Pi maps cross-paper evidence to your hypotheses and suggests impacts without changing the problem."}</p></div><button type="button" disabled={Boolean(action) || !state.evidence.canAssess} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : (locale === "zh" ? "开始证据研判" : "Assess evidence")} →</button></section>}<section className="v2-problem-actions"><header><div><strong>{locale === "zh" ? "接下来推进什么" : "What moves the problem forward"}</strong><small>{locale === "zh" ? "建议需要你接受；完成后成为长期研究记录" : "Suggestions need your acceptance and become durable research history when completed"}</small></div><span>{acceptedActions.length} {locale === "zh" ? "进行中" : "active"}</span></header>{state.actions.map((item, index) => <article className={item.status} key={item.id}><span>{item.status === "done" ? "✓" : String(index + 1).padStart(2, "0")}</span><div><small>{item.kind.toUpperCase()}</small><strong>{locale === "zh" ? item.titleZh : item.titleEn}</strong><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p></div>{item.status === "proposed" ? <footer><button type="button" onClick={() => onUpdateAction(item.id, "accepted")}>{locale === "zh" ? "接受" : "Accept"}</button><button type="button" onClick={() => onUpdateAction(item.id, "dismissed")}>{locale === "zh" ? "暂不做" : "Dismiss"}</button></footer> : item.status === "accepted" ? <button type="button" onClick={() => onUpdateAction(item.id, "done")}>{locale === "zh" ? "标记完成" : "Mark done"}</button> : <em>{locale === "zh" ? "已完成" : "Completed"}</em>}</article>)}{!state.actions.length && <p className="v2-problem-no-actions">{locale === "zh" ? "完成一次证据研判后，Pi 会提出 1–3 项具体行动。" : "After an evidence assessment, Pi will propose 1–3 concrete moves."}</p>}</section>{error && <div className="v2-problem-error">{error}</div>}</section>;
+}
+
 export default function ResearchApp({ user }: { user: User }) {
   const [locale, setLocale] = useState<Locale>("zh");
   const [view, setView] = useState<View>("today");
@@ -2471,6 +2595,11 @@ export default function ResearchApp({ user }: { user: User }) {
   const [researchSynthesisLoading, setResearchSynthesisLoading] = useState(false);
   const [researchSynthesisError, setResearchSynthesisError] = useState("");
   const synthesisAutoAttemptRef = useRef(new Set<string>());
+  const [researchProblemState, setResearchProblemState] = useState<ResearchProblemState | null>(null);
+  const [researchProblemLoading, setResearchProblemLoading] = useState(false);
+  const [researchProblemAction, setResearchProblemAction] = useState<string | null>(null);
+  const [researchProblemError, setResearchProblemError] = useState("");
+  const researchProblemAutoAttemptRef = useRef(new Set<string>());
   const [researchMap, setResearchMap] = useState<ResearchMapState>({
     tracks: [], edges: [], paperEdges: [],
     paperNetwork: { status: "idle", paperCount: 0, totalPaperCount: 0, builtPaperCount: 0, coveredPaperIds: [], coveredPaperHash: "", coverageRevision: 0, coverageCursor: 0, paperRevision: "", builtPaperRevision: "", citationEdgeCount: 0, similarityEdgeCount: 0, semanticEdgeCount: 0, pathEdgeCount: 0, model: "", sources: [], updatedAt: null, error: null },
@@ -2481,7 +2610,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [directionRelationFocusId, setDirectionRelationFocusId] = useState<string | null>(null);
   const [directionPinnedRelationId, setDirectionPinnedRelationId] = useState<string | null>(null);
   const [researchMapMode, setResearchMapMode] = useState<ResearchMapMode>("directions");
-  const [researchRouteTab, setResearchRouteTab] = useState<ResearchRouteTab>("assessment");
+  const [researchRouteTab, setResearchRouteTab] = useState<ResearchRouteTab>("problem");
   const [paperNetworkMode, setPaperNetworkMode] = useState<PaperNetworkMode>("similarity");
   const [paperNetworkScope, setPaperNetworkScope] = useState<PaperNetworkScope>("all");
   const [paperDiscoveryTab, setPaperDiscoveryTab] = useState<PaperDiscoveryTab>("similar");
@@ -3325,6 +3454,46 @@ export default function ResearchApp({ user }: { user: User }) {
   }, [activeSpace.id, researchRouteTab, selectedThread, view]);
 
   useEffect(() => {
+    if (view !== "thread-detail" || researchRouteTab !== "problem" || !selectedThread
+      || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    let cancelled = false;
+    const spaceId = activeSpace.id;
+    const trackId = selectedThread.id;
+    const run = async () => {
+      setResearchProblemState(null);
+      setResearchProblemLoading(true);
+      setResearchProblemError("");
+      try {
+        const response = await fetch(`/api/research-problem?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}`);
+        const data = await response.json() as { problemState?: ResearchProblemState; error?: string };
+        if (!response.ok || !data.problemState) throw new Error(data.error || "research problem unavailable");
+        if (cancelled) return;
+        setResearchProblemState(data.problemState);
+        const autoAction = !data.problemState.problem && data.problemState.evidence.canDraft ? "draft"
+          : data.problemState.problem?.status === "active" && data.problemState.evidence.canAssess
+            && (!data.problemState.assessment || data.problemState.assessment.stale) ? "assess" : null;
+        const attemptKey = `${spaceId}:${trackId}:${autoAction || "none"}:${data.problemState.problem?.updatedAt || "new"}:${data.problemState.evidence.synthesisRevision}`;
+        if (!autoAction || researchProblemAutoAttemptRef.current.has(attemptKey)) return;
+        researchProblemAutoAttemptRef.current.add(attemptKey);
+        setResearchProblemAction(autoAction);
+        const generatedResponse = await fetch("/api/research-problem", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spaceId, trackId, action: autoAction, workingLanguage: locale }),
+        });
+        const generated = await generatedResponse.json() as { problemState?: ResearchProblemState; error?: string };
+        if (!generatedResponse.ok || !generated.problemState) throw new Error(generated.error || "research problem generation failed");
+        if (!cancelled) setResearchProblemState(generated.problemState);
+      } catch (error) {
+        if (!cancelled) setResearchProblemError(error instanceof Error ? error.message : "research problem unavailable");
+      } finally {
+        if (!cancelled) { setResearchProblemLoading(false); setResearchProblemAction(null); }
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [activeSpace.id, locale, researchRouteTab, selectedThread, view]);
+
+  useEffect(() => {
     const needsLearningPath = view === "learn" || (view === "threads" && researchMapMode === "papers" && paperNetworkMode === "path");
     if (!needsLearningPath || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     let cancelled = false;
@@ -4109,7 +4278,7 @@ export default function ResearchApp({ user }: { user: User }) {
     setAskOpen(true);
   };
 
-  const openThread = (thread: ResearchTrack, tab: ResearchRouteTab = "assessment") => {
+  const openThread = (thread: ResearchTrack, tab: ResearchRouteTab = "problem") => {
     setSelectedThread(thread);
     setResearchRouteTab(tab);
     navigate("thread-detail");
@@ -4322,6 +4491,83 @@ export default function ResearchApp({ user }: { user: User }) {
     } finally {
       setResearchSynthesisLoading(false);
     }
+  };
+
+  const draftResearchProblem = async () => {
+    if (!selectedThread || researchProblemAction || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    setResearchProblemAction("draft");
+    setResearchProblemError("");
+    try {
+      const response = await fetch("/api/research-problem", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId: selectedThread.id, action: "draft", workingLanguage: locale }),
+      });
+      const data = await response.json() as { problemState?: ResearchProblemState; error?: string };
+      if (!response.ok || !data.problemState) throw new Error(data.error || "research problem draft failed");
+      setResearchProblemState(data.problemState);
+    } catch (error) {
+      setResearchProblemError(error instanceof Error ? error.message : "research problem draft failed");
+    } finally { setResearchProblemAction(null); }
+  };
+
+  const confirmResearchProblem = async (draft: { question: string; objective: string; scope: string; successCriteria: string; stage: ResearchProblemStage; hypotheses: Array<{ statement: string; rationale: string; confidence: number; sourceStatementIds: string[] }> }) => {
+    if (!selectedThread || researchProblemAction) return;
+    setResearchProblemAction("confirm");
+    setResearchProblemError("");
+    try {
+      const response = await fetch("/api/research-problem", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId: selectedThread.id, action: "confirm", workingLanguage: locale, ...draft }),
+      });
+      const data = await response.json() as { problemState?: ResearchProblemState; error?: string };
+      if (!response.ok || !data.problemState) throw new Error(data.error || "research problem confirmation failed");
+      setResearchProblemState(data.problemState);
+      setResearchProblemAction("assess");
+      const assessmentResponse = await fetch("/api/research-problem", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId: selectedThread.id, action: "assess" }),
+      });
+      const assessmentData = await assessmentResponse.json() as { problemState?: ResearchProblemState; error?: string };
+      if (!assessmentResponse.ok || !assessmentData.problemState) throw new Error(assessmentData.error || "initial research assessment failed");
+      setResearchProblemState(assessmentData.problemState);
+      setToast(locale === "zh" ? "研究问题已确认，并开始指导今日发现" : "The research problem is confirmed and now guides discovery");
+    } catch (error) {
+      setResearchProblemError(error instanceof Error ? error.message : "research problem confirmation failed");
+    } finally { setResearchProblemAction(null); }
+  };
+
+  const assessResearchProblem = async () => {
+    if (!selectedThread || researchProblemAction) return;
+    setResearchProblemAction("assess");
+    setResearchProblemError("");
+    try {
+      const response = await fetch("/api/research-problem", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId: selectedThread.id, action: "assess" }),
+      });
+      const data = await response.json() as { problemState?: ResearchProblemState; error?: string };
+      if (!response.ok || !data.problemState) throw new Error(data.error || "research problem assessment failed");
+      setResearchProblemState(data.problemState);
+      setToast(locale === "zh" ? "Pi 已按最新证据更新问题研判" : "Pi updated the problem assessment from current evidence");
+    } catch (error) {
+      setResearchProblemError(error instanceof Error ? error.message : "research problem assessment failed");
+    } finally { setResearchProblemAction(null); }
+  };
+
+  const updateResearchProblemAction = async (actionId: string, status: "accepted" | "done" | "dismissed") => {
+    if (!selectedThread || researchProblemAction) return;
+    setResearchProblemAction(`action:${actionId}`);
+    try {
+      const response = await fetch("/api/research-problem", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId: selectedThread.id, actionId, status }),
+      });
+      const data = await response.json() as { problemState?: ResearchProblemState; error?: string };
+      if (!response.ok || !data.problemState) throw new Error(data.error || "research action update failed");
+      setResearchProblemState(data.problemState);
+    } catch {
+      setToast(locale === "zh" ? "研究行动暂时无法更新" : "The research action could not be updated");
+    } finally { setResearchProblemAction(null); }
   };
 
   const generateLearningPath = async (targetOverride?: string, trackIdOverride: string | null | undefined = undefined) => {
@@ -4543,7 +4789,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     const readingAction = dailyReadingPlan[index];
                     return <details key={paper?.id || `${index}:${signal || readingAction}`}>
                       <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i>{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}<PaperEvidenceBadge paper={paper} locale={locale} processing={evidenceProcessingPaperId === paper.id} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
-                      <div className="v2-daily-paper-analysis">{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看完整解读" : "Open full analysis"} →</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(paper, "save")}>{(saved[activeSpace.id + ":" + paper.id] ?? paper.saved) ? "★ " + t.saved : "☆ " + t.save}</button></footer>}</div>
+                      <div className="v2-daily-paper-analysis">{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看完整解读" : "Open full analysis"} →</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => saveFeedback(paper, "save")}>{(saved[activeSpace.id + ":" + paper.id] ?? paper.saved) ? "★ " + t.saved : "☆ " + t.save}</button></footer>}</div>
                     </details>;
                   })}
                 </div>
@@ -4788,8 +5034,9 @@ export default function ResearchApp({ user }: { user: User }) {
 
               <section className={`v2-route-role-strip ${selectedThread.userRole}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级。" : "This role changes future discovery budget and route priority."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
 
-              <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{tab === "assessment" ? "01" : tab === "evidence" ? "02" : tab === "gaps" ? "03" : "04"}</span><strong>{tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
+              <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["problem", "assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab, tabIndex) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{String(tabIndex + 1).padStart(2, "0")}</span><strong>{tab === "problem" ? (locale === "zh" ? "研究问题" : "Research problem") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
 
+              {researchRouteTab === "problem" && <ResearchProblemWorkbench key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} loading={researchProblemLoading} action={researchProblemAction} error={researchProblemError} locale={locale} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} />}
               {researchRouteTab === "assessment" && <ResearchSynthesisWorkbench track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} error={researchSynthesisError} locale={locale} onRefresh={() => void refreshResearchSynthesis(selectedThread)} onScanGap={() => void scanResearchRouteGap(selectedThread)} onExplain={() => askAboutResearchRoute(selectedThread, "gap")} />}
 
               {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-evidence-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "路线证据与代表作" : "ROUTE EVIDENCE & REPRESENTATIVE WORK"}</p><h2>{locale === "zh" ? "从奠基、转折走到当前前沿" : "From foundations and turning points to the frontier"}</h2></div><div className="v2-route-stage-counts">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span className={role} key={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</div></header><div className="v2-route-evidence-chain">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role, roleIndex) => <section className={role} key={role}><header><span>{String(roleIndex + 1).padStart(2, "0")}</span><div><strong>{researchRoleLabel(role, locale)}</strong><small>{role === "foundation" ? (locale === "zh" ? "定义问题与基本工具" : "Defines the question and core tools") : role === "milestone" ? (locale === "zh" ? "改变路线走向的关键节点" : "Turning points that changed the route") : (locale === "zh" ? "当前活跃问题与方法" : "Current active questions and methods")}</small></div></header><div>{selectedThread.papers.filter((paper) => paper.role === role).map((paper) => <article key={paper.id}><header><span>{researchPaperYear(paper)}</span><small>{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</small></header><em className={`v2-route-provenance ${paper.provenance || "system_curated"}`}>{paper.provenance === "user_confirmed" ? (locale === "zh" ? "用户已确认" : "User confirmed") : (locale === "zh" ? "Pi 策展代表作" : "Pi-curated representative")}</em><h3>{paper.title}</h3><p>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p><footer><button type="button" onClick={() => askAboutRoutePaper(selectedThread, paper)}>{locale === "zh" ? "让 Pi 解释位置" : "Ask Pi about its place"}</button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)}>{t.openOriginal} ↗</a></footer></article>)}{!selectedThread.papers.some((paper) => paper.role === role) && <div className="v2-route-chain-empty"><span>＋</span><p>{locale === "zh" ? "这个阶段仍缺少有代表性的真实论文。" : "This stage still lacks a representative real paper."}</p><button type="button" onClick={() => { setResearchRouteTab("gaps"); }}>{locale === "zh" ? "去补证据" : "Fill the gap"} →</button></div>}</div></section>)}</div></section>}
@@ -4895,6 +5142,7 @@ export default function ResearchApp({ user }: { user: User }) {
             <div className="v2-paper-detail-grid">
               <div>
                 <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><span>{t.qualityScore}</span><strong>{selectedMonitorPaper.qualityScore}</strong></div></section>
+                {selectedMonitorPaper.researchProblemId && <section className="v2-content-section v2-paper-problem-impact"><header><p className="v2-kicker">π {locale === "zh" ? "与当前研究问题的关系" : "ACTIVE RESEARCH PROBLEM"}</p><div><span>{locale === "zh" ? "问题贴合" : "Problem fit"}<b>{selectedMonitorPaper.problemFitScore}</b></span><span>{locale === "zh" ? "降低不确定性" : "Uncertainty reduction"}<b>{selectedMonitorPaper.uncertaintyReductionScore}</b></span><span>{locale === "zh" ? "可行动性" : "Actionability"}<b>{selectedMonitorPaper.actionabilityScore}</b></span></div></header><h2>{locale === "zh" ? selectedMonitorPaper.researchProblemImpactZh : selectedMonitorPaper.researchProblemImpactEn}</h2><aside><small>{locale === "zh" ? "读完后应该决定" : "DECISION AFTER READING"}</small><strong>{locale === "zh" ? selectedMonitorPaper.researchDecisionZh : selectedMonitorPaper.researchDecisionEn}</strong></aside></section>}
                 <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><h2>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</h2></section>
                 <section className={`v2-evidence-grounding ${paperEvidence?.evidenceLevel || selectedMonitorPaper.evidenceLevel} ${paperEvidence?.status || selectedMonitorPaper.evidenceStatus}`}>
                   <header><div><p className="v2-kicker">π {locale === "zh" ? "原文证据" : "SOURCE EVIDENCE"}</p><h2>{paperEvidenceLoading ? evidenceStatusLabel("fetching", locale) : evidenceLevelLabel(paperEvidence?.evidenceLevel || selectedMonitorPaper.evidenceLevel, locale)}</h2></div><span><i />{paperEvidenceLoading ? (locale === "zh" ? "不阻塞当前阅读" : "Current reading stays available") : evidenceStatusLabel(paperEvidence?.status || selectedMonitorPaper.evidenceStatus, locale)}</span></header>

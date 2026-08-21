@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { researchMapEvidenceProposalBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
+import { researchMapEvidenceProposalBootstrapSql, researchProblemBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
 
 export type ApiUser = {
   userId: string;
@@ -49,6 +49,14 @@ async function ensurePaperInsightReviewColumns(database: D1Database) {
     { name: "llm_recommended", sql: "ALTER TABLE paper_insights ADD COLUMN llm_recommended INTEGER NOT NULL DEFAULT 0" },
     { name: "llm_relevance_score", sql: "ALTER TABLE paper_insights ADD COLUMN llm_relevance_score INTEGER NOT NULL DEFAULT 0" },
     { name: "screening_reason", sql: "ALTER TABLE paper_insights ADD COLUMN screening_reason TEXT NOT NULL DEFAULT ''" },
+    { name: "research_problem_id", sql: "ALTER TABLE paper_insights ADD COLUMN research_problem_id TEXT" },
+    { name: "problem_fit_score", sql: "ALTER TABLE paper_insights ADD COLUMN problem_fit_score INTEGER NOT NULL DEFAULT 0" },
+    { name: "uncertainty_reduction_score", sql: "ALTER TABLE paper_insights ADD COLUMN uncertainty_reduction_score INTEGER NOT NULL DEFAULT 0" },
+    { name: "actionability_score", sql: "ALTER TABLE paper_insights ADD COLUMN actionability_score INTEGER NOT NULL DEFAULT 0" },
+    { name: "research_problem_impact_zh", sql: "ALTER TABLE paper_insights ADD COLUMN research_problem_impact_zh TEXT NOT NULL DEFAULT ''" },
+    { name: "research_problem_impact_en", sql: "ALTER TABLE paper_insights ADD COLUMN research_problem_impact_en TEXT NOT NULL DEFAULT ''" },
+    { name: "research_decision_zh", sql: "ALTER TABLE paper_insights ADD COLUMN research_decision_zh TEXT NOT NULL DEFAULT ''" },
+    { name: "research_decision_en", sql: "ALTER TABLE paper_insights ADD COLUMN research_decision_en TEXT NOT NULL DEFAULT ''" },
   ];
   for (const addition of additions) {
     if (!existing.has(addition.name)) await database.prepare(addition.sql).run();
@@ -196,6 +204,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_track_papers_track_position ON research_track_papers(track_id, position)"),
     ...researchMapEvidenceProposalBootstrapSql.map((statement) => database.prepare(statement)),
     ...researchSynthesisBootstrapSql.map((statement) => database.prepare(statement)),
+    ...researchProblemBootstrapSql.map((statement) => database.prepare(statement)),
     database.prepare("CREATE TABLE IF NOT EXISTS research_paper_edges (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, source_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, target_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, kind TEXT NOT NULL, relation_kind TEXT NOT NULL DEFAULT 'related', relationship_zh TEXT NOT NULL DEFAULT '', relationship_en TEXT NOT NULL DEFAULT '', confidence INTEGER NOT NULL DEFAULT 0, evidence_source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_paper_edges_pair_kind_relation ON research_paper_edges(source_paper_id, target_paper_id, kind, relation_kind)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_paper_edges_space_kind ON research_paper_edges(space_id, kind)"),

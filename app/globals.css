@@ -4493,3 +4493,96 @@ main { min-width: 0; }
   .v2-synthesis-sources { margin-left: 0; }
   .v2-synthesis-next button { width: 100%; }
 }
+
+/* Pi Research V70 — user-confirmed problem advancement loop */
+.v2-route-workspace-tabs { grid-template-columns: repeat(5,minmax(0,1fr)); }
+.v2-research-problem > header { padding: 22px; border-bottom: 1px solid #dbe3dd; display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
+.v2-research-problem > header h2 { max-width: 900px; margin: 6px 0 0; color: #30463a; font: 400 22px/1.4 Georgia,serif; }
+.v2-research-problem > header > span { padding: 7px 10px; border-radius: 99px; background: #e6eee8; color: #426650; font-size: 10px; font-weight: 760; white-space: nowrap; }
+.v2-problem-editor { padding: 20px 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.v2-problem-editor label { display: grid; gap: 7px; }
+.v2-problem-editor label.question { grid-column: 1 / -1; }
+.v2-problem-editor label > span { color: #5c7063; font-size: 10px; font-weight: 780; }
+.v2-problem-editor textarea,.v2-problem-hypotheses textarea { min-height: 82px; padding: 11px 12px; border: 1px solid #d3ddd6; border-radius: 8px; background: #fbfcfa; color: #3e4f46; resize: vertical; font: 12px/1.55 sans-serif; }
+.v2-problem-editor .question textarea { min-height: 96px; color: #30473b; font: 16px/1.55 Georgia,serif; }
+.v2-problem-editor label.stage { max-width: 240px; }
+.v2-problem-editor select { min-height: 40px; padding: 0 10px; border: 1px solid #d3ddd6; border-radius: 8px; background: #fbfcfa; color: #43574c; }
+.v2-problem-hypotheses { padding: 2px 22px 20px; }
+.v2-problem-hypotheses > header,.v2-problem-confirmed-hypotheses > header,.v2-problem-actions > header { padding: 13px 0; border-bottom: 1px solid #dce4de; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.v2-problem-hypotheses > header strong,.v2-problem-confirmed-hypotheses > header strong,.v2-problem-actions > header strong { color: #40574a; font-size: 12px; }
+.v2-problem-hypotheses > header small,.v2-problem-actions > header small { color: #7c8981; font-size: 9px; }
+.v2-problem-hypotheses > article { padding: 13px 0; border-bottom: 1px solid #e2e8e3; display: grid; grid-template-columns: 34px minmax(0,1fr) 28px; gap: 10px; }
+.v2-problem-hypotheses > article > span,.v2-problem-confirmed-hypotheses > article > span { width: 30px; height: 30px; border-radius: 50%; background: #e5eee8; color: #38604b; display: grid; place-items: center; font: 10px Georgia,serif; }
+.v2-problem-hypotheses article textarea { width: 100%; min-height: 62px; }
+.v2-problem-hypotheses article p { margin: 6px 0 0; color: #78827c; font-size: 10px; line-height: 1.55; }
+.v2-problem-hypotheses article > button { height: 28px; border: 0; border-radius: 50%; background: #f1f3f0; color: #849088; }
+.v2-problem-hypotheses > button.add { margin-top: 12px; padding: 0; border: 0; background: transparent; color: #37634e; font-size: 10px; font-weight: 760; }
+.v2-problem-confirm { padding: 16px 22px; border-top: 1px solid #d8e1da; background: #f2f6f3; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.v2-problem-confirm strong { color: #385645; font-size: 12px; }
+.v2-problem-confirm p { margin: 4px 0 0; color: #738078; font-size: 10px; }
+.v2-problem-confirm button,.v2-problem-assessment button,.v2-problem-empty > button { min-height: 39px; padding: 0 13px; border: 1px solid #315d48; border-radius: 7px; background: #315d48; color: #fff; font-size: 10px; font-weight: 770; white-space: nowrap; }
+.v2-problem-definition { padding: 18px 22px; border-bottom: 1px solid #dce3de; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.v2-problem-definition article { padding: 13px; border: 1px solid #dce4de; border-radius: 9px; background: #fafbf9; }
+.v2-problem-definition small,.v2-problem-assessment article small { color: #54705f; font-size: 9px; font-weight: 820; letter-spacing: .06em; }
+.v2-problem-definition p { margin: 7px 0 0; color: #53645a; font-size: 11px; line-height: 1.65; }
+.v2-problem-confirmed-hypotheses { padding: 3px 22px 18px; }
+.v2-problem-confirmed-hypotheses > header span,.v2-problem-actions > header > span { color: #557061; font-size: 10px; }
+.v2-problem-confirmed-hypotheses > article { padding: 14px 0; border-bottom: 1px solid #e0e6e1; display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 10px; }
+.v2-problem-confirmed-hypotheses h3 { margin: 1px 0 5px; color: #3c5146; font: 14px/1.45 Georgia,serif; }
+.v2-problem-confirmed-hypotheses p { margin: 0; color: #758079; font-size: 10px; line-height: 1.55; }
+.v2-problem-confirmed-hypotheses aside { margin-top: 9px; padding: 8px 10px; border-left: 2px solid #91ad9b; background: #f2f6f3; display: grid; grid-template-columns: 70px minmax(0,1fr) 40px; gap: 8px; color: #5f7067; font-size: 10px; line-height: 1.5; }
+.v2-problem-confirmed-hypotheses aside.challenges { border-color: #b27b5d; background: #faf3ef; }
+.v2-problem-confirmed-hypotheses aside.qualifies { border-color: #aa9655; background: #faf8ef; }
+.v2-problem-confirmed-hypotheses aside.gap { border-color: #b55f4a; background: #fbf2ef; }
+.v2-problem-confirmed-hypotheses aside em { font-style: normal; text-align: right; }
+.v2-problem-assessment { padding: 19px 22px; border-top: 1px solid #dbe3dd; border-bottom: 1px solid #dbe3dd; background: #f2f6f3; }
+.v2-problem-assessment > header { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.v2-problem-assessment > header small { color: #456553; display: block; font-size: 9px; font-weight: 820; letter-spacing: .07em; }
+.v2-problem-assessment > header strong { margin-top: 4px; color: #6b7a71; display: block; font-size: 10px; }
+.v2-problem-assessment > p { max-width: 1050px; margin: 14px 0; color: #465a4f; font: 14px/1.68 Georgia,serif; }
+.v2-problem-assessment > blockquote { margin: 0 0 14px; padding: 10px 12px; border-left: 2px solid #88a692; background: #fff; color: #5b6e63; display: flex; gap: 9px; font-size: 10px; line-height: 1.55; }
+.v2-problem-assessment blockquote strong { margin-right: 7px; color: #365b47; }
+.v2-problem-assessment > div { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.v2-problem-assessment article { padding: 12px; border: 1px solid #d6e0d9; border-radius: 8px; background: rgba(255,255,255,.65); }
+.v2-problem-assessment article p { margin: 6px 0 0; color: #52655a; font-size: 11px; line-height: 1.6; }
+.v2-problem-assessment.empty { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.v2-problem-assessment.empty strong { color: #3f5a4b; font-size: 12px; }
+.v2-problem-assessment.empty p { margin: 4px 0 0; color: #748178; font-size: 10px; }
+.v2-problem-actions { padding: 4px 22px 20px; }
+.v2-problem-actions > article { padding: 13px 0; border-bottom: 1px solid #e0e6e1; display: grid; grid-template-columns: 32px minmax(0,1fr) auto; gap: 11px; align-items: center; }
+.v2-problem-actions > article > span { width: 29px; height: 29px; border-radius: 50%; background: #e7eee9; color: #476653; display: grid; place-items: center; font: 9px Georgia,serif; }
+.v2-problem-actions article small { color: #7a877f; font-size: 8px; }
+.v2-problem-actions article strong { margin-top: 3px; color: #3f5549; display: block; font: 13px/1.4 Georgia,serif; }
+.v2-problem-actions article p { margin: 3px 0 0; color: #748078; font-size: 9px; }
+.v2-problem-actions article footer { display: flex; gap: 6px; }
+.v2-problem-actions button { min-height: 31px; padding: 0 9px; border: 1px solid #c7d6cd; border-radius: 6px; background: #fff; color: #416451; font-size: 9px; font-weight: 760; }
+.v2-problem-actions article.done { opacity: .65; }
+.v2-problem-actions article > em { color: #587363; font-size: 9px; font-style: normal; }
+.v2-problem-no-actions,.v2-problem-error { margin: 15px 0 0; color: #78847d; font-size: 10px; }
+.v2-problem-error { color: #955c42; }
+.v2-daily-paper-analysis > section.research-problem-impact { grid-column: 1 / -1; padding: 11px 12px; border: 1px solid #cbdcd2; border-radius: 8px; background: #f8fbf9; }
+.v2-daily-paper-analysis section.research-problem-impact small { margin-top: 9px; color: #6f7f76; display: block; font-size: 8px; font-weight: 780; }
+.v2-daily-paper-analysis section.research-problem-impact b { margin-top: 3px; color: #355b47; display: block; font: 12px/1.5 Georgia,serif; }
+.v2-paper-problem-impact > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.v2-paper-problem-impact > header > div { display: flex; gap: 7px; }
+.v2-paper-problem-impact > header span { padding: 7px 9px; border-radius: 7px; background: #edf3ef; color: #617369; display: grid; gap: 2px; font-size: 8px; text-align: center; }
+.v2-paper-problem-impact > header b { color: #315d48; font: 15px Georgia,serif; }
+.v2-paper-problem-impact > h2 { margin-top: 18px; }
+.v2-paper-problem-impact > aside { margin-top: 14px; padding: 12px 14px; border-left: 2px solid #759785; background: #f1f6f3; }
+.v2-paper-problem-impact > aside small { color: #65776d; font-size: 8px; font-weight: 820; }
+.v2-paper-problem-impact > aside strong { margin-top: 5px; color: #385447; display: block; font: 13px/1.5 Georgia,serif; }
+
+@media (max-width: 900px) {
+  .v2-route-workspace-tabs { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .v2-problem-definition { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .v2-route-workspace-tabs { grid-template-columns: 1fr 1fr; }
+  .v2-research-problem > header,.v2-problem-confirm,.v2-problem-assessment.empty,.v2-problem-assessment > header,.v2-paper-problem-impact > header { align-items: flex-start; flex-direction: column; }
+  .v2-problem-editor,.v2-problem-assessment > div { grid-template-columns: 1fr; }
+  .v2-problem-editor label.question { grid-column: 1; }
+  .v2-problem-confirm button,.v2-problem-assessment button { width: 100%; }
+  .v2-problem-actions > article { align-items: flex-start; grid-template-columns: 32px minmax(0,1fr); }
+  .v2-problem-actions > article > footer,.v2-problem-actions > article > button,.v2-problem-actions > article > em { grid-column: 2; }
+  .v2-paper-problem-impact > header > div { width: 100%; flex-wrap: wrap; }
+}

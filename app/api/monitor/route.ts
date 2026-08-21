@@ -260,6 +260,14 @@ type PaperRow = {
   reading_focus_en: string;
   research_questions_zh: string;
   research_questions_en: string;
+  research_problem_id: string;
+  problem_fit_score: number;
+  uncertainty_reduction_score: number;
+  actionability_score: number;
+  research_problem_impact_zh: string;
+  research_problem_impact_en: string;
+  research_decision_zh: string;
+  research_decision_en: string;
   evidence_status: string;
   evidence_level: string;
   evidence_source_kind: string;
@@ -387,6 +395,14 @@ type PaperReview = {
   readingFocusEn: string;
   researchQuestionsZh: string[];
   researchQuestionsEn: string[];
+  researchProblemId: string;
+  problemFitScore: number;
+  uncertaintyReductionScore: number;
+  actionabilityScore: number;
+  researchProblemImpactZh: string;
+  researchProblemImpactEn: string;
+  researchDecisionZh: string;
+  researchDecisionEn: string;
 };
 
 function paperReviewMapRole(value: unknown): PaperReview["mapRole"] {
@@ -937,11 +953,16 @@ async function routeDiscoveryQueries(
      COALESCE(synthesis.overview_en, '') AS synthesis_overview_en,
      COALESCE(synthesis.next_search_query, '') AS synthesis_next_search_query,
      COALESCE(synthesis.confidence, 0) AS synthesis_confidence,
+     COALESCE(problem.id, '') AS research_problem_id,
+     COALESCE(problem.question, '') AS research_problem_question,
+     COALESCE((SELECT assessment.next_search_query FROM research_problem_assessments assessment
+       WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS problem_next_search_query,
      MAX(c.last_scanned_at) AS last_scanned_at
      FROM research_tracks t
      LEFT JOIN monitor_discovery_coverage c ON c.space_id = t.space_id AND c.route_id = t.id AND c.horizon = ?
      LEFT JOIN research_syntheses synthesis ON synthesis.space_id = t.space_id AND synthesis.track_id = t.id
       AND synthesis.status IN ('ready', 'partial')
+     LEFT JOIN research_problems problem ON problem.space_id = t.space_id AND problem.track_id = t.id AND problem.status = 'active'
      LEFT JOIN (
        SELECT event.space_id, event.route_id, MIN(18, SUM(event.weight)) AS passive_engagement
        FROM paper_engagement_events event
@@ -955,10 +976,10 @@ async function routeDiscoveryQueries(
      ) behavior ON behavior.space_id = t.space_id AND behavior.route_id = t.id
       WHERE t.space_id = ? GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score,
       t.interaction_score, behavior.passive_engagement, t.intelligence_json, t.intelligence_updated_at,
-      synthesis.overview_en, synthesis.next_search_query, synthesis.confidence
+      synthesis.overview_en, synthesis.next_search_query, synthesis.confidence, problem.id, problem.question
      ORDER BY CASE WHEN MAX(c.last_scanned_at) IS NULL THEN 0 ELSE 1 END, MAX(c.last_scanned_at),
      CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, t.interaction_score DESC, t.depth_score DESC`,
-  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; last_scanned_at: string | null }>();
+  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; research_problem_id: string; research_problem_question: string; problem_next_search_query: string; last_scanned_at: string | null }>();
   const coreBudget = mode === "focused" ? 2 : 2;
   const adjacentBudget = mode === "focused" ? 0 : mode === "open" ? 2 : 1;
   const chooseRoutes = (pool: typeof rows.results, budget: number) => {
@@ -987,11 +1008,13 @@ async function routeDiscoveryQueries(
         channel: "topic" as const,
         routeId: row.id,
         explorationRole: role,
-        routeUrgency: Math.min(10, Math.round(row.passive_engagement / 2)),
+        routeUrgency: Math.min(22, Math.round(row.passive_engagement / 2) + (row.research_problem_id ? 12 : 0)),
       };
     }).filter((plan) => plan.query.length >= 4);
   const gapRows = selectedRows.flatMap(({ row, role }) => {
     const intelligence = directionDiscoverySignal(row.intelligence_json, row.intelligence_updated_at);
+    const problemQuery = cleanText(row.problem_next_search_query || "");
+    if (problemQuery && asciiOnly(problemQuery)) return [{ row, role, intelligence: { nextSearchQuery: problemQuery, confidence: 96 } }];
     const synthesisQuery = cleanText(row.synthesis_next_search_query || "");
     if (synthesisQuery && asciiOnly(synthesisQuery)) return [{ row, role, intelligence: {
       nextSearchQuery: synthesisQuery,
@@ -1650,12 +1673,14 @@ async function ensureDailyQueryPlan(
       plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null; created_at: string;
     }>(),
     database.prepare(RESEARCH_GUIDANCE_TRACKS_SQL).bind(space.id).all<ResearchGuidanceTrackSnapshot>(),
-    database.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).bind(space.id, space.id, space.id, space.id, space.id).first<{
+    database.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).bind(space.id, space.id, space.id, space.id, space.id, space.id, space.id).first<{
       preference_revision: string;
       feedback_revision: string;
       reading_revision: string;
       confirmed_evidence_revision: string;
       synthesis_revision: string;
+      problem_revision: string;
+      problem_assessment_revision: string;
     }>(),
     database.prepare(RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL).bind(space.id).all<ConfirmedRouteEvidenceSnapshot>(),
   ]);
@@ -1666,6 +1691,8 @@ async function ensureDailyQueryPlan(
     readingRevision: guidance?.reading_revision || "",
     confirmedEvidenceRevision: guidance?.confirmed_evidence_revision || "",
     synthesisRevision: guidance?.synthesis_revision || "",
+    problemRevision: guidance?.problem_revision || "",
+    problemAssessmentRevision: guidance?.problem_assessment_revision || "",
     confirmedEvidence: confirmedEvidence.results,
   });
   const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(guidanceIdentity));
@@ -1696,7 +1723,7 @@ async function ensureDailyQueryPlan(
   }
 
   const queryLimit = preference.explorationMode === "focused" ? 1 : preference.explorationMode === "open" ? 3 : 2;
-  const [signals, tracks, recentCoverage, branchPerformance] = await Promise.all([
+  const [signals, tracks, recentCoverage, branchPerformance, activeProblems] = await Promise.all([
     readPreferenceSignals(database, space.id, 28),
     database.prepare(
       `SELECT track.id, track.title_en, track.summary_en, track.search_queries, track.user_role, track.depth_score,
@@ -1713,6 +1740,18 @@ async function ensureDailyQueryPlan(
       "SELECT source_key, channel, SUM(attempt_count) AS attempts, SUM(new_candidate_count) AS new_candidates FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY source_key, channel ORDER BY SUM(new_candidate_count) ASC, SUM(attempt_count) DESC LIMIT 12",
     ).bind(space.id).all<{ source_key: string; channel: string; attempts: number; new_candidates: number }>(),
     loadDiscoveryBranchScores(database, space.id),
+    database.prepare(
+      `SELECT problem.id, problem.track_id, problem.question, problem.objective, problem.scope,
+        problem.success_criteria, problem.stage,
+        COALESCE((SELECT assessment.uncertainty_en FROM research_problem_assessments assessment
+          WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS uncertainty_en,
+        COALESCE((SELECT assessment.next_decision_en FROM research_problem_assessments assessment
+          WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS next_decision_en,
+        COALESCE((SELECT assessment.next_search_query FROM research_problem_assessments assessment
+          WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS next_search_query
+       FROM research_problems problem WHERE problem.space_id = ? AND problem.status = 'active'
+       ORDER BY problem.updated_at DESC LIMIT 8`,
+    ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; next_search_query: string }>(),
   ]);
   const directionSignals = tracks.results.flatMap((track) => {
     const intelligence = directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at);
@@ -1756,6 +1795,7 @@ async function ensureDailyQueryPlan(
               `Explicit and inferred preference evidence: ${JSON.stringify(signals.map((item) => ({ layer: item.layer, kind: item.kind, label: item.labelEn, evidence: item.evidence, confidence: item.effectiveConfidence })))}`,
               `Existing directions and user depth: ${JSON.stringify(tracks.results.map((track) => ({ title: track.title_en, role: track.user_role, depth: track.depth_score, interaction: track.interaction_score, summary: track.summary_en, queries: parseVenues(track.search_queries).slice(0, 4) })))}`,
               `Grounded direction opportunities, watch signals, and evidence gaps; Grounded cross-paper synthesis that today's search should test: ${JSON.stringify(directionSignals)}`,
+              `User-confirmed active research problems. Give these greater weight than broad route wording; use at least one horizon slot to reduce their stated uncertainty when a safe query is available: ${JSON.stringify(activeProblems.results)}`,
               `Recently confirmed route evidence (use its title and route role to refine queries even while Pi is rebuilding direction intelligence): ${JSON.stringify(confirmedEvidence.results.map((item) => ({ trackId: item.track_id, title: item.title, role: item.map_role, confidence: item.confidence })))}`,
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
               `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,
@@ -2080,8 +2120,10 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
         priority_venue, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason,
         recommendation_tier, read_minutes, read_depth, problem_zh, problem_en, method_zh, method_en,
         contribution_zh, contribution_en, limitations_zh, limitations_en, reading_focus_zh, reading_focus_en,
-        research_questions_zh, research_questions_en)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        research_questions_zh, research_questions_en, research_problem_id, problem_fit_score,
+        uncertainty_reduction_score, actionability_score, research_problem_impact_zh, research_problem_impact_en,
+        research_decision_zh, research_decision_en)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE ${monitorPaperNotDismissedSql("?", "?")}
        ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text, summary_zh = excluded.summary_zh,
        summary_en = excluded.summary_en, why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
@@ -2095,6 +2137,10 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
        limitations_zh = excluded.limitations_zh, limitations_en = excluded.limitations_en,
        reading_focus_zh = excluded.reading_focus_zh, reading_focus_en = excluded.reading_focus_en,
        research_questions_zh = excluded.research_questions_zh, research_questions_en = excluded.research_questions_en,
+       research_problem_id = excluded.research_problem_id, problem_fit_score = excluded.problem_fit_score,
+       uncertainty_reduction_score = excluded.uncertainty_reduction_score, actionability_score = excluded.actionability_score,
+       research_problem_impact_zh = excluded.research_problem_impact_zh, research_problem_impact_en = excluded.research_problem_impact_en,
+       research_decision_zh = excluded.research_decision_zh, research_decision_en = excluded.research_decision_en,
        updated_at = CURRENT_TIMESTAMP`,
     ).bind(paperId, spaceId, candidate.abstractText, review.summaryZh, review.summaryEn, review.whyReadZh, review.whyReadEn,
       review.qualityScore, candidate.priorityVenue ? 1 : 0, review.recommended ? "deepseek" : "deepseek_rejected",
@@ -2102,7 +2148,9 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
       review.recommendationTier, review.readMinutes, review.readDepth, review.problemZh, review.problemEn,
       review.methodZh, review.methodEn, review.contributionZh, review.contributionEn, review.limitationsZh,
       review.limitationsEn, review.readingFocusZh, review.readingFocusEn, JSON.stringify(review.researchQuestionsZh),
-      JSON.stringify(review.researchQuestionsEn), spaceId, paperId) }];
+      JSON.stringify(review.researchQuestionsEn), review.researchProblemId || null, review.problemFitScore,
+      review.uncertaintyReductionScore, review.actionabilityScore, review.researchProblemImpactZh,
+      review.researchProblemImpactEn, review.researchDecisionZh, review.researchDecisionEn, spaceId, paperId) }];
   });
   if (!insightWrites.length) return [] as PaperReview[];
   const insightResults = await database.batch(insightWrites.map((write) => write.statement));
@@ -2222,7 +2270,19 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
   const mapTracks = await database.prepare(
     "SELECT id, title_zh, title_en, summary_en, search_queries, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 10",
   ).bind(space.id).all<MapTrackContext>();
+  const activeProblems = await database.prepare(
+    `SELECT problem.id, problem.track_id, problem.question, problem.objective, problem.scope,
+      problem.success_criteria, problem.stage,
+      COALESCE((SELECT assessment.uncertainty_en FROM research_problem_assessments assessment
+        WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS uncertainty_en,
+      COALESCE((SELECT assessment.next_decision_en FROM research_problem_assessments assessment
+        WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS next_decision_en
+     FROM research_problems problem WHERE problem.space_id = ? AND problem.status = 'active'
+     ORDER BY problem.updated_at DESC LIMIT 10`,
+  ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string }>();
   const validTrackIds = new Set(mapTracks.results.map((track) => track.id));
+  const validProblemIds = new Set(activeProblems.results.map((problem) => problem.id));
+  const problemByTrackId = new Map(activeProblems.results.map((problem) => [problem.track_id, problem]));
   const routeTitles = new Map(mapTracks.results.map((track) => [track.id, { titleZh: track.title_zh, titleEn: track.title_en }]));
   const completed: PaperReview[] = [];
 
@@ -2233,7 +2293,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     let batchOutputTokens = 0;
     const prompt = [
       "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
-      "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, recommendationTier, readMinutes, readDepth, summaryZh, summaryEn, whyReadZh, whyReadEn, problemZh/En, methodZh/En, contributionZh/En, limitationsZh/En, readingFocusZh/En, researchQuestionsZh/En, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
+      "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, recommendationTier, readMinutes, readDepth, summaryZh, summaryEn, whyReadZh, whyReadEn, problemZh/En, methodZh/En, contributionZh/En, limitationsZh/En, readingFocusZh/En, researchQuestionsZh/En, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn, researchProblemId, problemFitScore, uncertaintyReductionScore, actionabilityScore, researchProblemImpactZh/En, researchDecisionZh/En.",
       "relevanceScore and qualityScore must be integer scores on a 0-100 scale, never decimals on a 0-1 scale.",
       "Act as a strict academic editor, not a search-result summarizer. A real paper can still be irrelevant and must then be rejected.",
       "Set isPaper=false for mastheads, publication information, author instructions, contents, editorials without research content, corrections, calls for papers, or other non-paper records.",
@@ -2248,6 +2308,8 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "For recommended papers, write evidence-disciplined bilingual fields for the research problem, method, main contribution, limitations or uncertainty, and concrete reading focus. If the metadata cannot support a claim, state that the abstract/metadata is insufficient instead of inventing it.",
       "researchQuestionsZh and researchQuestionsEn must each contain 2-4 concise follow-up questions that a researcher could investigate after reading; align the two lists semantically.",
       "Choose recommendationTier=must_read only for a direct, high-consequence match; browse for a useful paper worth focused reading; reserve for a credible paper that should be kept as supporting material. Choose readDepth=deep|focused|overview and estimate readMinutes from 5 to 90.",
+      "When a paper bears directly on a user-confirmed active research problem, return its exact researchProblemId and score problemFitScore, uncertaintyReductionScore, and actionabilityScore from 0-100. Explain what judgment it may change in researchProblemImpactZh/En and what the researcher should decide after reading in researchDecisionZh/En. Metadata or an abstract may motivate a decision to investigate; it cannot justify claiming the user hypothesis is proved. Leave researchProblemId and all related text empty for no credible problem link.",
+      "If an active research problem exists for the assigned track, must_read additionally requires problemFitScore >= 82 and a non-empty concrete research decision. Otherwise downgrade to browse. Route relevance alone remains enough for browse or reserve when the paper is useful but does not directly advance the active problem.",
       "Do not write generic phrases such as 'it is recent', 'it has a high score', or 'it comes from a priority venue' as the main reason to read.",
       "For rejected records, set all summary, whyRead, problem, method, contribution, limitations, and readingFocus fields to empty strings, set both researchQuestions arrays to [], and give a short screeningReason. Never spend narrative tokens explaining a rejected record.",
       "When research-map directions are supplied, assign every recommended paper to the single best-fitting trackId whenever a credible direct or supporting relationship exists. Use an empty trackId only when every available direction would create a misleading relationship.",
@@ -2267,6 +2329,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         searchQueries: parseVenues(track.search_queries),
         intelligence: directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at),
       })))}`,
+      `User-confirmed active research problems and their current unresolved decisions: ${JSON.stringify(activeProblems.results)}`,
       "Use each direction's evidence gap and watch signal when judging whether a paper actually changes that route. A keyword match that does not close a gap, strengthen evidence, or reveal a credible new branch should not be mapped as new route evidence.",
       "JSON records to review:",
       JSON.stringify(batch.map((paper) => ({
@@ -2343,7 +2406,6 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       const whyReadZh = cleanText(item.whyReadZh || "").slice(0, 800);
       const whyReadEn = cleanText(item.whyReadEn || "").slice(0, 1000);
       const requestedTier = item.recommendationTier === "must_read" || item.recommendationTier === "reserve" ? item.recommendationTier : "browse";
-      const recommendationTier: PaperReview["recommendationTier"] = requestedTier === "must_read" && (relevanceScore < 86 || qualityScore < 80) ? "browse" : requestedTier;
       const readDepth: PaperReview["readDepth"] = item.readDepth === "deep" || item.readDepth === "overview" ? item.readDepth : "focused";
       const readMinutes = Math.max(5, Math.min(90, Math.round(Number(item.readMinutes) || (readDepth === "deep" ? 40 : readDepth === "overview" ? 8 : 18))));
       const researchQuestionsZh = Array.isArray(item.researchQuestionsZh) ? item.researchQuestionsZh.map((question) => cleanText(String(question)).slice(0, 280)).filter(Boolean).slice(0, 4) : [];
@@ -2361,6 +2423,22 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       const trackId = recommended && validTrackIds.has(cleanText(item.trackId || "")) ? cleanText(item.trackId || "") : "";
       const mapRationaleZh = trackId ? cleanText(item.mapRationaleZh || "").slice(0, 700) : "";
       const mapRationaleEn = trackId ? cleanText(item.mapRationaleEn || "").slice(0, 900) : "";
+      const assignedTrackId = mapRationaleZh && mapRationaleEn ? trackId : "";
+      const activeProblem = assignedTrackId ? problemByTrackId.get(assignedTrackId) : undefined;
+      const requestedProblemId = cleanText(item.researchProblemId || "");
+      const researchProblemId = recommended && activeProblem && validProblemIds.has(requestedProblemId)
+        && activeProblem.id === requestedProblemId ? requestedProblemId : "";
+      const problemFitScore = researchProblemId ? normalizeModelScore(item.problemFitScore, scoreScale) : 0;
+      const uncertaintyReductionScore = researchProblemId ? normalizeModelScore(item.uncertaintyReductionScore, scoreScale) : 0;
+      const actionabilityScore = researchProblemId ? normalizeModelScore(item.actionabilityScore, scoreScale) : 0;
+      const researchProblemImpactZh = researchProblemId ? cleanText(item.researchProblemImpactZh || "").slice(0, 760) : "";
+      const researchProblemImpactEn = researchProblemId ? cleanText(item.researchProblemImpactEn || "").slice(0, 1000) : "";
+      const researchDecisionZh = researchProblemId ? cleanText(item.researchDecisionZh || "").slice(0, 650) : "";
+      const researchDecisionEn = researchProblemId ? cleanText(item.researchDecisionEn || "").slice(0, 850) : "";
+      let recommendationTier: PaperReview["recommendationTier"] = requestedTier === "must_read" && (relevanceScore < 86 || qualityScore < 80) ? "browse" : requestedTier;
+      if (recommendationTier === "must_read" && activeProblem
+        && (!researchProblemId || problemFitScore < 82 || !researchProblemImpactZh || !researchProblemImpactEn
+          || !researchDecisionZh || !researchDecisionEn)) recommendationTier = "browse";
       batchReviews.push({
         canonicalId: candidate.canonicalId,
         isPaper: item.isPaper === true,
@@ -2372,7 +2450,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         whyReadZh: recommended ? whyReadZh : "",
         whyReadEn: recommended ? whyReadEn : "",
         screeningReason: cleanText(item.screeningReason || (recommended ? "Recommended by DeepSeek Pro" : "Rejected by DeepSeek Pro")).slice(0, 500),
-        trackId: mapRationaleZh && mapRationaleEn ? trackId : "",
+        trackId: assignedTrackId,
         mapRole: paperReviewMapRole(item.mapRole),
         mapRationaleZh,
         mapRationaleEn,
@@ -2391,6 +2469,14 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         readingFocusEn: cleanText(item.readingFocusEn || "").slice(0, 1000),
         researchQuestionsZh,
         researchQuestionsEn,
+        researchProblemId,
+        problemFitScore,
+        uncertaintyReductionScore,
+        actionabilityScore,
+        researchProblemImpactZh,
+        researchProblemImpactEn,
+        researchDecisionZh,
+        researchDecisionEn,
       });
     }
     const persistedBatchReviews = await persistReviewBatch(database, space.id, jobId, batch, batchReviews);
@@ -3344,6 +3430,14 @@ function toPaper(paper: PaperRow, now: number) {
     readingFocusEn: paper.reading_focus_en,
     researchQuestionsZh: parseVenues(paper.research_questions_zh),
     researchQuestionsEn: parseVenues(paper.research_questions_en),
+    researchProblemId: paper.research_problem_id,
+    problemFitScore: paper.problem_fit_score,
+    uncertaintyReductionScore: paper.uncertainty_reduction_score,
+    actionabilityScore: paper.actionability_score,
+    researchProblemImpactZh: paper.research_problem_impact_zh,
+    researchProblemImpactEn: paper.research_problem_impact_en,
+    researchDecisionZh: paper.research_decision_zh,
+    researchDecisionEn: paper.research_decision_en,
     evidenceStatus: paper.evidence_status,
     evidenceLevel: paper.evidence_level,
     evidenceSourceKind: paper.evidence_source_kind,
@@ -3393,6 +3487,14 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.limitations_en, '') AS limitations_en, COALESCE(i.reading_focus_zh, '') AS reading_focus_zh,
        COALESCE(i.reading_focus_en, '') AS reading_focus_en, COALESCE(i.research_questions_zh, '[]') AS research_questions_zh,
        COALESCE(i.research_questions_en, '[]') AS research_questions_en,
+       COALESCE(i.research_problem_id, '') AS research_problem_id,
+       COALESCE(i.problem_fit_score, 0) AS problem_fit_score,
+       COALESCE(i.uncertainty_reduction_score, 0) AS uncertainty_reduction_score,
+       COALESCE(i.actionability_score, 0) AS actionability_score,
+       COALESCE(i.research_problem_impact_zh, '') AS research_problem_impact_zh,
+       COALESCE(i.research_problem_impact_en, '') AS research_problem_impact_en,
+       COALESCE(i.research_decision_zh, '') AS research_decision_zh,
+       COALESCE(i.research_decision_en, '') AS research_decision_en,
        COALESCE(ed.status, 'unavailable') AS evidence_status,
        COALESCE(ed.evidence_level, CASE WHEN LENGTH(COALESCE(i.abstract_text, '')) > 0 THEN 'abstract' ELSE 'metadata' END) AS evidence_level,
        COALESCE(ed.source_kind, CASE WHEN LENGTH(COALESCE(i.abstract_text, '')) > 0 THEN 'abstract' ELSE 'metadata' END) AS evidence_source_kind,
@@ -4438,6 +4540,13 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
      i.recommendation_tier, i.read_minutes, i.read_depth, i.problem_zh, i.problem_en,
      i.method_zh, i.method_en, i.contribution_zh, i.contribution_en, i.limitations_zh,
      i.limitations_en, i.reading_focus_zh, i.reading_focus_en, i.research_questions_zh, i.research_questions_en,
+     COALESCE(i.research_problem_id, '') AS research_problem_id, COALESCE(i.problem_fit_score, 0) AS problem_fit_score,
+     COALESCE(i.uncertainty_reduction_score, 0) AS uncertainty_reduction_score,
+     COALESCE(i.actionability_score, 0) AS actionability_score,
+     COALESCE(i.research_problem_impact_zh, '') AS research_problem_impact_zh,
+     COALESCE(i.research_problem_impact_en, '') AS research_problem_impact_en,
+     COALESCE(i.research_decision_zh, '') AS research_decision_zh,
+     COALESCE(i.research_decision_en, '') AS research_decision_en,
      COALESCE((SELECT ep.track_id FROM research_map_evidence_proposals ep
        WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
        ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
@@ -4466,6 +4575,8 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
     recommendation_tier: string; read_minutes: number; read_depth: string; problem_zh: string; problem_en: string;
     method_zh: string; method_en: string; contribution_zh: string; contribution_en: string; limitations_zh: string;
     limitations_en: string; reading_focus_zh: string; reading_focus_en: string; research_questions_zh: string; research_questions_en: string;
+    research_problem_id: string; problem_fit_score: number; uncertainty_reduction_score: number; actionability_score: number;
+    research_problem_impact_zh: string; research_problem_impact_en: string; research_decision_zh: string; research_decision_en: string;
     track_id: string; map_role: string; map_rationale_zh: string; map_rationale_en: string;
   }>();
   const byId = new Map(rows.results.map((row) => [row.canonical_id, row]));
@@ -4485,6 +4596,10 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
       contributionZh: row.contribution_zh, contributionEn: row.contribution_en, limitationsZh: row.limitations_zh,
       limitationsEn: row.limitations_en, readingFocusZh: row.reading_focus_zh, readingFocusEn: row.reading_focus_en,
       researchQuestionsZh: parseVenues(row.research_questions_zh), researchQuestionsEn: parseVenues(row.research_questions_en),
+      researchProblemId: row.research_problem_id, problemFitScore: row.problem_fit_score,
+      uncertaintyReductionScore: row.uncertainty_reduction_score, actionabilityScore: row.actionability_score,
+      researchProblemImpactZh: row.research_problem_impact_zh, researchProblemImpactEn: row.research_problem_impact_en,
+      researchDecisionZh: row.research_decision_zh, researchDecisionEn: row.research_decision_en,
     }];
   });
 }
