@@ -114,10 +114,35 @@ export const monitorRuns = sqliteTable(
     lockToken: text("lock_token"),
     lockExpiresAt: text("lock_expires_at"),
     lastTrigger: text("last_trigger").notNull().default("visit"),
+    lastUserActivityAt: text("last_user_activity_at"),
+    scheduledRunsSinceActivity: integer("scheduled_runs_since_activity").notNull().default(0),
+    automationPausedAt: text("automation_paused_at"),
+    automationPauseReason: text("automation_pause_reason").notNull().default(""),
     error: text("error"),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
-  (table) => [uniqueIndex("idx_monitor_runs_space").on(table.spaceId)],
+  (table) => [
+    uniqueIndex("idx_monitor_runs_space").on(table.spaceId),
+    index("idx_monitor_runs_automation_due").on(table.automationPausedAt, table.status, table.nextRunAt),
+  ],
+);
+
+export const monitorSchedulerTicks = sqliteTable(
+  "monitor_scheduler_ticks",
+  {
+    id: text("id").primaryKey(),
+    startedAt: text("started_at").notNull(),
+    completedAt: text("completed_at"),
+    dueSpaceCount: integer("due_space_count").notNull().default(0),
+    startedCount: integer("started_count").notNull().default(0),
+    advancedCount: integer("advanced_count").notNull().default(0),
+    completedCount: integer("completed_count").notNull().default(0),
+    pausedCount: integer("paused_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    error: text("error").notNull().default(""),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [index("idx_monitor_scheduler_ticks_created").on(table.createdAt)],
 );
 
 export const monitorDiscoveryPages = sqliteTable(

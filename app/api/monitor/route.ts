@@ -11,6 +11,11 @@ import {
 } from "../../../lib/discovery/candidate-selection.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import {
+  MONITOR_AUTOMATION_LIMITS,
+  monitorAutomationPauseCopy,
+  monitorAutomationPauseReason,
+} from "../../../lib/monitor-automation.mjs";
 import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
 import {
@@ -112,6 +117,10 @@ type RunRow = {
   scanned_count: number;
   discovery_round: number;
   last_trigger: string;
+  last_user_activity_at: string | null;
+  scheduled_runs_since_activity: number;
+  automation_paused_at: string | null;
+  automation_pause_reason: string;
   error: string | null;
 };
 type ScanJobRow = {
@@ -1442,6 +1451,41 @@ async function usageCount(database: D1Database, scope: string, date: string) {
   const row = await database.prepare("SELECT request_count FROM ai_usage_daily WHERE scope = ? AND usage_date = ? LIMIT 1")
     .bind(scope, date).first<{ request_count: number }>();
   return row?.request_count || 0;
+}
+
+type AutomationPauseReason = "pending_backlog" | "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable";
+
+async function readAutomationCounters(database: D1Database, spaceId: string) {
+  const usageDate = shanghaiDateKey(new Date());
+  const [pending, usage] = await Promise.all([
+    database.prepare(
+      `SELECT COUNT(*) AS count
+       FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+       LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
+       LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
+       WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_model = ?
+        AND COALESCE(f.saved, 0) = 0 AND COALESCE(f.feedback, '') = ''
+        AND COALESCE(r.status, 'unread') = 'unread'`,
+    ).bind(spaceId, MONITOR_MODEL).first<{ count: number }>(),
+    database.prepare(
+      `SELECT COALESCE(request_count, 0) AS requests,
+       COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) AS tokens
+       FROM ai_usage_daily WHERE scope = ? AND usage_date = ? LIMIT 1`,
+    ).bind("monitor-space:" + spaceId, usageDate).first<{ requests: number; tokens: number }>(),
+  ]);
+  return {
+    pendingRecommendations: pending?.count || 0,
+    dailyRequests: usage?.requests || 0,
+    dailyTokens: usage?.tokens || 0,
+  };
+}
+
+async function pauseMonitorAutomation(database: D1Database, spaceId: string, reason: AutomationPauseReason) {
+  await database.prepare(
+    `UPDATE monitor_runs SET automation_paused_at = COALESCE(automation_paused_at, CURRENT_TIMESTAMP),
+     automation_pause_reason = ?, lock_token = NULL, lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE space_id = ?`,
+  ).bind(reason, spaceId).run();
 }
 
 async function recordUsage(database: D1Database, scope: string, date: string, inputTokens: number, outputTokens: number) {
@@ -3216,7 +3260,7 @@ function toPaper(paper: PaperRow, now: number) {
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
   const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration] = await Promise.all([
-    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
+    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
       `SELECT p.id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.horizon,
@@ -3493,6 +3537,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        FROM outcomes`,
     ).bind(space.id).first<{ labels: number; accepted: number; dismissed: number; known: number; wrong_type: number }>(),
   ]);
+  const automationCounters = await readAutomationCounters(database, space.id);
   const now = Date.now();
   const duePapers = papers.results
     .filter((paper) => paper.analysis_model === MONITOR_MODEL && isPaperDue(paper, now))
@@ -3507,6 +3552,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     .filter((paper) => paper.analysis_model === MONITOR_MODEL || Boolean(paper.saved || paper.feedback) || paper.reading_status !== "unread")
     .map((paper) => toPaper(paper, now));
   const pendingPapers = historyPapers.filter((paper) => paper.userState !== "accepted" && paper.userState !== "dismissed");
+  const automationPauseReason = (run?.automation_pause_reason || "") as AutomationPauseReason | "";
+  const automationPauseCopy = monitorAutomationPauseCopy(automationPauseReason || null, automationCounters.pendingRecommendations);
   let latestQueries: Partial<Record<Horizon, string[]>> = {};
   try { latestQueries = queryPlanRow ? JSON.parse(queryPlanRow.queries_json) as Partial<Record<Horizon, string[]>> : {}; } catch { latestQueries = {}; }
   const reviewed = scanMetrics?.reviewed || 0;
@@ -3756,7 +3803,18 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       error: run?.error || null,
       cadenceHours: 24,
       automation: {
-        enabled: true,
+        enabled: !run?.automation_paused_at,
+        paused: Boolean(run?.automation_paused_at),
+        pauseReason: automationPauseReason || null,
+        pauseMessageZh: automationPauseCopy.zh,
+        pauseMessageEn: automationPauseCopy.en,
+        pausedAt: run?.automation_paused_at || null,
+        lastUserActivityAt: run?.last_user_activity_at || null,
+        scheduledRunsSinceActivity: run?.scheduled_runs_since_activity || 0,
+        pendingRecommendations: automationCounters.pendingRecommendations,
+        dailyRequests: automationCounters.dailyRequests,
+        dailyTokens: automationCounters.dailyTokens,
+        limits: MONITOR_AUTOMATION_LIMITS,
         cadenceHours: 24,
         schedulerCheckMinutes: 10,
         errorRetryMinutes: Math.round(ERROR_RETRY_MS / 60_000),
@@ -4487,11 +4545,28 @@ export async function POST(request: Request) {
 
   try {
     if (action === "start") {
-      if (!apiKey) return Response.json({ error: "请先在网页中连接 DeepSeek API Key" }, { status: 400 });
+      await database.prepare(
+        `INSERT OR IGNORE INTO monitor_runs
+         (id, space_id, status, last_trigger, last_user_activity_at, updated_at)
+         VALUES (?, ?, 'idle', ?, ?, CURRENT_TIMESTAMP)`,
+      ).bind(crypto.randomUUID(), space.id, trigger, trigger === "scheduled" ? null : new Date().toISOString()).run();
+      if (trigger !== "scheduled") {
+        await database.prepare(
+          `UPDATE monitor_runs SET last_user_activity_at = CURRENT_TIMESTAMP, scheduled_runs_since_activity = 0,
+           automation_paused_at = NULL, automation_pause_reason = '', updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
+        ).bind(space.id).run();
+      }
+      if (!apiKey) {
+        if (trigger === "scheduled") {
+          await pauseMonitorAutomation(database, space.id, "model_unavailable");
+          return Response.json(await readState(database, space, { cached: true, automationPaused: true }));
+        }
+        return Response.json({ error: "请先在网页中连接 DeepSeek API Key" }, { status: 400 });
+      }
       await ensurePreference(database, space);
       const previous = await database.prepare(
-        "SELECT status, last_run_at, next_run_at, updated_at, discovery_round, lock_token, lock_expires_at FROM monitor_runs WHERE space_id = ? LIMIT 1",
-      ).bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null }>();
+        "SELECT status, last_run_at, next_run_at, updated_at, discovery_round, lock_token, lock_expires_at, last_user_activity_at, scheduled_runs_since_activity FROM monitor_runs WHERE space_id = ? LIMIT 1",
+      ).bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; last_user_activity_at: string | null; scheduled_runs_since_activity: number }>();
       const activeJob = await database.prepare(
         "SELECT id, status, checkpoint FROM monitor_scan_jobs WHERE space_id = ? AND status NOT IN ('ready', 'error') ORDER BY started_at DESC LIMIT 1",
       ).bind(space.id).first<{ id: string; status: string; checkpoint: string }>();
@@ -4506,6 +4581,19 @@ export async function POST(request: Request) {
         }
         return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }), { status: 202 });
       }
+      if (trigger !== "manual") {
+        const counters = await readAutomationCounters(database, space.id);
+        const pauseReason = monitorAutomationPauseReason({
+          ...counters,
+          lastUserActivityAt: previous?.last_user_activity_at || null,
+          scheduledRunsSinceActivity: previous?.scheduled_runs_since_activity || 0,
+          now: now.getTime(),
+        }) as AutomationPauseReason | null;
+        if (pauseReason) {
+          await pauseMonitorAutomation(database, space.id, pauseReason);
+          return Response.json(await readState(database, space, { cached: true, automationPaused: true }));
+        }
+      }
       const previousJob = await database.prepare(
         `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
@@ -4513,6 +4601,7 @@ export async function POST(request: Request) {
          FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
       ).bind(space.id).first<StagedJobRow>();
       if (trigger !== "manual" && previousJob?.status === "error" && isNonRetryableDeepSeekError(previousJob.error)) {
+        if (trigger === "scheduled") await pauseMonitorAutomation(database, space.id, "model_unavailable");
         return Response.json(await readState(database, space, { cached: true, credentialActionRequired: true }));
       }
       const previousWork = parseScanWorkQueue(previousJob?.work_queue_json);
@@ -4543,13 +4632,12 @@ export async function POST(request: Request) {
             : "从已保存检查点继续本轮扫描"
         : "Pi 正在制定本轮检索计划";
       await database.prepare(
-        "INSERT OR IGNORE INTO monitor_runs (id, space_id, status, last_trigger, updated_at) VALUES (?, ?, 'idle', ?, CURRENT_TIMESTAMP)",
-      ).bind(crypto.randomUUID(), space.id, trigger).run();
-      await database.prepare(
         `UPDATE monitor_runs SET status = ?, lock_token = ?, lock_expires_at = ?, last_trigger = ?, error = NULL,
-         new_count = ?, scanned_count = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
+         new_count = ?, scanned_count = ?, scheduled_runs_since_activity = scheduled_runs_since_activity + ?,
+         automation_paused_at = NULL, automation_pause_reason = '', updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
       ).bind(initialStatus, lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), trigger,
-        resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.discovered_count || 0 : 0, space.id).run();
+        resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.discovered_count || 0 : 0,
+        trigger === "scheduled" ? 1 : 0, space.id).run();
       await database.prepare(
         `INSERT INTO monitor_scan_jobs
          (id, space_id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,

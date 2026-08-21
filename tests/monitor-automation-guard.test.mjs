@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import {
+  MONITOR_AUTOMATION_LIMITS,
+  monitorAutomationPauseCopy,
+  monitorAutomationPauseReason,
+} from "../lib/monitor-automation.mjs";
+
+const now = Date.parse("2026-08-21T08:00:00.000Z");
+const healthy = {
+  now,
+  pendingRecommendations: 3,
+  scheduledRunsSinceActivity: 1,
+  lastUserActivityAt: "2026-08-20T08:00:00.000Z",
+  dailyRequests: 8,
+  dailyTokens: 24_000,
+};
+
+test("automatic monitoring pauses before unattended research spending can accumulate", () => {
+  assert.equal(monitorAutomationPauseReason(healthy), null);
+  assert.equal(monitorAutomationPauseReason({ ...healthy, pendingRecommendations: MONITOR_AUTOMATION_LIMITS.pendingRecommendations }), "pending_backlog");
+  assert.equal(monitorAutomationPauseReason({ ...healthy, scheduledRunsSinceActivity: MONITOR_AUTOMATION_LIMITS.scheduledRunsWithoutActivity }), "unattended_runs");
+  assert.equal(monitorAutomationPauseReason({ ...healthy, lastUserActivityAt: "2026-08-13T08:00:00.000Z" }), "inactive");
+  assert.equal(monitorAutomationPauseReason({ ...healthy, dailyTokens: MONITOR_AUTOMATION_LIMITS.dailyTokens }), "daily_budget");
+  assert.match(monitorAutomationPauseCopy("pending_backlog", 12).zh, /12 篇推荐等待处理/);
+});
+
+test("scheduled monitoring persists heartbeats and advances only a bounded checkpoint slice", async () => {
+  const [worker, route, schema, repository, client] = await Promise.all([
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(worker, /SCHEDULED_ADVANCE_STEPS = 3/);
+  assert.match(worker, /monitor_scheduler_ticks/);
+  assert.match(worker, /r\.automation_paused_at IS NULL/);
+  assert.match(route, /monitorAutomationPauseReason/);
+  assert.match(route, /scheduled_runs_since_activity = scheduled_runs_since_activity \+ \?/);
+  assert.match(route, /automationPaused: true/);
+  assert.match(schema, /monitorSchedulerTicks/);
+  assert.match(repository, /idx_monitor_runs_automation_due/);
+  assert.match(client, /等待你处理后恢复/);
+});

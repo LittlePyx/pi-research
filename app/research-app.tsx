@@ -179,7 +179,24 @@ type MonitorState = {
   error: string | null;
   cadenceHours: number;
   lastTrigger?: string;
-  automation?: { enabled: boolean; cadenceHours: number; schedulerCheckMinutes: number; errorRetryMinutes: number; singleRunLock: boolean };
+  automation?: {
+    enabled: boolean;
+    paused?: boolean;
+    pauseReason?: "pending_backlog" | "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable" | null;
+    pauseMessageZh?: string;
+    pauseMessageEn?: string;
+    pausedAt?: string | null;
+    lastUserActivityAt?: string | null;
+    scheduledRunsSinceActivity?: number;
+    pendingRecommendations?: number;
+    dailyRequests?: number;
+    dailyTokens?: number;
+    limits?: { pendingRecommendations: number; scheduledRunsWithoutActivity: number; inactiveDays: number; dailyRequests: number; dailyTokens: number };
+    cadenceHours: number;
+    schedulerCheckMinutes: number;
+    errorRetryMinutes: number;
+    singleRunLock: boolean;
+  };
   source: string;
   horizons: string[];
   preferences?: MonitorPreferences;
@@ -4186,7 +4203,21 @@ export default function ResearchApp({ user }: { user: User }) {
                 <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
                 <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div>{Boolean(monitor?.preferences?.trackedAuthors?.length) && <div><span>{locale === "zh" ? "追踪作者" : "Tracked authors"}</span><p>{monitor?.preferences?.trackedAuthors.slice(0, 6).map((author) => <i key={author}>{author}</i>)}</p></div>}</div>
                 {monitor?.queryPlan && <div className="v2-query-plan"><span>π</span><div><strong>{locale === "zh" ? "研究线索驱动的今日检索" : "Today's route-guided discovery"} · {monitor.queryPlan.queryCount} {locale === "zh" ? "组查询" : "queries"}</strong><p>{locale === "zh" ? monitor.queryPlan.rationaleZh : monitor.queryPlan.rationaleEn}</p><small>{locale === "zh" ? "研究线索 → 今日发现 → 你的判断 → 路线更新" : "Research routes → daily discovery → your judgment → map updates"} · {monitor.queryPlan.degraded ? (locale === "zh" ? "稳定检索策略" : "Stable fallback strategy") : modelDisplayName(monitor.queryPlan.model)}</small><small className="v2-query-loop-note">{locale === "zh" ? "只有接受、保存或完成阅读后才确认进入路线；标记不相关会校正下一轮检索。" : "A paper enters the route only after you accept, save, or finish reading it; marking it irrelevant corrects the next scan."}</small></div></div>}
-                <dl className="v2-monitor-metrics"><div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div><div><dt>{t.nextScan}</dt><dd>{formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div><div><dt>{locale === "zh" ? "自动监控" : "Automatic monitoring"}</dt><dd>{locale === "zh" ? `每 ${monitor?.automation?.cadenceHours || 24} 小时 · ${monitor?.automation?.schedulerCheckMinutes || 10} 分钟检查一次` : `Every ${monitor?.automation?.cadenceHours || 24}h · due check every ${monitor?.automation?.schedulerCheckMinutes || 10}m`}</dd></div><div><dt>{locale === "zh" ? "上次触发" : "Last trigger"}</dt><dd>{monitor?.lastTrigger === "scheduled" ? (locale === "zh" ? "后台定时" : "Scheduled") : monitor?.lastTrigger === "manual" ? (locale === "zh" ? "手动深挖" : "Manual deep dive") : (locale === "zh" ? "打开时补扫" : "Catch-up on visit")}</dd></div><div><dt>{locale === "zh" ? "持续探索轮次" : "Exploration round"}</dt><dd>#{monitor?.explorationRound || 0}</dd></div><div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div></dl>
+                <dl className="v2-monitor-metrics">
+                  <div><dt>{t.lastScan}</dt><dd>{formatMonitorDate(monitor?.lastRunAt || null, locale)}</dd></div>
+                  <div><dt>{t.nextScan}</dt><dd>{monitor?.automation?.paused ? (locale === "zh" ? "等待你处理后恢复" : "Waiting for your return") : formatMonitorDate(monitor?.nextRunAt || null, locale)}</dd></div>
+                  <div>
+                    <dt>{locale === "zh" ? "自动监控" : "Automatic monitoring"}</dt>
+                    <dd title={locale === "zh" ? monitor?.automation?.pauseMessageZh : monitor?.automation?.pauseMessageEn}>
+                      {monitor?.automation?.paused
+                        ? `${locale === "zh" ? "已待机" : "On standby"} · ${monitor.automation.pauseReason === "pending_backlog" ? `${monitor.automation.pendingRecommendations || 0}/${monitor.automation.limits?.pendingRecommendations || 12} ${locale === "zh" ? "篇待处理" : "pending"}` : monitor.automation.pauseReason === "daily_budget" ? (locale === "zh" ? "今日预算已用完" : "daily budget used") : monitor.automation.pauseReason === "model_unavailable" ? (locale === "zh" ? "模型待恢复" : "model unavailable") : (locale === "zh" ? "下次打开后恢复" : "resumes next visit")}`
+                        : `${locale === "zh" ? "每日" : "Daily"} · ${monitor?.automation?.pendingRecommendations || 0}/${monitor?.automation?.limits?.pendingRecommendations || 12} ${locale === "zh" ? "篇待处理" : "pending"}`}
+                    </dd>
+                  </div>
+                  <div><dt>{locale === "zh" ? "上次触发" : "Last trigger"}</dt><dd>{monitor?.lastTrigger === "scheduled" ? (locale === "zh" ? "后台定时" : "Scheduled") : monitor?.lastTrigger === "manual" ? (locale === "zh" ? "手动深挖" : "Manual deep dive") : (locale === "zh" ? "打开时补扫" : "Catch-up on visit")}</dd></div>
+                  <div><dt>{locale === "zh" ? "持续探索轮次" : "Exploration round"}</dt><dd>#{monitor?.explorationRound || 0}</dd></div>
+                  <div><dt>{monitor?.knownCount || 0} {t.knownPapers}</dt><dd>{monitor?.scannedCount || 0} {t.scannedPapers}</dd></div>
+                </dl>
                 {SHOW_INTERNAL_QUALITY_UI && monitor?.qualityMetrics && <dl className="v2-quality-metrics"><div><dt>{locale === "zh" ? "7日入选率" : "7-day selection yield"}</dt><dd>{monitor.qualityMetrics.recommendationYield}%</dd></div><div><dt>{locale === "zh" ? "用户接受率" : "User acceptance"}</dt><dd>{monitor.qualityMetrics.acceptanceRate}%</dd></div><div><dt>{locale === "zh" ? "候选 / 深度评审" : "Candidates / reviewed"}</dt><dd>{monitor.qualityMetrics.candidates} / {monitor.qualityMetrics.reviewed}</dd></div><div><dt>{locale === "zh" ? "7日智能用量" : "7-day AI usage"}</dt><dd>{Math.round((monitor.qualityMetrics.inputTokens + monitor.qualityMetrics.outputTokens) / 1000)}k tokens</dd></div></dl>}
                 {SHOW_INTERNAL_QUALITY_UI && Boolean(monitor?.discoveryPerformance?.sources.length) && <div className="v2-discovery-performance"><header><strong>{locale === "zh" ? "发现来源表现" : "Discovery performance"}</strong><small>{locale === "zh" ? "依据真实入选与反馈持续调整" : "Updated from real selections and feedback"}</small></header>{monitor?.discoveryPerformance?.sources.slice(0, 6).map((source) => <div key={`${source.channel}:${source.sourceKey}`}><span>{source.sourceKey.replace(/_/g, " ")}</span><i>{source.channel}</i><b>{source.papers}</b><em>{source.acceptanceRate}%</em></div>)}</div>}
                 {SHOW_INTERNAL_QUALITY_UI && Boolean(monitor?.discoveryPerformance?.tracks.length) && <div className="v2-track-performance"><span>{locale === "zh" ? "研究方向命中" : "Research-track fit"}</span><div>{monitor?.discoveryPerformance?.tracks.slice(0, 6).map((track) => <i key={track.trackId}><b>{locale === "zh" ? track.titleZh : track.titleEn}</b><small>{track.papers} {locale === "zh" ? "篇" : "papers"} · {track.acceptanceRate}%</small></i>)}</div></div>}
