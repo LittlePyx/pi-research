@@ -183,7 +183,7 @@ test("review persistence is atomically suppressed before dismissal and later dis
 
 function guidanceSnapshot(sqlite) {
   const tracks = sqlite.prepare(RESEARCH_GUIDANCE_TRACKS_SQL).all("space-a");
-  const revisions = sqlite.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).get("space-a", "space-a", "space-a", "space-a");
+  const revisions = sqlite.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).get("space-a", "space-a", "space-a", "space-a", "space-a");
   const confirmedEvidence = sqlite.prepare(RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL).all("space-a");
   return {
     identity: researchGuidanceIdentity({
@@ -192,6 +192,7 @@ function guidanceSnapshot(sqlite) {
       feedbackRevision: revisions.feedback_revision,
       readingRevision: revisions.reading_revision,
       confirmedEvidenceRevision: revisions.confirmed_evidence_revision,
+      synthesisRevision: revisions.synthesis_revision,
       confirmedEvidence,
     }),
     confirmedEvidence,
@@ -214,6 +215,7 @@ test("interaction and confirmed route evidence change the durable guidance ident
         id TEXT PRIMARY KEY, space_id TEXT, track_id TEXT, paper_id TEXT, map_role TEXT,
         confidence INTEGER, status TEXT, updated_at TEXT
       );
+      CREATE TABLE research_syntheses (space_id TEXT, status TEXT, updated_at TEXT);
       INSERT INTO research_tracks VALUES
         ('track-a', 'space-a', 'core', 70, 25, 1, '{}', NULL);
       INSERT INTO monitored_papers VALUES

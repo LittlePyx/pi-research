@@ -1417,7 +1417,10 @@ export async function POST(request: Request) {
     if (hydrating && track.expansion_count >= 0) return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
     const queries = parseJsonArray(track.search_queries);
     if (!queries.length) throw new Error("This direction has no usable discovery queries");
-    const gapQuery = gapExpanding ? parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
+    const synthesisGap = gapExpanding ? await database.prepare(
+      "SELECT next_search_query FROM research_syntheses WHERE space_id = ? AND track_id = ? AND status IN ('ready', 'partial') AND next_search_query != '' LIMIT 1",
+    ).bind(space.id, track.id).first<{ next_search_query: string }>() : null;
+    const gapQuery = gapExpanding ? synthesisGap?.next_search_query.trim() || parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
     if (gapExpanding && !gapQuery) {
       return Response.json({ error: "Refresh Pi's direction assessment before scanning this evidence gap" }, { status: 422 });
     }

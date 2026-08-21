@@ -127,6 +127,53 @@ type PaperEvidence = {
   updatedAt: string;
   claims: PaperEvidenceClaim[];
 };
+type ResearchSynthesisSource = {
+  claimId: string;
+  paperId: string;
+  title: string;
+  authors: string;
+  venue: string;
+  publishedAt: string | null;
+  evidenceQuote: string;
+  locator: string;
+  sourceUrl: string;
+  evidenceLevel: "metadata" | "abstract" | "fulltext";
+};
+type ResearchSynthesisStatement = {
+  id: string;
+  kind: "consensus" | "disagreement" | "qualification" | "method_lineage" | "evidence_gap";
+  titleZh: string;
+  titleEn: string;
+  textZh: string;
+  textEn: string;
+  confidence: number;
+  sourcePaperIds: string[];
+  sources: ResearchSynthesisSource[];
+};
+type ResearchSynthesis = {
+  status: "empty" | "generating" | "ready" | "partial" | "error";
+  questionZh: string;
+  questionEn: string;
+  overviewZh: string;
+  overviewEn: string;
+  changeSummaryZh: string;
+  changeSummaryEn: string;
+  nextSearchQuery: string;
+  confidence: number;
+  sourcePaperCount: number;
+  fulltextPaperCount: number;
+  claimCount: number;
+  availablePaperCount: number;
+  availableFulltextPaperCount: number;
+  availableClaimCount: number;
+  canGenerate: boolean;
+  stale: boolean;
+  model: string;
+  error: string | null;
+  analyzedAt: string | null;
+  updatedAt: string | null;
+  statements: ResearchSynthesisStatement[];
+};
 type MonitorPreferences = {
   profileKey: string;
   profileNameZh: string;
@@ -1289,6 +1336,17 @@ function routeChangeKindLabel(kind: string) {
   return labels[kind] || { zh: "路线更新", en: "Route update", symbol: "＋" };
 }
 
+function researchSynthesisKindLabel(kind: ResearchSynthesisStatement["kind"], locale: Locale) {
+  const labels: Record<ResearchSynthesisStatement["kind"], Localized> = {
+    consensus: { zh: "当前共识", en: "Current consensus" },
+    disagreement: { zh: "真实分歧", en: "Substantive disagreement" },
+    qualification: { zh: "条件差异", en: "Conditional difference" },
+    method_lineage: { zh: "方法演进", en: "Method lineage" },
+    evidence_gap: { zh: "证据缺口", en: "Evidence gap" },
+  };
+  return labels[kind][locale];
+}
+
 function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) => void) {
   let stopped = false;
   let polling = false;
@@ -2371,6 +2429,30 @@ function DirectionPathMap({
   </div>;
 }
 
+function ResearchSynthesisWorkbench({
+  track, synthesis, loading, error, locale, onRefresh, onScanGap, onExplain,
+}: {
+  track: ResearchTrack;
+  synthesis: ResearchSynthesis | null;
+  loading: boolean;
+  error: string;
+  locale: Locale;
+  onRefresh: () => void;
+  onScanGap: () => void;
+  onExplain: () => void;
+}) {
+  const ready = Boolean(synthesis && ["ready", "partial"].includes(synthesis.status) && synthesis.statements.length);
+  const availablePapers = synthesis?.availablePaperCount || 0;
+  return <section className="v2-route-workspace-panel v2-research-synthesis" role="tabpanel">
+    <header><div><p className="v2-kicker">π {locale === "zh" ? "可追溯的跨论文证据综合" : "TRACEABLE CROSS-PAPER SYNTHESIS"}</p><h2>{locale === "zh" ? "哪些判断已经站稳，哪些仍然相互冲突" : "What is stable, what conflicts, and what remains unresolved"}</h2><span className="v2-sr-only">这条路线目前可以怎样判断</span></div><div><span>{ready ? synthesis!.confidence : track.intelligence?.confidence || 0}%<small>{locale === "zh" ? "综合置信度" : "confidence"}</small></span><button type="button" onClick={onRefresh} disabled={loading || !synthesis?.canGenerate}>{loading ? (locale === "zh" ? "Pi 正在综合…" : "Synthesizing…") : ready ? (locale === "zh" ? "按最新证据更新" : "Refresh from evidence") : (locale === "zh" ? "生成跨论文综合" : "Build synthesis")}</button></div></header>
+    {ready ? <>
+      <div className="v2-synthesis-overview"><div><small>{locale === "zh" ? "这组论文共同回答的问题" : "QUESTION SHARED BY THESE PAPERS"}</small><h3>{locale === "zh" ? synthesis!.questionZh : synthesis!.questionEn}</h3><p>{locale === "zh" ? synthesis!.overviewZh : synthesis!.overviewEn}</p>{(locale === "zh" ? synthesis!.changeSummaryZh : synthesis!.changeSummaryEn) && <aside><b>↗</b><span><strong>{locale === "zh" ? "相较上一版，发生了什么" : "What changed since the previous revision"}</strong>{locale === "zh" ? synthesis!.changeSummaryZh : synthesis!.changeSummaryEn}</span></aside>}</div><dl><div><dt>{locale === "zh" ? "已核验论文" : "Grounded papers"}</dt><dd>{synthesis!.sourcePaperCount}</dd></div><div><dt>{locale === "zh" ? "开放全文" : "Open full text"}</dt><dd>{synthesis!.fulltextPaperCount}</dd></div><div><dt>{locale === "zh" ? "证据判断" : "Claims"}</dt><dd>{synthesis!.claimCount}</dd></div></dl></div>
+      <div className="v2-synthesis-statement-list">{synthesis!.statements.map((statement, index) => <details className={statement.kind} key={statement.id}><summary><span>{String(index + 1).padStart(2, "0")}</span><div><small>{researchSynthesisKindLabel(statement.kind, locale)}</small><h3>{locale === "zh" ? statement.titleZh : statement.titleEn}</h3><p>{locale === "zh" ? statement.textZh : statement.textEn}</p></div><b>{statement.confidence}%<i>＋</i></b></summary><div className="v2-synthesis-sources"><header><strong>{locale === "zh" ? "回到原文核对" : "Verify in the source"}</strong><span>{statement.sources.length} {locale === "zh" ? "条证据" : "claims"}</span></header>{statement.sources.map((source) => <article key={source.claimId}><div><span>{source.evidenceLevel === "fulltext" ? (locale === "zh" ? "开放全文" : "Full text") : (locale === "zh" ? "摘要" : "Abstract")}</span><strong>{source.title}</strong><small>{[source.authors, source.publishedAt?.slice(0, 4), source.venue].filter(Boolean).join(" · ")}</small></div><blockquote>“{source.evidenceQuote}”</blockquote><footer><em>{source.locator || (locale === "zh" ? "原文定位待补全" : "Locator pending")}</em>{source.sourceUrl && <a href={source.sourceUrl} target="_blank" rel="noreferrer">{locale === "zh" ? "打开证据" : "Open evidence"} ↗</a>}</footer></article>)}</div></details>)}</div>
+      <footer className="v2-synthesis-next"><div><small>{locale === "zh" ? "综合识别出的下一项关键验证" : "NEXT HIGH-VALUE TEST FROM THE SYNTHESIS"}</small><strong>{synthesis!.nextSearchQuery || (locale === "zh" ? "当前综合尚未形成安全的定向检索式" : "No safe targeted query is ready yet")}</strong><p>{locale === "zh" ? "这条检索会进入共享质量评估；只有通过门槛的真实论文才会回到今日推荐和路线待确认证据。" : "This query enters the shared quality gate. Only real papers that pass return to Today and the route evidence queue."}</p></div><button type="button" onClick={onScanGap} disabled={!synthesis!.nextSearchQuery}>{locale === "zh" ? "沿此缺口继续发现" : "Discover along this gap"} →</button></footer>
+    </> : loading ? <div className="v2-route-panel-empty v2-synthesis-loading"><span>π</span><div><strong>{locale === "zh" ? "Pi 正在逐条比对论文证据" : "Pi is comparing claim-level evidence"}</strong><p>{locale === "zh" ? "正在区分共同结论、条件差异、真正冲突和方法演进。" : "Separating shared conclusions, conditional differences, real conflicts, and method lineage."}</p></div></div> : <div className="v2-route-panel-empty v2-synthesis-empty"><span>◎</span><div><strong>{availablePapers < 2 ? (locale === "zh" ? "还需要至少两篇已确认且可核验的论文" : "At least two confirmed, grounded papers are needed") : (locale === "zh" ? "这条路线还没有形成跨论文综合" : "This route has no cross-paper synthesis yet")}</strong><p>{availablePapers < 2 ? (locale === "zh" ? `目前有 ${availablePapers} 篇论文具备逐条证据。Pi 不会用标题相似或单篇摘要冒充共识与分歧。` : `${availablePapers} paper(s) currently have claim-level evidence. Pi will not turn title similarity or one abstract into consensus.`) : (locale === "zh" ? "现有证据已足够，可以让 Pi 生成带原文定位的综合。" : "Enough evidence is available for a source-linked synthesis.")}</p>{track.intelligence && <small>{locale === "zh" ? `路线级初步研判：${track.intelligence.assessmentZh}` : `Preliminary route assessment: ${track.intelligence.assessmentEn}`}</small>}{error && <em>{error}</em>}</div>{availablePapers >= 2 ? <button type="button" onClick={onRefresh}>{locale === "zh" ? "开始综合" : "Build synthesis"} →</button> : <button type="button" onClick={onExplain}>{locale === "zh" ? "让 Pi 解释还缺什么" : "Ask Pi what is missing"} →</button>}</div>}
+  </section>;
+}
+
 export default function ResearchApp({ user }: { user: User }) {
   const [locale, setLocale] = useState<Locale>("zh");
   const [view, setView] = useState<View>("today");
@@ -2385,6 +2467,10 @@ export default function ResearchApp({ user }: { user: User }) {
   const [paperEvidenceError, setPaperEvidenceError] = useState("");
   const [paperEvidenceRetry, setPaperEvidenceRetry] = useState(0);
   const [evidenceProcessingPaperId, setEvidenceProcessingPaperId] = useState<string | null>(null);
+  const [researchSynthesis, setResearchSynthesis] = useState<ResearchSynthesis | null>(null);
+  const [researchSynthesisLoading, setResearchSynthesisLoading] = useState(false);
+  const [researchSynthesisError, setResearchSynthesisError] = useState("");
+  const synthesisAutoAttemptRef = useRef(new Set<string>());
   const [researchMap, setResearchMap] = useState<ResearchMapState>({
     tracks: [], edges: [], paperEdges: [],
     paperNetwork: { status: "idle", paperCount: 0, totalPaperCount: 0, builtPaperCount: 0, coveredPaperIds: [], coveredPaperHash: "", coverageRevision: 0, coverageCursor: 0, paperRevision: "", builtPaperRevision: "", citationEdgeCount: 0, similarityEdgeCount: 0, semanticEdgeCount: 0, pathEdgeCount: 0, model: "", sources: [], updatedAt: null, error: null },
@@ -2658,12 +2744,6 @@ export default function ResearchApp({ user }: { user: User }) {
       || confirmedRouteEvidenceCount(left) - confirmedRouteEvidenceCount(right) || left.depthScore - right.depthScore;
   })[0] || null, [researchMap.tracks]);
   const latestRouteChange = monitor?.mapChanges?.[0] || null;
-  const selectedThreadEvidencePapers = useMemo(() => {
-    if (!selectedThread) return [];
-    const evidenceIds = new Set(selectedThread.intelligence?.evidenceCanonicalIds || []);
-    const grounded = selectedThread.papers.filter((paper) => evidenceIds.has(paper.canonicalId));
-    return (grounded.length ? grounded : selectedThread.papers).slice(0, 8);
-  }, [selectedThread]);
   const selectedThreadChanges = useMemo(() => {
     if (!selectedThread) return [];
     return (monitor?.mapChanges || []).filter((change) => change.trackTitleZh === selectedThread.titleZh
@@ -3205,6 +3285,44 @@ export default function ResearchApp({ user }: { user: User }) {
     const timer = window.setInterval(() => setMapOutlinePhase((current) => Math.min(3, current + 1)), 2600);
     return () => window.clearInterval(timer);
   }, [mapLoading]);
+
+  useEffect(() => {
+    if (view !== "thread-detail" || researchRouteTab !== "assessment" || !selectedThread
+      || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    let cancelled = false;
+    const spaceId = activeSpace.id;
+    const trackId = selectedThread.id;
+    const load = async () => {
+      setResearchSynthesis(null);
+      setResearchSynthesisError("");
+      setResearchSynthesisLoading(true);
+      try {
+        const response = await fetch(`/api/research-synthesis?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}`);
+        const data = await response.json() as { synthesis?: ResearchSynthesis; error?: string };
+        if (!response.ok || !data.synthesis) throw new Error(data.error || "synthesis unavailable");
+        if (cancelled) return;
+        setResearchSynthesis(data.synthesis);
+        const shouldGenerate = data.synthesis.canGenerate && (data.synthesis.status === "empty" || data.synthesis.stale);
+        const attemptKey = `${spaceId}:${trackId}:${data.synthesis.availableClaimCount}:${data.synthesis.updatedAt || "new"}`;
+        if (!shouldGenerate || synthesisAutoAttemptRef.current.has(attemptKey)) return;
+        synthesisAutoAttemptRef.current.add(attemptKey);
+        const generateResponse = await fetch("/api/research-synthesis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spaceId, trackId }),
+        });
+        const generated = await generateResponse.json() as { synthesis?: ResearchSynthesis; error?: string; modelRequired?: boolean };
+        if (!generateResponse.ok || !generated.synthesis) throw new Error(generated.error || "synthesis generation failed");
+        if (!cancelled) setResearchSynthesis(generated.synthesis);
+      } catch (error) {
+        if (!cancelled) setResearchSynthesisError(error instanceof Error ? error.message : "synthesis unavailable");
+      } finally {
+        if (!cancelled) setResearchSynthesisLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [activeSpace.id, researchRouteTab, selectedThread, view]);
 
   useEffect(() => {
     const needsLearningPath = view === "learn" || (view === "threads" && researchMapMode === "papers" && paperNetworkMode === "path");
@@ -4139,7 +4257,8 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const scanResearchRouteGap = async (thread: ResearchTrack) => {
-    if (mapAction || mapBuildTrackId || mapIntelligenceTrackId || !thread.intelligence?.nextSearchQuery
+    const hasGapQuery = Boolean((researchSynthesis && selectedThread?.id === thread.id ? researchSynthesis.nextSearchQuery : "") || thread.intelligence?.nextSearchQuery);
+    if (mapAction || mapBuildTrackId || mapIntelligenceTrackId || !hasGapQuery
       || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     setMapAction(`gap:${thread.id}`);
     try {
@@ -4180,6 +4299,28 @@ export default function ResearchApp({ user }: { user: User }) {
       setToast(locale === "zh" ? "方向研判暂时无法更新" : "The direction assessment could not be refreshed");
     } finally {
       setMapAction(null);
+    }
+  };
+
+  const refreshResearchSynthesis = async (thread: ResearchTrack) => {
+    if (researchSynthesisLoading || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    setResearchSynthesisLoading(true);
+    setResearchSynthesisError("");
+    try {
+      const response = await fetch("/api/research-synthesis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId: thread.id, force: true }),
+      });
+      const data = await response.json() as { synthesis?: ResearchSynthesis; error?: string; modelRequired?: boolean };
+      if (!response.ok || !data.synthesis) throw new Error(data.error || "synthesis generation failed");
+      setResearchSynthesis(data.synthesis);
+      setToast(locale === "zh" ? "Pi 已按最新证据重建跨论文综合" : "Pi rebuilt the cross-paper synthesis from current evidence");
+    } catch (error) {
+      setResearchSynthesisError(error instanceof Error ? error.message : "synthesis unavailable");
+      setToast(locale === "zh" ? "跨论文综合暂时无法更新，已有研判仍可使用" : "The synthesis could not refresh; the saved assessment remains available");
+    } finally {
+      setResearchSynthesisLoading(false);
     }
   };
 
@@ -4647,9 +4788,9 @@ export default function ResearchApp({ user }: { user: User }) {
 
               <section className={`v2-route-role-strip ${selectedThread.userRole}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级。" : "This role changes future discovery budget and route priority."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
 
-              <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{tab === "assessment" ? "01" : tab === "evidence" ? "02" : tab === "gaps" ? "03" : "04"}</span><strong>{tab === "assessment" ? (locale === "zh" ? "当前研判" : "Assessment") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
+              <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{tab === "assessment" ? "01" : tab === "evidence" ? "02" : tab === "gaps" ? "03" : "04"}</span><strong>{tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
 
-              {researchRouteTab === "assessment" && <section className="v2-route-workspace-panel" role="tabpanel"><header><div><p className="v2-kicker">π {locale === "zh" ? "基于当前证据" : "GROUNDED IN CURRENT EVIDENCE"}</p><h2>{locale === "zh" ? "这条路线目前可以怎样判断" : "What the current evidence lets us conclude"}</h2></div><div><span>{selectedThread.intelligence?.confidence || 0}%<small>{locale === "zh" ? "证据置信度" : "confidence"}</small></span><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || mapIntelligenceTrackId || !selectedThread.papers.length)}>{mapAction === `interpret:${selectedThread.id}` ? (locale === "zh" ? "更新中…" : "Refreshing…") : (locale === "zh" ? "重新研判" : "Refresh assessment")}</button></div></header>{selectedThread.intelligence ? <div className="v2-route-assessment-layout"><div className="v2-route-assessment-cards"><article className="lead"><small>{locale === "zh" ? "当前判断" : "CURRENT ASSESSMENT"}</small><p>{locale === "zh" ? selectedThread.intelligence.assessmentZh : selectedThread.intelligence.assessmentEn}</p></article><article><small>{locale === "zh" ? "关键机会" : "KEY OPPORTUNITY"}</small><p>{locale === "zh" ? selectedThread.intelligence.opportunityZh : selectedThread.intelligence.opportunityEn}</p></article><article><small>{locale === "zh" ? "观察信号" : "WATCH SIGNAL"}</small><p>{locale === "zh" ? selectedThread.intelligence.watchSignalZh : selectedThread.intelligence.watchSignalEn}</p></article></div><aside><header><strong>{locale === "zh" ? "本次判断使用的论文" : "Papers used for this assessment"}</strong><span>{selectedThreadEvidencePapers.length}</span></header>{selectedThreadEvidencePapers.map((paper) => <article key={paper.id}><span>{researchPaperYear(paper)}</span><button type="button" onClick={() => askAboutRoutePaper(selectedThread, paper)}><strong>{paper.title}</strong><small>{paper.venue || paper.authors}</small></button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)} aria-label={`${t.openOriginal}: ${paper.title}`}>↗</a></article>)}</aside></div> : <div className="v2-route-panel-empty"><span>π</span><div><strong>{locale === "zh" ? "这条路线还没有形成可追溯研判" : "No traceable assessment exists for this route yet"}</strong><p>{locale === "zh" ? "先补充真实论文，再让 Pi 基于证据形成判断。" : "Add real papers first, then ask Pi to form a grounded assessment."}</p></div><button type="button" onClick={() => void expandResearchTrack(selectedThread)}>{locale === "zh" ? "补充路线" : "Fill route"} →</button></div>}</section>}
+              {researchRouteTab === "assessment" && <ResearchSynthesisWorkbench track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} error={researchSynthesisError} locale={locale} onRefresh={() => void refreshResearchSynthesis(selectedThread)} onScanGap={() => void scanResearchRouteGap(selectedThread)} onExplain={() => askAboutResearchRoute(selectedThread, "gap")} />}
 
               {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-evidence-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "路线证据与代表作" : "ROUTE EVIDENCE & REPRESENTATIVE WORK"}</p><h2>{locale === "zh" ? "从奠基、转折走到当前前沿" : "From foundations and turning points to the frontier"}</h2></div><div className="v2-route-stage-counts">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span className={role} key={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</div></header><div className="v2-route-evidence-chain">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role, roleIndex) => <section className={role} key={role}><header><span>{String(roleIndex + 1).padStart(2, "0")}</span><div><strong>{researchRoleLabel(role, locale)}</strong><small>{role === "foundation" ? (locale === "zh" ? "定义问题与基本工具" : "Defines the question and core tools") : role === "milestone" ? (locale === "zh" ? "改变路线走向的关键节点" : "Turning points that changed the route") : (locale === "zh" ? "当前活跃问题与方法" : "Current active questions and methods")}</small></div></header><div>{selectedThread.papers.filter((paper) => paper.role === role).map((paper) => <article key={paper.id}><header><span>{researchPaperYear(paper)}</span><small>{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</small></header><em className={`v2-route-provenance ${paper.provenance || "system_curated"}`}>{paper.provenance === "user_confirmed" ? (locale === "zh" ? "用户已确认" : "User confirmed") : (locale === "zh" ? "Pi 策展代表作" : "Pi-curated representative")}</em><h3>{paper.title}</h3><p>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p><footer><button type="button" onClick={() => askAboutRoutePaper(selectedThread, paper)}>{locale === "zh" ? "让 Pi 解释位置" : "Ask Pi about its place"}</button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)}>{t.openOriginal} ↗</a></footer></article>)}{!selectedThread.papers.some((paper) => paper.role === role) && <div className="v2-route-chain-empty"><span>＋</span><p>{locale === "zh" ? "这个阶段仍缺少有代表性的真实论文。" : "This stage still lacks a representative real paper."}</p><button type="button" onClick={() => { setResearchRouteTab("gaps"); }}>{locale === "zh" ? "去补证据" : "Fill the gap"} →</button></div>}</div></section>)}</div></section>}
 

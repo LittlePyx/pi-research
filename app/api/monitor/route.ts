@@ -934,9 +934,14 @@ async function routeDiscoveryQueries(
     `SELECT t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score, t.interaction_score,
      COALESCE(behavior.passive_engagement, 0) AS passive_engagement,
      t.intelligence_json, t.intelligence_updated_at,
+     COALESCE(synthesis.overview_en, '') AS synthesis_overview_en,
+     COALESCE(synthesis.next_search_query, '') AS synthesis_next_search_query,
+     COALESCE(synthesis.confidence, 0) AS synthesis_confidence,
      MAX(c.last_scanned_at) AS last_scanned_at
      FROM research_tracks t
      LEFT JOIN monitor_discovery_coverage c ON c.space_id = t.space_id AND c.route_id = t.id AND c.horizon = ?
+     LEFT JOIN research_syntheses synthesis ON synthesis.space_id = t.space_id AND synthesis.track_id = t.id
+      AND synthesis.status IN ('ready', 'partial')
      LEFT JOIN (
        SELECT event.space_id, event.route_id, MIN(18, SUM(event.weight)) AS passive_engagement
        FROM paper_engagement_events event
@@ -949,10 +954,11 @@ async function routeDiscoveryQueries(
        GROUP BY event.space_id, event.route_id
      ) behavior ON behavior.space_id = t.space_id AND behavior.route_id = t.id
       WHERE t.space_id = ? GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score,
-      t.interaction_score, behavior.passive_engagement, t.intelligence_json, t.intelligence_updated_at
+      t.interaction_score, behavior.passive_engagement, t.intelligence_json, t.intelligence_updated_at,
+      synthesis.overview_en, synthesis.next_search_query, synthesis.confidence
      ORDER BY CASE WHEN MAX(c.last_scanned_at) IS NULL THEN 0 ELSE 1 END, MAX(c.last_scanned_at),
      CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, t.interaction_score DESC, t.depth_score DESC`,
-  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; last_scanned_at: string | null }>();
+  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; last_scanned_at: string | null }>();
   const coreBudget = mode === "focused" ? 2 : 2;
   const adjacentBudget = mode === "focused" ? 0 : mode === "open" ? 2 : 1;
   const chooseRoutes = (pool: typeof rows.results, budget: number) => {
@@ -986,6 +992,11 @@ async function routeDiscoveryQueries(
     }).filter((plan) => plan.query.length >= 4);
   const gapRows = selectedRows.flatMap(({ row, role }) => {
     const intelligence = directionDiscoverySignal(row.intelligence_json, row.intelligence_updated_at);
+    const synthesisQuery = cleanText(row.synthesis_next_search_query || "");
+    if (synthesisQuery && asciiOnly(synthesisQuery)) return [{ row, role, intelligence: {
+      nextSearchQuery: synthesisQuery,
+      confidence: Math.max(Number(row.synthesis_confidence || 0), intelligence?.confidence || 0),
+    } }];
     if (!intelligence?.nextSearchQuery || !asciiOnly(intelligence.nextSearchQuery)) return [];
     return [{ row, role, intelligence }];
   }).sort((left, right) => right.intelligence.confidence - left.intelligence.confidence);
@@ -1639,11 +1650,12 @@ async function ensureDailyQueryPlan(
       plan_date: string; exploration_mode: string; queries_json: string; rationale_zh: string; rationale_en: string; model: string; error: string | null; created_at: string;
     }>(),
     database.prepare(RESEARCH_GUIDANCE_TRACKS_SQL).bind(space.id).all<ResearchGuidanceTrackSnapshot>(),
-    database.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).bind(space.id, space.id, space.id, space.id).first<{
+    database.prepare(RESEARCH_GUIDANCE_REVISIONS_SQL).bind(space.id, space.id, space.id, space.id, space.id).first<{
       preference_revision: string;
       feedback_revision: string;
       reading_revision: string;
       confirmed_evidence_revision: string;
+      synthesis_revision: string;
     }>(),
     database.prepare(RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL).bind(space.id).all<ConfirmedRouteEvidenceSnapshot>(),
   ]);
@@ -1653,6 +1665,7 @@ async function ensureDailyQueryPlan(
     feedbackRevision: guidance?.feedback_revision || "",
     readingRevision: guidance?.reading_revision || "",
     confirmedEvidenceRevision: guidance?.confirmed_evidence_revision || "",
+    synthesisRevision: guidance?.synthesis_revision || "",
     confirmedEvidence: confirmedEvidence.results,
   });
   const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(guidanceIdentity));
@@ -1686,8 +1699,16 @@ async function ensureDailyQueryPlan(
   const [signals, tracks, recentCoverage, branchPerformance] = await Promise.all([
     readPreferenceSignals(database, space.id, 28),
     database.prepare(
-      "SELECT id, title_en, summary_en, search_queries, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY CASE user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, interaction_score DESC, depth_score DESC LIMIT 10",
-    ).bind(space.id).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; support_score: number; interaction_score: number; intelligence_json: string; intelligence_updated_at: string | null }>(),
+      `SELECT track.id, track.title_en, track.summary_en, track.search_queries, track.user_role, track.depth_score,
+       track.support_score, track.interaction_score, track.intelligence_json, track.intelligence_updated_at,
+       COALESCE(synthesis.overview_en, '') AS synthesis_overview_en,
+       COALESCE(synthesis.next_search_query, '') AS synthesis_next_search_query,
+       COALESCE(synthesis.confidence, 0) AS synthesis_confidence
+       FROM research_tracks track LEFT JOIN research_syntheses synthesis
+        ON synthesis.space_id = track.space_id AND synthesis.track_id = track.id AND synthesis.status IN ('ready', 'partial')
+       WHERE track.space_id = ? ORDER BY CASE track.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END,
+       track.interaction_score DESC, track.depth_score DESC LIMIT 10`,
+    ).bind(space.id).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; support_score: number; interaction_score: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number }>(),
     database.prepare(
       "SELECT source_key, channel, SUM(attempt_count) AS attempts, SUM(new_candidate_count) AS new_candidates FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY source_key, channel ORDER BY SUM(new_candidate_count) ASC, SUM(attempt_count) DESC LIMIT 12",
     ).bind(space.id).all<{ source_key: string; channel: string; attempts: number; new_candidates: number }>(),
@@ -1695,17 +1716,17 @@ async function ensureDailyQueryPlan(
   ]);
   const directionSignals = tracks.results.flatMap((track) => {
     const intelligence = directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at);
-    return intelligence ? [{
+    return intelligence || track.synthesis_next_search_query ? [{
       trackId: track.id,
       title: track.title_en,
       role: track.user_role,
       depth: track.depth_score + track.interaction_score,
       support: track.support_score,
-      opportunity: intelligence.opportunityEn,
-      watchSignal: intelligence.watchSignalEn,
-      evidenceGap: intelligence.evidenceGapEn,
-      nextSearchQuery: intelligence.nextSearchQuery,
-      confidence: intelligence.confidence,
+      opportunity: track.synthesis_overview_en || intelligence?.opportunityEn || "",
+      watchSignal: intelligence?.watchSignalEn || "",
+      evidenceGap: intelligence?.evidenceGapEn || "",
+      nextSearchQuery: track.synthesis_next_search_query || intelligence?.nextSearchQuery || "",
+      confidence: Math.max(track.synthesis_confidence || 0, intelligence?.confidence || 0),
     }] : [];
   });
   let queries: Record<Horizon, string[]> = { days: [], months: [], years: [] };
@@ -1730,11 +1751,11 @@ async function ensureDailyQueryPlan(
               `Build today's query plan for ${space.name}: ${space.description}.`,
               `Exploration mode: ${preference.explorationMode}. Return exactly ${queryLimit} concise English bibliographic query strings per horizon.`,
               "The three horizons are simultaneous: days = newest 14 days; months = new and high-quality 6 months; years = durable, foundational, methodologically useful 5 years.",
-              "Move beyond yesterday's obvious wording. Cover core depth, one adjacent bridge when mode allows, unresolved questions, under-covered subdirections, methods, and representative venues. When grounded direction intelligence contains an evidence gap or nextSearchQuery, use at least one horizon slot to test that gap instead of merely repeating broad topic keywords. Do not include dates, API syntax, Boolean operators, journal names alone, or generic words such as research/study/paper.",
+              "Move beyond yesterday's obvious wording. Cover core depth, one adjacent bridge when mode allows, unresolved questions, under-covered subdirections, methods, and representative venues. When a grounded cross-paper synthesis or direction assessment contains an evidence gap or nextSearchQuery, use at least one horizon slot to test that gap instead of merely repeating broad topic keywords. Do not include dates, API syntax, Boolean operators, journal names alone, or generic words such as research/study/paper.",
               "Return {\"days\":[...],\"months\":[...],\"years\":[...],\"rationaleZh\":\"...\",\"rationaleEn\":\"...\"}.",
               `Explicit and inferred preference evidence: ${JSON.stringify(signals.map((item) => ({ layer: item.layer, kind: item.kind, label: item.labelEn, evidence: item.evidence, confidence: item.effectiveConfidence })))}`,
               `Existing directions and user depth: ${JSON.stringify(tracks.results.map((track) => ({ title: track.title_en, role: track.user_role, depth: track.depth_score, interaction: track.interaction_score, summary: track.summary_en, queries: parseVenues(track.search_queries).slice(0, 4) })))}`,
-              `Grounded direction opportunities, watch signals, and evidence gaps that today's search should test: ${JSON.stringify(directionSignals)}`,
+              `Grounded direction opportunities, watch signals, and evidence gaps; Grounded cross-paper synthesis that today's search should test: ${JSON.stringify(directionSignals)}`,
               `Recently confirmed route evidence (use its title and route role to refine queries even while Pi is rebuilding direction intelligence): ${JSON.stringify(confirmedEvidence.results.map((item) => ({ trackId: item.track_id, title: item.title, role: item.map_role, confidence: item.confidence })))}`,
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
               `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,

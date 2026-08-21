@@ -644,6 +644,94 @@ export const paperEvidenceAudits = sqliteTable(
   ],
 );
 
+export const researchSyntheses = sqliteTable(
+  "research_syntheses",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("empty"),
+    inputRevision: text("input_revision").notNull().default(""),
+    questionZh: text("question_zh").notNull().default(""),
+    questionEn: text("question_en").notNull().default(""),
+    overviewZh: text("overview_zh").notNull().default(""),
+    overviewEn: text("overview_en").notNull().default(""),
+    changeSummaryZh: text("change_summary_zh").notNull().default(""),
+    changeSummaryEn: text("change_summary_en").notNull().default(""),
+    nextSearchQuery: text("next_search_query").notNull().default(""),
+    confidence: integer("confidence").notNull().default(0),
+    sourcePaperCount: integer("source_paper_count").notNull().default(0),
+    fulltextPaperCount: integer("fulltext_paper_count").notNull().default(0),
+    claimCount: integer("claim_count").notNull().default(0),
+    model: text("model").notNull().default(""),
+    error: text("error"),
+    lockToken: text("lock_token"),
+    lockExpiresAt: text("lock_expires_at"),
+    analyzedAt: text("analyzed_at"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_syntheses_space_track").on(table.spaceId, table.trackId),
+    index("idx_research_syntheses_space_updated").on(table.spaceId, table.updatedAt),
+  ],
+);
+
+export const researchSynthesisStatements = sqliteTable(
+  "research_synthesis_statements",
+  {
+    id: text("id").primaryKey(),
+    synthesisId: text("synthesis_id").notNull().references(() => researchSyntheses.id, { onDelete: "cascade" }),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    titleZh: text("title_zh").notNull(),
+    titleEn: text("title_en").notNull(),
+    textZh: text("text_zh").notNull(),
+    textEn: text("text_en").notNull(),
+    confidence: integer("confidence").notNull().default(0),
+    sourceClaimIds: text("source_claim_ids").notNull().default("[]"),
+    sourcePaperIds: text("source_paper_ids").notNull().default("[]"),
+    position: integer("position").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_synthesis_statements_position").on(table.synthesisId, table.position),
+    index("idx_research_synthesis_statements_track_kind").on(table.trackId, table.kind),
+  ],
+);
+
+export const researchSynthesisRevisions = sqliteTable(
+  "research_synthesis_revisions",
+  {
+    id: text("id").primaryKey(),
+    synthesisId: text("synthesis_id").notNull().references(() => researchSyntheses.id, { onDelete: "cascade" }),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    inputRevision: text("input_revision").notNull(),
+    changeSummaryZh: text("change_summary_zh").notNull().default(""),
+    changeSummaryEn: text("change_summary_en").notNull().default(""),
+    snapshotJson: text("snapshot_json").notNull().default("{}"),
+    sourcePaperCount: integer("source_paper_count").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_synthesis_revisions_identity").on(table.synthesisId, table.inputRevision),
+    index("idx_research_synthesis_revisions_track_created").on(table.trackId, table.createdAt),
+  ],
+);
+
+export const researchSynthesisBootstrapSql = [
+  "CREATE TABLE IF NOT EXISTS research_syntheses (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'empty', input_revision TEXT NOT NULL DEFAULT '', question_zh TEXT NOT NULL DEFAULT '', question_en TEXT NOT NULL DEFAULT '', overview_zh TEXT NOT NULL DEFAULT '', overview_en TEXT NOT NULL DEFAULT '', change_summary_zh TEXT NOT NULL DEFAULT '', change_summary_en TEXT NOT NULL DEFAULT '', next_search_query TEXT NOT NULL DEFAULT '', confidence INTEGER NOT NULL DEFAULT 0, source_paper_count INTEGER NOT NULL DEFAULT 0, fulltext_paper_count INTEGER NOT NULL DEFAULT 0, claim_count INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', error TEXT, lock_token TEXT, lock_expires_at TEXT, analyzed_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_syntheses_space_track ON research_syntheses(space_id, track_id)",
+  "CREATE INDEX IF NOT EXISTS idx_research_syntheses_space_updated ON research_syntheses(space_id, updated_at)",
+  "CREATE TABLE IF NOT EXISTS research_synthesis_statements (id TEXT PRIMARY KEY NOT NULL, synthesis_id TEXT NOT NULL REFERENCES research_syntheses(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, kind TEXT NOT NULL, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, text_zh TEXT NOT NULL, text_en TEXT NOT NULL, confidence INTEGER NOT NULL DEFAULT 0, source_claim_ids TEXT NOT NULL DEFAULT '[]', source_paper_ids TEXT NOT NULL DEFAULT '[]', position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_synthesis_statements_position ON research_synthesis_statements(synthesis_id, position)",
+  "CREATE INDEX IF NOT EXISTS idx_research_synthesis_statements_track_kind ON research_synthesis_statements(track_id, kind)",
+  "CREATE TABLE IF NOT EXISTS research_synthesis_revisions (id TEXT PRIMARY KEY NOT NULL, synthesis_id TEXT NOT NULL REFERENCES research_syntheses(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, input_revision TEXT NOT NULL, change_summary_zh TEXT NOT NULL DEFAULT '', change_summary_en TEXT NOT NULL DEFAULT '', snapshot_json TEXT NOT NULL DEFAULT '{}', source_paper_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_synthesis_revisions_identity ON research_synthesis_revisions(synthesis_id, input_revision)",
+  "CREATE INDEX IF NOT EXISTS idx_research_synthesis_revisions_track_created ON research_synthesis_revisions(track_id, created_at)",
+] as const;
+
 export const monitorCandidateSources = sqliteTable(
   "monitor_candidate_sources",
   {
