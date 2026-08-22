@@ -305,7 +305,7 @@ type PaperRow = {
   discovery_route_interaction: number;
   discovery_track_title_zh: string;
   discovery_track_title_en: string;
-  quality_stage: "reviewing" | "recommended";
+  quality_stage: "discovered" | "reviewed" | "reviewing" | "recommended";
 };
 type Candidate = {
   canonicalId: string;
@@ -4054,7 +4054,26 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        ), 0) AS discovery_route_interaction,
        COALESCE(route_track.title_zh, '') AS discovery_track_title_zh,
        COALESCE(route_track.title_en, '') AS discovery_track_title_en,
-       CASE WHEN i.llm_recommended = 1 AND i.analysis_source = 'deepseek' THEN 'recommended' ELSE 'reviewing' END AS quality_stage,
+       CASE
+        WHEN i.llm_recommended = 1 AND i.analysis_source = 'deepseek' THEN 'recommended'
+        WHEN EXISTS (
+          SELECT 1 FROM recommendation_audit_events history
+          WHERE history.space_id = p.space_id AND history.paper_id = p.id
+           AND history.relevance_score >= 72 AND history.quality_score >= 70
+           AND (history.decision = 'verification_pending'
+            OR (history.verification_status = 'degraded' AND (
+              lower(history.screening_reason) LIKE '%timeout%' OR lower(history.screening_reason) LIKE '%aborted%'
+              OR lower(history.screening_reason) LIKE '%draft is empty%' OR lower(history.screening_reason) LIKE '%empty draft%'
+              OR lower(history.screening_reason) LIKE '%no populated substantive fields%'
+              OR lower(history.screening_reason) LIKE '%draft incomplete%'
+            )))
+        ) THEN 'reviewing'
+        WHEN i.analysis_source LIKE 'deepseek%' OR EXISTS (
+          SELECT 1 FROM recommendation_audit_events review
+          WHERE review.space_id = p.space_id AND review.paper_id = p.id AND review.is_paper = 1
+        ) THEN 'reviewed'
+        ELSE 'discovered'
+       END AS quality_stage,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
        COALESCE(f.saved, 0) AS saved, f.feedback, COALESCE(r.status, 'unread') AS reading_status,
        COALESCE(r.note, '') AS reading_note
@@ -4070,22 +4089,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        LEFT JOIN research_tracks route_track
         ON route_track.id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
         AND route_track.space_id = p.space_id
-        WHERE p.space_id = ? AND (
-         (i.llm_recommended = 1 AND i.analysis_source = 'deepseek')
-         OR EXISTS (
-           SELECT 1 FROM recommendation_audit_events history
-           WHERE history.space_id = p.space_id AND history.paper_id = p.id
-            AND history.relevance_score >= 72 AND history.quality_score >= 70
-            AND (history.recommended = 1 OR history.decision = 'verification_pending'
-             OR (history.verification_status = 'degraded' AND (
-               lower(history.screening_reason) LIKE '%timeout%' OR lower(history.screening_reason) LIKE '%aborted%'
-               OR lower(history.screening_reason) LIKE '%draft is empty%' OR lower(history.screening_reason) LIKE '%empty draft%'
-               OR lower(history.screening_reason) LIKE '%no populated substantive fields%'
-               OR lower(history.screening_reason) LIKE '%draft incomplete%'
-             )))
-         )
-        )
-        ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 300`,
+        WHERE p.space_id = ?
+        ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 2000`,
     ).bind(space.id).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
     database.prepare(
@@ -4338,16 +4343,18 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     (paper) => paper.horizon,
     6,
   );
-  const historyPapers = papers.results
-    .filter((paper) => paper.analysis_model === MONITOR_MODEL || Boolean(paper.saved || paper.feedback) || paper.reading_status !== "unread")
-    .map((paper) => toPaper(paper, now));
+  // The paper library is a durable discovery archive, not a synonym for today's recommendation queue.
+  // Keep every discovered paper visible while quality_stage makes clear how far Pi has evaluated it.
+  const historyPapers = papers.results.map((paper) => toPaper(paper, now));
+  const recommendationHistoryPapers = historyPapers.filter((paper) => paper.qualityStage === "recommended"
+    || paper.qualityStage === "reviewing" || paper.saved || Boolean(paper.feedback) || paper.readingStatus !== "unread");
   const savedCandidatePapers = papers.results
     .filter((paper) => paper.quality_stage === "reviewing")
     .sort((left, right) => right.llm_relevance_score - left.llm_relevance_score
       || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at))
     .slice(0, 12)
     .map((paper) => toPaper(paper, now));
-  const pendingPapers = historyPapers.filter((paper) => paper.userState !== "accepted" && paper.userState !== "dismissed");
+  const pendingPapers = recommendationHistoryPapers.filter((paper) => paper.userState !== "accepted" && paper.userState !== "dismissed");
   const automationPauseReason = (run?.automation_pause_reason || "") as AutomationPauseReason | "";
   const automationPauseCopy = monitorAutomationPauseCopy(automationPauseReason || null);
   let latestQueries: Partial<Record<Horizon, string[]>> = {};
@@ -4800,14 +4807,14 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       savedCandidatePapers,
       historyPapers,
       historyCounts: {
-        all: historyPapers.length,
+        all: recommendationHistoryPapers.length,
         inbox: pendingPapers.length,
         unseen: pendingPapers.filter((paper) => paper.userState === "unseen").length,
         seen: pendingPapers.filter((paper) => paper.userState === "seen").length,
         snoozed: pendingPapers.filter((paper) => paper.userState === "snoozed").length,
-        accepted: historyPapers.filter((paper) => paper.userState === "accepted").length,
-        saved: historyPapers.filter((paper) => paper.saved).length,
-        dismissed: historyPapers.filter((paper) => paper.userState === "dismissed").length,
+        accepted: recommendationHistoryPapers.filter((paper) => paper.userState === "accepted").length,
+        saved: recommendationHistoryPapers.filter((paper) => paper.saved).length,
+        dismissed: recommendationHistoryPapers.filter((paper) => paper.userState === "dismissed").length,
         reading: Object.fromEntries(readingCounts.results.map((row) => [row.status, row.count])),
       },
       ...extra,

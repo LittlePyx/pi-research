@@ -40,7 +40,8 @@ test("route candidates cannot starve and Today exposes explicit route provenance
   assert.match(monitor, /discoveryType/);
   assert.match(monitor, /discoveryTrack/);
   assert.match(monitor, /qualityStage: paper\.quality_stage/);
-  assert.match(monitor, /CASE WHEN i\.llm_recommended = 1 AND i\.analysis_source = 'deepseek' THEN 'recommended' ELSE 'reviewing' END AS quality_stage/);
+  assert.match(monitor, /WHEN i\.llm_recommended = 1 AND i\.analysis_source = 'deepseek' THEN 'recommended'/);
+  assert.match(monitor, /THEN 'reviewing'[\s\S]*THEN 'reviewed'[\s\S]*ELSE 'discovered'/);
   assert.match(monitor, /routeId: entry\.routeId \|\| null/);
   assert.match(monitor, /originKind: monitorRouteOriginKind/);
   assert.match(planning, /FROM recommendation_audit_events ae/);

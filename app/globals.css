@@ -2484,6 +2484,8 @@ main { min-width: 0; }
 .v2-library-paper-actions button { min-height: 34px; padding: 0 10px; border: 1px solid #d3d8d2; border-radius: 6px; background: white; color: #5f6961; font-size: 12px !important; text-align: left; }
 .v2-library-paper-actions button:hover { border-color: #9fb3a5; color: #315f88; }
 .v2-library-paper-actions button:first-child { border-color: #b9cdbd; background: #edf3ef; color: #4e6b57; font-weight: 750; }
+.v2-library-list > .v2-library-load-more { min-height: 44px; padding: 0 18px; border: 1px solid #cdd6cf; border-radius: 8px; background: #f7f8f5; color: #53675a; font-size: 12px !important; font-weight: 750; text-align: center; }
+.v2-library-list > .v2-library-load-more:hover { border-color: #9fb3a5; background: #eef3ef; color: #315f88; }
 .v2-history-state { font-size: 11px !important; }
 
 @media (max-width: 1180px) {

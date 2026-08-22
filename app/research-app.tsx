@@ -105,7 +105,7 @@ type MonitorPaper = {
   } | null;
   discoveryType?: RouteDiscoveryType | null;
   discoveryTrack?: { id: string; titleZh: string; titleEn: string } | null;
-  qualityStage?: "queued" | "reviewing" | "recommended" | null;
+  qualityStage?: "queued" | "discovered" | "reviewed" | "reviewing" | "recommended" | null;
 };
 type PaperEvidenceClaim = {
   id: string;
@@ -1343,17 +1343,19 @@ function explorationStatusLabel(status: ExplorationBranch["status"], locale: Loc
 }
 
 function historyCountsFor(papers: MonitorPaper[]) {
-  const unresolved = papers.filter((paper) => !["accepted", "dismissed"].includes(paper.userState));
+  const recommendationPapers = papers.filter((paper) => paper.qualityStage === "recommended" || paper.qualityStage === "reviewing"
+    || paper.saved || Boolean(paper.feedback) || paper.readingStatus !== "unread");
+  const unresolved = recommendationPapers.filter((paper) => !["accepted", "dismissed"].includes(paper.userState));
   return {
-    all: papers.length,
+    all: recommendationPapers.length,
     inbox: unresolved.length,
     unseen: unresolved.filter((paper) => paper.userState === "unseen").length,
     seen: unresolved.filter((paper) => paper.userState === "seen").length,
     snoozed: unresolved.filter((paper) => paper.userState === "snoozed").length,
-    accepted: papers.filter((paper) => paper.userState === "accepted").length,
-    saved: papers.filter((paper) => paper.saved).length,
-    dismissed: papers.filter((paper) => paper.userState === "dismissed").length,
-    reading: papers.reduce<Record<string, number>>((counts, paper) => {
+    accepted: recommendationPapers.filter((paper) => paper.userState === "accepted").length,
+    saved: recommendationPapers.filter((paper) => paper.saved).length,
+    dismissed: recommendationPapers.filter((paper) => paper.userState === "dismissed").length,
+    reading: recommendationPapers.reduce<Record<string, number>>((counts, paper) => {
       const status = paper.readingStatus || "unread";
       counts[status] = (counts[status] || 0) + 1;
       return counts;
@@ -2784,10 +2786,11 @@ export default function ResearchApp({ user }: { user: User }) {
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [feedbackPrompt, setFeedbackPrompt] = useState<{ paper: MonitorPaper; kind: "relevant" | "not_relevant" } | null>(null);
   const [feedbackNote, setFeedbackNote] = useState("");
-  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("inbox");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>("all");
   const [librarySearch, setLibrarySearch] = useState("");
   const [librarySort, setLibrarySort] = useState<LibrarySort>("priority");
+  const [libraryVisibleCount, setLibraryVisibleCount] = useState(60);
   const [paperReturnView, setPaperReturnView] = useState<"today" | "library">("today");
   const [paperNoteDraft, setPaperNoteDraft] = useState("");
   const [readingMemoryAnalyzing, setReadingMemoryAnalyzing] = useState(false);
@@ -2867,6 +2870,9 @@ export default function ResearchApp({ user }: { user: User }) {
     const query = librarySearch.trim().toLocaleLowerCase();
     const stateRank: Record<MonitorPaper["userState"], number> = { unseen: 0, seen: 1, snoozed: 2, accepted: 3, dismissed: 4 };
     return historyPapers.filter((paper) => {
+      const belongsToRecommendationInbox = paper.qualityStage === "recommended" || paper.qualityStage === "reviewing"
+        || paper.saved || Boolean(paper.feedback) || paper.readingStatus !== "unread";
+      if (libraryFilter === "inbox" && !belongsToRecommendationInbox) return false;
       if (libraryFilter === "inbox" && ["accepted", "dismissed"].includes(paper.userState)) return false;
       if (libraryFilter === "accepted" && paper.userState !== "accepted") return false;
       if (libraryFilter === "dismissed" && paper.userState !== "dismissed") return false;
@@ -2882,6 +2888,7 @@ export default function ResearchApp({ user }: { user: User }) {
         || timeValue(first.firstShownAt) - timeValue(second.firstShownAt);
     });
   }, [historyPapers, inboxFilter, libraryFilter, librarySearch, librarySort]);
+  const visibleLibraryPapers = useMemo(() => libraryPapers.slice(0, libraryVisibleCount), [libraryPapers, libraryVisibleCount]);
   const scanIsActive = monitoring || isMonitorScanning(monitor?.status);
   const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
   const activeScanJob = monitor?.scanJob && !["ready", "error"].includes(monitor.scanJob.status) ? monitor.scanJob : null;
@@ -5269,7 +5276,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <button className={libraryFilter === "inbox" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); }}>{t.inbox}<span>{monitor?.historyCounts?.inbox || 0}</span></button>
               <button className={libraryFilter === "accepted" ? "active" : ""} type="button" onClick={() => setLibraryFilter("accepted")}>{t.accepted}<span>{monitor?.historyCounts?.accepted || 0}</span></button>
               <button className={libraryFilter === "dismissed" ? "active" : ""} type="button" onClick={() => setLibraryFilter("dismissed")}>{t.ignored}<span>{monitor?.historyCounts?.dismissed || 0}</span></button>
-              <button className={libraryFilter === "all" ? "active" : ""} type="button" onClick={() => setLibraryFilter("all")}>{t.all}<span>{monitor?.historyCounts?.all || historyPapers.length}</span></button>
+              <button className={libraryFilter === "all" ? "active" : ""} type="button" onClick={() => setLibraryFilter("all")}>{locale === "zh" ? "全部发现" : "All discoveries"}<span>{historyPapers.length}</span></button>
             </div>
             <div className="v2-library-toolbar">
               <label><span>⌕</span><input value={librarySearch} onChange={(event) => setLibrarySearch(event.target.value)} placeholder={t.historySearch} aria-label={t.historySearch} /></label>
@@ -5278,12 +5285,12 @@ export default function ResearchApp({ user }: { user: User }) {
               </select>
             </div>
             <div className="v2-library-list">
-              {libraryPapers.map((paper) => (
+              {visibleLibraryPapers.map((paper) => (
                 <article className={"v2-library-paper " + paper.userState} key={paper.id}>
                   <button className="v2-library-paper-main" type="button" onClick={() => openMonitorPaper(paper)}>
-                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span><span>{t.qualityScore} {paper.qualityScore}</span><PaperEvidenceBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>
+                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? (locale === "zh" ? "高潜力待核验" : "High potential") : paper.qualityStage === "reviewed" ? (locale === "zh" ? "已评审归档" : "Reviewed archive") : (locale === "zh" ? "发现归档" : "Discovery archive")}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span><span>{t.qualityScore} {paper.qualityScore}</span><PaperEvidenceBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>
                     <h2>{paper.title}</h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p>
-                    <p className="v2-library-paper-why"><b>{t.whySuitable}</b>{locale === "zh" ? paper.whyReadZh : paper.whyReadEn}</p>
+                    <p className="v2-library-paper-why"><b>{paper.qualityStage === "recommended" || paper.qualityStage === "reviewing" ? t.whySuitable : locale === "zh" ? "归档说明" : "Archive note"}</b>{(locale === "zh" ? paper.whyReadZh : paper.whyReadEn) || (paper.qualityStage === "reviewed" ? (locale === "zh" ? "Pi 已完成质量评审，但它没有进入正式推荐队列；保留在论文库供后续检索。" : "Pi reviewed this paper, but it did not enter the formal recommendation queue. It remains searchable in the library.") : (locale === "zh" ? "扫描过程中发现的真实论文，尚未完成深度解读；保留在论文库，不等同于推荐。" : "A real paper found during discovery. Deep analysis is not complete; archiving it does not mean it is recommended."))}</p>
                     <footer><span>◎ {reminderLabel(paper, locale)}</span><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><b>{t.viewAnalysis} →</b></footer>
                   </button>
                   <div className="v2-library-paper-actions">
@@ -5293,6 +5300,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   </div>
                 </article>
               ))}
+              {visibleLibraryPapers.length < libraryPapers.length && <button className="v2-library-load-more" type="button" onClick={() => setLibraryVisibleCount((count) => count + 60)}>{locale === "zh" ? `继续显示（剩余 ${libraryPapers.length - visibleLibraryPapers.length} 篇）` : `Show more (${libraryPapers.length - visibleLibraryPapers.length} remaining)`}</button>}
               {!libraryPapers.length && <p className="v2-monitor-empty">{scanIsActive ? scanPhase : locale === "zh" ? "这个分类暂时没有论文。未处理的推荐不会因为错过一天而消失。" : "No papers are in this category yet. Pending recommendations do not disappear when you miss a day."}</p>}
             </div>
           </main>
