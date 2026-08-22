@@ -13,6 +13,12 @@ import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import {
+  hasCompleteRecommendationDraft,
+  isRetryableEmptyDraftDegradation,
+  recommendationDraftMissingFields,
+  verifierContradictsCompleteDraft,
+} from "../../../lib/recommendation-draft.mjs";
+import {
   RECOMMENDATION_VERIFICATION_FIELDS,
   evidenceVerificationReport,
   sanitizeEvidenceVerificationDraft,
@@ -2086,6 +2092,10 @@ async function verifyRecommendationBatch(input: {
 }) {
   const recommended = input.reviews.filter((review) => review.recommended);
   if (!recommended.length) return input.reviews;
+  const incompleteDraft = recommended.find((review) => !hasCompleteRecommendationDraft(review));
+  if (incompleteDraft) {
+    throw new Error(`Recommendation draft incomplete: ${incompleteDraft.canonicalId} is missing ${recommendationDraftMissingFields(incompleteDraft).join(", ")}`);
+  }
   const candidateById = new Map(input.candidates.map((candidate) => [candidate.canonicalId, candidate]));
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -2167,6 +2177,9 @@ async function verifyRecommendationBatch(input: {
   const corrected = new Map<string, PaperReview>();
   for (const review of recommended) {
     const raw = initialById.get(review.canonicalId) || { verdict: "insufficient", reason: "Verifier omitted this paper" };
+    if (verifierContradictsCompleteDraft(raw.reason, review)) {
+      throw new Error(`Recommendation verifier contradicted a complete draft for ${review.canonicalId}`);
+    }
     const candidate = candidateById.get(review.canonicalId);
     const report = sanitizeEvidenceVerificationDraft(raw, {
       allowedFields: recommendationVerificationFields(review),
@@ -2669,6 +2682,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "This is a latency-safe fallback. Judge the supplied evidence directly without hidden chain-of-thought.",
       `Set recommended=true only for a concrete research fit with relevanceScore >= ${RECOMMENDATION_THRESHOLD} and credible quality. Scores are integers from 0 to 100.`,
       "Each item must include canonicalId, isPaper, recommended, relevanceScore, qualityScore, recommendationTier, readMinutes, readDepth, summaryZh, summaryEn, whyReadZh, whyReadEn, problemZh, problemEn, methodZh, methodEn, contributionZh, contributionEn, limitationsZh, limitationsEn, readingFocusZh, readingFocusEn, researchQuestionsZh, researchQuestionsEn, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
+      "For every recommended paper, both researchQuestions lists must contain at least 2 concrete questions and every bilingual narrative field must be populated.",
       "For a recommended paper, keep each bilingual narrative concrete but concise and grounded only in the title, abstract, authors, venue, date, and citations supplied. For a rejected paper, leave narrative fields empty and explain the rejection briefly.",
       `Research space: ${space.name} — ${cleanText(space.description).slice(0, 600)}`,
       `Research-map directions: ${JSON.stringify(compactMapTracks.map((track) => ({ id: track.id, titleZh: track.titleZh, titleEn: track.titleEn, summaryEn: track.summaryEn })))}`,
@@ -2707,7 +2721,17 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         ]);
         const content = data.choices?.[0]?.message?.content || "";
         if (!content.trim()) throw new Error("DeepSeek Pro returned an empty review");
-        parsed = parseReviewPayload(content);
+        const nextParsed = parseReviewPayload(content);
+        const nextScoreScale = inferModelScoreScale(nextParsed.reviews || []);
+        const incomplete = (nextParsed.reviews || []).filter((item) => item.isPaper === true && item.recommended === true
+          && normalizeModelScore(item.relevanceScore, nextScoreScale) >= RECOMMENDATION_THRESHOLD
+          && normalizeModelScore(item.qualityScore, nextScoreScale) >= 65)
+          .map((item) => ({ canonicalId: cleanText(item.canonicalId || ""), missing: recommendationDraftMissingFields(item) }))
+          .filter((item) => item.missing.length);
+        if (incomplete.length) {
+          throw new Error(`DeepSeek Pro returned an incomplete recommended review: ${incomplete.map((item) => `${item.canonicalId || "unknown"} (${item.missing.join(", ")})`).join("; ")}`);
+        }
+        parsed = nextParsed;
       } catch (error) {
         lastError = error;
         if (isNonRetryableDeepSeekError(error)) throw error;
@@ -3053,7 +3077,7 @@ async function generateDailyBrief(
   jobId: string,
   candidates: Candidate[],
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepScheduled?: number; deepReviewed?: number; deepDeferred?: number; analysisUnavailable?: number; verificationPending?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepScheduled?: number; deepReviewed?: number; deepDeferred?: number; analysisUnavailable?: number; verificationPending?: number; verificationFailed?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
   now: Date,
   apiKey: string,
   deferLlm = false,
@@ -3071,6 +3095,8 @@ async function generateDailyBrief(
     6,
   );
   const analysisUnavailable = metrics.analysisUnavailable === 1;
+  const verificationPending = Math.max(0, metrics.verificationPending || 0);
+  const verificationFailed = Math.max(0, metrics.verificationFailed || 0);
   const selectedCanonicalIds = selected.map((review) => review.canonicalId);
   let paperIds: string[] = [];
   if (selectedCanonicalIds.length) {
@@ -3084,41 +3110,49 @@ async function generateDailyBrief(
     await saveDailyBrief(database, {
     spaceId: space.id, briefDate, jobId, status: analysisUnavailable ? "degraded" : "ready",
     headlineZh: selected.length
-      ? `今天有 ${selected.length} 篇论文通过严格筛选`
-      : metrics.verificationPending ? `${metrics.verificationPending} 篇高潜力论文等待证据确认`
-        : analysisUnavailable ? "候选已保存，AI 解读暂未完成" : "今天没有论文达到严格推荐门槛",
+      ? `今天 ${selected.length} 篇已确认${verificationPending ? `，${verificationPending} 篇待核验` : ""}`
+      : verificationPending ? `${verificationPending} 篇高潜力论文等待证据确认`
+        : analysisUnavailable ? "候选已保存，AI 解读暂未完成"
+          : verificationFailed ? `本轮暂无正式推荐，${verificationFailed} 篇证据未通过` : "今天没有论文达到严格推荐门槛",
     headlineEn: selected.length
-      ? `${selected.length} papers passed today's strict review`
-      : metrics.verificationPending ? `${metrics.verificationPending} high-potential papers await evidence verification`
-        : analysisUnavailable ? "Candidates saved; AI review is pending" : "No paper cleared today's strict recommendation bar",
+      ? `${selected.length} confirmed today${verificationPending ? `; ${verificationPending} awaiting verification` : ""}`
+      : verificationPending ? `${verificationPending} high-potential papers await evidence verification`
+        : analysisUnavailable ? "Candidates saved; AI review is pending"
+          : verificationFailed ? `No formal recommendation; ${verificationFailed} failed the evidence gate` : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
-      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并为 ${metrics.evidenceDeepened || 0} 篇高潜力论文补强原文证据，最终保留 ${selected.length} 篇。${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
-      : metrics.verificationPending
-        ? `Pi 已保存 ${metrics.verificationPending} 篇达到推荐分数的深度解读草稿；独立核验服务响应较慢，因此它们尚未作为正式推荐发布。后续只续跑核验，不会重新检索、筛选或撰写。`
+      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并为 ${metrics.evidenceDeepened || 0} 篇高潜力论文补强原文证据，最终确认 ${selected.length} 篇。${verificationPending ? `${verificationPending} 篇仍在等待独立核验，不计入正式推荐。` : ""}${verificationFailed ? `${verificationFailed} 篇因证据不足未发布。` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
+      : verificationPending
+        ? `Pi 已保存 ${verificationPending} 篇达到推荐分数的深度解读草稿；独立核验服务响应较慢，因此它们尚未作为正式推荐发布。后续只续跑核验，不会重新检索、筛选或撰写。${verificationFailed ? `另有 ${verificationFailed} 篇未通过证据核验，原因会保留在研究账本中。` : ""}`
       : analysisUnavailable
         ? `Pi 已保存 ${metrics.scanned} 篇候选和 ${metrics.screened || 0} 篇快速筛选结果；本轮 ${metrics.deepScheduled || metrics.deepDeferred || 0} 篇高潜力论文因模型响应异常尚未完成解读。它们仍在待评审队列中，因此这不是“没有论文达标”的质量结论。`
-        : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
+        : verificationFailed
+          ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；其中 ${verificationFailed} 篇达到高潜力阶段，但未通过独立证据核验，因此本轮正式推荐为 0。它们不是因技术等待被淘汰，核验原因已保留。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`
+          : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
     overviewEn: selected.length
-      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and retained ${selected.length}. ${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
-      : metrics.verificationPending
-        ? `Pi preserved ${metrics.verificationPending} deeply reviewed drafts that reached the recommendation score. Independent verification was slow, so they are not published as formal recommendations yet. A later run retries verification only, without repeating discovery, screening, or drafting.`
+      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and confirmed ${selected.length}. ${verificationPending ? `${verificationPending} still await independent verification and are not counted as formal recommendations. ` : ""}${verificationFailed ? `${verificationFailed} were withheld for insufficient evidence. ` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
+      : verificationPending
+        ? `Pi preserved ${verificationPending} deeply reviewed drafts that reached the recommendation score. Independent verification was slow, so they are not published as formal recommendations yet. A later run retries verification only, without repeating discovery, screening, or drafting.${verificationFailed ? ` Another ${verificationFailed} failed evidence verification and remain recorded in the research ledger.` : ""}`
       : analysisUnavailable
         ? `Pi saved ${metrics.scanned} candidates and ${metrics.screened || 0} fast-screen results. Model failures prevented this run from completing AI review of ${metrics.deepScheduled || metrics.deepDeferred || 0} high-potential papers. They remain queued, so this is not a finding that no paper met the quality bar.`
-        : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`,
+        : verificationFailed
+          ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. ${verificationFailed} reached the high-potential stage but failed independent evidence verification, so the formal recommendation count is zero. Their verification reasons remain in the research ledger.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`
+          : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`,
     signalsZh: selected.slice(0, 6).map((review) => review.contributionZh || review.summaryZh || review.whyReadZh).filter(Boolean),
     signalsEn: selected.slice(0, 6).map((review) => review.contributionEn || review.summaryEn || review.whyReadEn).filter(Boolean),
     readingPlanZh: selected.slice(0, 6).map((review) => review.readingFocusZh || review.whyReadZh || review.summaryZh).filter(Boolean),
     readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn).filter(Boolean),
     watchlistZh: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} 篇响应较慢的论文会在后续扫描中重试，不会重复处理已完成论文。`] : []),
-      ...(metrics.verificationPending ? [`${metrics.verificationPending} 篇高潜力论文处于待核验状态；这是技术等待，不是质量淘汰。`] : []),
-      ...(!selected.length && !analysisUnavailable && !metrics.verificationPending ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
+      ...(verificationPending ? [`${verificationPending} 篇高潜力论文处于待核验状态；这是技术等待，不是质量淘汰。`] : []),
+      ...(verificationFailed ? [`${verificationFailed} 篇论文未通过独立证据核验；它们与待核验论文分开统计。`] : []),
+      ...(!selected.length && !analysisUnavailable && !verificationPending && !verificationFailed ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
       ...(analysisUnavailable ? ["模型恢复后将从保存点继续评审；已完成的检索与筛选不会重新消耗额度。"] : []),
     ],
     watchlistEn: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} slow papers will be retried in a later scan without repeating completed reviews.`] : []),
-      ...(metrics.verificationPending ? [`${metrics.verificationPending} high-potential papers are awaiting verification; this is a technical wait, not a quality rejection.`] : []),
-      ...(!selected.length && !analysisUnavailable && !metrics.verificationPending ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
+      ...(verificationPending ? [`${verificationPending} high-potential papers are awaiting verification; this is a technical wait, not a quality rejection.`] : []),
+      ...(verificationFailed ? [`${verificationFailed} papers failed independent evidence verification and are counted separately from pending drafts.`] : []),
+      ...(!selected.length && !analysisUnavailable && !verificationPending && !verificationFailed ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
       ...(analysisUnavailable ? ["When the model recovers, review resumes from the saved checkpoint without repeating completed discovery or screening."] : []),
     ],
     paperIds, metrics, model: "evidence-summary", error: enhancementError || null,
@@ -5019,7 +5053,11 @@ async function loadCachedQuickScreens(database: D1Database, spaceId: string, can
      WHERE p.space_id = ? AND (i.analysis_source IN ('deepseek_screened', 'deepseek_verification_pending')
        OR (i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded'
          AND (lower(i.screening_reason) LIKE '%timeout%' OR lower(i.screening_reason) LIKE '%aborted%'
-           OR lower(i.screening_reason) LIKE '%temporarily unavailable%'))) AND i.analysis_model = ?
+           OR lower(i.screening_reason) LIKE '%temporarily unavailable%'
+           OR lower(i.screening_reason) LIKE '%draft is empty%'
+           OR lower(i.screening_reason) LIKE '%empty draft%'
+           OR lower(i.screening_reason) LIKE '%no populated substantive fields%'
+           OR lower(i.screening_reason) LIKE '%draft incomplete%'))) AND i.analysis_model = ?
        AND p.canonical_id IN (${uniqueIds.map(() => "?").join(", ")})`,
   ).bind(spaceId, MONITOR_MODEL, ...uniqueIds).all<{
     canonical_id: string; horizon: Horizon; llm_relevance_score: number; quality_score: number; screening_reason: string;
@@ -5262,6 +5300,8 @@ async function runLegacyMonitor(request: Request) {
         newCandidates: newCandidateCount,
         duplicates: duplicateCount,
         reviewed: reviews.length,
+        verificationPending: reviews.filter((review) => review.verificationRetryable).length,
+        verificationFailed: reviews.filter((review) => review.verificationStatus === "degraded").length,
         recommended: newCount,
         rejected: rejectedCount,
       }, completedAt, apiKey);
@@ -5388,24 +5428,42 @@ export async function POST(request: Request) {
       const pipelineOutdated = Boolean(previousJob && previousWork.pipelineVersion !== MONITOR_PIPELINE_VERSION);
       const verificationCarryover = Boolean(!pipelineOutdated && previousJob?.status === "ready"
         && previousWork.verificationDeferredIds.length);
+      const previousDeepReviews = !pipelineOutdated && previousJob?.status === "ready" && previousWork.deepIds.length
+        ? await loadPersistedReviews(database, space.id, previousWork.deepIds)
+        : [];
+      const incompleteDraftCarryoverIds = previousDeepReviews
+        .filter((review) => isRetryableEmptyDraftDegradation(review))
+        .map((review) => review.canonicalId);
+      const incompleteDraftCarryover = Boolean(incompleteDraftCarryoverIds.length);
+      const qualityCarryover = verificationCarryover || incompleteDraftCarryover;
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
       const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
-      if (!verificationCarryover && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
+      if (!qualityCarryover && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
         return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
       }
       const lockToken = crypto.randomUUID();
       const jobId = crypto.randomUUID();
       const resumeCheckpoint = previousJob?.status === "error" && !pipelineOutdated
         ? inferResumeCheckpoint(previousJob, previousWork)
-        : verificationCarryover ? "verifying_recommendations" : "planning";
+        : incompleteDraftCarryover ? "deep_reviewing"
+          : verificationCarryover ? "verifying_recommendations" : "planning";
       const resumable = Boolean(!pipelineOutdated && resumeCheckpoint !== "planning"
-        && (previousJob?.status === "error" || verificationCarryover));
+        && (previousJob?.status === "error" || qualityCarryover));
       if (resumable) {
         previousWork.resumeCheckpoint = "";
         previousWork.screenFailureCount = 0;
         previousWork.deepFailureCount = 0;
         previousWork.verificationFailureCount = 0;
         if (verificationCarryover) previousWork.verificationDeferredIds = [];
+        if (incompleteDraftCarryoverIds.length) {
+          const retryIds = new Set(incompleteDraftCarryoverIds);
+          previousWork.deepIds = Array.from(new Set([...previousWork.deepIds, ...incompleteDraftCarryoverIds])).slice(0, DEEP_REVIEW_MAX_LIMIT);
+          previousWork.deepCompletedIds = previousWork.deepCompletedIds.filter((id) => !retryIds.has(id));
+          previousWork.deepDeferredIds = previousWork.deepDeferredIds.filter((id) => !retryIds.has(id));
+          previousWork.verificationIds = previousWork.verificationIds.filter((id) => !retryIds.has(id));
+          previousWork.verificationCompletedIds = previousWork.verificationCompletedIds.filter((id) => !retryIds.has(id));
+          previousWork.verificationDeferredIds = previousWork.verificationDeferredIds.filter((id) => !retryIds.has(id));
+        }
       }
       const initialCheckpoint = resumable ? resumeCheckpoint : "planning";
       const initialWork = resumable ? previousWork : newScanWorkQueue();
@@ -5500,6 +5558,8 @@ export async function POST(request: Request) {
         deepReviewed: reviews.length,
         deepDeferred: work.deepDeferredIds.length,
         analysisUnavailable: completion.state === "analysis_unavailable" ? 1 : 0,
+        verificationPending: reviews.filter((review) => review.verificationRetryable).length,
+        verificationFailed: reviews.filter((review) => review.verificationStatus === "degraded").length,
         evidenceDeepened: reviews.filter((review) => isPublishedRecommendation(review) && ["ready", "partial"].includes(review.evidenceStatus)).length,
         fulltextVerified: reviews.filter((review) => isPublishedRecommendation(review) && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length,
         recommended: recommendedCount,
@@ -5561,6 +5621,7 @@ export async function POST(request: Request) {
       const finalizedReviews = await persistReviewBatch(database, space.id, job.id, candidates, reconciledReviews);
       const recommended = finalizedReviews.filter(isPublishedRecommendation).length;
       const verificationPending = finalizedReviews.filter((review) => review.verificationRetryable).length;
+      const verificationFailed = finalizedReviews.filter((review) => review.verificationStatus === "degraded").length;
       const completion = deepReviewCompletion({
         scheduled: work.deepIds.length,
         completed: finalizedReviews.length,
@@ -5613,7 +5674,7 @@ export async function POST(request: Request) {
             : verificationPending
               ? "High-potential drafts were preserved; independent verification is pending"
             : "Completed reviews produced no recommendation",
-          metadata: { completionState: completion.state, verificationPending, ...completion, rejectionBreakdown },
+          metadata: { completionState: completion.state, verificationPending, verificationFailed, ...completion, rejectionBreakdown },
         });
       }
       await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, finalizedReviews, {
@@ -5627,6 +5688,7 @@ export async function POST(request: Request) {
         deepDeferred: work.deepDeferredIds.length,
         analysisUnavailable: completion.state === "analysis_unavailable" ? 1 : 0,
         verificationPending,
+        verificationFailed,
         evidenceDeepened,
         fulltextVerified,
         recommended,
@@ -5655,7 +5717,9 @@ export async function POST(request: Request) {
         ).bind(completion.state === "analysis_unavailable"
           ? `候选与筛选结果已保存；${work.deepDeferredIds.length} 篇高潜力论文等待模型恢复后续评`
           : verificationPending
-            ? `本轮发现与解读已完成；${verificationPending} 篇高潜力论文等待独立核验，不会重复撰写`
+            ? `本轮发现与解读已完成；${verificationPending} 篇等待独立核验${verificationFailed ? `，${verificationFailed} 篇证据未通过` : ""}`
+          : verificationFailed
+            ? `本轮严格评审已完成；${verificationFailed} 篇高潜力论文因证据不足未发布`
           : work.deepDeferredIds.length
             ? `本轮已完成；${work.deepDeferredIds.length} 篇响应较慢的论文已延后重试`
             : recommended ? "推荐已可阅读，Pi 正在后台整理今日简报" : "本轮严格评审已完成，暂无强推荐",
@@ -5675,6 +5739,7 @@ export async function POST(request: Request) {
           deepReviewed: finalizedReviews.length,
           deepDeferred: work.deepDeferredIds.length,
           verificationPending,
+          verificationFailed,
           completionState: completion.state,
           recommended,
           evidenceDeepened,
@@ -6020,6 +6085,19 @@ export async function POST(request: Request) {
           const candidates = await pendingCandidateQueue(database, space.id, [canonicalId]);
           const drafts = await loadPersistedReviews(database, space.id, [canonicalId]);
           const draft = drafts.find((review) => review.verificationRetryable);
+          if (draft && !hasCompleteRecommendationDraft(draft)) {
+            const retryIds = new Set([canonicalId]);
+            work.deepIds = Array.from(new Set([...work.deepIds, canonicalId])).slice(0, DEEP_REVIEW_MAX_LIMIT);
+            work.deepCompletedIds = work.deepCompletedIds.filter((id) => !retryIds.has(id));
+            work.deepDeferredIds = work.deepDeferredIds.filter((id) => !retryIds.has(id));
+            work.verificationIds = work.verificationIds.filter((id) => !retryIds.has(id));
+            work.verificationCompletedIds = work.verificationCompletedIds.filter((id) => !retryIds.has(id));
+            work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => !retryIds.has(id));
+            await saveScanWorkQueue(database, job.id, work);
+            await setStage("deep_reviewing", "deep_reviewing", 86,
+              `发现 1 篇解读结构不完整，正在自动重新生成；已完成论文不会重做`);
+            return Response.json(await readState(database, space, { regeneratingIncompleteDraft: true }), { status: 202 });
+          }
           if (!draft || !candidates.length) {
             work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
           } else {
