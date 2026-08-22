@@ -5,6 +5,7 @@ import { enqueueMonitorCandidates, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from
 import {
   confirmedExternalResearchMapEvidenceStatements,
   dismissResearchMapEvidence,
+  formalResearchMapEvidencePredicate,
   promoteAlreadyAcceptedResearchMapEvidence,
   promoteResearchMapEvidence,
   reconcileConfirmedResearchMapEvidence,
@@ -15,6 +16,25 @@ import {
   upsertPendingResearchMapEvidence,
   upsertRouteGapResearchMapEvidence,
 } from "../lib/research-map-evidence.ts";
+
+test("formal route changes require ready, grounded full-text evidence", () => {
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec(`
+    CREATE TABLE research_map_changes (id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT);
+    CREATE TABLE paper_evidence_documents (
+      id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT, status TEXT, evidence_level TEXT,
+      grounded_claim_count INTEGER, coverage_score INTEGER, unsupported_claim_count INTEGER
+    );
+    INSERT INTO research_map_changes VALUES ('qualified', 'space-a', 'paper-a'), ('legacy', 'space-a', 'paper-b');
+    INSERT INTO paper_evidence_documents VALUES
+      ('evidence-a', 'space-a', 'paper-a', 'ready', 'fulltext', 3, 70, 1),
+      ('evidence-b', 'space-a', 'paper-b', 'ready', 'abstract', 5, 100, 0);
+  `);
+  const rows = sqlite.prepare(`SELECT c.id FROM research_map_changes c
+    WHERE ${formalResearchMapEvidencePredicate("c")} ORDER BY c.id`).all();
+  assert.deepEqual(rows.map((row) => row.id), ["qualified"]);
+  sqlite.close();
+});
 
 function d1Database(sqlite) {
   return {

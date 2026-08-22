@@ -56,6 +56,7 @@ test("recommended papers enter a non-blocking evidence queue with claim-level pr
   assert.match(route, /Every evidence quote must be copied verbatim/);
   assert.match(route, /evidenceQuoteIsGrounded/);
   assert.match(route, /paper_evidence_audits/);
+  assert.match(route, /source\.level === "fulltext" && groundedCount >= 3 && coverageScore >= 70 && unsupportedCount <= 1/);
   assert.match(route, /kind, title_zh, title_en, summary_zh, summary_en, confidence/);
   assert.match(route, /intelligence_updated_at = NULL/);
   assert.match(monitor, /groundedEvidenceRows/);

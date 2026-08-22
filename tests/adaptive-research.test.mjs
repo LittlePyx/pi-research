@@ -29,9 +29,10 @@ test("explicit and inferred preference evidence stay separate", async () => {
 });
 
 test("new recommendations stay provisional until confirmed evidence updates route changes", async () => {
-  const [monitor, client] = await Promise.all([
+  const [monitor, client, evidence] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/research-map-evidence.ts", import.meta.url), "utf8"),
   ]);
   assert.match(monitor, /upsertPendingResearchMapEvidence/);
   assert.match(monitor, /research_map_evidence_proposals/);
@@ -45,4 +46,9 @@ test("new recommendations stay provisional until confirmed evidence updates rout
   assert.match(client, /routeChangeKindLabel/);
   assert.match(client, /v2-layered-memory/);
   assert.match(client, /v2-feedback-options/);
+  assert.match(client, /feedbackEffectCopy/);
+  assert.match(client, /saveFeedback\(paper, "not_relevant", "duplicate_known"\)/);
+  assert.match(evidence, /grounded_claim_count >= 3/);
+  assert.match(evidence, /coverage_score >= 70/);
+  assert.match(evidence, /unsupported_claim_count <= 1/);
 });

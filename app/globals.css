@@ -3165,6 +3165,7 @@ main { min-width: 0; }
 .v2-daily-paper-analysis > footer { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid #d9e1df; display: flex; flex-wrap: wrap; gap: 7px; }
 .v2-daily-paper-analysis > footer button { min-height: 32px; padding: 0 10px; border: 1px solid #c9d5d2; border-radius: 6px; background: rgba(255,255,255,.74); color: #526b67; font-size: 10px; font-weight: 750; cursor: pointer; }
 .v2-daily-paper-analysis > footer button:first-child { border-color: #456f80; background: #456f80; color: white; }
+.v2-daily-paper-analysis > footer button.positive { border-color: #9ab7a7; background: #eaf2ed; color: #315e48; }
 .v2-daily-paper-queue > aside { margin-top: 14px; padding: 12px 14px; border-radius: 9px; background: #f5f1e8; color: #655f51; }
 .v2-daily-paper-queue > aside strong { font-size: 10px; }
 .v2-daily-paper-queue > aside ul { margin: 6px 0 0; padding-left: 17px; font-size: 10px; line-height: 1.5; }

@@ -3,7 +3,7 @@ import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { enqueueMonitorCandidates, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
-import { reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
+import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -1228,7 +1228,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
        FROM (
         SELECT track_id, kind, title_zh, title_en, summary_zh, summary_en, confidence, created_at,
          ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY created_at DESC, rowid DESC) AS change_rank
-        FROM research_map_changes WHERE space_id = ?
+        FROM research_map_changes c WHERE c.space_id = ? AND ${formalResearchMapEvidencePredicate("c")}
        ) WHERE change_rank = 1`,
     ).bind(spaceId).all<TrackLatestChangeRow>(),
     database.prepare(RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL)

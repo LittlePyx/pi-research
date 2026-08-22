@@ -60,7 +60,9 @@ test("today feedback refreshes direction intelligence and research memory", asyn
   assert.match(feedback, /intelligence_json = '\{\}'/);
   assert.match(feedback, /kind === "save" \|\| kind === "relevant" \|\| kind === "not_relevant"/);
   assert.match(feedback, /reconcileResearchMapEvidenceStatements/);
-  assert.match(feedback, /DB\.batch\(\[\s*feedbackStatement,\s*\.\.\.reconcileResearchMapEvidenceStatements/s);
+  assert.match(feedback, /DB\.batch\(\[\s*feedbackStatement,[\s\S]*\.\.\.reconcileResearchMapEvidenceStatements/);
+  assert.match(feedback, /reasonCode === "duplicate_known"[\s\S]*status = 'mastered'/);
+  assert.match(feedback, /通过全文证据门槛后才会记为路线变化/);
   assert.match(library, /database\.batch\(\[\s*readingProgressStatement,\s*\.\.\.reconcileResearchMapEvidenceStatements/s);
   assert.match(map, /readPreferenceSignals\(database, spaceId, 24\)/);
   assert.match(map, /signal\.layer.*signal\.kind.*signal\.labelEn/s);
@@ -72,8 +74,8 @@ test("the interface explains the research-route and daily-discovery loop", async
   assert.match(app, /研究线索 → 今日发现 → 你的判断 → 路线更新/);
   assert.match(app, /只有接受、保存或完成阅读后才确认进入路线/);
   assert.match(app, /路线深挖候选统一进入共享质量队列/);
-  assert.match(app, /通过评审并由你确认后才成为已确认证据/);
-  assert.match(app, /通过后才进入今日推荐与待确认证据/);
+  assert.match(app, /只有全文证据达到门槛才会记为科学证据变化/);
+  assert.match(app, /通过后才进入今日推荐与待确认纳入/);
   assert.match(app, /discoveryOrigin/);
   assert.match(app, /RouteDiscoveryBadge/);
   assert.match(app, /if \(!origin && !\(track && paper\.discoveryType\)\) return null/);

@@ -565,7 +565,7 @@ export async function POST(request: Request) {
         unsupportedCount ? `${unsupportedCount} model claim(s) were retained as unverified inference.` : null, document.id, lockToken),
     ];
     await database.batch(statements);
-    if (source.level === "fulltext" && groundedCount >= 2) {
+    if (source.level === "fulltext" && groundedCount >= 3 && coverageScore >= 70 && unsupportedCount <= 1) {
       const routes = await database.prepare(
         `SELECT proposal.track_id FROM research_map_evidence_proposals proposal
          WHERE proposal.space_id = ? AND proposal.paper_id = ? AND proposal.status = 'confirmed'

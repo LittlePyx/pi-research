@@ -37,6 +37,25 @@ type EvidenceProposalRow = {
 export const PERSISTENT_RESEARCH_MAP_ACCEPTANCE_ID_PREFIX = "network-accept:";
 export const SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX = "system-curated-review:";
 
+/**
+ * A paper can be curated into a route after an explicit user decision, but it
+ * is only presented as a scientific route change after its full text has met
+ * the current grounding bar. `paperIdExpression` lets read-only projections
+ * audit inferred/legacy rows without requiring a persisted map-change alias.
+ */
+export function formalResearchMapEvidencePredicate(changeAlias: string, paperIdExpression = `${changeAlias}.paper_id`) {
+  return `EXISTS (
+    SELECT 1 FROM paper_evidence_documents evidence_document
+    WHERE evidence_document.space_id = ${changeAlias}.space_id
+     AND evidence_document.paper_id = ${paperIdExpression}
+     AND evidence_document.status = 'ready'
+     AND evidence_document.evidence_level = 'fulltext'
+     AND evidence_document.grounded_claim_count >= 3
+     AND evidence_document.coverage_score >= 70
+     AND evidence_document.unsupported_claim_count <= 1
+  )`;
+}
+
 export type ResearchMapEvidenceDecision = {
   changed: number;
   trackIds: string[];

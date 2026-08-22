@@ -42,7 +42,7 @@ import {
   type ConfirmedRouteEvidenceSnapshot,
   type ResearchGuidanceTrackSnapshot,
 } from "../../../lib/monitor-route-planning";
-import { promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
+import { formalResearchMapEvidencePredicate, promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { POST as deepenPaperEvidenceRequest } from "../paper-evidence/route";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
@@ -3039,8 +3039,9 @@ async function generateDailyBrief(
     const byCanonical = new Map(rows.results.map((row) => [row.canonical_id, row.id]));
     paperIds = selectedCanonicalIds.map((id) => byCanonical.get(id)).filter((id): id is string => Boolean(id));
   }
-  const fallback = async (error?: string) => saveDailyBrief(database, {
-    spaceId: space.id, briefDate, jobId, status: error ? "degraded" : "ready",
+  const saveEvidenceBrief = async (enhancementError?: string) => {
+    await saveDailyBrief(database, {
+    spaceId: space.id, briefDate, jobId, status: "ready",
     headlineZh: selected.length ? `今天有 ${selected.length} 篇论文通过严格筛选` : "今天没有论文达到严格推荐门槛",
     headlineEn: selected.length ? `${selected.length} papers passed today's strict review` : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
@@ -3049,16 +3050,28 @@ async function generateDailyBrief(
     overviewEn: selected.length
       ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and retained ${selected.length}. Other discoveries remain in the exploration ledger.`
       : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.`,
-    signalsZh: selected.slice(0, 6).map((review) => review.summaryZh || review.whyReadZh).filter(Boolean),
-    signalsEn: selected.slice(0, 6).map((review) => review.summaryEn || review.whyReadEn).filter(Boolean),
-    readingPlanZh: selected.slice(0, 6).map((review) => review.whyReadZh || review.summaryZh).filter(Boolean),
-    readingPlanEn: selected.slice(0, 6).map((review) => review.whyReadEn || review.summaryEn).filter(Boolean),
+    signalsZh: selected.slice(0, 6).map((review) => review.contributionZh || review.summaryZh || review.whyReadZh).filter(Boolean),
+    signalsEn: selected.slice(0, 6).map((review) => review.contributionEn || review.summaryEn || review.whyReadEn).filter(Boolean),
+    readingPlanZh: selected.slice(0, 6).map((review) => review.readingFocusZh || review.whyReadZh || review.summaryZh).filter(Boolean),
+    readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn).filter(Boolean),
     watchlistZh: selected.length ? [] : ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"],
     watchlistEn: selected.length ? [] : ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."],
-    paperIds, metrics, model: error ? "deterministic-fallback" : "evidence-summary", error: error || null,
+    paperIds, metrics, model: "evidence-summary", error: enhancementError || null,
   });
-  if (!selected.length) return fallback();
-  if (deferLlm) return fallback("LLM enhancement pending");
+    if (enhancementError) await recordReliabilityEvent(database, {
+      spaceId: space.id,
+      scanJobId: jobId,
+      kind: "daily_brief_enhancement_unavailable",
+      stage: "briefing",
+      source: MONITOR_MODEL,
+      outcome: "degraded",
+      errorCode: monitorErrorCode(enhancementError),
+      message: enhancementError,
+      metadata: { canonicalBrief: "evidence-summary", selectedPapers: selected.length },
+    });
+  };
+  if (!selected.length) return saveEvidenceBrief();
+  if (deferLlm) return saveEvidenceBrief();
 
   const usageDate = now.toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
@@ -3071,7 +3084,7 @@ async function generateDailyBrief(
   if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
     || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
-    return fallback(!apiKey ? "DeepSeek Pro is not configured" : "Daily brief analysis budget reached");
+    return saveEvidenceBrief(!apiKey ? "DeepSeek Pro is not configured" : "Daily brief analysis budget reached");
   }
   try {
     const records = selected.map((review) => {
@@ -3152,7 +3165,7 @@ async function generateDailyBrief(
       paperIds, metrics, model: MONITOR_MODEL,
     });
   } catch (error) {
-    await fallback(error instanceof Error ? error.message.slice(0, 260) : "Daily brief generation failed");
+    await saveEvidenceBrief(error instanceof Error ? error.message.slice(0, 260) : "Daily brief generation failed");
   }
 }
 
@@ -3307,8 +3320,10 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
        ORDER BY updated_at DESC LIMIT 10`,
     ).bind(space.id).all<{ takeaway_zh: string; takeaway_en: string; questions_zh: string; questions_en: string }>(),
     database.prepare(
-      `SELECT title_zh, title_en, summary_zh, summary_en FROM research_map_changes
-       WHERE space_id = ? AND created_at >= datetime('now', '-7 days') ORDER BY created_at DESC LIMIT 12`,
+      `SELECT c.title_zh, c.title_en, c.summary_zh, c.summary_en FROM research_map_changes c
+       WHERE c.space_id = ? AND c.created_at >= datetime('now', '-7 days')
+        AND ${formalResearchMapEvidencePredicate("c")}
+       ORDER BY c.created_at DESC LIMIT 12`,
     ).bind(space.id).all<{ title_zh: string; title_en: string; summary_zh: string; summary_en: string }>(),
   ]);
   const fallback = async (error?: string) => {
@@ -3906,7 +3921,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        FROM research_map_changes c
        JOIN research_tracks t ON t.id = c.track_id AND t.space_id = c.space_id
        JOIN monitored_papers p ON p.id = c.paper_id AND p.space_id = c.space_id
-       WHERE c.space_id = ? AND c.created_at >= datetime('now', '-7 days')
+        WHERE c.space_id = ? AND c.created_at >= datetime('now', '-7 days')
+         AND ${formalResearchMapEvidencePredicate("c")}
        ORDER BY c.created_at DESC LIMIT 12`,
     ).bind(space.id).all<{
       id: string; kind: string; title_zh: string; title_en: string; summary_zh: string; summary_en: string;
@@ -3936,7 +3952,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         AND ep.track_id = tp.track_id AND ep.status = 'confirmed'
        JOIN research_tracks t ON t.id = tp.track_id AND t.space_id = tp.space_id
        LEFT JOIN research_map_changes c ON c.paper_id = p.id AND c.track_id = tp.track_id AND c.kind = 'new_evidence'
-       WHERE p.space_id = ? AND c.id IS NULL
+        WHERE p.space_id = ? AND c.id IS NULL
+         AND ${formalResearchMapEvidencePredicate("ep", "p.id")}
         AND (p.discovered_at >= datetime('now', '-7 days') OR tp.created_at >= datetime('now', '-7 days'))
        ORDER BY created_at DESC LIMIT 12`,
     ).bind(space.id).all<{
@@ -4351,11 +4368,11 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       titleZh: initialized ? `建立研究路线：${activity.title_zh}` : `${activity.title_zh}新增 ${count} 篇代表论文`,
       titleEn: initialized ? `Research route created: ${activity.title_en}` : `${count} representative papers added to ${activity.title_en}`,
       summaryZh: initialized
-        ? `Pi 已建立这条研究路线${count ? `，并纳入 ${count} 篇奠基、里程碑或前沿论文作为初始证据` : "，代表论文仍在持续填充"}。`
-        : `这条路线最近补充了 ${count} 篇代表论文，研究地图的证据覆盖随之更新。`,
+        ? `Pi 已建立这条研究路线${count ? `，并纳入 ${count} 篇奠基、里程碑或前沿论文作为结构节点` : "，代表论文仍在持续填充"}。这些节点与已通过全文门槛的科学证据分开标记。`
+        : `这条路线最近补充了 ${count} 篇代表论文；只有全文证据达到门槛后，才会另行记为科学证据变化。`,
       summaryEn: initialized
-        ? `Pi created this research route${count ? ` with ${count} foundation, milestone, or frontier papers as its initial evidence` : "; representative papers are still being added"}.`
-        : `${count} representative papers were added recently, updating the route's evidence coverage.`,
+        ? `Pi created this research route${count ? ` with ${count} foundation, milestone, or frontier papers as structural nodes` : "; representative papers are still being added"}. These nodes remain distinct from scientific evidence that cleared the full-text bar.`
+        : `${count} representative papers were added recently. A scientific evidence change appears separately only after the full-text bar is met.`,
       confidence: 100,
       createdAt: activity.latest_activity_at,
       trackTitleZh: activity.title_zh,

@@ -22,6 +22,34 @@ type FeedbackPayload = {
 
 type EngagementTrack = { id: string; title_zh: string; title_en: string };
 
+function feedbackEffect(kind: FeedbackPayload["kind"], value: boolean, reasonCode: FeedbackReasonCode | null) {
+  if (!value) return {
+    zh: "已撤销这次判断；论文回到待处理状态。",
+    en: "This decision was removed and the paper returned to the inbox.",
+  };
+  if (kind === "later") return {
+    zh: "已推迟 3 天；不会降低这个方向或方法的推荐权重。",
+    en: "Snoozed for three days without lowering this topic or method.",
+  };
+  if (reasonCode === "duplicate_known") return {
+    zh: "已标记为已掌握；下一轮会减少同类入门内容，继续寻找更深或更新的工作。",
+    en: "Marked as mastered. Pi will reduce similar introductory work and seek deeper or newer papers.",
+  };
+  if (kind === "not_relevant") return {
+    zh: "已降低相似检索分支的优先级；历史论文和其他研究方向不会被删除。",
+    en: "Similar retrieval branches were deprioritized without deleting history or other directions.",
+  };
+  if (kind === "relevant") return {
+    zh: "已加强对应主题、方法或问题的下一轮检索；通过全文证据门槛后才会记为路线变化。",
+    en: "The matching topic, method, or question will guide the next scan; route changes still require full-text evidence.",
+  };
+  if (kind === "save") return {
+    zh: "已保存，并作为后续检索的正向信号；不会直接把论文当成已验证路线证据。",
+    en: "Saved as a positive discovery signal, without treating the paper as verified route evidence.",
+  };
+  return { zh: "已记录。", en: "Recorded." };
+}
+
 async function resolveEngagementTrack(database: D1Database, spaceId: string, paperId: string) {
   const formal = await database.prepare(
     `SELECT t.id, t.title_zh, t.title_en FROM monitored_papers p
@@ -203,7 +231,7 @@ export async function POST(request: Request) {
        ON CONFLICT(space_id, paper_id) DO UPDATE SET snoozed_until = excluded.snoozed_until, updated_at = CURRENT_TIMESTAMP`,
     ).bind(crypto.randomUUID(), spaceId, paperId, snoozedUntil).run();
     await addResearchTrackSignal(DB, spaceId, paperId, 1);
-    return NextResponse.json({ ok: true, state: "snoozed", snoozedUntil });
+    return NextResponse.json({ ok: true, state: "snoozed", snoozedUntil, effect: feedbackEffect(kind, true, null) });
   }
 
   const saved = kind === "save" ? Number(body.value) : 0;
@@ -257,6 +285,12 @@ export async function POST(request: Request) {
   // leave the paper feedback and research map in contradictory states.
   await DB.batch([
     feedbackStatement,
+    ...(reasonCode === "duplicate_known" && body.value ? [DB.prepare(
+      `INSERT INTO paper_reading_progress (id, space_id, paper_id, status, note, completed_at)
+       VALUES (?, ?, ?, 'mastered', '', CURRENT_TIMESTAMP)
+       ON CONFLICT(space_id, paper_id) DO UPDATE SET status = 'mastered',
+        note = paper_reading_progress.note, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP`,
+    ).bind(crypto.randomUUID(), spaceId, paperId)] : []),
     ...reconcileResearchMapEvidenceStatements(DB, spaceId, paperId),
   ]);
 
@@ -281,5 +315,9 @@ export async function POST(request: Request) {
     await refreshResearchLoopAfterFeedback(DB, spaceId, paperId);
   }
 
-  return NextResponse.json({ ok: true, state: body.value ? kind === "not_relevant" ? "dismissed" : "accepted" : "pending" });
+  return NextResponse.json({
+    ok: true,
+    state: body.value ? kind === "not_relevant" ? "dismissed" : "accepted" : "pending",
+    effect: feedbackEffect(kind, body.value, reasonCode),
+  });
 }
