@@ -390,6 +390,7 @@ type MonitorState = {
   horizons: string[];
   preferences?: MonitorPreferences;
   papers: MonitorPaper[];
+  savedCandidatePapers?: MonitorPaper[];
   historyPapers?: MonitorPaper[];
   historyCounts?: { all: number; inbox: number; unseen: number; seen: number; snoozed: number; accepted: number; saved: number; dismissed: number; reading?: Record<string, number> };
   scanJob?: {
@@ -4974,6 +4975,11 @@ export default function ResearchApp({ user }: { user: User }) {
                 {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "为什么今天没有推荐？" : "Why are there no recommendations today?"}</strong><p>{locale === "zh" ? `${latestQuickScreenedCount} 篇论文完成快速筛选，${latestDeepReviewedCount} 篇完成逐篇深度解读${latestDeepDeferredCount ? `，另有 ${latestDeepDeferredCount} 篇响应较慢已延后` : ""}；已完成论文没有同时通过研究相关性、论文质量、证据完整度与模型明确推荐四项门槛。` : `${latestQuickScreenedCount} papers passed fast screening and ${latestDeepReviewedCount} completed paper-by-paper deep review${latestDeepDeferredCount ? `; ${latestDeepDeferredCount} slow papers were deferred` : ""}. The completed papers did not clear all four gates for research fit, quality, evidence completeness, and an explicit model recommendation.`}</p><small>{locale === "zh" ? "Pi 不会为了填满页面降低标准；单篇响应过慢不会再阻塞整轮，首批零入选时仍会追加临界论文复审。" : "Pi will not lower the bar to fill the page. One slow paper no longer blocks the full run, and a zero-yield first batch still triggers a near-miss review batch."}</small></div>}
                 {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <aside><strong>{locale === "zh" ? "继续观察" : "Keep watching"}</strong><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></aside>}
               </div>
+            </section>}
+
+            {Boolean(monitor?.savedCandidatePapers?.length) && <section className="v2-today-more v2-saved-candidates">
+              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "已保留的高潜力论文" : "SAVED HIGH-POTENTIAL PAPERS"}</p><h2>{locale === "zh" ? "达到深度评审门槛，但核验尚未完成" : "Passed deep review; verification is not complete"}</h2><p>{locale === "zh" ? "这些论文不计入正式推荐，但不会再因重扫、超时或本轮零入选而消失；Pi 会从已保存稿件继续核验。" : "These do not count as formal recommendations, but rescans, timeouts, and zero-yield runs will no longer erase them. Pi resumes from the saved draft."}</p></div><span>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇" : "papers"}</span></header>
+              <div className="v2-compact-list">{(monitor?.savedCandidatePapers || []).map((paper) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span className="v2-tier-badge reserve">{locale === "zh" ? "待恢复核验" : "Verification saved"}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</small></span><span className="v2-thread-chip">{locale === "zh" ? `相关性 ${paper.relevanceScore}` : `Fit ${paper.relevanceScore}`}</span><b>→</b></button>)}</div>
             </section>}
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>

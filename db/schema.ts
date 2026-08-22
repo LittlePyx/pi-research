@@ -571,11 +571,15 @@ export const paperInsights = sqliteTable(
     verificationCoverageScore: integer("verification_coverage_score").notNull().default(0),
     verificationJson: text("verification_json").notNull().default("{}"),
     verificationModel: text("verification_model").notNull().default(""),
+    everRecommended: integer("ever_recommended", { mode: "boolean" }).notNull().default(false),
+    firstRecommendedAt: text("first_recommended_at"),
+    lastRecommendedAt: text("last_recommended_at"),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
   (table) => [
     index("idx_paper_insights_space_quality").on(table.spaceId, table.qualityScore),
     index("idx_paper_insights_space_recommended_quality").on(table.spaceId, table.llmRecommended, table.qualityScore),
+    index("idx_paper_insights_space_recommendation_history").on(table.spaceId, table.everRecommended, table.lastRecommendedAt),
   ],
 );
 

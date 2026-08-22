@@ -63,13 +63,70 @@ async function ensurePaperInsightReviewColumns(database: D1Database) {
     { name: "verification_coverage_score", sql: "ALTER TABLE paper_insights ADD COLUMN verification_coverage_score INTEGER NOT NULL DEFAULT 0" },
     { name: "verification_json", sql: "ALTER TABLE paper_insights ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}'" },
     { name: "verification_model", sql: "ALTER TABLE paper_insights ADD COLUMN verification_model TEXT NOT NULL DEFAULT ''" },
+    { name: "ever_recommended", sql: "ALTER TABLE paper_insights ADD COLUMN ever_recommended INTEGER NOT NULL DEFAULT 0" },
+    { name: "first_recommended_at", sql: "ALTER TABLE paper_insights ADD COLUMN first_recommended_at TEXT" },
+    { name: "last_recommended_at", sql: "ALTER TABLE paper_insights ADD COLUMN last_recommended_at TEXT" },
   ];
+  const needsRecommendationHistoryBackfill = !existing.has("ever_recommended");
   for (const addition of additions) {
     if (!existing.has(addition.name)) await database.prepare(addition.sql).run();
   }
   await database.prepare(
     "UPDATE paper_insights SET proposed_recommendation_tier = recommendation_tier WHERE recommendation_tier = 'must_read' AND proposed_recommendation_tier = 'browse'",
   ).run();
+  if (needsRecommendationHistoryBackfill) {
+    await database.prepare(
+      `UPDATE paper_insights SET
+       ever_recommended = 1,
+       llm_recommended = 1,
+       analysis_source = 'deepseek',
+       analysis_model = COALESCE((
+         SELECT audit.model FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1 ORDER BY audit.reviewed_at DESC, audit.id DESC LIMIT 1
+       ), analysis_model),
+       llm_relevance_score = MAX(llm_relevance_score, COALESCE((
+         SELECT MAX(audit.relevance_score) FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1
+       ), 0)),
+       quality_score = MAX(quality_score, COALESCE((
+         SELECT MAX(audit.quality_score) FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1
+       ), 0)),
+       proposed_recommendation_tier = COALESCE((
+         SELECT audit.recommendation_tier FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1 ORDER BY audit.reviewed_at DESC, audit.id DESC LIMIT 1
+       ), proposed_recommendation_tier),
+       recommendation_tier = COALESCE((
+         SELECT audit.recommendation_tier FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1 ORDER BY audit.reviewed_at DESC, audit.id DESC LIMIT 1
+       ), recommendation_tier),
+       verification_status = COALESCE((
+         SELECT audit.verification_status FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1 ORDER BY audit.reviewed_at DESC, audit.id DESC LIMIT 1
+       ), verification_status),
+       first_recommended_at = (
+         SELECT MIN(audit.reviewed_at) FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1
+       ),
+       last_recommended_at = (
+         SELECT MAX(audit.reviewed_at) FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1
+       )
+       WHERE EXISTS (
+         SELECT 1 FROM recommendation_audit_events audit
+         WHERE audit.space_id = paper_insights.space_id AND audit.paper_id = paper_insights.paper_id
+          AND audit.recommended = 1
+       )`,
+    ).run();
+  }
 }
 
 async function ensureEvidenceVerificationColumns(database: D1Database) {
@@ -207,7 +264,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_query_plans (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, plan_date TEXT NOT NULL, exploration_mode TEXT NOT NULL, queries_json TEXT NOT NULL DEFAULT '{}', rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', error TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_query_plans_space_date ON monitor_query_plans(space_id, plan_date)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_query_plans_space_created ON monitor_query_plans(space_id, created_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS paper_insights (paper_id TEXT PRIMARY KEY NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, abstract_text TEXT NOT NULL DEFAULT '', summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', why_read_zh TEXT NOT NULL DEFAULT '', why_read_en TEXT NOT NULL DEFAULT '', quality_score INTEGER NOT NULL DEFAULT 0, priority_venue INTEGER NOT NULL DEFAULT 0, analysis_source TEXT NOT NULL DEFAULT 'metadata', analysis_model TEXT NOT NULL DEFAULT '', llm_recommended INTEGER NOT NULL DEFAULT 0, llm_relevance_score INTEGER NOT NULL DEFAULT 0, screening_reason TEXT NOT NULL DEFAULT '', proposed_recommendation_tier TEXT NOT NULL DEFAULT 'browse', recommendation_tier TEXT NOT NULL DEFAULT 'browse', read_minutes INTEGER NOT NULL DEFAULT 12, read_depth TEXT NOT NULL DEFAULT 'focused', problem_zh TEXT NOT NULL DEFAULT '', problem_en TEXT NOT NULL DEFAULT '', method_zh TEXT NOT NULL DEFAULT '', method_en TEXT NOT NULL DEFAULT '', contribution_zh TEXT NOT NULL DEFAULT '', contribution_en TEXT NOT NULL DEFAULT '', limitations_zh TEXT NOT NULL DEFAULT '', limitations_en TEXT NOT NULL DEFAULT '', reading_focus_zh TEXT NOT NULL DEFAULT '', reading_focus_en TEXT NOT NULL DEFAULT '', research_questions_zh TEXT NOT NULL DEFAULT '[]', research_questions_en TEXT NOT NULL DEFAULT '[]', verification_status TEXT NOT NULL DEFAULT 'not_required', verification_coverage_score INTEGER NOT NULL DEFAULT 0, verification_json TEXT NOT NULL DEFAULT '{}', verification_model TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS paper_insights (paper_id TEXT PRIMARY KEY NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, abstract_text TEXT NOT NULL DEFAULT '', summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', why_read_zh TEXT NOT NULL DEFAULT '', why_read_en TEXT NOT NULL DEFAULT '', quality_score INTEGER NOT NULL DEFAULT 0, priority_venue INTEGER NOT NULL DEFAULT 0, analysis_source TEXT NOT NULL DEFAULT 'metadata', analysis_model TEXT NOT NULL DEFAULT '', llm_recommended INTEGER NOT NULL DEFAULT 0, llm_relevance_score INTEGER NOT NULL DEFAULT 0, screening_reason TEXT NOT NULL DEFAULT '', proposed_recommendation_tier TEXT NOT NULL DEFAULT 'browse', recommendation_tier TEXT NOT NULL DEFAULT 'browse', read_minutes INTEGER NOT NULL DEFAULT 12, read_depth TEXT NOT NULL DEFAULT 'focused', problem_zh TEXT NOT NULL DEFAULT '', problem_en TEXT NOT NULL DEFAULT '', method_zh TEXT NOT NULL DEFAULT '', method_en TEXT NOT NULL DEFAULT '', contribution_zh TEXT NOT NULL DEFAULT '', contribution_en TEXT NOT NULL DEFAULT '', limitations_zh TEXT NOT NULL DEFAULT '', limitations_en TEXT NOT NULL DEFAULT '', reading_focus_zh TEXT NOT NULL DEFAULT '', reading_focus_en TEXT NOT NULL DEFAULT '', research_questions_zh TEXT NOT NULL DEFAULT '[]', research_questions_en TEXT NOT NULL DEFAULT '[]', verification_status TEXT NOT NULL DEFAULT 'not_required', verification_coverage_score INTEGER NOT NULL DEFAULT 0, verification_json TEXT NOT NULL DEFAULT '{}', verification_model TEXT NOT NULL DEFAULT '', ever_recommended INTEGER NOT NULL DEFAULT 0, first_recommended_at TEXT, last_recommended_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_quality ON paper_insights(space_id, quality_score)"),
     database.prepare("CREATE TABLE IF NOT EXISTS paper_evidence_documents (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, paper_id TEXT NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'queued', evidence_level TEXT NOT NULL DEFAULT 'metadata', source_kind TEXT NOT NULL DEFAULT 'metadata', source_url TEXT NOT NULL DEFAULT '', license TEXT NOT NULL DEFAULT '', text_hash TEXT NOT NULL DEFAULT '', extracted_chars INTEGER NOT NULL DEFAULT 0, section_count INTEGER NOT NULL DEFAULT 0, claim_count INTEGER NOT NULL DEFAULT 0, grounded_claim_count INTEGER NOT NULL DEFAULT 0, unsupported_claim_count INTEGER NOT NULL DEFAULT 0, coverage_score INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', error TEXT, lock_token TEXT, lock_expires_at TEXT, fetched_at TEXT, analyzed_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_evidence_documents_space_paper ON paper_evidence_documents(space_id, paper_id)"),
@@ -272,6 +329,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_path_steps_space_status ON learning_path_steps(space_id, status)"),
   ]);
   await ensurePaperInsightReviewColumns(database);
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_recommendation_history ON paper_insights(space_id, ever_recommended, last_recommended_at)").run();
   await ensureEvidenceVerificationColumns(database);
   await ensureGrowthMapColumns(database);
   await ensureResearchNetworkColumns(database);

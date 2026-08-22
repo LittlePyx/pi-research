@@ -10,6 +10,7 @@ import {
   selectBalancedByGroup,
 } from "../../../lib/discovery/candidate-selection.mjs";
 import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
+import { mergeDailyBriefHistory } from "../../../lib/daily-brief-history.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import {
@@ -304,6 +305,7 @@ type PaperRow = {
   discovery_route_interaction: number;
   discovery_track_title_zh: string;
   discovery_track_title_en: string;
+  quality_stage: "reviewing" | "recommended";
 };
 type Candidate = {
   canonicalId: string;
@@ -2380,8 +2382,14 @@ async function persistQuickScreens(database: D1Database, spaceId: string, screen
     if (!paperId) return [];
     const eligible = isPrimaryDeepCandidate(screen) || isRescueDeepCandidate(screen) || isContinuityDeepCandidate(screen);
     return [{ screen, statement: database.prepare(
-      `UPDATE paper_insights SET analysis_source = ?, analysis_model = ?, llm_recommended = 0,
-       llm_relevance_score = ?, quality_score = MAX(quality_score, ?), screening_reason = ?, updated_at = CURRENT_TIMESTAMP
+      `UPDATE paper_insights SET
+       analysis_source = CASE WHEN ever_recommended = 1 THEN analysis_source ELSE ? END,
+       analysis_model = CASE WHEN ever_recommended = 1 THEN analysis_model ELSE ? END,
+       llm_recommended = CASE WHEN ever_recommended = 1 THEN llm_recommended ELSE 0 END,
+       llm_relevance_score = CASE WHEN ever_recommended = 1 THEN llm_relevance_score ELSE ? END,
+       quality_score = MAX(quality_score, ?),
+       screening_reason = CASE WHEN ever_recommended = 1 THEN screening_reason ELSE ? END,
+       updated_at = CURRENT_TIMESTAMP
        WHERE paper_id = ? AND space_id = ?
         AND ${monitorPaperNotDismissedSql("paper_insights.space_id", "paper_insights.paper_id")}`,
     ).bind(eligible ? "deepseek_screened" : "deepseek_rejected", MONITOR_MODEL, screen.relevanceScore, screen.qualityScore, screen.screeningReason, paperId, spaceId) }];
@@ -2417,29 +2425,53 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
         research_questions_zh, research_questions_en, research_problem_id, problem_fit_score,
         uncertainty_reduction_score, actionability_score, research_problem_impact_zh, research_problem_impact_en,
         research_decision_zh, research_decision_en, verification_status, verification_coverage_score,
-        verification_json, verification_model)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        verification_json, verification_model, ever_recommended, first_recommended_at, last_recommended_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE ${monitorPaperNotDismissedSql("?", "?")}
-       ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text, summary_zh = excluded.summary_zh,
-       summary_en = excluded.summary_en, why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
-       quality_score = excluded.quality_score, priority_venue = excluded.priority_venue,
-       analysis_source = excluded.analysis_source, analysis_model = excluded.analysis_model,
-       llm_recommended = excluded.llm_recommended, llm_relevance_score = excluded.llm_relevance_score,
-       screening_reason = excluded.screening_reason,
-       proposed_recommendation_tier = excluded.proposed_recommendation_tier,
-       recommendation_tier = excluded.recommendation_tier,
-       read_minutes = excluded.read_minutes, read_depth = excluded.read_depth,
-       problem_zh = excluded.problem_zh, problem_en = excluded.problem_en, method_zh = excluded.method_zh,
-       method_en = excluded.method_en, contribution_zh = excluded.contribution_zh, contribution_en = excluded.contribution_en,
-       limitations_zh = excluded.limitations_zh, limitations_en = excluded.limitations_en,
-       reading_focus_zh = excluded.reading_focus_zh, reading_focus_en = excluded.reading_focus_en,
-       research_questions_zh = excluded.research_questions_zh, research_questions_en = excluded.research_questions_en,
-       research_problem_id = excluded.research_problem_id, problem_fit_score = excluded.problem_fit_score,
-       uncertainty_reduction_score = excluded.uncertainty_reduction_score, actionability_score = excluded.actionability_score,
-       research_problem_impact_zh = excluded.research_problem_impact_zh, research_problem_impact_en = excluded.research_problem_impact_en,
-       research_decision_zh = excluded.research_decision_zh, research_decision_en = excluded.research_decision_en,
-       verification_status = excluded.verification_status, verification_coverage_score = excluded.verification_coverage_score,
-       verification_json = excluded.verification_json, verification_model = excluded.verification_model,
+       ON CONFLICT(paper_id) DO UPDATE SET
+       abstract_text = CASE WHEN length(trim(excluded.abstract_text)) > 0 THEN excluded.abstract_text ELSE paper_insights.abstract_text END,
+       summary_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.summary_zh ELSE excluded.summary_zh END,
+       summary_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.summary_en ELSE excluded.summary_en END,
+       why_read_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.why_read_zh ELSE excluded.why_read_zh END,
+       why_read_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.why_read_en ELSE excluded.why_read_en END,
+       quality_score = MAX(paper_insights.quality_score, excluded.quality_score),
+       priority_venue = MAX(paper_insights.priority_venue, excluded.priority_venue),
+       analysis_source = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.analysis_source ELSE excluded.analysis_source END,
+       analysis_model = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.analysis_model ELSE excluded.analysis_model END,
+       llm_recommended = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.llm_recommended ELSE excluded.llm_recommended END,
+       llm_relevance_score = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.llm_relevance_score ELSE excluded.llm_relevance_score END,
+       screening_reason = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.screening_reason ELSE excluded.screening_reason END,
+       proposed_recommendation_tier = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.proposed_recommendation_tier ELSE excluded.proposed_recommendation_tier END,
+       recommendation_tier = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.recommendation_tier ELSE excluded.recommendation_tier END,
+       read_minutes = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.read_minutes ELSE excluded.read_minutes END,
+       read_depth = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.read_depth ELSE excluded.read_depth END,
+       problem_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.problem_zh ELSE excluded.problem_zh END,
+       problem_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.problem_en ELSE excluded.problem_en END,
+       method_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.method_zh ELSE excluded.method_zh END,
+       method_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.method_en ELSE excluded.method_en END,
+       contribution_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.contribution_zh ELSE excluded.contribution_zh END,
+       contribution_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.contribution_en ELSE excluded.contribution_en END,
+       limitations_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.limitations_zh ELSE excluded.limitations_zh END,
+       limitations_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.limitations_en ELSE excluded.limitations_en END,
+       reading_focus_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.reading_focus_zh ELSE excluded.reading_focus_zh END,
+       reading_focus_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.reading_focus_en ELSE excluded.reading_focus_en END,
+       research_questions_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.research_questions_zh ELSE excluded.research_questions_zh END,
+       research_questions_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.research_questions_en ELSE excluded.research_questions_en END,
+       research_problem_id = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.research_problem_id ELSE excluded.research_problem_id END,
+       problem_fit_score = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.problem_fit_score ELSE excluded.problem_fit_score END,
+       uncertainty_reduction_score = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.uncertainty_reduction_score ELSE excluded.uncertainty_reduction_score END,
+       actionability_score = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.actionability_score ELSE excluded.actionability_score END,
+       research_problem_impact_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.research_problem_impact_zh ELSE excluded.research_problem_impact_zh END,
+       research_problem_impact_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.research_problem_impact_en ELSE excluded.research_problem_impact_en END,
+       research_decision_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.research_decision_zh ELSE excluded.research_decision_zh END,
+       research_decision_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.research_decision_en ELSE excluded.research_decision_en END,
+       verification_status = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.verification_status ELSE excluded.verification_status END,
+       verification_coverage_score = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.verification_coverage_score ELSE excluded.verification_coverage_score END,
+       verification_json = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.verification_json ELSE excluded.verification_json END,
+       verification_model = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.verification_model ELSE excluded.verification_model END,
+       ever_recommended = MAX(paper_insights.ever_recommended, excluded.ever_recommended),
+       first_recommended_at = COALESCE(paper_insights.first_recommended_at, excluded.first_recommended_at),
+       last_recommended_at = CASE WHEN excluded.ever_recommended = 1 THEN excluded.last_recommended_at ELSE paper_insights.last_recommended_at END,
        updated_at = CURRENT_TIMESTAMP`,
     ).bind(paperId, spaceId, candidate.abstractText, review.summaryZh, review.summaryEn, review.whyReadZh, review.whyReadEn,
       review.qualityScore, candidate.priorityVenue ? 1 : 0,
@@ -2452,7 +2484,11 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
       review.uncertaintyReductionScore, review.actionabilityScore, review.researchProblemImpactZh,
       review.researchProblemImpactEn, review.researchDecisionZh, review.researchDecisionEn,
       review.verificationStatus, review.verificationCoverageScore, JSON.stringify(review.verificationReport),
-      review.verificationStatus === "not_required" ? "" : MONITOR_MODEL, spaceId, paperId) }];
+      review.verificationStatus === "not_required" ? "" : MONITOR_MODEL,
+      isPublishedRecommendation(review) ? 1 : 0,
+      isPublishedRecommendation(review) ? new Date().toISOString() : null,
+      isPublishedRecommendation(review) ? new Date().toISOString() : null,
+      spaceId, paperId) }];
   });
   if (!insightWrites.length) return [] as PaperReview[];
   const insightResults = await database.batch(insightWrites.map((write) => write.statement));
@@ -2994,6 +3030,29 @@ async function saveDailyBrief(
     error?: string | null;
   },
 ) {
+  const existingRow = await database.prepare(
+    `SELECT headline_zh, headline_en, overview_zh, overview_en, signals_zh, signals_en,
+     reading_plan_zh, reading_plan_en, watchlist_zh, watchlist_en, paper_ids, metrics_json
+     FROM monitor_daily_briefs WHERE space_id = ? AND brief_date = ? LIMIT 1`,
+  ).bind(input.spaceId, input.briefDate).first<{
+    headline_zh: string; headline_en: string; overview_zh: string; overview_en: string;
+    signals_zh: string; signals_en: string; reading_plan_zh: string; reading_plan_en: string;
+    watchlist_zh: string; watchlist_en: string; paper_ids: string; metrics_json: string;
+  }>();
+  const mergedInput = mergeDailyBriefHistory(existingRow ? {
+    headlineZh: existingRow.headline_zh,
+    headlineEn: existingRow.headline_en,
+    overviewZh: existingRow.overview_zh,
+    overviewEn: existingRow.overview_en,
+    signalsZh: parseVenues(existingRow.signals_zh),
+    signalsEn: parseVenues(existingRow.signals_en),
+    readingPlanZh: parseVenues(existingRow.reading_plan_zh),
+    readingPlanEn: parseVenues(existingRow.reading_plan_en),
+    watchlistZh: parseVenues(existingRow.watchlist_zh),
+    watchlistEn: parseVenues(existingRow.watchlist_en),
+    paperIds: parseVenues(existingRow.paper_ids),
+    metrics: parseJsonObject(existingRow.metrics_json) as Record<string, number>,
+  } : null, input);
   await database.prepare(
     `INSERT INTO monitor_daily_briefs
      (id, space_id, brief_date, scan_job_id, status, headline_zh, headline_en, overview_zh, overview_en,
@@ -3010,11 +3069,11 @@ async function saveDailyBrief(
       error = excluded.error, updated_at = CURRENT_TIMESTAMP`,
   ).bind(
     input.id || crypto.randomUUID(), input.spaceId, input.briefDate, input.jobId, input.status,
-    input.headlineZh, input.headlineEn, input.overviewZh, input.overviewEn,
-    JSON.stringify(input.signalsZh), JSON.stringify(input.signalsEn),
-    JSON.stringify(input.readingPlanZh), JSON.stringify(input.readingPlanEn),
-    JSON.stringify(input.watchlistZh), JSON.stringify(input.watchlistEn),
-    JSON.stringify(input.paperIds), JSON.stringify(input.metrics), input.model, input.error || null,
+    mergedInput.headlineZh, mergedInput.headlineEn, mergedInput.overviewZh, mergedInput.overviewEn,
+    JSON.stringify(mergedInput.signalsZh), JSON.stringify(mergedInput.signalsEn),
+    JSON.stringify(mergedInput.readingPlanZh), JSON.stringify(mergedInput.readingPlanEn),
+    JSON.stringify(mergedInput.watchlistZh), JSON.stringify(mergedInput.watchlistEn),
+    JSON.stringify(mergedInput.paperIds), JSON.stringify(mergedInput.metrics), input.model, input.error || null,
   ).run();
 }
 
@@ -3544,6 +3603,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
      p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
      WHERE p.space_id = ? AND ${candidateCondition}
+       AND COALESCE(i.ever_recommended, 0) = 0
        AND NOT EXISTS (
          SELECT 1 FROM paper_feedback suppressed
          WHERE suppressed.space_id = p.space_id AND suppressed.paper_id = p.id
@@ -3899,7 +3959,7 @@ function toPaper(paper: PaperRow, now: number) {
     evidenceGroundedClaimCount: paper.evidence_grounded_claim_count,
     evidenceCoverageScore: paper.evidence_coverage_score,
     trackId: paper.track_id || null,
-    qualityStage: "recommended" as const,
+    qualityStage: paper.quality_stage,
     ...(originKind && paper.discovery_route_id && sourceLabels ? {
       discoveryOrigin: {
         kind: originKind,
@@ -3931,7 +3991,18 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.why_read_zh, '') AS why_read_zh, COALESCE(i.why_read_en, '') AS why_read_en,
        COALESCE(i.quality_score, 0) AS quality_score, COALESCE(i.priority_venue, 0) AS priority_venue,
        COALESCE(i.analysis_source, 'metadata') AS analysis_source, COALESCE(i.analysis_model, '') AS analysis_model,
-       COALESCE(i.llm_recommended, 0) AS llm_recommended, COALESCE(i.llm_relevance_score, 0) AS llm_relevance_score,
+       COALESCE(i.llm_recommended, 0) AS llm_recommended,
+       MAX(COALESCE(i.llm_relevance_score, 0), COALESCE((
+         SELECT MAX(history.relevance_score) FROM recommendation_audit_events history
+         WHERE history.space_id = p.space_id AND history.paper_id = p.id
+          AND (history.recommended = 1 OR history.decision = 'verification_pending'
+           OR (history.verification_status = 'degraded' AND (
+             lower(history.screening_reason) LIKE '%timeout%' OR lower(history.screening_reason) LIKE '%aborted%'
+             OR lower(history.screening_reason) LIKE '%draft is empty%' OR lower(history.screening_reason) LIKE '%empty draft%'
+             OR lower(history.screening_reason) LIKE '%no populated substantive fields%'
+             OR lower(history.screening_reason) LIKE '%draft incomplete%'
+           )))
+       ), 0)) AS llm_relevance_score,
        COALESCE(i.proposed_recommendation_tier, i.recommendation_tier, 'browse') AS proposed_recommendation_tier,
        COALESCE(i.recommendation_tier, 'browse') AS recommendation_tier, COALESCE(i.read_minutes, 12) AS read_minutes,
        COALESCE(i.read_depth, 'focused') AS read_depth, COALESCE(i.problem_zh, '') AS problem_zh,
@@ -3983,6 +4054,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        ), 0) AS discovery_route_interaction,
        COALESCE(route_track.title_zh, '') AS discovery_track_title_zh,
        COALESCE(route_track.title_en, '') AS discovery_track_title_en,
+       CASE WHEN i.llm_recommended = 1 AND i.analysis_source = 'deepseek' THEN 'recommended' ELSE 'reviewing' END AS quality_stage,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
        COALESCE(f.saved, 0) AS saved, f.feedback, COALESCE(r.status, 'unread') AS reading_status,
        COALESCE(r.note, '') AS reading_note
@@ -3998,7 +4070,21 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        LEFT JOIN research_tracks route_track
         ON route_track.id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
         AND route_track.space_id = p.space_id
-        WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek'
+        WHERE p.space_id = ? AND (
+         (i.llm_recommended = 1 AND i.analysis_source = 'deepseek')
+         OR EXISTS (
+           SELECT 1 FROM recommendation_audit_events history
+           WHERE history.space_id = p.space_id AND history.paper_id = p.id
+            AND history.relevance_score >= 72 AND history.quality_score >= 70
+            AND (history.recommended = 1 OR history.decision = 'verification_pending'
+             OR (history.verification_status = 'degraded' AND (
+               lower(history.screening_reason) LIKE '%timeout%' OR lower(history.screening_reason) LIKE '%aborted%'
+               OR lower(history.screening_reason) LIKE '%draft is empty%' OR lower(history.screening_reason) LIKE '%empty draft%'
+               OR lower(history.screening_reason) LIKE '%no populated substantive fields%'
+               OR lower(history.screening_reason) LIKE '%draft incomplete%'
+             )))
+         )
+        )
         ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 300`,
     ).bind(space.id).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
@@ -4243,7 +4329,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const automationCounters = await readAutomationCounters(database, space.id);
   const now = Date.now();
   const duePapers = papers.results
-    .filter((paper) => paper.analysis_model === MONITOR_MODEL && isPaperDue(paper, now))
+    .filter((paper) => paper.quality_stage === "recommended" && paper.analysis_model === MONITOR_MODEL && isPaperDue(paper, now))
     .sort((left, right) => left.show_count - right.show_count || right.discovery_route_interaction - left.discovery_route_interaction
       || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at));
   const selected = selectDiverseItems(
@@ -4254,6 +4340,12 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   );
   const historyPapers = papers.results
     .filter((paper) => paper.analysis_model === MONITOR_MODEL || Boolean(paper.saved || paper.feedback) || paper.reading_status !== "unread")
+    .map((paper) => toPaper(paper, now));
+  const savedCandidatePapers = papers.results
+    .filter((paper) => paper.quality_stage === "reviewing")
+    .sort((left, right) => right.llm_relevance_score - left.llm_relevance_score
+      || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at))
+    .slice(0, 12)
     .map((paper) => toPaper(paper, now));
   const pendingPapers = historyPapers.filter((paper) => paper.userState !== "accepted" && paper.userState !== "dismissed");
   const automationPauseReason = (run?.automation_pause_reason || "") as AutomationPauseReason | "";
@@ -4705,6 +4797,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       },
       suggestedAuthors,
       papers: selected.map((paper) => toPaper(paper, now)),
+      savedCandidatePapers,
       historyPapers,
       historyCounts: {
         all: historyPapers.length,
