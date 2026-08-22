@@ -18,6 +18,25 @@ export const PAPER_EVIDENCE_LEVEL_RANK: Record<PaperEvidenceLevel, number> = {
   fulltext: 2,
 };
 
+export const MUST_READ_EVIDENCE_REQUIREMENTS = {
+  minimumGroundedClaims: 3,
+  minimumCoverageScore: 70,
+  maximumUnsupportedClaims: 1,
+} as const;
+
+export function fullTextEvidenceQualifiesForMustRead(input: {
+  level: PaperEvidenceLevel;
+  status: PaperEvidenceStatus;
+  groundedClaims: number;
+  coverageScore: number;
+  unsupportedClaims: number;
+}) {
+  return input.level === "fulltext" && input.status === "ready"
+    && input.groundedClaims >= MUST_READ_EVIDENCE_REQUIREMENTS.minimumGroundedClaims
+    && input.coverageScore >= MUST_READ_EVIDENCE_REQUIREMENTS.minimumCoverageScore
+    && input.unsupportedClaims <= MUST_READ_EVIDENCE_REQUIREMENTS.maximumUnsupportedClaims;
+}
+
 export function evidenceConfidenceCap(level: PaperEvidenceLevel) {
   return level === "fulltext" ? 94 : level === "abstract" ? 68 : 35;
 }

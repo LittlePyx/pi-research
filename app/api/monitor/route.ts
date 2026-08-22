@@ -44,6 +44,7 @@ import {
 } from "../../../lib/monitor-route-planning";
 import { promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
+import { POST as deepenPaperEvidenceRequest } from "../paper-evidence/route";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
 type Horizon = "days" | "months" | "years";
@@ -251,6 +252,7 @@ type PaperRow = {
   feedback: string | null;
   reading_status: string;
   reading_note: string;
+  proposed_recommendation_tier: string;
   recommendation_tier: string;
   read_minutes: number;
   read_depth: string;
@@ -417,6 +419,12 @@ type PaperReview = {
   verificationInputTokens: number;
   verificationOutputTokens: number;
   verificationRetryable: boolean;
+  proposedRecommendationTier: "must_read" | "browse" | "reserve";
+  evidenceLevel: "metadata" | "abstract" | "fulltext";
+  evidenceStatus: "unavailable" | "queued" | "fetching" | "ready" | "partial" | "error";
+  evidenceGroundedClaims: number;
+  evidenceUnsupportedClaims: number;
+  evidenceCoverageScore: number;
 };
 
 function paperReviewMapRole(value: unknown): PaperReview["mapRole"] {
@@ -442,6 +450,8 @@ type ScanWorkQueue = {
   screens: QuickScreen[];
   deepIds: string[];
   deepCompletedIds: string[];
+  evidenceIds: string[];
+  evidenceCompletedIds: string[];
   rescueScreenIds: string[];
   rescueScreened: boolean;
   rawCandidateCount: number;
@@ -488,6 +498,7 @@ const DEEP_REVIEW_CONCURRENCY = 2;
 const DEEP_REVIEW_LIMIT = 8;
 const DEEP_REVIEW_RESCUE_LIMIT = 4;
 const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
+const PRE_PUBLICATION_EVIDENCE_LIMIT = 4;
 const RESCUE_SCREEN_LIMIT = 8;
 const CONTINUITY_DEEP_REVIEW_LIMIT = 4;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
@@ -501,7 +512,7 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-19T09:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-evidence-v4-verified";
+const MONITOR_PIPELINE_VERSION = "continuous-evidence-v5-fulltext-ranked";
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
 const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
@@ -2342,24 +2353,31 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
     const candidate = candidateByCanonical.get(review.canonicalId);
     const paperId = paperIds.get(review.canonicalId);
     if (!candidate || !paperId) return [];
+    const proposedTier = review.proposedRecommendationTier || review.recommendationTier;
+    const fullTextQualified = review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready"
+      && review.evidenceGroundedClaims >= 3 && review.evidenceCoverageScore >= 70
+      && review.evidenceUnsupportedClaims <= 1;
+    const effectiveTier = proposedTier === "must_read" ? fullTextQualified ? "must_read" : "browse" : proposedTier;
     return [{ review, statement: database.prepare(
       `INSERT INTO paper_insights
        (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en, quality_score,
         priority_venue, analysis_source, analysis_model, llm_recommended, llm_relevance_score, screening_reason,
-        recommendation_tier, read_minutes, read_depth, problem_zh, problem_en, method_zh, method_en,
+        proposed_recommendation_tier, recommendation_tier, read_minutes, read_depth, problem_zh, problem_en, method_zh, method_en,
         contribution_zh, contribution_en, limitations_zh, limitations_en, reading_focus_zh, reading_focus_en,
         research_questions_zh, research_questions_en, research_problem_id, problem_fit_score,
         uncertainty_reduction_score, actionability_score, research_problem_impact_zh, research_problem_impact_en,
         research_decision_zh, research_decision_en, verification_status, verification_coverage_score,
         verification_json, verification_model)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE ${monitorPaperNotDismissedSql("?", "?")}
        ON CONFLICT(paper_id) DO UPDATE SET abstract_text = excluded.abstract_text, summary_zh = excluded.summary_zh,
        summary_en = excluded.summary_en, why_read_zh = excluded.why_read_zh, why_read_en = excluded.why_read_en,
        quality_score = excluded.quality_score, priority_venue = excluded.priority_venue,
        analysis_source = excluded.analysis_source, analysis_model = excluded.analysis_model,
        llm_recommended = excluded.llm_recommended, llm_relevance_score = excluded.llm_relevance_score,
-       screening_reason = excluded.screening_reason, recommendation_tier = excluded.recommendation_tier,
+       screening_reason = excluded.screening_reason,
+       proposed_recommendation_tier = excluded.proposed_recommendation_tier,
+       recommendation_tier = excluded.recommendation_tier,
        read_minutes = excluded.read_minutes, read_depth = excluded.read_depth,
        problem_zh = excluded.problem_zh, problem_en = excluded.problem_en, method_zh = excluded.method_zh,
        method_en = excluded.method_en, contribution_zh = excluded.contribution_zh, contribution_en = excluded.contribution_en,
@@ -2377,7 +2395,7 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
       review.qualityScore, candidate.priorityVenue ? 1 : 0,
       review.verificationRetryable ? "deepseek_verification_pending" : review.recommended ? "deepseek" : "deepseek_rejected",
       MONITOR_MODEL, review.recommended ? 1 : 0, review.relevanceScore, review.screeningReason,
-      review.recommendationTier, review.readMinutes, review.readDepth, review.problemZh, review.problemEn,
+      proposedTier, effectiveTier, review.readMinutes, review.readDepth, review.problemZh, review.problemEn,
       review.methodZh, review.methodEn, review.contributionZh, review.contributionEn, review.limitationsZh,
       review.limitationsEn, review.readingFocusZh, review.readingFocusEn, JSON.stringify(review.researchQuestionsZh),
       JSON.stringify(review.researchQuestionsEn), review.researchProblemId || null, review.problemFitScore,
@@ -2732,6 +2750,12 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         verificationInputTokens: 0,
         verificationOutputTokens: 0,
         verificationRetryable: false,
+        proposedRecommendationTier: recommendationTier,
+        evidenceLevel: candidate.abstractText.trim() ? "abstract" : "metadata",
+        evidenceStatus: "unavailable",
+        evidenceGroundedClaims: 0,
+        evidenceUnsupportedClaims: 0,
+        evidenceCoverageScore: 0,
       });
     }
     if (batchReviews.some((review) => review.recommended)) await database.prepare(
@@ -2957,6 +2981,31 @@ function selectDiverseItems<T>(
   return selected;
 }
 
+function choosePrePublicationEvidenceIds(reviews: PaperReview[]) {
+  const ranked = reviews.filter((review) => review.recommended
+    && ["verified", "revised"].includes(review.verificationStatus))
+    .sort((left, right) => {
+      const tier = { must_read: 3, browse: 2, reserve: 1 };
+      return tier[right.proposedRecommendationTier] - tier[left.proposedRecommendationTier]
+        || right.problemFitScore - left.problemFitScore
+        || right.relevanceScore - left.relevanceScore
+        || right.qualityScore - left.qualityScore;
+    });
+  const selected: PaperReview[] = [];
+  const selectedIds = new Set<string>();
+  const trackCounts = new Map<string, number>();
+  const add = (review: PaperReview) => {
+    if (selected.length >= PRE_PUBLICATION_EVIDENCE_LIMIT || selectedIds.has(review.canonicalId)) return;
+    selected.push(review);
+    selectedIds.add(review.canonicalId);
+    const key = review.trackId || review.canonicalId;
+    trackCounts.set(key, (trackCounts.get(key) || 0) + 1);
+  };
+  for (const review of ranked) if (!(trackCounts.get(review.trackId || review.canonicalId) || 0)) add(review);
+  for (const review of ranked) add(review);
+  return selected.map((review) => review.canonicalId);
+}
+
 async function generateDailyBrief(
   database: D1Database,
   space: SpaceRow,
@@ -2964,7 +3013,7 @@ async function generateDailyBrief(
   jobId: string,
   candidates: Candidate[],
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
   now: Date,
   apiKey: string,
   deferLlm = false,
@@ -2995,10 +3044,10 @@ async function generateDailyBrief(
     headlineZh: selected.length ? `今天有 ${selected.length} 篇论文通过严格筛选` : "今天没有论文达到严格推荐门槛",
     headlineEn: selected.length ? `${selected.length} papers passed today's strict review` : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
-      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并保留 ${selected.length} 篇。其余结果仍在探索账本中，不会因本轮未推荐而丢失。`
+      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并为 ${metrics.evidenceDeepened || 0} 篇高潜力论文补强原文证据，最终保留 ${selected.length} 篇。其余结果仍在探索账本中。`
       : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。`,
     overviewEn: selected.length
-      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, and retained ${selected.length}. Other discoveries remain in the exploration ledger instead of being discarded.`
+      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and retained ${selected.length}. Other discoveries remain in the exploration ledger.`
       : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.`,
     signalsZh: selected.slice(0, 6).map((review) => review.summaryZh || review.whyReadZh).filter(Boolean),
     signalsEn: selected.slice(0, 6).map((review) => review.summaryEn || review.whyReadEn).filter(Boolean),
@@ -3034,6 +3083,9 @@ async function generateDailyBrief(
         publishedAt: candidate?.publishedAt || null,
         horizon: candidate?.horizon || "days",
         recommendationTier: review.recommendationTier,
+        evidenceLevel: review.evidenceLevel,
+        evidenceCoverageScore: review.evidenceCoverageScore,
+        groundedClaimCount: review.evidenceGroundedClaims,
         relevanceScore: review.relevanceScore,
         summaryZh: review.summaryZh,
         summaryEn: review.summaryEn,
@@ -3052,7 +3104,7 @@ async function generateDailyBrief(
       body: JSON.stringify({
         model: MONITOR_MODEL,
         messages: [
-          { role: "system", content: "You are Pi Research's daily research editor. Return strict JSON, stay evidence-disciplined, and synthesize only the supplied paper analyses." },
+          { role: "system", content: "You are Pi Research's daily research editor. Return strict JSON, stay evidence-disciplined, and synthesize only the supplied paper analyses. Treat their attached evidence state as authoritative." },
           { role: "user", content: [
             "Create a concise bilingual daily research brief for a long-term researcher.",
             "Return {headlineZh, headlineEn, overviewZh, overviewEn, signalsZh, signalsEn, readingPlanZh, readingPlanEn, watchlistZh, watchlistEn}.",
@@ -3060,7 +3112,8 @@ async function generateDailyBrief(
             "headlineZh should be at most 22 Chinese characters and headlineEn at most 12 words. overviewZh should be 70-140 Chinese characters and overviewEn 45-85 words; explain the common theme, important difference, or decision for this research space instead of repeating paper abstracts.",
             "Each Chinese signal must be 45-95 characters and each English signal 25-55 words. Use plain language: state what changed or became newly usable, then why it matters to this research space. Do not dump numbered contributions or chains of theorem statements.",
             "Each Chinese reading-plan item must be 35-75 characters and each English item 20-45 words. Give one practical reading action and one question to carry into the paper.",
-            "Never mention section, page, figure, or theorem numbers because only metadata and abstracts are supplied. Never claim 'first', 'complete characterization', proof, experiment, convergence rate, or optimality unless that exact claim is explicitly supported by the supplied abstract.",
+            "Treat fulltext evidence as stronger than abstract evidence. A must-read label is valid only when evidenceLevel is fulltext; do not imply that abstract-grounded work received full-text verification.",
+            "Never mention section, page, figure, or theorem numbers unless they are present in the supplied grounded reading focus. Never claim 'first', 'complete characterization', proof, experiment, convergence rate, or optimality unless the supplied verified analysis explicitly supports it.",
             "Briefly explain specialized abbreviations on first use. Avoid generic praise, repeated scores, and phrases such as 'focus on the derivation' without saying what decision or concept the reader should extract.",
             "Identify cross-paper patterns only when supported. Do not invent results or imply that rejected candidates were useful.",
             `Research space: ${space.name} — ${space.description}`,
@@ -3692,6 +3745,7 @@ function toPaper(paper: PaperRow, now: number) {
     snoozedUntil: paper.snoozed_until,
     readingStatus: paper.reading_status,
     readingNote: paper.reading_note,
+    proposedRecommendationTier: paper.proposed_recommendation_tier,
     recommendationTier: paper.recommendation_tier,
     readMinutes: paper.read_minutes,
     readDepth: paper.read_depth,
@@ -3758,6 +3812,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.quality_score, 0) AS quality_score, COALESCE(i.priority_venue, 0) AS priority_venue,
        COALESCE(i.analysis_source, 'metadata') AS analysis_source, COALESCE(i.analysis_model, '') AS analysis_model,
        COALESCE(i.llm_recommended, 0) AS llm_recommended, COALESCE(i.llm_relevance_score, 0) AS llm_relevance_score,
+       COALESCE(i.proposed_recommendation_tier, i.recommendation_tier, 'browse') AS proposed_recommendation_tier,
        COALESCE(i.recommendation_tier, 'browse') AS recommendation_tier, COALESCE(i.read_minutes, 12) AS read_minutes,
        COALESCE(i.read_depth, 'focused') AS read_depth, COALESCE(i.problem_zh, '') AS problem_zh,
        COALESCE(i.problem_en, '') AS problem_en, COALESCE(i.method_zh, '') AS method_zh,
@@ -4240,7 +4295,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     job.status === "ready"
     || (scanWork?.screens.length || 0) > 0
     || (scanWork?.deepIds.length || 0) > 0
-    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "main_complete", "complete"].includes(job.checkpoint)
+    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "evidence_deepening", "finalizing", "main_complete", "complete"].includes(job.checkpoint)
     || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing"].includes(scanWork?.resumeCheckpoint || "")
   ));
   const scanHorizonStats = discoveryOrder.map((horizon, index) => {
@@ -4359,6 +4414,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         candidateCount: scanWork?.candidateIds.length || 0,
         deepCandidateCount: scanWork?.deepIds.length || 0,
         deepCompletedCount: scanWork?.deepCompletedIds.length || 0,
+        evidenceTargetCount: scanWork?.evidenceIds.length || 0,
+        evidenceCompletedCount: scanWork?.evidenceCompletedIds.length || 0,
         horizonStats: scanHorizonStats,
         pipelineVersion: scanWork?.pipelineVersion || "",
         needsRefresh: job.status === "ready" && scanWork?.pipelineVersion !== MONITOR_PIPELINE_VERSION,
@@ -4598,6 +4655,7 @@ function parseFrozenQueryPlan(value: unknown): QueryPlan | undefined {
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
+    evidenceIds: [], evidenceCompletedIds: [],
     rescueScreenIds: [], rescueScreened: false, screenFailureCount: 0, deepFailureCount: 0,
     pipelineVersion: "", horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
   };
@@ -4624,6 +4682,8 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       })) : [],
       deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      evidenceIds: Array.isArray(parsed.evidenceIds) ? parsed.evidenceIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
+      evidenceCompletedIds: Array.isArray(parsed.evidenceCompletedIds) ? parsed.evidenceCompletedIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
       rescueScreenIds: Array.isArray(parsed.rescueScreenIds) ? parsed.rescueScreenIds.filter((id): id is string => typeof id === "string").slice(0, RESCUE_SCREEN_LIMIT) : [],
       rescueScreened: parsed.rescueScreened === true,
       rawCandidateCount: Math.max(0, Number(parsed.rawCandidateCount) || 0),
@@ -4643,6 +4703,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
 function newScanWorkQueue(): ScanWorkQueue {
   return {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
+    evidenceIds: [], evidenceCompletedIds: [],
     rawCandidateCount: 0, newCandidateCount: 0, screenFailureCount: 0, deepFailureCount: 0,
     pipelineVersion: MONITOR_PIPELINE_VERSION, horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
   };
@@ -4650,12 +4711,14 @@ function newScanWorkQueue(): ScanWorkQueue {
 
 const RESUMABLE_SCAN_CHECKPOINTS = new Set([
   "planning", "discovering_days", "discovering_months", "discovering_years", "deduplicating",
-  "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing",
+  "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "evidence_deepening", "finalizing",
 ]);
 
 function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_source">, work: ScanWorkQueue) {
   if (work.resumeCheckpoint && RESUMABLE_SCAN_CHECKPOINTS.has(work.resumeCheckpoint)) return work.resumeCheckpoint;
   if (RESUMABLE_SCAN_CHECKPOINTS.has(job.checkpoint)) return job.checkpoint;
+  if (work.evidenceIds.length && work.evidenceCompletedIds.length < work.evidenceIds.length) return "evidence_deepening";
+  if (work.evidenceIds.length && work.evidenceCompletedIds.length >= work.evidenceIds.length) return "finalizing";
   if (work.deepIds.length) {
     return work.deepCompletedIds.length ? "deep_reviewing" : "enriching_abstracts";
   }
@@ -4668,7 +4731,7 @@ function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_s
 
 function statusForCheckpoint(checkpoint: string) {
   if (["enriching_screening_abstracts", "screening", "rescue_screening"].includes(checkpoint)) return "screening";
-  if (["enriching_abstracts", "deep_reviewing"].includes(checkpoint)) return "deep_reviewing";
+  if (["enriching_abstracts", "deep_reviewing", "evidence_deepening", "finalizing"].includes(checkpoint)) return "deep_reviewing";
   if (checkpoint === "deduplicating") return "deduplicating";
   if (checkpoint.startsWith("discovering_")) return checkpoint;
   return "scanning";
@@ -4680,6 +4743,8 @@ function monitorProgressByCheckpoint(checkpoint: string) {
   if (checkpoint === "rescue_screening") return 72;
   if (checkpoint === "enriching_abstracts") return 76;
   if (checkpoint === "deep_reviewing") return 80;
+  if (checkpoint === "evidence_deepening") return 95;
+  if (checkpoint === "finalizing") return 99;
   if (checkpoint === "deduplicating") return 50;
   if (checkpoint === "discovering_years") return 36;
   if (checkpoint === "discovering_months") return 22;
@@ -4698,6 +4763,8 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     ...work.screens.map((screen) => screen.canonicalId),
     ...work.deepIds,
     ...work.deepCompletedIds,
+    ...work.evidenceIds,
+    ...work.evidenceCompletedIds,
     ...work.rescueScreenIds,
   ])).filter(Boolean);
   if (!queuedIds.length) return false;
@@ -4715,15 +4782,21 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
     deepCompletedIds: work.deepCompletedIds,
+    evidenceIds: work.evidenceIds,
+    evidenceCompletedIds: work.evidenceCompletedIds,
     rescueScreenIds: work.rescueScreenIds,
   });
   const retained = retainReviewableScanWork(work, reviewableIds);
   Object.assign(work, retained);
+  work.evidenceIds = work.evidenceIds.filter((id) => reviewableIds.has(id));
+  work.evidenceCompletedIds = work.evidenceCompletedIds.filter((id) => reviewableIds.has(id));
   return before !== JSON.stringify({
     candidateIds: work.candidateIds,
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
     deepCompletedIds: work.deepCompletedIds,
+    evidenceIds: work.evidenceIds,
+    evidenceCompletedIds: work.evidenceCompletedIds,
     rescueScreenIds: work.rescueScreenIds,
   });
 }
@@ -4818,6 +4891,7 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
   const rows = await database.prepare(
     `SELECT p.canonical_id, i.analysis_source, i.llm_recommended, i.llm_relevance_score, i.quality_score,
      i.summary_zh, i.summary_en, i.why_read_zh, i.why_read_en, i.screening_reason,
+     COALESCE(i.proposed_recommendation_tier, i.recommendation_tier, 'browse') AS proposed_recommendation_tier,
      i.recommendation_tier, i.read_minutes, i.read_depth, i.problem_zh, i.problem_en,
      i.method_zh, i.method_en, i.contribution_zh, i.contribution_en, i.limitations_zh,
      i.limitations_en, i.reading_focus_zh, i.reading_focus_en, i.research_questions_zh, i.research_questions_en,
@@ -4831,6 +4905,11 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
      COALESCE(i.verification_status, 'not_required') AS verification_status,
      COALESCE(i.verification_coverage_score, 0) AS verification_coverage_score,
      COALESCE(i.verification_json, '{}') AS verification_json,
+     COALESCE(ed.evidence_level, CASE WHEN length(trim(i.abstract_text)) > 0 THEN 'abstract' ELSE 'metadata' END) AS evidence_level,
+     COALESCE(ed.status, 'unavailable') AS evidence_status,
+     COALESCE(ed.grounded_claim_count, 0) AS evidence_grounded_claims,
+     COALESCE(ed.unsupported_claim_count, 0) AS evidence_unsupported_claims,
+     COALESCE(ed.coverage_score, 0) AS evidence_coverage_score,
      COALESCE((SELECT ep.track_id FROM research_map_evidence_proposals ep
        WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
        ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
@@ -4852,16 +4931,19 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
        (SELECT tp.rationale_en FROM research_track_papers tp
         WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_en
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+     LEFT JOIN paper_evidence_documents ed ON ed.paper_id = p.id AND ed.space_id = p.space_id
      WHERE p.space_id = ? AND p.canonical_id IN (${placeholders})`,
   ).bind(spaceId, ...canonicalIds).all<{
     canonical_id: string; analysis_source: string; llm_recommended: number; llm_relevance_score: number; quality_score: number;
     summary_zh: string; summary_en: string; why_read_zh: string; why_read_en: string; screening_reason: string;
-    recommendation_tier: string; read_minutes: number; read_depth: string; problem_zh: string; problem_en: string;
+    proposed_recommendation_tier: string; recommendation_tier: string; read_minutes: number; read_depth: string; problem_zh: string; problem_en: string;
     method_zh: string; method_en: string; contribution_zh: string; contribution_en: string; limitations_zh: string;
     limitations_en: string; reading_focus_zh: string; reading_focus_en: string; research_questions_zh: string; research_questions_en: string;
     research_problem_id: string; problem_fit_score: number; uncertainty_reduction_score: number; actionability_score: number;
     research_problem_impact_zh: string; research_problem_impact_en: string; research_decision_zh: string; research_decision_en: string;
     verification_status: EvidenceVerificationStatus; verification_coverage_score: number; verification_json: string;
+    evidence_level: PaperReview["evidenceLevel"]; evidence_status: PaperReview["evidenceStatus"];
+    evidence_grounded_claims: number; evidence_unsupported_claims: number; evidence_coverage_score: number;
     track_id: string; map_role: string; map_rationale_zh: string; map_rationale_en: string;
   }>();
   const byId = new Map(rows.results.map((row) => [row.canonical_id, row]));
@@ -4869,6 +4951,7 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
     const row = byId.get(canonicalId);
     if (!row || !["deepseek", "deepseek_rejected"].includes(row.analysis_source)) return [];
     const tier: PaperReview["recommendationTier"] = row.recommendation_tier === "must_read" || row.recommendation_tier === "reserve" ? row.recommendation_tier : "browse";
+    const proposedTier: PaperReview["proposedRecommendationTier"] = row.proposed_recommendation_tier === "must_read" || row.proposed_recommendation_tier === "reserve" ? row.proposed_recommendation_tier : "browse";
     const depth: PaperReview["readDepth"] = row.read_depth === "deep" || row.read_depth === "overview" ? row.read_depth : "focused";
     return [{
       canonicalId, isPaper: true, recommended: Boolean(row.llm_recommended), relevanceScore: row.llm_relevance_score,
@@ -4889,6 +4972,12 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
       verificationReport: parseJsonObject(row.verification_json || "{}"),
       verificationInputTokens: 0, verificationOutputTokens: 0,
       verificationRetryable: false,
+      proposedRecommendationTier: proposedTier,
+      evidenceLevel: row.evidence_level,
+      evidenceStatus: row.evidence_status,
+      evidenceGroundedClaims: row.evidence_grounded_claims,
+      evidenceUnsupportedClaims: row.evidence_unsupported_claims,
+      evidenceCoverageScore: row.evidence_coverage_score,
     }];
   });
 }
@@ -5170,6 +5259,8 @@ export async function POST(request: Request) {
       const initialSource = resumable
         ? initialCheckpoint === "screening"
           ? `从已保存进度继续 · ${previousWork.screens.length} / ${previousWork.candidateIds.length} 篇已筛选`
+          : initialCheckpoint === "evidence_deepening"
+            ? `从已保存进度继续 · ${previousWork.evidenceCompletedIds.length} / ${previousWork.evidenceIds.length} 篇已补强原文证据`
           : initialCheckpoint === "deep_reviewing" || initialCheckpoint === "enriching_abstracts"
             ? `从已保存进度继续 · ${previousWork.deepCompletedIds.length} / ${previousWork.deepIds.length} 篇已深度解读`
             : "从已保存检查点继续本轮扫描"
@@ -5239,6 +5330,8 @@ export async function POST(request: Request) {
         reviewed: reviews.length,
         screened: work.screens.length,
         deepReviewed: reviews.length,
+        evidenceDeepened: reviews.filter((review) => review.recommended && ["ready", "partial"].includes(review.evidenceStatus)).length,
+        fulltextVerified: reviews.filter((review) => review.recommended && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length,
         recommended: reviews.filter((review) => review.recommended).length,
         rejected: Math.max(0, work.screens.length - reviews.filter((review) => review.recommended).length),
       }, completedAt, apiKey);
@@ -5297,6 +5390,10 @@ export async function POST(request: Request) {
       // change: a user may have withdrawn a paper while that LLM call was in flight.
       const finalizedReviews = await persistReviewBatch(database, space.id, job.id, candidates, reconciledReviews);
       const recommended = finalizedReviews.filter((review) => review.recommended).length;
+      const evidenceDeepened = finalizedReviews.filter((review) => review.recommended
+        && ["ready", "partial"].includes(review.evidenceStatus)).length;
+      const fulltextVerified = finalizedReviews.filter((review) => review.recommended
+        && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length;
       const rejected = Math.max(0, work.screens.length - recommended);
       const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
       if (recommended && !firstRecommendationAt) {
@@ -5322,6 +5419,8 @@ export async function POST(request: Request) {
         reviewed: finalizedReviews.length,
         screened: work.screens.length,
         deepReviewed: finalizedReviews.length,
+        evidenceDeepened,
+        fulltextVerified,
         recommended,
         rejected,
       }, completedAt, apiKey, true);
@@ -5359,6 +5458,8 @@ export async function POST(request: Request) {
           screened: work.screens.length,
           deepReviewed: finalizedReviews.length,
           recommended,
+          evidenceDeepened,
+          fulltextVerified,
           duplicates: duplicateCount,
         },
       });
@@ -5408,6 +5509,8 @@ export async function POST(request: Request) {
         work.screens = await loadCachedQuickScreens(database, space.id, work.candidateIds);
         work.deepIds = [];
         work.deepCompletedIds = [];
+        work.evidenceIds = [];
+        work.evidenceCompletedIds = [];
         work.rescueScreenIds = [];
         work.rescueScreened = false;
         work.pipelineVersion = MONITOR_PIPELINE_VERSION;
@@ -5605,9 +5708,76 @@ export async function POST(request: Request) {
               return Response.json(await readState(database, space, { rescueReview: true }), { status: 202 });
             }
           }
-          const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
-          return finalizeMain(candidates, persistedReviews);
+          work.evidenceIds = choosePrePublicationEvidenceIds(persistedReviews);
+          work.evidenceCompletedIds = [];
+          await saveScanWorkQueue(database, job.id, work);
+          if (work.evidenceIds.length) {
+            await setStage("evidence_deepening", "deep_reviewing", 95,
+              `正在为 ${work.evidenceIds.length} 篇高潜力论文补强原文证据；推荐已可预览`);
+            return Response.json(await readState(database, space, { evidenceDeepening: true }), { status: 202 });
+          }
+          await setStage("finalizing", "deep_reviewing", 99, "证据分级完成，正在整理今日推荐");
         }
+      } else if (job.checkpoint === "evidence_deepening") {
+        const completed = new Set(work.evidenceCompletedIds);
+        const canonicalId = work.evidenceIds.find((id) => !completed.has(id));
+        if (!canonicalId) {
+          await setStage("finalizing", "deep_reviewing", 99, "原文证据补强完成，正在重新排序今日推荐");
+        } else {
+          const paper = await database.prepare(
+            "SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id = ? LIMIT 1",
+          ).bind(space.id, canonicalId).first<{ id: string }>();
+          let busy = false;
+          let outcome = "当前可用证据已保留";
+          if (paper?.id) {
+            try {
+              const headers = new Headers(request.headers);
+              headers.delete("content-length");
+              headers.set("content-type", "application/json");
+              const evidenceResponse = await deepenPaperEvidenceRequest(new Request(new URL("/api/paper-evidence", request.url), {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ spaceId: space.id, paperId: paper.id }),
+              }));
+              const data = await evidenceResponse.json() as {
+                busy?: boolean;
+                evidence?: { evidenceLevel?: string; groundedClaimCount?: number; coverageScore?: number; status?: string } | null;
+                error?: string;
+              };
+              busy = Boolean(data.busy);
+              if (data.evidence?.evidenceLevel === "fulltext" && data.evidence.status === "ready") {
+                outcome = `全文已核验 · ${data.evidence.groundedClaimCount || 0} 条可定位判断`;
+              } else if (data.evidence?.evidenceLevel === "abstract") {
+                outcome = "开放全文暂不可结构化读取，已按摘要保守定级";
+              } else if (data.error) {
+                outcome = "原文补强暂不可用，已按当前证据保守定级";
+              }
+            } catch (evidenceError) {
+              outcome = "原文补强暂不可用，已按当前证据保守定级";
+              await recordReliabilityEvent(database, {
+                spaceId: space.id, scanJobId: job.id, kind: "evidence_stage_degraded",
+                stage: "evidence_deepening", source: "open-full-text", outcome: "degraded",
+                message: normalizedMonitorError(evidenceError), metadata: { canonicalId },
+              });
+            }
+          }
+          if (!busy) work.evidenceCompletedIds = Array.from(new Set([...work.evidenceCompletedIds, canonicalId]));
+          await saveScanWorkQueue(database, job.id, work);
+          const evidenceProgress = Math.min(98, 95 + Math.round(work.evidenceCompletedIds.length
+            / Math.max(1, work.evidenceIds.length) * 3));
+          await database.prepare(
+            "UPDATE monitor_scan_jobs SET current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          ).bind(busy
+            ? `原文证据正在后台处理中 · ${work.evidenceCompletedIds.length} / ${work.evidenceIds.length} 篇已完成`
+            : `${outcome} · ${work.evidenceCompletedIds.length} / ${work.evidenceIds.length} 篇已完成`, evidenceProgress, job.id).run();
+          if (work.evidenceCompletedIds.length >= work.evidenceIds.length) {
+            await setStage("finalizing", "deep_reviewing", 99, "原文证据补强完成，正在重新排序今日推荐");
+          }
+        }
+      } else if (job.checkpoint === "finalizing") {
+        const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
+        const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
+        return finalizeMain(candidates, persistedReviews);
       }
       return Response.json(await readState(database, space, { advanced: true }), { status: 202 });
     } catch (error) {

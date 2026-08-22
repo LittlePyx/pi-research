@@ -5,6 +5,7 @@ import {
   evidenceCoverageScore,
   evidenceQuoteIsGrounded,
   extractArxivId,
+  fullTextEvidenceQualifiesForMustRead,
   normalizeEvidenceText,
   safeEvidenceSourceUrl,
   type PaperEvidenceClaimInput,
@@ -24,6 +25,8 @@ type PaperRow = {
   abstract_text: string;
   summary_zh: string;
   summary_en: string;
+  proposed_recommendation_tier: "must_read" | "browse" | "reserve";
+  recommendation_tier: "must_read" | "browse" | "reserve";
 };
 
 type EvidenceDocumentRow = {
@@ -297,6 +300,7 @@ async function readEvidence(database: D1Database, spaceId: string, paperId: stri
     sectionCount: document.section_count,
     claimCount: document.claim_count,
     groundedClaimCount: document.grounded_claim_count,
+    unsupportedClaimCount: document.unsupported_claim_count,
     coverageScore: document.coverage_score,
     model: document.model,
     error: document.error,
@@ -315,11 +319,27 @@ async function ownedPaper(database: D1Database, userId: string, spaceId: string,
   return database.prepare(
     `SELECT p.id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at,
      COALESCE(i.abstract_text, '') AS abstract_text, COALESCE(i.summary_zh, '') AS summary_zh,
-     COALESCE(i.summary_en, '') AS summary_en
+     COALESCE(i.summary_en, '') AS summary_en,
+     COALESCE(i.proposed_recommendation_tier, i.recommendation_tier, 'browse') AS proposed_recommendation_tier,
+     COALESCE(i.recommendation_tier, 'browse') AS recommendation_tier
      FROM monitored_papers p JOIN research_spaces s ON s.id = p.space_id
      LEFT JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
      WHERE p.id = ? AND p.space_id = ? AND s.owner_user_id = ? LIMIT 1`,
   ).bind(paperId, spaceId, userId).first<PaperRow>();
+}
+
+async function applyEvidenceBoundedRecommendationTier(
+  database: D1Database,
+  spaceId: string,
+  paperId: string,
+  qualifiesForMustRead: boolean,
+) {
+  await database.prepare(
+    `UPDATE paper_insights SET recommendation_tier = CASE
+      WHEN proposed_recommendation_tier = 'must_read' THEN ?
+      ELSE proposed_recommendation_tier END,
+     updated_at = CURRENT_TIMESTAMP WHERE paper_id = ? AND space_id = ?`,
+  ).bind(qualifiesForMustRead ? "must_read" : "browse", paperId, spaceId).run();
 }
 
 export async function GET(request: Request) {
@@ -353,7 +373,16 @@ export async function POST(request: Request) {
      VALUES (?, ?, ?, 'queued') ON CONFLICT(space_id, paper_id) DO NOTHING`,
   ).bind(documentId, spaceId, paperId).run();
   const current = await readEvidence(database, spaceId, paperId);
-  if (current?.status === "ready" && !payload.force) return Response.json({ evidence: current, cached: true });
+  if (current?.status === "ready" && !payload.force) {
+    await applyEvidenceBoundedRecommendationTier(database, spaceId, paperId, fullTextEvidenceQualifiesForMustRead({
+      level: current.evidenceLevel,
+      status: current.status,
+      groundedClaims: current.groundedClaimCount,
+      coverageScore: current.coverageScore,
+      unsupportedClaims: current.unsupportedClaimCount,
+    }));
+    return Response.json({ evidence: await readEvidence(database, spaceId, paperId), cached: true });
+  }
 
   const lockToken = crypto.randomUUID();
   const lock = await database.prepare(
@@ -376,6 +405,7 @@ export async function POST(request: Request) {
       source.sections.length, source.note || null, spaceId, paperId, lockToken).run();
 
     if (source.level === "metadata" || !sourceText) {
+      await applyEvidenceBoundedRecommendationTier(database, spaceId, paperId, false);
       await database.prepare(
         `UPDATE paper_evidence_documents SET status = 'partial', lock_token = NULL, lock_expires_at = NULL,
          updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ? AND lock_token = ?`,
@@ -385,6 +415,7 @@ export async function POST(request: Request) {
 
     const credential = resolveDeepSeekCredential(request);
     if (!credential.apiKey) {
+      await applyEvidenceBoundedRecommendationTier(database, spaceId, paperId, false);
       await database.prepare(
         `UPDATE paper_evidence_documents SET status = 'partial', error = ?, lock_token = NULL,
          lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ? AND lock_token = ?`,
@@ -399,6 +430,7 @@ export async function POST(request: Request) {
       usageCount(database, workspaceScope, usageDate),
     ]);
     if (globalCount >= EVIDENCE_DAILY_GLOBAL_LIMIT || workspaceCount >= EVIDENCE_DAILY_WORKSPACE_LIMIT) {
+      await applyEvidenceBoundedRecommendationTier(database, spaceId, paperId, false);
       await database.prepare(
         `UPDATE paper_evidence_documents SET status = 'partial', error = ?, lock_token = NULL,
          lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ? AND lock_token = ?`,
@@ -458,6 +490,25 @@ export async function POST(request: Request) {
     const coverageScore = evidenceCoverageScore(claims);
     const locatorCoverage = claims.length ? Math.round(claims.filter((claim) => claim.grounded && claim.locator).length / claims.length * 100) : 0;
     const groundingRate = claims.length ? Math.round(groundedCount / claims.length * 100) : 0;
+    const groundedClaims = claims.filter((claim) => claim.grounded);
+    const kindText = (kinds: PaperEvidenceClaimKind[], locale: "zh" | "en", limit: number) => groundedClaims
+      .filter((claim) => kinds.includes(claim.kind))
+      .map((claim) => locale === "zh" ? claim.claimZh : claim.claimEn)
+      .filter(Boolean).slice(0, limit).join(locale === "zh" ? "；" : "; ");
+    const strongestGrounded = [...groundedClaims].sort((left, right) => {
+      const rank: Record<PaperEvidenceClaimKind, number> = { contribution: 0, result: 1, method: 2, problem: 3, limitation: 4 };
+      return rank[left.kind] - rank[right.kind] || right.confidence - left.confidence;
+    }).slice(0, 3);
+    const groundedSummaryZh = strongestGrounded.map((claim) => claim.claimZh).join("；").slice(0, 1100);
+    const groundedSummaryEn = strongestGrounded.map((claim) => claim.claimEn).join("; ").slice(0, 1500);
+    const focusClaim = strongestGrounded[0];
+    const groundedReadingFocusZh = focusClaim
+      ? `重点核对${focusClaim.locator ? `“${focusClaim.locator}”中的证据` : "原文证据"}：${focusClaim.claimZh}`.slice(0, 1100) : "";
+    const groundedReadingFocusEn = focusClaim
+      ? `Check the evidence in ${focusClaim.locator || "the source text"}: ${focusClaim.claimEn}`.slice(0, 1500) : "";
+    const qualifiesForMustRead = fullTextEvidenceQualifiesForMustRead({
+      level: source.level, status: "ready", groundedClaims: groundedCount, coverageScore, unsupportedClaims: unsupportedCount,
+    });
     const document = await database.prepare("SELECT id FROM paper_evidence_documents WHERE space_id = ? AND paper_id = ? AND lock_token = ?")
       .bind(spaceId, paperId, lockToken).first<{ id: string }>();
     if (!document) throw new Error("Evidence job ownership expired");
@@ -484,7 +535,9 @@ export async function POST(request: Request) {
       ).bind(crypto.randomUUID(), document.id, spaceId, paperId, source.level, groundingRate, locatorCoverage,
         unsupportedCount, analysis.abstractConflict ? 1 : 0, credential.model),
       database.prepare(
-        `UPDATE paper_insights SET problem_zh = COALESCE(NULLIF(?, ''), problem_zh),
+        `UPDATE paper_insights SET summary_zh = COALESCE(NULLIF(?, ''), summary_zh),
+         summary_en = COALESCE(NULLIF(?, ''), summary_en),
+         problem_zh = COALESCE(NULLIF(?, ''), problem_zh),
          problem_en = COALESCE(NULLIF(?, ''), problem_en), method_zh = COALESCE(NULLIF(?, ''), method_zh),
          method_en = COALESCE(NULLIF(?, ''), method_en), contribution_zh = COALESCE(NULLIF(?, ''), contribution_zh),
          contribution_en = COALESCE(NULLIF(?, ''), contribution_en), limitations_zh = COALESCE(NULLIF(?, ''), limitations_zh),
@@ -492,14 +545,17 @@ export async function POST(request: Request) {
          reading_focus_en = COALESCE(NULLIF(?, ''), reading_focus_en),
          research_questions_zh = COALESCE(NULLIF(?, '[]'), research_questions_zh),
          research_questions_en = COALESCE(NULLIF(?, '[]'), research_questions_en),
+         recommendation_tier = CASE WHEN proposed_recommendation_tier = 'must_read' THEN ? ELSE proposed_recommendation_tier END,
          updated_at = CURRENT_TIMESTAMP WHERE paper_id = ? AND space_id = ?`,
-      ).bind(cleanText(analysis.problemZh).slice(0, 1100), cleanText(analysis.problemEn).slice(0, 1500),
-        cleanText(analysis.methodZh).slice(0, 1100), cleanText(analysis.methodEn).slice(0, 1500),
-        cleanText(analysis.contributionZh).slice(0, 1100), cleanText(analysis.contributionEn).slice(0, 1500),
-        cleanText(analysis.limitationsZh).slice(0, 1100), cleanText(analysis.limitationsEn).slice(0, 1500),
-        cleanText(analysis.readingFocusZh).slice(0, 1100), cleanText(analysis.readingFocusEn).slice(0, 1500),
+      ).bind(groundedSummaryZh, groundedSummaryEn,
+        kindText(["problem"], "zh", 2).slice(0, 1100), kindText(["problem"], "en", 2).slice(0, 1500),
+        kindText(["method"], "zh", 2).slice(0, 1100), kindText(["method"], "en", 2).slice(0, 1500),
+        kindText(["contribution", "result"], "zh", 3).slice(0, 1100), kindText(["contribution", "result"], "en", 3).slice(0, 1500),
+        kindText(["limitation"], "zh", 2).slice(0, 1100), kindText(["limitation"], "en", 2).slice(0, 1500),
+        groundedReadingFocusZh, groundedReadingFocusEn,
         JSON.stringify((analysis.researchQuestionsZh || []).map(cleanText).filter(Boolean).slice(0, 6)),
-        JSON.stringify((analysis.researchQuestionsEn || []).map(cleanText).filter(Boolean).slice(0, 6)), paperId, spaceId),
+        JSON.stringify((analysis.researchQuestionsEn || []).map(cleanText).filter(Boolean).slice(0, 6)),
+        qualifiesForMustRead ? "must_read" : "browse", paperId, spaceId),
       database.prepare(
         `UPDATE paper_evidence_documents SET status = 'ready', claim_count = ?, grounded_claim_count = ?,
          unsupported_claim_count = ?, coverage_score = ?, model = ?, error = ?, analyzed_at = CURRENT_TIMESTAMP,
@@ -515,11 +571,7 @@ export async function POST(request: Request) {
          WHERE proposal.space_id = ? AND proposal.paper_id = ? AND proposal.status = 'confirmed'
          ORDER BY proposal.confidence DESC LIMIT 3`,
       ).bind(spaceId, paperId).all<{ track_id: string }>();
-      const strongest = claims.filter((claim) => claim.grounded)
-        .sort((left, right) => {
-          const rank: Record<PaperEvidenceClaimKind, number> = { contribution: 0, result: 1, method: 2, problem: 3, limitation: 4 };
-          return rank[left.kind] - rank[right.kind] || right.confidence - left.confidence;
-        }).slice(0, 3);
+      const strongest = strongestGrounded;
       const summaryZh = strongest.map((claim) => claim.claimZh).join("；").slice(0, 900);
       const summaryEn = strongest.map((claim) => claim.claimEn).join("; ").slice(0, 1200);
       for (const route of routes.results) {
@@ -548,6 +600,7 @@ export async function POST(request: Request) {
     return Response.json({ evidence: await readEvidence(database, spaceId, paperId) });
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 500) : "Evidence deepening failed";
+    await applyEvidenceBoundedRecommendationTier(database, spaceId, paperId, false);
     await database.prepare(
       `UPDATE paper_evidence_documents SET status = CASE WHEN extracted_chars > 0 THEN 'partial' ELSE 'error' END,
        error = ?, lock_token = NULL, lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP

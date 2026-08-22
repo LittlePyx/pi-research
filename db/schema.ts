@@ -543,6 +543,7 @@ export const paperInsights = sqliteTable(
     llmRecommended: integer("llm_recommended", { mode: "boolean" }).notNull().default(false),
     llmRelevanceScore: integer("llm_relevance_score").notNull().default(0),
     screeningReason: text("screening_reason").notNull().default(""),
+    proposedRecommendationTier: text("proposed_recommendation_tier").notNull().default("browse"),
     recommendationTier: text("recommendation_tier").notNull().default("browse"),
     readMinutes: integer("read_minutes").notNull().default(12),
     readDepth: text("read_depth").notNull().default("focused"),

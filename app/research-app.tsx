@@ -62,6 +62,7 @@ type MonitorPaper = {
   snoozedUntil: string | null;
   readingStatus: "unread" | "queued" | "reading" | "read" | "mastered" | "cited";
   readingNote: string;
+  proposedRecommendationTier: "must_read" | "browse" | "reserve";
   recommendationTier: "must_read" | "browse" | "reserve";
   readMinutes: number;
   readDepth: "overview" | "focused" | "deep";
@@ -406,6 +407,8 @@ type MonitorState = {
     candidateCount?: number;
     deepCandidateCount?: number;
     deepCompletedCount?: number;
+    evidenceTargetCount?: number;
+    evidenceCompletedCount?: number;
     horizonStats?: Array<{
       horizon: "days" | "months" | "years";
       status: "pending" | "searching" | "complete";
@@ -1157,9 +1160,10 @@ function PaperEvidenceBadge({ paper, locale, processing = false }: { paper: Moni
     ? (locale === "zh" ? "推荐内容已核验" : "Recommendation verified")
     : paper.verificationStatus === "revised"
       ? (locale === "zh" ? "核验后已修订" : "Verified and revised") : "";
+  const awaitingMustReadEvidence = paper.proposedRecommendationTier === "must_read" && paper.recommendationTier !== "must_read";
   return <><span className={`v2-evidence-badge ${paper.evidenceLevel} ${status}`} title={evidenceStatusLabel(status, locale)}>
     <i />{processing ? evidenceStatusLabel("fetching", locale) : evidenceLevelLabel(paper.evidenceLevel, locale)}
-  </span>{verificationLabel && <span className={`v2-verification-badge ${paper.verificationStatus}`} title={locale === "zh" ? `关键表述证据覆盖 ${paper.verificationCoverageScore}%` : `${paper.verificationCoverageScore}% evidence coverage for substantive statements`}><i />{verificationLabel}</span>}</>;
+  </span>{awaitingMustReadEvidence && <span className="v2-evidence-promotion" title={locale === "zh" ? "只有开放全文证据达到门槛后才会升级为今日必读" : "Promoted to must-read only after open full-text evidence clears the gate"}>{locale === "zh" ? "候选必读 · 待全文确认" : "Must-read candidate · awaiting full text"}</span>}{verificationLabel && <span className={`v2-verification-badge ${paper.verificationStatus}`} title={locale === "zh" ? `关键表述证据覆盖 ${paper.verificationCoverageScore}%` : `${paper.verificationCoverageScore}% evidence coverage for substantive statements`}><i />{verificationLabel}</span>}</>;
 }
 
 function monitorPaperHorizonLabel(paper: MonitorPaper, locale: Locale) {
@@ -1269,7 +1273,7 @@ function recommendationTierLabel(tier: MonitorPaper["recommendationTier"], local
 
 function evidenceLevelLabel(level: MonitorPaper["evidenceLevel"] | PaperEvidence["evidenceLevel"], locale: Locale) {
   if (level === "fulltext") return locale === "zh" ? "开放全文已核验" : "Open full text verified";
-  if (level === "abstract") return locale === "zh" ? "基于摘要" : "Abstract-grounded";
+  if (level === "abstract") return locale === "zh" ? "摘要已核验" : "Abstract verified";
   return locale === "zh" ? "仅书目信息" : "Metadata only";
 }
 
@@ -3747,7 +3751,7 @@ export default function ResearchApp({ user }: { user: User }) {
     if (completed >= 3) return;
     const candidate = rankedMonitorPapers.find((paper) => {
       const key = `${activeSpace.id}:${paper.id}`;
-      return ["unavailable", "queued"].includes(paper.evidenceStatus) && !evidenceAutoAttemptsRef.current.has(key);
+      return ["unavailable", "queued", "partial", "error"].includes(paper.evidenceStatus) && !evidenceAutoAttemptsRef.current.has(key);
     });
     if (!candidate) return;
     const key = `${activeSpace.id}:${candidate.id}`;
@@ -4916,7 +4920,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <header><p className="v2-kicker">π {locale === "zh" ? "今日研究判断" : "TODAY'S RESEARCH JUDGMENT"}</p><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
                 <h2>{locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn}</h2>
                 <p className="v2-daily-brief-overview">{locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn}</p>
-                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "快速筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深度解读" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div></dl>
+                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "快速筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深度解读" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div><div><dt>{locale === "zh" ? "原文补强" : "Evidence"}</dt><dd>{monitor.dailyBrief.metrics.evidenceDeepened || 0}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div></dl>
                 {Boolean(dailyBriefPapers.length) && <footer><button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button><button className="secondary" type="button" onClick={() => shareSnapshot("daily", dailyBriefPapers)} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily}</button></footer>}
               </div>
               <div className="v2-daily-paper-queue">

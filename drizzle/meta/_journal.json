@@ -253,6 +253,13 @@
       "when": 1787325434130,
       "tag": "0035_cool_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1787387370156,
+      "tag": "0036_bouncy_lord_hawal",
+      "breakpoints": true
     }
   ]
 }
