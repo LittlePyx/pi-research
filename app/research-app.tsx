@@ -93,7 +93,7 @@ type MonitorPaper = {
   evidenceClaimCount: number;
   evidenceGroundedClaimCount: number;
   evidenceCoverageScore: number;
-  verificationStatus: "not_required" | "verified" | "revised" | "degraded";
+  verificationStatus: "not_required" | "pending" | "verified" | "revised" | "degraded";
   verificationCoverageScore: number;
   discoveryOrigin?: {
     kind: RouteDiscoveryKind;
@@ -408,6 +408,9 @@ type MonitorState = {
     deepCandidateCount?: number;
     deepCompletedCount?: number;
     deepDeferredCount?: number;
+    verificationTargetCount?: number;
+    verificationCompletedCount?: number;
+    verificationPendingCount?: number;
     evidenceTargetCount?: number;
     evidenceCompletedCount?: number;
     horizonStats?: Array<{
@@ -4952,7 +4955,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <header><p className="v2-kicker">π {locale === "zh" ? "今日研究判断" : "TODAY'S RESEARCH JUDGMENT"}</p><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.model === "evidence-summary" ? (locale === "zh" ? "可核验证据简报" : "Evidence-first brief") : monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
                 <h2>{locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn}</h2>
                 <p className="v2-daily-brief-overview">{locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn}</p>
-                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "快速筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深度解读" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div><div><dt>{locale === "zh" ? "原文补强" : "Evidence"}</dt><dd>{monitor.dailyBrief.metrics.evidenceDeepened || 0}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div></dl>
+                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "快速筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深度解读" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div>{Boolean(monitor.dailyBrief.metrics.verificationPending) && <div><dt>{locale === "zh" ? "待核验" : "Pending verification"}</dt><dd>{monitor.dailyBrief.metrics.verificationPending}</dd></div>}<div><dt>{locale === "zh" ? "原文补强" : "Evidence"}</dt><dd>{monitor.dailyBrief.metrics.evidenceDeepened || 0}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div></dl>
                 {Boolean(dailyBriefPapers.length) && <footer><button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button><button className="secondary" type="button" onClick={() => shareSnapshot("daily", dailyBriefPapers)} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily}</button></footer>}
               </div>
               <div className="v2-daily-paper-queue">
@@ -5013,6 +5016,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     {activeScanJob?.discoveredCount || monitor?.scannedCount || 0} {locale === "zh" ? "条候选" : "candidates"}
                     {["screening", "deep_reviewing", "reviewing"].includes(effectiveScanStatus) && <> · {activeScanJob?.reviewedCount || 0}{activeScanJob?.candidateCount ? ` / ${activeScanJob.candidateCount}` : ""} {locale === "zh" ? "篇已筛选保存" : "screened and saved"}</>}
                     {effectiveScanStatus === "deep_reviewing" && <> · {activeScanJob?.recommendedCount || 0} {locale === "zh" ? "篇已可阅读" : "ready to read"}</>}
+                    {effectiveScanStatus === "deep_reviewing" && Boolean(activeScanJob?.verificationPendingCount) && <> · {activeScanJob?.verificationPendingCount} {locale === "zh" ? "篇高潜力解读待核验" : "high-potential drafts awaiting verification"}</>}
                     {effectiveScanStatus === "deep_reviewing" && Boolean(activeScanJob?.deepDeferredCount) && <> · {activeScanJob?.deepDeferredCount} {locale === "zh" ? "篇已延后，不阻塞本轮" : "deferred without blocking this scan"}</>}
                     {healthyCoverageCount > 0 && <> · {healthyCoverageCount} {locale === "zh" ? "类来源正常" : "source groups healthy"}</>}
                     {scanElapsedSeconds > 0 && <> · {scanElapsedSeconds < 60 ? `${scanElapsedSeconds}s` : `${Math.floor(scanElapsedSeconds / 60)}m ${scanElapsedSeconds % 60}s`}</>}

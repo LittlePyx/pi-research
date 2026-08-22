@@ -81,6 +81,30 @@ test("recommendations and research actions use independent verification and fail
   assert.match(migration, /PRAGMA optimize/);
 });
 
+test("a transient verifier timeout preserves the draft and resumes verification only", async () => {
+  const [monitor, verification, client] = await Promise.all([
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/evidence-verification.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(verification, /"pending"/);
+  assert.match(monitor, /function pendingRecommendationReview/);
+  assert.match(monitor, /verificationStatus: "pending"/);
+  assert.match(monitor, /checkpoint === "verifying_recommendations"/);
+  assert.match(monitor, /draftPreserved: true, retryScope: "verification_only"/);
+  assert.match(monitor, /work\.verificationFailureCount >= 2/);
+  assert.match(monitor, /remaining drafts were deferred without more model calls/);
+  assert.match(monitor, /verificationCarryover/);
+  assert.match(monitor, /previousWork\.verificationDeferredIds = \[\]/);
+  assert.match(monitor, /i\.verification_status = 'degraded'[\s\S]*lower\(i\.screening_reason\) LIKE '%timeout%'/);
+  assert.match(monitor, /AbortSignal\.timeout\(attempt === 0 \? 18_000 : 12_000\)/);
+  assert.match(monitor, /thinking: \{ type: "disabled" \}/);
+  assert.match(monitor, /isPublishedRecommendation\(review\) \? 1 : 0/);
+  assert.match(monitor, /deepseek_verification_pending/);
+  assert.doesNotMatch(monitor, /\.\.\.degradedRecommendationReview\(review, evidenceVerificationReport\(\{ initial \}\)\),\s*verificationRetryable: true/);
+  assert.match(client, /篇高潜力解读待核验/);
+});
+
 test("the verification migration applies to existing recommendation and action tables", async () => {
   const migration = await readFile(new URL("../drizzle/0035_cool_lady_bullseye.sql", import.meta.url), "utf8");
   const database = new DatabaseSync(":memory:");

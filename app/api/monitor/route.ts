@@ -459,6 +459,9 @@ type ScanWorkQueue = {
   deepCompletedIds: string[];
   deepDeferredIds: string[];
   retryDeepIds: string[];
+  verificationIds: string[];
+  verificationCompletedIds: string[];
+  verificationDeferredIds: string[];
   evidenceIds: string[];
   evidenceCompletedIds: string[];
   rescueScreenIds: string[];
@@ -467,6 +470,7 @@ type ScanWorkQueue = {
   newCandidateCount: number;
   screenFailureCount: number;
   deepFailureCount: number;
+  verificationFailureCount: number;
   pipelineVersion: string;
   horizonStats: Record<Horizon, HorizonScanStats>;
   frozenQueryPlan?: QueryPlan;
@@ -522,7 +526,7 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-19T09:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-evidence-v5-fulltext-ranked";
+const MONITOR_PIPELINE_VERSION = "continuous-evidence-v6-resilient-verification";
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
 const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
@@ -2035,6 +2039,22 @@ function correctedRecommendationReview(review: PaperReview, value: unknown): Pap
   return next.summaryZh && next.summaryEn && next.whyReadZh && next.whyReadEn ? next : null;
 }
 
+function isPublishedRecommendation(review: PaperReview) {
+  return review.recommended && !review.verificationRetryable
+    && (review.verificationStatus === "verified" || review.verificationStatus === "revised");
+}
+
+function pendingRecommendationReview(review: PaperReview, reason = "Waiting for independent evidence verification"): PaperReview {
+  if (!review.recommended) return review;
+  return {
+    ...review,
+    verificationStatus: "pending",
+    verificationCoverageScore: 0,
+    verificationReport: { status: "pending", reason: cleanText(reason).slice(0, 500) },
+    verificationRetryable: true,
+  };
+}
+
 function degradedRecommendationReview(review: PaperReview, report: ReturnType<typeof evidenceVerificationReport>): PaperReview {
   return {
     ...review,
@@ -2050,6 +2070,7 @@ function degradedRecommendationReview(review: PaperReview, report: ReturnType<ty
     verificationStatus: "degraded",
     verificationCoverageScore: report.coverageScore,
     verificationReport: report,
+    verificationRetryable: false,
   };
 }
 
@@ -2069,14 +2090,18 @@ async function verifyRecommendationBatch(input: {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   const call = async (items: PaperReview[], allowCorrection: boolean) => {
-    const response = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MONITOR_MODEL,
-        messages: [
-          { role: "system", content: "You are Pi Research's independent recommendation evidence verifier. Audit the draft against only the supplied metadata and abstract. Do not rubber-stamp the drafting model. Return strict JSON only." },
-          { role: "user", content: [
+    let data: DeepSeekResponse | null = null;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2 && !data; attempt += 1) {
+      try {
+        const response = await fetch("https://api.deepseek.com/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: MONITOR_MODEL,
+            messages: [
+              { role: "system", content: "You are Pi Research's fast independent recommendation evidence verifier. Audit only against supplied metadata and abstract. Return strict JSON without hidden chain-of-thought." },
+              { role: "user", content: [
             `Return {verifications:[{canonicalId,verdict:"verified|revise|insufficient",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,evidenceQuote,verdict:"supported|qualified|unsupported",reason}],reason${allowCorrection ? ",corrected:{summaryZh,summaryEn,whyReadZh,whyReadEn,problemZh,problemEn,methodZh,methodEn,contributionZh,contributionEn,limitationsZh,limitationsEn,readingFocusZh,readingFocusEn,researchQuestionsZh,researchQuestionsEn,researchProblemImpactZh,researchProblemImpactEn,researchDecisionZh,researchDecisionEn}" : ""}}]}.`,
             "Audit every supplied paper. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
             "claimChecks must cover every populated substantive field. evidenceQuote must be an exact contiguous quote from the supplied abstract; evidenceId must be empty because this stage has abstract evidence rather than stored claim IDs.",
@@ -2097,18 +2122,26 @@ async function verifyRecommendationBatch(input: {
                 draft: recommendationVerificationPayload(review),
               };
             })),
-          ].join("\n") },
-        ],
-        thinking: { type: "enabled" },
-        reasoning_effort: "medium",
-        response_format: { type: "json_object" },
-        max_tokens: Math.min(5200, 1000 + items.length * 1600),
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(34_000),
-    });
-    const data = await response.json() as DeepSeekResponse;
-    if (!response.ok) throw new Error(data.error?.message || "Recommendation evidence verification failed");
+              ].join("\n") },
+            ],
+            thinking: { type: "disabled" },
+            reasoning_effort: "low",
+            response_format: { type: "json_object" },
+            max_tokens: Math.min(attempt === 0 ? 3600 : 2600, 900 + items.length * 1400),
+            stream: false,
+          }),
+          signal: AbortSignal.timeout(attempt === 0 ? 18_000 : 12_000),
+        });
+        const responseData = await response.json() as DeepSeekResponse;
+        if (!response.ok) throw new Error(responseData.error?.message || "Recommendation evidence verification failed");
+        if (!responseData.choices?.[0]?.message?.content?.trim()) throw new Error("Recommendation evidence verifier returned an empty response");
+        data = responseData;
+      } catch (error) {
+        lastError = error;
+        if (isNonRetryableDeepSeekError(error)) throw error;
+      }
+    }
+    if (!data) throw lastError instanceof Error ? lastError : new Error("Recommendation evidence verification timed out twice");
     const callInputTokens = data.usage?.prompt_tokens || 0;
     const callOutputTokens = data.usage?.completion_tokens || 0;
     totalInputTokens += callInputTokens;
@@ -2173,9 +2206,9 @@ async function verifyRecommendationBatch(input: {
       verificationInputTokens: allocatedTokenShare(totalInputTokens, denominator, recommended.indexOf(review)),
       verificationOutputTokens: allocatedTokenShare(totalOutputTokens, denominator, recommended.indexOf(review)),
     };
-    if (initial.clean) return { ...review, verificationStatus: "verified" as const, verificationCoverageScore: report.coverageScore, verificationReport: report, ...usage };
+    if (initial.clean) return { ...review, verificationStatus: "verified" as const, verificationCoverageScore: report.coverageScore, verificationReport: report, verificationRetryable: false, ...usage };
     const correctedReview = corrected.get(review.canonicalId);
-    if (correctedReview && revised?.clean) return { ...correctedReview, verificationStatus: "revised" as const, verificationCoverageScore: report.coverageScore, verificationReport: report, ...usage };
+    if (correctedReview && revised?.clean) return { ...correctedReview, verificationStatus: "revised" as const, verificationCoverageScore: report.coverageScore, verificationReport: report, verificationRetryable: false, ...usage };
     return { ...degradedRecommendationReview(review, report), ...usage };
   });
 }
@@ -2398,7 +2431,7 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
     ).bind(paperId, spaceId, candidate.abstractText, review.summaryZh, review.summaryEn, review.whyReadZh, review.whyReadEn,
       review.qualityScore, candidate.priorityVenue ? 1 : 0,
       review.verificationRetryable ? "deepseek_verification_pending" : review.recommended ? "deepseek" : "deepseek_rejected",
-      MONITOR_MODEL, review.recommended ? 1 : 0, review.relevanceScore, review.screeningReason,
+      MONITOR_MODEL, isPublishedRecommendation(review) ? 1 : 0, review.relevanceScore, review.screeningReason,
       proposedTier, effectiveTier, review.readMinutes, review.readDepth, review.problemZh, review.problemEn,
       review.methodZh, review.methodEn, review.contributionZh, review.contributionEn, review.limitationsZh,
       review.limitationsEn, review.readingFocusZh, review.readingFocusEn, JSON.stringify(review.researchQuestionsZh),
@@ -2414,7 +2447,7 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
 
   const evidenceQueueWrites = persistedReviews.flatMap((review) => {
     const paperId = paperIds.get(review.canonicalId);
-    if (!review.recommended || !paperId) return [];
+    if (!isPublishedRecommendation(review) || !paperId) return [];
     return [database.prepare(
       `INSERT INTO paper_evidence_documents (id, space_id, paper_id, status)
        VALUES (?, ?, ?, 'queued')
@@ -2429,7 +2462,7 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
   const proposals = persistedReviews.flatMap((review) => {
     const candidate = candidateByCanonical.get(review.canonicalId);
     const paperId = paperIds.get(review.canonicalId);
-    if (!review.recommended || !review.trackId || !paperId || !review.mapRationaleZh || !review.mapRationaleEn) return [];
+    if (!isPublishedRecommendation(review) || !review.trackId || !paperId || !review.mapRationaleZh || !review.mapRationaleEn) return [];
     const reviewsSystemCuratedPaper = candidate?.provenance.some((entry) => entry.routeId === review.trackId
       && /^research-route:(foundation|milestone|frontier)$/.test(entry.sourceKey));
     return [{
@@ -2495,15 +2528,15 @@ async function persistRecommendationAuditBatch(
        model = excluded.model, relevance_score = excluded.relevance_score, quality_score = excluded.quality_score,
        recommendation_tier = excluded.recommendation_tier, screening_reason = excluded.screening_reason,
        provenance_json = excluded.provenance_json, appearance_count = excluded.appearance_count,
-       allocated_input_tokens = excluded.allocated_input_tokens,
-       allocated_output_tokens = excluded.allocated_output_tokens,
+       allocated_input_tokens = CASE WHEN excluded.allocated_input_tokens > 0 THEN excluded.allocated_input_tokens ELSE recommendation_audit_events.allocated_input_tokens END,
+       allocated_output_tokens = CASE WHEN excluded.allocated_output_tokens > 0 THEN excluded.allocated_output_tokens ELSE recommendation_audit_events.allocated_output_tokens END,
        verification_status = excluded.verification_status,
        verification_coverage_score = excluded.verification_coverage_score,
        verification_json = excluded.verification_json,
        verification_input_tokens = excluded.verification_input_tokens,
        verification_output_tokens = excluded.verification_output_tokens, reviewed_at = CURRENT_TIMESTAMP`,
     ).bind(
-      crypto.randomUUID(), spaceId, jobId, paperId, decision, review.isPaper ? 1 : 0, review.recommended ? 1 : 0,
+      crypto.randomUUID(), spaceId, jobId, paperId, decision, review.isPaper ? 1 : 0, isPublishedRecommendation(review) ? 1 : 0,
       candidate.horizon, MONITOR_MODEL, review.relevanceScore, review.qualityScore, review.recommendationTier,
       review.screeningReason, JSON.stringify(provenance), appearanceCount,
       allocatedTokenShare(inputTokens, reviews.length, index), allocatedTokenShare(outputTokens, reviews.length, index),
@@ -2521,9 +2554,9 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
   const usageDate = new Date().toISOString().slice(0, 10);
   const workspaceScope = "monitor-workspace:" + userId.slice("anonymous:".length);
   const spaceScope = "monitor-space:" + space.id;
-  // One drafting pass plus an independent verification pass and, only when
-  // needed, one post-revision verification pass.
-  const expectedCalls = Math.ceil(candidates.length / REVIEW_BATCH_SIZE) * 3;
+  // Drafting is persisted before independent verification. The verification
+  // stage has its own checkpoint, so a slow verifier never repeats this call.
+  const expectedCalls = Math.ceil(candidates.length / REVIEW_BATCH_SIZE);
   const [globalCount, workspaceCount, spaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate),
     usageCount(database, workspaceScope, usageDate),
@@ -2785,28 +2818,8 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         evidenceCoverageScore: 0,
       });
     }
-    if (batchReviews.some((review) => review.recommended)) await database.prepare(
-      "UPDATE monitor_scan_jobs SET current_source = 'Pi 正在独立核对推荐结论，未通过的内容不会发布', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-    ).bind(jobId).run();
-    let verifiedBatchReviews: PaperReview[];
-    try {
-      verifiedBatchReviews = await verifyRecommendationBatch({
-        database, spaceId: space.id, usageDate, workspaceScope, spaceScope, apiKey, candidates: batch, reviews: batchReviews,
-      });
-    } catch (verificationError) {
-      verifiedBatchReviews = batchReviews.map((review) => {
-        if (!review.recommended) return review;
-        const initial = sanitizeEvidenceVerificationDraft({
-          verdict: "insufficient", coverageScore: 0,
-          reason: verificationError instanceof Error ? verificationError.message : "Independent verification was unavailable",
-        }, { allowedFields: RECOMMENDATION_VERIFICATION_FIELDS });
-        return {
-          ...degradedRecommendationReview(review, evidenceVerificationReport({ initial })),
-          verificationRetryable: true,
-        };
-      });
-    }
-    const persistedBatchReviews = await persistReviewBatch(database, space.id, jobId, batch, verifiedBatchReviews);
+    const draftedBatchReviews = batchReviews.map((review) => pendingRecommendationReview(review));
+    const persistedBatchReviews = await persistReviewBatch(database, space.id, jobId, batch, draftedBatchReviews);
     completed.push(...persistedBatchReviews);
     try {
       await persistRecommendationAuditBatch(database, space.id, jobId, batch, persistedBatchReviews, batchInputTokens, batchOutputTokens);
@@ -2817,7 +2830,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     await database.batch([
       database.prepare(
         "UPDATE monitor_scan_jobs SET checkpoint = 'reviewing', reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-      ).bind(completed.length, completed.filter((review) => review.recommended).length, completed.length, candidates.length, jobId),
+      ).bind(completed.length, completed.filter(isPublishedRecommendation).length, completed.length, candidates.length, jobId),
       database.prepare(
         "UPDATE monitor_runs SET lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
       ).bind(new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken),
@@ -2834,7 +2847,7 @@ async function reconcileRecommendedReviewTracks(
   reviews: PaperReview[],
   apiKey: string,
 ) {
-  const missing = reviews.filter((review) => review.recommended && !review.trackId);
+  const missing = reviews.filter((review) => isPublishedRecommendation(review) && !review.trackId);
   if (!missing.length || !apiKey) return reviews;
   const tracks = await database.prepare(
     "SELECT id, title_zh, title_en, summary_zh, summary_en FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 12",
@@ -2906,7 +2919,7 @@ async function reconcileRecommendedReviewTracks(
         mapRationaleEn: rationaleEn,
       }] as const];
     }));
-    return reviews.map((review) => review.trackId || !review.recommended || !assignments.has(review.canonicalId)
+    return reviews.map((review) => review.trackId || !isPublishedRecommendation(review) || !assignments.has(review.canonicalId)
       ? review : { ...review, ...assignments.get(review.canonicalId)! });
   } catch (error) {
     console.error("Non-blocking route reconciliation failed", error);
@@ -3040,14 +3053,14 @@ async function generateDailyBrief(
   jobId: string,
   candidates: Candidate[],
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepScheduled?: number; deepReviewed?: number; deepDeferred?: number; analysisUnavailable?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepScheduled?: number; deepReviewed?: number; deepDeferred?: number; analysisUnavailable?: number; verificationPending?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
   now: Date,
   apiKey: string,
   deferLlm = false,
 ) {
   const briefDate = shanghaiDateKey(now);
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
-  const rankedReviews = reviews.filter((review) => review.recommended).sort((left, right) => {
+  const rankedReviews = reviews.filter(isPublishedRecommendation).sort((left, right) => {
     const tier = { must_read: 3, browse: 2, reserve: 1 };
     return tier[right.recommendationTier] - tier[left.recommendationTier] || right.relevanceScore - left.relevanceScore;
   });
@@ -3072,17 +3085,23 @@ async function generateDailyBrief(
     spaceId: space.id, briefDate, jobId, status: analysisUnavailable ? "degraded" : "ready",
     headlineZh: selected.length
       ? `今天有 ${selected.length} 篇论文通过严格筛选`
-      : analysisUnavailable ? "候选已保存，AI 解读暂未完成" : "今天没有论文达到严格推荐门槛",
+      : metrics.verificationPending ? `${metrics.verificationPending} 篇高潜力论文等待证据确认`
+        : analysisUnavailable ? "候选已保存，AI 解读暂未完成" : "今天没有论文达到严格推荐门槛",
     headlineEn: selected.length
       ? `${selected.length} papers passed today's strict review`
-      : analysisUnavailable ? "Candidates saved; AI review is pending" : "No paper cleared today's strict recommendation bar",
+      : metrics.verificationPending ? `${metrics.verificationPending} high-potential papers await evidence verification`
+        : analysisUnavailable ? "Candidates saved; AI review is pending" : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
       ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并为 ${metrics.evidenceDeepened || 0} 篇高潜力论文补强原文证据，最终保留 ${selected.length} 篇。${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
+      : metrics.verificationPending
+        ? `Pi 已保存 ${metrics.verificationPending} 篇达到推荐分数的深度解读草稿；独立核验服务响应较慢，因此它们尚未作为正式推荐发布。后续只续跑核验，不会重新检索、筛选或撰写。`
       : analysisUnavailable
         ? `Pi 已保存 ${metrics.scanned} 篇候选和 ${metrics.screened || 0} 篇快速筛选结果；本轮 ${metrics.deepScheduled || metrics.deepDeferred || 0} 篇高潜力论文因模型响应异常尚未完成解读。它们仍在待评审队列中，因此这不是“没有论文达标”的质量结论。`
         : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
     overviewEn: selected.length
       ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and retained ${selected.length}. ${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
+      : metrics.verificationPending
+        ? `Pi preserved ${metrics.verificationPending} deeply reviewed drafts that reached the recommendation score. Independent verification was slow, so they are not published as formal recommendations yet. A later run retries verification only, without repeating discovery, screening, or drafting.`
       : analysisUnavailable
         ? `Pi saved ${metrics.scanned} candidates and ${metrics.screened || 0} fast-screen results. Model failures prevented this run from completing AI review of ${metrics.deepScheduled || metrics.deepDeferred || 0} high-potential papers. They remain queued, so this is not a finding that no paper met the quality bar.`
         : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`,
@@ -3092,12 +3111,14 @@ async function generateDailyBrief(
     readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn).filter(Boolean),
     watchlistZh: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} 篇响应较慢的论文会在后续扫描中重试，不会重复处理已完成论文。`] : []),
-      ...(!selected.length && !analysisUnavailable ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
+      ...(metrics.verificationPending ? [`${metrics.verificationPending} 篇高潜力论文处于待核验状态；这是技术等待，不是质量淘汰。`] : []),
+      ...(!selected.length && !analysisUnavailable && !metrics.verificationPending ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
       ...(analysisUnavailable ? ["模型恢复后将从保存点继续评审；已完成的检索与筛选不会重新消耗额度。"] : []),
     ],
     watchlistEn: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} slow papers will be retried in a later scan without repeating completed reviews.`] : []),
-      ...(!selected.length && !analysisUnavailable ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
+      ...(metrics.verificationPending ? [`${metrics.verificationPending} high-potential papers are awaiting verification; this is a technical wait, not a quality rejection.`] : []),
+      ...(!selected.length && !analysisUnavailable && !metrics.verificationPending ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
       ...(analysisUnavailable ? ["When the model recovers, review resumes from the saved checkpoint without repeating completed discovery or screening."] : []),
     ],
     paperIds, metrics, model: "evidence-summary", error: enhancementError || null,
@@ -3260,7 +3281,7 @@ async function createScanNotifications(
     bodyEn: brief?.overview_en || `${metrics.screened || metrics.reviewed} fast-screened, ${metrics.deepReviewed || metrics.reviewed} deeply reviewed, and ${metrics.duplicates} duplicate analyses avoided.`,
     actionView: "today",
   });
-  const mustRead = reviews.filter((review) => review.recommended && review.recommendationTier === "must_read");
+  const mustRead = reviews.filter((review) => isPublishedRecommendation(review) && review.recommendationTier === "must_read");
   if (mustRead.length) {
     await upsertResearchNotification(database, {
       spaceId, dedupeKey: `must-read:${briefDate}`, kind: "must_read", priority: "high",
@@ -3469,6 +3490,9 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
     : `(i.analysis_model = ''
        OR i.analysis_source = 'deepseek_screened'
        OR i.analysis_source = 'deepseek_verification_pending'
+       OR (i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded'
+         AND (lower(i.screening_reason) LIKE '%timeout%' OR lower(i.screening_reason) LIKE '%aborted%'
+           OR lower(i.screening_reason) LIKE '%temporarily unavailable%'))
        OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days'))
        OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime(?)
          AND i.llm_relevance_score >= 45 AND i.quality_score >= 48)
@@ -3491,7 +3515,10 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
          WHERE suppressed.space_id = p.space_id AND suppressed.paper_id = p.id
            AND suppressed.feedback = 'not_relevant'
        )
-     ORDER BY CASE WHEN i.analysis_source = 'deepseek_verification_pending' THEN 2 WHEN i.analysis_source = 'deepseek_screened' THEN 1 ELSE 0 END DESC,
+     ORDER BY CASE WHEN i.analysis_source = 'deepseek_verification_pending' THEN 3
+       WHEN i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded'
+         AND (lower(i.screening_reason) LIKE '%timeout%' OR lower(i.screening_reason) LIKE '%aborted%' OR lower(i.screening_reason) LIKE '%temporarily unavailable%') THEN 2
+       WHEN i.analysis_source = 'deepseek_screened' THEN 1 ELSE 0 END DESC,
        CASE WHEN i.analysis_source IN ('deepseek_screened', 'deepseek_verification_pending') THEN i.llm_relevance_score ELSE p.relevance_score END DESC,
        p.relevance_score DESC,
        CASE WHEN length(trim(i.abstract_text)) >= 120 THEN 1 ELSE 0 END DESC,
@@ -4207,6 +4234,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     jobs: reliabilityJobs.results.map((row) => ({
       completionState: (() => {
         const work = parseScanWorkQueue(row.work_queue_json);
+        if (row.recommended_count === 0 && work.verificationIds.length > work.verificationCompletedIds.length) {
+          return "analysis_unavailable";
+        }
         return deepReviewCompletion({
           scheduled: work.deepIds.length,
           completed: work.deepCompletedIds.length,
@@ -4375,8 +4405,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     job.status === "ready"
     || (scanWork?.screens.length || 0) > 0
     || (scanWork?.deepIds.length || 0) > 0
-    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "evidence_deepening", "finalizing", "main_complete", "complete"].includes(job.checkpoint)
-    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing"].includes(scanWork?.resumeCheckpoint || "")
+    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "verifying_recommendations", "evidence_deepening", "finalizing", "main_complete", "complete"].includes(job.checkpoint)
+    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "verifying_recommendations"].includes(scanWork?.resumeCheckpoint || "")
   ));
   const scanHorizonStats = discoveryOrder.map((horizon, index) => {
     const stored = scanWork?.horizonStats[horizon];
@@ -4495,6 +4525,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         deepCandidateCount: scanWork?.deepIds.length || 0,
         deepCompletedCount: scanWork?.deepCompletedIds.length || 0,
         deepDeferredCount: scanWork?.deepDeferredIds.length || 0,
+        verificationTargetCount: scanWork?.verificationIds.length || 0,
+        verificationCompletedCount: scanWork?.verificationCompletedIds.length || 0,
+        verificationPendingCount: scanWork ? Math.max(0, scanWork.verificationIds.length - scanWork.verificationCompletedIds.length) : 0,
         evidenceTargetCount: scanWork?.evidenceIds.length || 0,
         evidenceCompletedCount: scanWork?.evidenceCompletedIds.length || 0,
         horizonStats: scanHorizonStats,
@@ -4737,8 +4770,9 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
     deepDeferredIds: [], retryDeepIds: [],
+    verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
     evidenceIds: [], evidenceCompletedIds: [],
-    rescueScreenIds: [], rescueScreened: false, screenFailureCount: 0, deepFailureCount: 0,
+    rescueScreenIds: [], rescueScreened: false, screenFailureCount: 0, deepFailureCount: 0, verificationFailureCount: 0,
     pipelineVersion: "", horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
   };
   if (!value) return fallback;
@@ -4766,6 +4800,9 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       deepDeferredIds: Array.isArray(parsed.deepDeferredIds) ? parsed.deepDeferredIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       retryDeepIds: Array.isArray(parsed.retryDeepIds) ? parsed.retryDeepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_CARRYOVER_LIMIT) : [],
+      verificationIds: Array.isArray(parsed.verificationIds) ? parsed.verificationIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      verificationCompletedIds: Array.isArray(parsed.verificationCompletedIds) ? parsed.verificationCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      verificationDeferredIds: Array.isArray(parsed.verificationDeferredIds) ? parsed.verificationDeferredIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       evidenceIds: Array.isArray(parsed.evidenceIds) ? parsed.evidenceIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
       evidenceCompletedIds: Array.isArray(parsed.evidenceCompletedIds) ? parsed.evidenceCompletedIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
       rescueScreenIds: Array.isArray(parsed.rescueScreenIds) ? parsed.rescueScreenIds.filter((id): id is string => typeof id === "string").slice(0, RESCUE_SCREEN_LIMIT) : [],
@@ -4774,6 +4811,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       newCandidateCount: Math.max(0, Number(parsed.newCandidateCount) || 0),
       screenFailureCount: Math.max(0, Number(parsed.screenFailureCount) || 0),
       deepFailureCount: Math.max(0, Number(parsed.deepFailureCount) || 0),
+      verificationFailureCount: Math.max(0, Number(parsed.verificationFailureCount) || 0),
       pipelineVersion: typeof parsed.pipelineVersion === "string" ? parsed.pipelineVersion : "",
       horizonStats,
       frozenQueryPlan: parseFrozenQueryPlan(parsed.frozenQueryPlan),
@@ -4788,20 +4826,22 @@ function newScanWorkQueue(): ScanWorkQueue {
   return {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
     deepDeferredIds: [], retryDeepIds: [],
+    verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
     evidenceIds: [], evidenceCompletedIds: [],
-    rawCandidateCount: 0, newCandidateCount: 0, screenFailureCount: 0, deepFailureCount: 0,
+    rawCandidateCount: 0, newCandidateCount: 0, screenFailureCount: 0, deepFailureCount: 0, verificationFailureCount: 0,
     pipelineVersion: MONITOR_PIPELINE_VERSION, horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
   };
 }
 
 const RESUMABLE_SCAN_CHECKPOINTS = new Set([
   "planning", "discovering_days", "discovering_months", "discovering_years", "deduplicating",
-  "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "evidence_deepening", "finalizing",
+  "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "verifying_recommendations", "evidence_deepening", "finalizing",
 ]);
 
 function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_source">, work: ScanWorkQueue) {
   if (work.resumeCheckpoint && RESUMABLE_SCAN_CHECKPOINTS.has(work.resumeCheckpoint)) return work.resumeCheckpoint;
   if (RESUMABLE_SCAN_CHECKPOINTS.has(job.checkpoint)) return job.checkpoint;
+  if (work.verificationIds.length && work.verificationCompletedIds.length + work.verificationDeferredIds.length < work.verificationIds.length) return "verifying_recommendations";
   if (work.evidenceIds.length && work.evidenceCompletedIds.length < work.evidenceIds.length) return "evidence_deepening";
   if (work.evidenceIds.length && work.evidenceCompletedIds.length >= work.evidenceIds.length) return "finalizing";
   if (work.deepIds.length) {
@@ -4816,7 +4856,7 @@ function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_s
 
 function statusForCheckpoint(checkpoint: string) {
   if (["enriching_screening_abstracts", "screening", "rescue_screening"].includes(checkpoint)) return "screening";
-  if (["enriching_abstracts", "deep_reviewing", "evidence_deepening", "finalizing"].includes(checkpoint)) return "deep_reviewing";
+  if (["enriching_abstracts", "deep_reviewing", "verifying_recommendations", "evidence_deepening", "finalizing"].includes(checkpoint)) return "deep_reviewing";
   if (checkpoint === "deduplicating") return "deduplicating";
   if (checkpoint.startsWith("discovering_")) return checkpoint;
   return "scanning";
@@ -4828,6 +4868,7 @@ function monitorProgressByCheckpoint(checkpoint: string) {
   if (checkpoint === "rescue_screening") return 72;
   if (checkpoint === "enriching_abstracts") return 76;
   if (checkpoint === "deep_reviewing") return 80;
+  if (checkpoint === "verifying_recommendations") return 94;
   if (checkpoint === "evidence_deepening") return 95;
   if (checkpoint === "finalizing") return 99;
   if (checkpoint === "deduplicating") return 50;
@@ -4850,6 +4891,9 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     ...work.deepCompletedIds,
     ...work.deepDeferredIds,
     ...work.retryDeepIds,
+    ...work.verificationIds,
+    ...work.verificationCompletedIds,
+    ...work.verificationDeferredIds,
     ...work.evidenceIds,
     ...work.evidenceCompletedIds,
     ...work.rescueScreenIds,
@@ -4871,6 +4915,9 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     deepCompletedIds: work.deepCompletedIds,
     deepDeferredIds: work.deepDeferredIds,
     retryDeepIds: work.retryDeepIds,
+    verificationIds: work.verificationIds,
+    verificationCompletedIds: work.verificationCompletedIds,
+    verificationDeferredIds: work.verificationDeferredIds,
     evidenceIds: work.evidenceIds,
     evidenceCompletedIds: work.evidenceCompletedIds,
     rescueScreenIds: work.rescueScreenIds,
@@ -4879,6 +4926,9 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
   Object.assign(work, retained);
   work.deepDeferredIds = work.deepDeferredIds.filter((id) => reviewableIds.has(id));
   work.retryDeepIds = work.retryDeepIds.filter((id) => reviewableIds.has(id));
+  work.verificationIds = work.verificationIds.filter((id) => reviewableIds.has(id));
+  work.verificationCompletedIds = work.verificationCompletedIds.filter((id) => reviewableIds.has(id));
+  work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => reviewableIds.has(id));
   work.evidenceIds = work.evidenceIds.filter((id) => reviewableIds.has(id));
   work.evidenceCompletedIds = work.evidenceCompletedIds.filter((id) => reviewableIds.has(id));
   return before !== JSON.stringify({
@@ -4888,6 +4938,9 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     deepCompletedIds: work.deepCompletedIds,
     deepDeferredIds: work.deepDeferredIds,
     retryDeepIds: work.retryDeepIds,
+    verificationIds: work.verificationIds,
+    verificationCompletedIds: work.verificationCompletedIds,
+    verificationDeferredIds: work.verificationDeferredIds,
     evidenceIds: work.evidenceIds,
     evidenceCompletedIds: work.evidenceCompletedIds,
     rescueScreenIds: work.rescueScreenIds,
@@ -4963,7 +5016,10 @@ async function loadCachedQuickScreens(database: D1Database, spaceId: string, can
   const rows = await database.prepare(
     `SELECT p.canonical_id, p.horizon, i.llm_relevance_score, i.quality_score, i.screening_reason
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
-     WHERE p.space_id = ? AND i.analysis_source = 'deepseek_screened' AND i.analysis_model = ?
+     WHERE p.space_id = ? AND (i.analysis_source IN ('deepseek_screened', 'deepseek_verification_pending')
+       OR (i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded'
+         AND (lower(i.screening_reason) LIKE '%timeout%' OR lower(i.screening_reason) LIKE '%aborted%'
+           OR lower(i.screening_reason) LIKE '%temporarily unavailable%'))) AND i.analysis_model = ?
        AND p.canonical_id IN (${uniqueIds.map(() => "?").join(", ")})`,
   ).bind(spaceId, MONITOR_MODEL, ...uniqueIds).all<{
     canonical_id: string; horizon: Horizon; llm_relevance_score: number; quality_score: number; screening_reason: string;
@@ -5042,12 +5098,13 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
   const byId = new Map(rows.results.map((row) => [row.canonical_id, row]));
   return canonicalIds.flatMap((canonicalId) => {
     const row = byId.get(canonicalId);
-    if (!row || !["deepseek", "deepseek_rejected"].includes(row.analysis_source)) return [];
+    if (!row || !["deepseek", "deepseek_rejected", "deepseek_verification_pending"].includes(row.analysis_source)) return [];
+    const verificationRetryable = row.analysis_source === "deepseek_verification_pending";
     const tier: PaperReview["recommendationTier"] = row.recommendation_tier === "must_read" || row.recommendation_tier === "reserve" ? row.recommendation_tier : "browse";
     const proposedTier: PaperReview["proposedRecommendationTier"] = row.proposed_recommendation_tier === "must_read" || row.proposed_recommendation_tier === "reserve" ? row.proposed_recommendation_tier : "browse";
     const depth: PaperReview["readDepth"] = row.read_depth === "deep" || row.read_depth === "overview" ? row.read_depth : "focused";
     return [{
-      canonicalId, isPaper: true, recommended: Boolean(row.llm_recommended), relevanceScore: row.llm_relevance_score,
+      canonicalId, isPaper: true, recommended: verificationRetryable || Boolean(row.llm_recommended), relevanceScore: row.llm_relevance_score,
       qualityScore: row.quality_score, summaryZh: row.summary_zh, summaryEn: row.summary_en, whyReadZh: row.why_read_zh,
       whyReadEn: row.why_read_en, screeningReason: row.screening_reason, trackId: row.track_id,
       mapRole: paperReviewMapRole(row.map_role),
@@ -5064,7 +5121,7 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
       verificationStatus: row.verification_status, verificationCoverageScore: row.verification_coverage_score,
       verificationReport: parseJsonObject(row.verification_json || "{}"),
       verificationInputTokens: 0, verificationOutputTokens: 0,
-      verificationRetryable: false,
+      verificationRetryable,
       proposedRecommendationTier: proposedTier,
       evidenceLevel: row.evidence_level,
       evidenceStatus: row.evidence_status,
@@ -5194,7 +5251,7 @@ async function runLegacyMonitor(request: Request) {
       await updateRunPhase(database, space.id, jobId, lockToken, "reviewing", scannedCount);
       const reviews = await reviewCandidates(database, enrichedSpace, user.userId, preference.priorityVenues, pendingCandidates, jobId, lockToken, apiKey);
 
-      const newCount = reviews.filter((review) => review.recommended).length;
+      const newCount = reviews.filter(isPublishedRecommendation).length;
       const rejectedCount = reviews.length - newCount;
       await updateRunPhase(database, space.id, jobId, lockToken, "saving", scannedCount, newCount);
 
@@ -5329,19 +5386,26 @@ export async function POST(request: Request) {
       }
       const previousWork = parseScanWorkQueue(previousJob?.work_queue_json);
       const pipelineOutdated = Boolean(previousJob && previousWork.pipelineVersion !== MONITOR_PIPELINE_VERSION);
+      const verificationCarryover = Boolean(!pipelineOutdated && previousJob?.status === "ready"
+        && previousWork.verificationDeferredIds.length);
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
       const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
-      if (!pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
+      if (!verificationCarryover && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
         return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
       }
       const lockToken = crypto.randomUUID();
       const jobId = crypto.randomUUID();
-      const resumeCheckpoint = previousJob?.status === "error" && !pipelineOutdated ? inferResumeCheckpoint(previousJob, previousWork) : "planning";
-      const resumable = Boolean(previousJob?.status === "error" && !pipelineOutdated && resumeCheckpoint !== "planning");
+      const resumeCheckpoint = previousJob?.status === "error" && !pipelineOutdated
+        ? inferResumeCheckpoint(previousJob, previousWork)
+        : verificationCarryover ? "verifying_recommendations" : "planning";
+      const resumable = Boolean(!pipelineOutdated && resumeCheckpoint !== "planning"
+        && (previousJob?.status === "error" || verificationCarryover));
       if (resumable) {
         previousWork.resumeCheckpoint = "";
         previousWork.screenFailureCount = 0;
         previousWork.deepFailureCount = 0;
+        previousWork.verificationFailureCount = 0;
+        if (verificationCarryover) previousWork.verificationDeferredIds = [];
       }
       const initialCheckpoint = resumable ? resumeCheckpoint : "planning";
       const initialWork = resumable ? previousWork : newScanWorkQueue();
@@ -5355,6 +5419,8 @@ export async function POST(request: Request) {
           ? `从已保存进度继续 · ${previousWork.screens.length} / ${previousWork.candidateIds.length} 篇已筛选`
           : initialCheckpoint === "evidence_deepening"
             ? `从已保存进度继续 · ${previousWork.evidenceCompletedIds.length} / ${previousWork.evidenceIds.length} 篇已补强原文证据`
+          : initialCheckpoint === "verifying_recommendations"
+            ? `从已保存进度继续 · ${previousWork.verificationCompletedIds.length} / ${previousWork.verificationIds.length} 篇已完成独立核验`
           : initialCheckpoint === "deep_reviewing" || initialCheckpoint === "enriching_abstracts"
             ? `从已保存进度继续 · ${new Set([...previousWork.deepCompletedIds, ...previousWork.deepDeferredIds]).size} / ${previousWork.deepIds.length} 篇已处理`
             : "从已保存检查点继续本轮扫描"
@@ -5417,7 +5483,7 @@ export async function POST(request: Request) {
       const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
       const reviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
       const completedAt = job.completed_at ? new Date(job.completed_at) : new Date();
-      const recommendedCount = reviews.filter((review) => review.recommended).length;
+      const recommendedCount = reviews.filter(isPublishedRecommendation).length;
       const completion = deepReviewCompletion({
         scheduled: work.deepIds.length,
         completed: reviews.length,
@@ -5434,8 +5500,8 @@ export async function POST(request: Request) {
         deepReviewed: reviews.length,
         deepDeferred: work.deepDeferredIds.length,
         analysisUnavailable: completion.state === "analysis_unavailable" ? 1 : 0,
-        evidenceDeepened: reviews.filter((review) => review.recommended && ["ready", "partial"].includes(review.evidenceStatus)).length,
-        fulltextVerified: reviews.filter((review) => review.recommended && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length,
+        evidenceDeepened: reviews.filter((review) => isPublishedRecommendation(review) && ["ready", "partial"].includes(review.evidenceStatus)).length,
+        fulltextVerified: reviews.filter((review) => isPublishedRecommendation(review) && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length,
         recommended: recommendedCount,
         rejected: Math.max(0, work.screens.length - recommendedCount),
       }, completedAt, apiKey);
@@ -5493,16 +5559,17 @@ export async function POST(request: Request) {
       // Re-run the guarded persistence even when route reconciliation made no
       // change: a user may have withdrawn a paper while that LLM call was in flight.
       const finalizedReviews = await persistReviewBatch(database, space.id, job.id, candidates, reconciledReviews);
-      const recommended = finalizedReviews.filter((review) => review.recommended).length;
+      const recommended = finalizedReviews.filter(isPublishedRecommendation).length;
+      const verificationPending = finalizedReviews.filter((review) => review.verificationRetryable).length;
       const completion = deepReviewCompletion({
         scheduled: work.deepIds.length,
         completed: finalizedReviews.length,
         deferred: work.deepDeferredIds.length,
         recommended,
       });
-      const evidenceDeepened = finalizedReviews.filter((review) => review.recommended
+      const evidenceDeepened = finalizedReviews.filter((review) => isPublishedRecommendation(review)
         && ["ready", "partial"].includes(review.evidenceStatus)).length;
-      const fulltextVerified = finalizedReviews.filter((review) => review.recommended
+      const fulltextVerified = finalizedReviews.filter((review) => isPublishedRecommendation(review)
         && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length;
       const rejected = Math.max(0, work.screens.length - recommended);
       const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
@@ -5527,6 +5594,7 @@ export async function POST(request: Request) {
           const reason = !review.isPaper ? "not_research_paper"
             : review.relevanceScore < RECOMMENDATION_THRESHOLD ? "below_relevance_gate"
               : review.qualityScore < 65 ? "below_quality_gate"
+                : review.verificationRetryable ? "evidence_verification_pending"
                 : review.verificationStatus === "degraded" ? "evidence_verification_failed"
                   : "model_did_not_recommend_or_evidence_incomplete";
           counts[reason] = (counts[reason] || 0) + 1;
@@ -5538,12 +5606,14 @@ export async function POST(request: Request) {
           kind: "zero_recommendation_audit",
           stage: "finalizing",
           source: MONITOR_MODEL,
-          outcome: completion.state === "analysis_unavailable" ? "degraded" : "info",
-          errorCode: completion.state === "analysis_unavailable" ? "analysis_unavailable" : "",
+          outcome: completion.state === "analysis_unavailable" || verificationPending ? "degraded" : "info",
+          errorCode: completion.state === "analysis_unavailable" ? "analysis_unavailable" : verificationPending ? "verification_pending" : "",
           message: completion.state === "analysis_unavailable"
             ? "No quality conclusion was made because every scheduled deep review was deferred"
+            : verificationPending
+              ? "High-potential drafts were preserved; independent verification is pending"
             : "Completed reviews produced no recommendation",
-          metadata: { completionState: completion.state, ...completion, rejectionBreakdown },
+          metadata: { completionState: completion.state, verificationPending, ...completion, rejectionBreakdown },
         });
       }
       await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, finalizedReviews, {
@@ -5556,6 +5626,7 @@ export async function POST(request: Request) {
         deepReviewed: finalizedReviews.length,
         deepDeferred: work.deepDeferredIds.length,
         analysisUnavailable: completion.state === "analysis_unavailable" ? 1 : 0,
+        verificationPending,
         evidenceDeepened,
         fulltextVerified,
         recommended,
@@ -5583,6 +5654,8 @@ export async function POST(request: Request) {
            error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         ).bind(completion.state === "analysis_unavailable"
           ? `候选与筛选结果已保存；${work.deepDeferredIds.length} 篇高潜力论文等待模型恢复后续评`
+          : verificationPending
+            ? `本轮发现与解读已完成；${verificationPending} 篇高潜力论文等待独立核验，不会重复撰写`
           : work.deepDeferredIds.length
             ? `本轮已完成；${work.deepDeferredIds.length} 篇响应较慢的论文已延后重试`
             : recommended ? "推荐已可阅读，Pi 正在后台整理今日简报" : "本轮严格评审已完成，暂无强推荐",
@@ -5591,9 +5664,9 @@ export async function POST(request: Request) {
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: job.id,
-        kind: work.deepDeferredIds.length ? "scan_completed_partial" : "scan_completed",
+        kind: work.deepDeferredIds.length || verificationPending ? "scan_completed_partial" : "scan_completed",
         stage: "main_complete",
-        outcome: work.deepDeferredIds.length ? "degraded" : "success",
+        outcome: work.deepDeferredIds.length || verificationPending ? "degraded" : "success",
         durationMs: Math.max(0, completedAt.getTime() - databaseTime(job.started_at)),
         metadata: {
           discovered: job.discovered_count,
@@ -5601,6 +5674,7 @@ export async function POST(request: Request) {
           screened: work.screens.length,
           deepReviewed: finalizedReviews.length,
           deepDeferred: work.deepDeferredIds.length,
+          verificationPending,
           completionState: completion.state,
           recommended,
           evidenceDeepened,
@@ -5658,6 +5732,10 @@ export async function POST(request: Request) {
         work.deepIds = [];
         work.deepCompletedIds = [];
         work.deepDeferredIds = [];
+        work.verificationIds = [];
+        work.verificationCompletedIds = [];
+        work.verificationDeferredIds = [];
+        work.verificationFailureCount = 0;
         work.evidenceIds = [];
         work.evidenceCompletedIds = [];
         work.rescueScreenIds = [];
@@ -5748,6 +5826,17 @@ export async function POST(request: Request) {
             ])).slice(0, DEEP_REVIEW_MAX_LIMIT);
             work.retryDeepIds = [];
           }
+          const queuedExistingReviews = await loadPersistedReviews(database, space.id, work.candidateIds);
+          const queuedPendingIds = queuedExistingReviews
+            .filter((review) => review.verificationRetryable)
+            .map((review) => review.canonicalId);
+          work.deepIds = Array.from(new Set([...queuedPendingIds, ...work.deepIds])).slice(0, DEEP_REVIEW_MAX_LIMIT);
+          const existingReviews = queuedExistingReviews.filter((review) => work.deepIds.includes(review.canonicalId));
+          const pendingVerificationIds = existingReviews
+            .filter((review) => review.verificationRetryable)
+            .map((review) => review.canonicalId);
+          work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...pendingVerificationIds]));
+          work.verificationIds = Array.from(new Set([...work.verificationIds, ...pendingVerificationIds]));
           await saveScanWorkQueue(database, job.id, work);
           if (!work.deepIds.length) return finalizeMain([], []);
           await setStage("enriching_abstracts", "deep_reviewing", 76, `正在为 ${work.deepIds.length} 篇高潜力论文补全摘要证据`);
@@ -5805,13 +5894,14 @@ export async function POST(request: Request) {
             work.deepFailureCount = 0;
             await saveScanWorkQueue(database, job.id, work);
             const saved = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
-            const ready = saved.filter((review) => review.recommended).length;
+            const ready = saved.filter(isPublishedRecommendation).length;
+            const pendingVerification = saved.filter((review) => review.verificationRetryable).length;
             const progress = Math.min(94, 76 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 18));
             await database.prepare(
               `UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', recommended_count = ?,
                first_recommendation_at = CASE WHEN ? > 0 THEN COALESCE(first_recommendation_at, CURRENT_TIMESTAMP) ELSE first_recommendation_at END,
                current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            ).bind(ready, ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${ready} 篇已可阅读`, progress, job.id).run();
+            ).bind(ready, ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${pendingVerification} 篇高潜力解读已保存、等待独立核验`, progress, job.id).run();
             if (ready && !firstRecommendationAt) {
               firstRecommendationAt = new Date().toISOString();
               await recordReliabilityEvent(database, {
@@ -5878,15 +5968,17 @@ export async function POST(request: Request) {
           if (fatalError) throw fatalError;
         }
         const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
-        const recommended = persistedReviews.filter((review) => review.recommended).length;
+        const recommended = persistedReviews.filter(isPublishedRecommendation).length;
+        const verificationPending = persistedReviews.filter((review) => review.verificationRetryable).length;
+        const potentialRecommendations = persistedReviews.filter((review) => review.recommended).length;
         const processedDeepCount = new Set([...work.deepCompletedIds, ...work.deepDeferredIds]).size;
         const deepProgress = Math.min(94, 76 + Math.round(processedDeepCount / Math.max(1, work.deepIds.length) * 18));
         await database.prepare(
           "UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', reviewed_count = ?, recommended_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
-          `已处理 ${processedDeepCount} / ${work.deepIds.length} 篇深度解读，${recommended} 篇已可阅读${work.deepDeferredIds.length ? `，${work.deepDeferredIds.length} 篇响应较慢已延后` : ""}`, deepProgress, job.id).run();
+          `已处理 ${processedDeepCount} / ${work.deepIds.length} 篇深度解读，${verificationPending} 篇高潜力解读待核验${recommended ? `，${recommended} 篇已可阅读` : ""}${work.deepDeferredIds.length ? `，${work.deepDeferredIds.length} 篇响应较慢已延后` : ""}`, deepProgress, job.id).run();
         if (processedDeepCount >= work.deepIds.length) {
-          if (!recommended && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
+          if (!potentialRecommendations && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
             const rescueIds = Array.from(new Set([
               ...chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, DEEP_REVIEW_RESCUE_LIMIT),
@@ -5899,6 +5991,18 @@ export async function POST(request: Request) {
               return Response.json(await readState(database, space, { rescueReview: true }), { status: 202 });
             }
           }
+          work.verificationIds = Array.from(new Set([
+            ...work.verificationIds,
+            ...persistedReviews.filter((review) => review.verificationRetryable).map((review) => review.canonicalId),
+          ]));
+          work.verificationCompletedIds = work.verificationCompletedIds.filter((id) => work.verificationIds.includes(id));
+          work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => work.verificationIds.includes(id));
+          await saveScanWorkQueue(database, job.id, work);
+          if (work.verificationIds.length) {
+            await setStage("verifying_recommendations", "deep_reviewing", 94,
+              `已保存 ${work.verificationIds.length} 篇高潜力解读，正在逐篇独立核验证据`);
+            return Response.json(await readState(database, space, { verifyingRecommendations: true }), { status: 202 });
+          }
           work.evidenceIds = choosePrePublicationEvidenceIds(persistedReviews);
           work.evidenceCompletedIds = [];
           await saveScanWorkQueue(database, job.id, work);
@@ -5908,6 +6012,86 @@ export async function POST(request: Request) {
             return Response.json(await readState(database, space, { evidenceDeepening: true }), { status: 202 });
           }
           await setStage("finalizing", "deep_reviewing", 99, "证据分级完成，正在整理今日推荐");
+        }
+      } else if (job.checkpoint === "verifying_recommendations") {
+        const handled = new Set([...work.verificationCompletedIds, ...work.verificationDeferredIds]);
+        const canonicalId = work.verificationIds.find((id) => !handled.has(id));
+        if (canonicalId) {
+          const candidates = await pendingCandidateQueue(database, space.id, [canonicalId]);
+          const drafts = await loadPersistedReviews(database, space.id, [canonicalId]);
+          const draft = drafts.find((review) => review.verificationRetryable);
+          if (!draft || !candidates.length) {
+            work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
+          } else {
+            const usageDate = new Date().toISOString().slice(0, 10);
+            const workspaceScope = "monitor-workspace:" + user.userId.replace(/^anonymous:/, "");
+            const spaceScope = "monitor-space:" + space.id;
+            try {
+              const verified = await verifyRecommendationBatch({
+                database, spaceId: space.id, usageDate, workspaceScope, spaceScope,
+                apiKey, candidates, reviews: [draft],
+              });
+              const persisted = await persistReviewBatch(database, space.id, job.id, candidates, verified);
+              await persistRecommendationAuditBatch(database, space.id, job.id, candidates, persisted, 0, 0);
+              work.verificationCompletedIds = Array.from(new Set([...work.verificationCompletedIds, canonicalId]));
+              work.verificationFailureCount = 0;
+            } catch (verificationError) {
+              if (isNonRetryableDeepSeekError(verificationError)) throw verificationError;
+              work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
+              work.verificationFailureCount += 1;
+              await recordReliabilityEvent(database, {
+                spaceId: space.id,
+                scanJobId: job.id,
+                kind: "verification_deferred",
+                stage: "verifying_recommendations",
+                source: MONITOR_MODEL,
+                outcome: "degraded",
+                errorCode: monitorErrorCode(verificationError),
+                message: normalizedMonitorError(verificationError),
+                metadata: { canonicalId, draftPreserved: true, retryScope: "verification_only" },
+              });
+              if (work.verificationFailureCount >= 2) {
+                const alreadyHandled = new Set([...work.verificationCompletedIds, ...work.verificationDeferredIds]);
+                const circuitDeferred = work.verificationIds.filter((id) => !alreadyHandled.has(id));
+                work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, ...circuitDeferred]));
+                await recordReliabilityEvent(database, {
+                  spaceId: space.id,
+                  scanJobId: job.id,
+                  kind: "llm_circuit_opened",
+                  stage: "verifying_recommendations",
+                  source: MONITOR_MODEL,
+                  outcome: "degraded",
+                  errorCode: monitorErrorCode(verificationError),
+                  message: "Repeated verifier timeouts; remaining drafts were deferred without more model calls",
+                  metadata: { consecutiveFailures: work.verificationFailureCount, newlyDeferred: circuitDeferred.length },
+                });
+              }
+            }
+          }
+          await saveScanWorkQueue(database, job.id, work);
+        }
+        const verificationProcessed = new Set([...work.verificationCompletedIds, ...work.verificationDeferredIds]).size;
+        const verificationReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
+        const published = verificationReviews.filter(isPublishedRecommendation).length;
+        const pending = verificationReviews.filter((review) => review.verificationRetryable).length;
+        const verificationProgress = Math.min(96, 94 + Math.round(verificationProcessed
+          / Math.max(1, work.verificationIds.length) * 2));
+        await database.prepare(
+          "UPDATE monitor_scan_jobs SET recommended_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(published,
+          `独立核验 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已确认，${pending} 篇高潜力解读等待后续核验`,
+          verificationProgress, job.id).run();
+        if (verificationProcessed >= work.verificationIds.length) {
+          work.evidenceIds = choosePrePublicationEvidenceIds(verificationReviews);
+          work.evidenceCompletedIds = [];
+          await saveScanWorkQueue(database, job.id, work);
+          if (work.evidenceIds.length) {
+            await setStage("evidence_deepening", "deep_reviewing", 96,
+              `独立核验完成，正在为 ${work.evidenceIds.length} 篇入选论文补强原文证据`);
+          } else {
+            await setStage("finalizing", "deep_reviewing", 99,
+              pending ? `${pending} 篇高潜力解读已保存待核验，正在整理本轮结果` : "独立核验完成，正在整理今日推荐");
+          }
         }
       } else if (job.checkpoint === "evidence_deepening") {
         const completed = new Set(work.evidenceCompletedIds);

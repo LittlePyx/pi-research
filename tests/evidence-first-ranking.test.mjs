@@ -29,7 +29,8 @@ test("the monitor deepens evidence before final ranking without blocking on fail
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0036_bouncy_lord_hawal.sql", import.meta.url), "utf8"),
   ]);
-  assert.match(monitor, /continuous-evidence-v5-fulltext-ranked/);
+  assert.match(monitor, /continuous-evidence-v6-resilient-verification/);
+  assert.match(monitor, /verifying_recommendations/);
   assert.match(monitor, /PRE_PUBLICATION_EVIDENCE_LIMIT = 4/);
   assert.match(monitor, /evidence_deepening/);
   assert.match(monitor, /deepenPaperEvidenceRequest/);

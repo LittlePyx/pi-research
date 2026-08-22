@@ -1,5 +1,5 @@
 export type EvidenceVerificationVerdict = "verified" | "revise" | "insufficient";
-export type EvidenceVerificationStatus = "not_required" | "verified" | "revised" | "degraded";
+export type EvidenceVerificationStatus = "not_required" | "pending" | "verified" | "revised" | "degraded";
 
 export const RECOMMENDATION_VERIFICATION_FIELDS = [
   "summary", "whyRead", "problem", "method", "contribution", "limitations", "readingFocus",
