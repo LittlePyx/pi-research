@@ -26,6 +26,13 @@ import {
 import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
 import {
+  deepReviewCompletion,
+  isFatalModelFailure,
+  modelFailureCode,
+  settleFaultTolerantBatch,
+  shouldOpenDeepReviewCircuit,
+} from "../../../lib/monitor-fault-policy.mjs";
+import {
   LATEST_AUDIT_ROUTE_ORIGIN_SUBQUERY,
   PRE_REVIEW_ROUTE_ORIGIN_SUBQUERY,
   RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL,
@@ -1645,13 +1652,7 @@ function normalizedMonitorError(error: unknown) {
 }
 
 function monitorErrorCode(error: unknown) {
-  const normalized = normalizedMonitorError(error);
-  if (normalized === DEEPSEEK_BALANCE_ERROR || normalized === DEEPSEEK_CREDENTIAL_ERROR) return normalized;
-  if (/timeout|aborted/i.test(normalized)) return "timeout";
-  if (/429|rate.?limit|throttl/i.test(normalized)) return "rate_limited";
-  if (/5\d\d|temporarily unavailable/i.test(normalized)) return "upstream_unavailable";
-  if (/json|malformed|did not (?:screen|review)/i.test(normalized)) return "invalid_model_output";
-  return "stage_failed";
+  return modelFailureCode(normalizedMonitorError(error));
 }
 
 async function recordReliabilityEvent(database: D1Database, input: {
@@ -1683,7 +1684,7 @@ async function recordReliabilityEvent(database: D1Database, input: {
 }
 
 function isNonRetryableDeepSeekError(error: unknown) {
-  return [DEEPSEEK_BALANCE_ERROR, DEEPSEEK_CREDENTIAL_ERROR].includes(normalizedMonitorError(error));
+  return isFatalModelFailure(normalizedMonitorError(error));
 }
 
 function normalizePlannedQueries(value: unknown, limit: number) {
@@ -2011,7 +2012,7 @@ function recommendationVerificationFields(review: PaperReview) {
 function correctedRecommendationReview(review: PaperReview, value: unknown): PaperReview | null {
   if (!value || typeof value !== "object") return null;
   const corrected = value as Record<string, unknown>;
-  const text = (key: string, fallback: string, limit: number) => cleanText(corrected[key] ?? fallback).slice(0, limit);
+  const text = (key: string, fallback: string, limit: number) => cleanText(String(corrected[key] ?? fallback)).slice(0, limit);
   const list = (key: string, fallback: string[], limit: number) => Array.isArray(corrected[key])
     ? (corrected[key] as unknown[]).map((item) => cleanText(String(item))).filter(Boolean).slice(0, limit)
     : fallback;
@@ -2126,7 +2127,7 @@ async function verifyRecommendationBatch(input: {
   const initialById = new Map(initialRaw.flatMap((raw) => {
     if (!raw || typeof raw !== "object") return [];
     const item = raw as Record<string, unknown>;
-    const canonicalId = cleanText(item.canonicalId || "");
+    const canonicalId = cleanText(String(item.canonicalId || ""));
     return canonicalId ? [[canonicalId, item] as const] : [];
   }));
   const initialReports = new Map<string, ReturnType<typeof sanitizeEvidenceVerificationDraft>>();
@@ -2151,7 +2152,7 @@ async function verifyRecommendationBatch(input: {
     revisedById = new Map(revisedRaw.flatMap((raw) => {
       if (!raw || typeof raw !== "object") return [];
       const item = raw as Record<string, unknown>;
-      const canonicalId = cleanText(item.canonicalId || "");
+      const canonicalId = cleanText(String(item.canonicalId || ""));
       const review = corrected.get(canonicalId);
       const candidate = candidateById.get(canonicalId);
       return canonicalId && review ? [[canonicalId, sanitizeEvidenceVerificationDraft(item, {
@@ -3039,7 +3040,7 @@ async function generateDailyBrief(
   jobId: string,
   candidates: Candidate[],
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; deepDeferred?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepScheduled?: number; deepReviewed?: number; deepDeferred?: number; analysisUnavailable?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
   now: Date,
   apiKey: string,
   deferLlm = false,
@@ -3056,6 +3057,7 @@ async function generateDailyBrief(
     (review) => candidateById.get(review.canonicalId)?.horizon || "days",
     6,
   );
+  const analysisUnavailable = metrics.analysisUnavailable === 1;
   const selectedCanonicalIds = selected.map((review) => review.canonicalId);
   let paperIds: string[] = [];
   if (selectedCanonicalIds.length) {
@@ -3067,26 +3069,36 @@ async function generateDailyBrief(
   }
   const saveEvidenceBrief = async (enhancementError?: string) => {
     await saveDailyBrief(database, {
-    spaceId: space.id, briefDate, jobId, status: "ready",
-    headlineZh: selected.length ? `今天有 ${selected.length} 篇论文通过严格筛选` : "今天没有论文达到严格推荐门槛",
-    headlineEn: selected.length ? `${selected.length} papers passed today's strict review` : "No paper cleared today's strict recommendation bar",
+    spaceId: space.id, briefDate, jobId, status: analysisUnavailable ? "degraded" : "ready",
+    headlineZh: selected.length
+      ? `今天有 ${selected.length} 篇论文通过严格筛选`
+      : analysisUnavailable ? "候选已保存，AI 解读暂未完成" : "今天没有论文达到严格推荐门槛",
+    headlineEn: selected.length
+      ? `${selected.length} papers passed today's strict review`
+      : analysisUnavailable ? "Candidates saved; AI review is pending" : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
       ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并为 ${metrics.evidenceDeepened || 0} 篇高潜力论文补强原文证据，最终保留 ${selected.length} 篇。${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
-      : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
+      : analysisUnavailable
+        ? `Pi 已保存 ${metrics.scanned} 篇候选和 ${metrics.screened || 0} 篇快速筛选结果；本轮 ${metrics.deepScheduled || metrics.deepDeferred || 0} 篇高潜力论文因模型响应异常尚未完成解读。它们仍在待评审队列中，因此这不是“没有论文达标”的质量结论。`
+        : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
     overviewEn: selected.length
       ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and retained ${selected.length}. ${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
-      : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`,
+      : analysisUnavailable
+        ? `Pi saved ${metrics.scanned} candidates and ${metrics.screened || 0} fast-screen results. Model failures prevented this run from completing AI review of ${metrics.deepScheduled || metrics.deepDeferred || 0} high-potential papers. They remain queued, so this is not a finding that no paper met the quality bar.`
+        : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`,
     signalsZh: selected.slice(0, 6).map((review) => review.contributionZh || review.summaryZh || review.whyReadZh).filter(Boolean),
     signalsEn: selected.slice(0, 6).map((review) => review.contributionEn || review.summaryEn || review.whyReadEn).filter(Boolean),
     readingPlanZh: selected.slice(0, 6).map((review) => review.readingFocusZh || review.whyReadZh || review.summaryZh).filter(Boolean),
     readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn).filter(Boolean),
     watchlistZh: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} 篇响应较慢的论文会在后续扫描中重试，不会重复处理已完成论文。`] : []),
-      ...(!selected.length ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
+      ...(!selected.length && !analysisUnavailable ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
+      ...(analysisUnavailable ? ["模型恢复后将从保存点继续评审；已完成的检索与筛选不会重新消耗额度。"] : []),
     ],
     watchlistEn: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} slow papers will be retried in a later scan without repeating completed reviews.`] : []),
-      ...(!selected.length ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
+      ...(!selected.length && !analysisUnavailable ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
+      ...(analysisUnavailable ? ["When the model recovers, review resumes from the saved checkpoint without repeating completed discovery or screening."] : []),
     ],
     paperIds, metrics, model: "evidence-summary", error: enhancementError || null,
   });
@@ -3848,7 +3860,7 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration] = await Promise.all([
+  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -4131,12 +4143,12 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        FROM paper_costs`,
     ).bind(space.id).first<{ accepted_papers_14: number; review_tokens_14: number; accepted_papers_7: number; review_tokens_7: number }>(),
     database.prepare(
-      `SELECT status, started_at, completed_at, first_recommendation_at, recommended_count, resume_of_job_id, error
+      `SELECT status, started_at, completed_at, first_recommendation_at, recommended_count, resume_of_job_id, error, work_queue_json
        FROM monitor_scan_jobs WHERE space_id = ? AND started_at >= datetime('now', '-13 days')
        ORDER BY started_at DESC`,
     ).bind(space.id).all<{
       status: string; started_at: string; completed_at: string | null; first_recommendation_at: string | null;
-      recommended_count: number; resume_of_job_id: string | null; error: string | null;
+      recommended_count: number; resume_of_job_id: string | null; error: string | null; work_queue_json: string;
     }>(),
     database.prepare(
       `SELECT source, COUNT(*) AS failures, MAX(message) AS last_error, MAX(created_at) AS last_seen_at
@@ -4161,6 +4173,11 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         SUM(CASE WHEN reason_code = 'wrong_type' AND feedback = 'not_relevant' THEN 1 ELSE 0 END) AS wrong_type
        FROM outcomes`,
     ).bind(space.id).first<{ labels: number; accepted: number; dismissed: number; known: number; wrong_type: number }>(),
+    database.prepare(
+      `SELECT stage, outcome, duration_ms FROM monitor_reliability_events
+       WHERE space_id = ? AND created_at >= datetime('now', '-13 days') AND duration_ms > 0
+       ORDER BY created_at DESC LIMIT 300`,
+    ).bind(space.id).all<{ stage: string; outcome: string; duration_ms: number }>(),
   ]);
   const automationCounters = await readAutomationCounters(database, space.id);
   const now = Date.now();
@@ -4188,6 +4205,15 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const accepted = feedbackMetrics?.accepted || 0;
   const reliabilityProgram = buildReliabilityProgram({
     jobs: reliabilityJobs.results.map((row) => ({
+      completionState: (() => {
+        const work = parseScanWorkQueue(row.work_queue_json);
+        return deepReviewCompletion({
+          scheduled: work.deepIds.length,
+          completed: work.deepCompletedIds.length,
+          deferred: work.deepDeferredIds.length,
+          recommended: row.recommended_count,
+        }).state;
+      })(),
       status: row.status,
       startedAt: row.started_at,
       completedAt: row.completed_at,
@@ -4209,6 +4235,11 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       known: reliabilityCalibration?.known || 0,
       wrongType: reliabilityCalibration?.wrong_type || 0,
     },
+    stageEvents: reliabilityStages.results.map((row) => ({
+      stage: row.stage,
+      outcome: row.outcome,
+      durationMs: row.duration_ms,
+    })),
   });
   const suggestedAuthors = Array.from(new Set(acceptedAuthorRows.results.flatMap((row) => row.authors.split(",").map((author) => cleanText(author)).filter((author) => author.length >= 4))))
     .filter((author) => !preference.trackedAuthors.some((tracked) => tracked.toLocaleLowerCase() === author.toLocaleLowerCase())).slice(0, 8);
@@ -5058,22 +5089,19 @@ async function runIncrementalDeepReview(
   const queue = candidates.slice(0, DEEP_REVIEW_CONCURRENCY);
   if (!queue.length) return { reviews: [] as PaperReview[], errors: [] as unknown[], failedIds: [] as string[] };
   let saveQueue = Promise.resolve();
-  const settled = await Promise.all(queue.map(async (candidate) => {
-    try {
-      const reviews = await reviewCandidates(database, space, userId, priorityVenues, [candidate], jobId, lockToken, apiKey);
-      if (reviews.length) {
-        saveQueue = saveQueue.then(() => onReviewsSaved(reviews));
-        await saveQueue;
-      }
-      return { canonicalId: candidate.canonicalId, reviews, error: null as unknown };
-    } catch (error) {
-      return { canonicalId: candidate.canonicalId, reviews: [] as PaperReview[], error };
-    }
-  }));
+  const settled = await settleFaultTolerantBatch(
+    queue,
+    (candidate) => reviewCandidates(database, space, userId, priorityVenues, [candidate], jobId, lockToken, apiKey),
+    async (_candidate, reviews) => {
+      if (!reviews.length) return;
+      saveQueue = saveQueue.then(() => onReviewsSaved(reviews));
+      await saveQueue;
+    },
+  );
   return {
-    reviews: settled.flatMap((result) => result.reviews),
-    errors: settled.flatMap((result) => result.error ? [result.error] : []),
-    failedIds: settled.flatMap((result) => result.error ? [result.canonicalId] : []),
+    reviews: settled.successes.flatMap((result) => Array.isArray(result.value) ? result.value : []),
+    errors: settled.failures.map((result) => result.error),
+    failedIds: settled.failures.map((result) => result.item.canonicalId),
   };
 }
 
@@ -5389,17 +5417,27 @@ export async function POST(request: Request) {
       const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
       const reviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
       const completedAt = job.completed_at ? new Date(job.completed_at) : new Date();
+      const recommendedCount = reviews.filter((review) => review.recommended).length;
+      const completion = deepReviewCompletion({
+        scheduled: work.deepIds.length,
+        completed: reviews.length,
+        deferred: work.deepDeferredIds.length,
+        recommended: recommendedCount,
+      });
       await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, reviews, {
         scanned: job.discovered_count,
         newCandidates: job.new_candidate_count,
         duplicates: job.duplicate_count,
         reviewed: reviews.length,
         screened: work.screens.length,
+        deepScheduled: work.deepIds.length,
         deepReviewed: reviews.length,
+        deepDeferred: work.deepDeferredIds.length,
+        analysisUnavailable: completion.state === "analysis_unavailable" ? 1 : 0,
         evidenceDeepened: reviews.filter((review) => review.recommended && ["ready", "partial"].includes(review.evidenceStatus)).length,
         fulltextVerified: reviews.filter((review) => review.recommended && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length,
-        recommended: reviews.filter((review) => review.recommended).length,
-        rejected: Math.max(0, work.screens.length - reviews.filter((review) => review.recommended).length),
+        recommended: recommendedCount,
+        rejected: Math.max(0, work.screens.length - recommendedCount),
       }, completedAt, apiKey);
       try {
         await maybeGenerateWeeklyReview(database, enrichedSpace, user.userId, completedAt, apiKey);
@@ -5456,6 +5494,12 @@ export async function POST(request: Request) {
       // change: a user may have withdrawn a paper while that LLM call was in flight.
       const finalizedReviews = await persistReviewBatch(database, space.id, job.id, candidates, reconciledReviews);
       const recommended = finalizedReviews.filter((review) => review.recommended).length;
+      const completion = deepReviewCompletion({
+        scheduled: work.deepIds.length,
+        completed: finalizedReviews.length,
+        deferred: work.deepDeferredIds.length,
+        recommended,
+      });
       const evidenceDeepened = finalizedReviews.filter((review) => review.recommended
         && ["ready", "partial"].includes(review.evidenceStatus)).length;
       const fulltextVerified = finalizedReviews.filter((review) => review.recommended
@@ -5478,14 +5522,40 @@ export async function POST(request: Request) {
           metadata: { recommended },
         });
       }
+      if (!recommended) {
+        const rejectionBreakdown = finalizedReviews.reduce<Record<string, number>>((counts, review) => {
+          const reason = !review.isPaper ? "not_research_paper"
+            : review.relevanceScore < RECOMMENDATION_THRESHOLD ? "below_relevance_gate"
+              : review.qualityScore < 65 ? "below_quality_gate"
+                : review.verificationStatus === "degraded" ? "evidence_verification_failed"
+                  : "model_did_not_recommend_or_evidence_incomplete";
+          counts[reason] = (counts[reason] || 0) + 1;
+          return counts;
+        }, {});
+        await recordReliabilityEvent(database, {
+          spaceId: space.id,
+          scanJobId: job.id,
+          kind: "zero_recommendation_audit",
+          stage: "finalizing",
+          source: MONITOR_MODEL,
+          outcome: completion.state === "analysis_unavailable" ? "degraded" : "info",
+          errorCode: completion.state === "analysis_unavailable" ? "analysis_unavailable" : "",
+          message: completion.state === "analysis_unavailable"
+            ? "No quality conclusion was made because every scheduled deep review was deferred"
+            : "Completed reviews produced no recommendation",
+          metadata: { completionState: completion.state, ...completion, rejectionBreakdown },
+        });
+      }
       await generateDailyBrief(database, enrichedSpace, user.userId, job.id, candidates, finalizedReviews, {
         scanned: job.discovered_count,
         newCandidates: work.newCandidateCount,
         duplicates: duplicateCount,
         reviewed: finalizedReviews.length,
         screened: work.screens.length,
+        deepScheduled: work.deepIds.length,
         deepReviewed: finalizedReviews.length,
         deepDeferred: work.deepDeferredIds.length,
+        analysisUnavailable: completion.state === "analysis_unavailable" ? 1 : 0,
         evidenceDeepened,
         fulltextVerified,
         recommended,
@@ -5511,9 +5581,11 @@ export async function POST(request: Request) {
            current_source = ?, progress = 100, new_candidate_count = ?,
            duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?,
            error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        ).bind(work.deepDeferredIds.length
-          ? `本轮已完成；${work.deepDeferredIds.length} 篇响应较慢的论文已延后重试`
-          : "推荐已可阅读，Pi 正在后台整理今日简报",
+        ).bind(completion.state === "analysis_unavailable"
+          ? `候选与筛选结果已保存；${work.deepDeferredIds.length} 篇高潜力论文等待模型恢复后续评`
+          : work.deepDeferredIds.length
+            ? `本轮已完成；${work.deepDeferredIds.length} 篇响应较慢的论文已延后重试`
+            : recommended ? "推荐已可阅读，Pi 正在后台整理今日简报" : "本轮严格评审已完成，暂无强推荐",
         work.newCandidateCount, duplicateCount, work.screens.length, recommended, rejected, completedAt.toISOString(), job.id),
       ]);
       await recordReliabilityEvent(database, {
@@ -5529,6 +5601,7 @@ export async function POST(request: Request) {
           screened: work.screens.length,
           deepReviewed: finalizedReviews.length,
           deepDeferred: work.deepDeferredIds.length,
+          completionState: completion.state,
           recommended,
           evidenceDeepened,
           fulltextVerified,
@@ -5777,6 +5850,31 @@ export async function POST(request: Request) {
               failureCount: work.deepFailureCount,
             },
           });
+          if (!fatalError && shouldOpenDeepReviewCircuit({
+            consecutiveFailures: work.deepFailureCount,
+            completedInBatch: result.reviews.length,
+            failedInBatch: result.failedIds.length,
+          })) {
+            const handledIds = new Set([...work.deepCompletedIds, ...work.deepDeferredIds]);
+            const circuitDeferredIds = work.deepIds.filter((id) => !handledIds.has(id));
+            work.deepDeferredIds = Array.from(new Set([...work.deepDeferredIds, ...circuitDeferredIds])).slice(0, DEEP_REVIEW_MAX_LIMIT);
+            await saveScanWorkQueue(database, job.id, work);
+            await recordReliabilityEvent(database, {
+              spaceId: space.id,
+              scanJobId: job.id,
+              kind: "llm_circuit_opened",
+              stage: "deep_reviewing",
+              source: MONITOR_MODEL,
+              outcome: "degraded",
+              errorCode: monitorErrorCode(result.errors[0]),
+              message: "Repeated transient review failures; remaining papers were deferred without additional model calls",
+              metadata: {
+                consecutiveFailures: work.deepFailureCount,
+                newlyDeferred: circuitDeferredIds.length,
+                totalDeferred: work.deepDeferredIds.length,
+              },
+            });
+          }
           if (fatalError) throw fatalError;
         }
         const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);

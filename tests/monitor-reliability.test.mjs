@@ -36,6 +36,34 @@ test("14-day reliability program detects scan, source, zero-yield, and evidence 
   ]);
 });
 
+test("unavailable analysis is not mislabeled as a zero-recommendation quality outcome", () => {
+  const program = buildReliabilityProgram({
+    now: Date.parse("2026-08-22T10:00:00.000Z"),
+    jobs: [
+      { status: "ready", startedAt: "2026-08-22T09:55:00.000Z", completedAt: "2026-08-22T10:00:00.000Z", firstRecommendationAt: null, recommendedCount: 0, completionState: "analysis_unavailable" },
+      { status: "ready", startedAt: "2026-08-21T09:55:00.000Z", completedAt: "2026-08-21T09:59:00.000Z", firstRecommendationAt: null, recommendedCount: 0, completionState: "no_match" },
+      { status: "ready", startedAt: "2026-08-20T09:55:00.000Z", completedAt: "2026-08-20T09:58:00.000Z", firstRecommendationAt: "2026-08-20T09:57:00.000Z", recommendedCount: 1, completionState: "recommended" },
+    ],
+    sourceFailures: [],
+    calibration: { labels: 12, accepted: 7, dismissed: 3, known: 2, wrongType: 0 },
+    stageEvents: [
+      { stage: "deep_reviewing", outcome: "success", durationMs: 21_000 },
+      { stage: "deep_reviewing", outcome: "degraded", durationMs: 38_000 },
+      { stage: "screening", outcome: "success", durationMs: 8_000 },
+    ],
+  });
+
+  assert.equal(program.actual.zeroRecommendationRuns, 1);
+  assert.equal(program.actual.consecutiveZeroRecommendationRuns, 1);
+  assert.equal(program.actual.analysisUnavailableRuns, 1);
+  assert.equal(program.actual.analysisAvailabilityRate, 67);
+  assert.deepEqual(program.stages[0], {
+    stage: "deep_reviewing", attempts: 2, failures: 1, p50DurationMs: 21_000, p95DurationMs: 38_000,
+  });
+  assert.equal(program.alerts.some((alert) => alert.code === "zero_recommendation_streak"), false);
+  assert.equal(program.alerts.some((alert) => alert.code === "analysis_unavailable"), true);
+});
+
 test("monitor persists internal reliability telemetry without exposing a user quality console", async () => {
   const [route, schema, repository, client] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
