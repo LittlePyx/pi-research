@@ -46,7 +46,8 @@ test("monitor persists internal reliability telemetry without exposing a user qu
 
   assert.match(schema, /monitor_reliability_events/);
   assert.match(repository, /CREATE TABLE IF NOT EXISTS monitor_reliability_events/);
-  assert.match(route, /kind: "scan_completed"/);
+  assert.match(route, /scan_completed_partial/);
+  assert.match(route, /: "scan_completed"/);
   assert.match(route, /kind: "scan_failed"/);
   assert.match(route, /kind: "first_recommendation_ready"/);
   assert.match(route, /internalReliability/);
@@ -56,9 +57,23 @@ test("monitor persists internal reliability telemetry without exposing a user qu
 
 test("DeepSeek stages stay below the production request cancellation boundary", async () => {
   const route = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
-  assert.match(route, /DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 28_000/);
-  assert.match(route, /DEEP_REVIEW_RETRY_TIMEOUT_MS = 12_000/);
+  assert.match(route, /DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000/);
+  assert.match(route, /DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000/);
   assert.match(route, /QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000/);
   assert.match(route, /QUICK_SCREEN_RETRY_TIMEOUT_MS = 12_000/);
   assert.doesNotMatch(route, /signal: AbortSignal\.timeout\(attempt === 0 \? 55_000 : 45_000\)/);
+});
+
+test("one slow deep review is deferred instead of failing the whole scan", async () => {
+  const [route, client] = await Promise.all([
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(route, /deepDeferredIds: string\[\]/);
+  assert.match(route, /work\.deepDeferredIds = Array\.from\(new Set/);
+  assert.match(route, /scan_completed_partial/);
+  assert.doesNotMatch(route, /if \(work\.deepFailureCount >= 2\) throw/);
+  assert.match(client, /step < 64/);
+  assert.match(client, /篇已延后，不阻塞本轮/);
 });

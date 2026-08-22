@@ -450,6 +450,8 @@ type ScanWorkQueue = {
   screens: QuickScreen[];
   deepIds: string[];
   deepCompletedIds: string[];
+  deepDeferredIds: string[];
+  retryDeepIds: string[];
   evidenceIds: string[];
   evidenceCompletedIds: string[];
   rescueScreenIds: string[];
@@ -498,6 +500,7 @@ const DEEP_REVIEW_CONCURRENCY = 2;
 const DEEP_REVIEW_LIMIT = 8;
 const DEEP_REVIEW_RESCUE_LIMIT = 4;
 const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
+const DEEP_REVIEW_CARRYOVER_LIMIT = 2;
 const PRE_PUBLICATION_EVIDENCE_LIMIT = 4;
 const RESCUE_SCREEN_LIMIT = 8;
 const CONTINUITY_DEEP_REVIEW_LIMIT = 4;
@@ -517,8 +520,8 @@ const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
 const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
 const QUICK_SCREEN_RETRY_TIMEOUT_MS = 12_000;
-const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 28_000;
-const DEEP_REVIEW_RETRY_TIMEOUT_MS = 12_000;
+const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000;
+const DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000;
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
 const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48;
@@ -2531,7 +2534,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     throw new Error("DeepSeek Pro review budget reached; unreviewed papers were not published");
   }
   const mapTracks = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_en, search_queries, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 10",
+    "SELECT id, title_zh, title_en, summary_en, search_queries, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 6",
   ).bind(space.id).all<MapTrackContext>();
   const activeProblems = await database.prepare(
     `SELECT problem.id, problem.track_id, problem.question, problem.objective, problem.scope,
@@ -2545,12 +2548,31 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       ,COALESCE((SELECT run.decision_en FROM research_action_runs run
         WHERE run.problem_id = problem.id AND run.status = 'ready' AND run.verification_status IN ('verified', 'revised') ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS latest_action_decision_en
      FROM research_problems problem WHERE problem.space_id = ? AND problem.status = 'active'
-     ORDER BY problem.updated_at DESC LIMIT 10`,
+     ORDER BY problem.updated_at DESC LIMIT 6`,
   ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; latest_action_result_en: string; latest_action_decision_en: string }>();
   const validTrackIds = new Set(mapTracks.results.map((track) => track.id));
   const validProblemIds = new Set(activeProblems.results.map((problem) => problem.id));
   const problemByTrackId = new Map(activeProblems.results.map((problem) => [problem.track_id, problem]));
   const routeTitles = new Map(mapTracks.results.map((track) => [track.id, { titleZh: track.title_zh, titleEn: track.title_en }]));
+  const boundedMemoryContext = cleanText(space.memoryContext || "No confirmed imported profile yet").slice(0, 1800);
+  const boundedPositiveExamples = cleanText(space.positiveExamples || "No positive paper feedback yet").slice(0, 1000);
+  const boundedNegativeExamples = cleanText(space.negativeExamples || "No negative paper feedback yet").slice(0, 800);
+  const compactMapTracks = mapTracks.results.map((track) => ({
+    id: track.id,
+    titleZh: track.title_zh,
+    titleEn: track.title_en,
+    summaryEn: cleanText(track.summary_en).slice(0, 280),
+    searchQueries: parseVenues(track.search_queries).slice(0, 3),
+    intelligence: directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at),
+  }));
+  const compactProblems = activeProblems.results.map((problem) => ({
+    id: problem.id,
+    track_id: problem.track_id,
+    question: cleanText(problem.question).slice(0, 260),
+    objective: cleanText(problem.objective).slice(0, 220),
+    uncertainty_en: cleanText(problem.uncertainty_en).slice(0, 260),
+    next_decision_en: cleanText(problem.next_decision_en).slice(0, 220),
+  }));
   const completed: PaperReview[] = [];
 
   for (let start = 0; start < candidates.length; start += REVIEW_BATCH_SIZE) {
@@ -2558,6 +2580,20 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     const batchReviews: PaperReview[] = [];
     let batchInputTokens = 0;
     let batchOutputTokens = 0;
+    const batchRecords = batch.map((paper) => ({
+      canonicalId: paper.canonicalId,
+      title: paper.title,
+      authors: paper.authors,
+      venue: paper.venue,
+      publishedAt: paper.publishedAt,
+      horizon: paper.horizon,
+      citations: paper.citationCount,
+      priorityVenue: paper.priorityVenue,
+      discoverySource: paper.source,
+      discoveryChannel: paper.discoveryChannel,
+      routeOrigins: routeReviewOrigins(paper, routeTitles),
+      abstract: paper.abstractText.slice(0, 1400),
+    }));
     const prompt = [
       "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
       "Each review must contain: canonicalId, isPaper, recommended, relevanceScore, qualityScore, recommendationTier, readMinutes, readDepth, summaryZh, summaryEn, whyReadZh, whyReadEn, problemZh/En, methodZh/En, contributionZh/En, limitationsZh/En, readingFocusZh/En, researchQuestionsZh/En, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn, researchProblemId, problemFitScore, uncertaintyReductionScore, actionabilityScore, researchProblemImpactZh/En, researchDecisionZh/En.",
@@ -2582,37 +2618,27 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "When research-map directions are supplied, assign every recommended paper to the single best-fitting trackId whenever a credible direct or supporting relationship exists. Use an empty trackId only when every available direction would create a misleading relationship.",
       "For a track assignment, use mapRole=foundation for a field-defining prerequisite, milestone for a durable development, or frontier for current active work, and write a concrete bilingual map rationale explaining how it extends that direction. For no assignment, keep both map rationales empty.",
       `Research space: ${space.name} — ${space.description}`,
-      `User-confirmed imported research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
-      `Papers the user explicitly valued or saved: ${space.positiveExamples || "No positive paper feedback yet"}`,
-      `Papers the user explicitly marked not relevant: ${space.negativeExamples || "No negative paper feedback yet"}`,
+      `User-confirmed imported research memory: ${boundedMemoryContext}`,
+      `Papers the user explicitly valued or saved: ${boundedPositiveExamples}`,
+      `Papers the user explicitly marked not relevant: ${boundedNegativeExamples}`,
       "Treat positive examples as preference evidence, not as permission to recommend loosely related papers. Use negative examples to recognize and reject recurring topic drift.",
       "Route-origin metadata explains why Pi surfaced a candidate. Verify that relationship against the supplied title and abstract; it is context only and never permission to recommend or to lower the quality threshold.",
       `Priority venues: ${priorityVenues.join("; ")}`,
-      `Existing research-map directions: ${JSON.stringify(mapTracks.results.map((track) => ({
-        id: track.id,
-        titleZh: track.title_zh,
-        titleEn: track.title_en,
-        summaryEn: track.summary_en,
-        searchQueries: parseVenues(track.search_queries),
-        intelligence: directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at),
-      })))}`,
-      `User-confirmed active research problems and their current unresolved decisions: ${JSON.stringify(activeProblems.results)}`,
+      `Existing research-map directions: ${JSON.stringify(compactMapTracks)}`,
+      `User-confirmed active research problems and their current unresolved decisions: ${JSON.stringify(compactProblems)}`,
       "Use each direction's evidence gap and watch signal when judging whether a paper actually changes that route. A keyword match that does not close a gap, strengthen evidence, or reveal a credible new branch should not be mapped as new route evidence.",
       "JSON records to review:",
-      JSON.stringify(batch.map((paper) => ({
-        canonicalId: paper.canonicalId,
-        title: paper.title,
-        authors: paper.authors,
-        venue: paper.venue,
-        publishedAt: paper.publishedAt,
-        horizon: paper.horizon,
-        citations: paper.citationCount,
-        priorityVenue: paper.priorityVenue,
-        discoverySource: paper.source,
-        discoveryChannel: paper.discoveryChannel,
-        routeOrigins: routeReviewOrigins(paper, routeTitles),
-        abstract: paper.abstractText.slice(0, 1400),
-      }))),
+      JSON.stringify(batchRecords),
+    ].join("\n");
+    const compactRetryPrompt = [
+      "Return one JSON object only as {\"reviews\":[...]}; review every record and copy canonicalId exactly.",
+      "This is a latency-safe fallback. Judge the supplied evidence directly without hidden chain-of-thought.",
+      `Set recommended=true only for a concrete research fit with relevanceScore >= ${RECOMMENDATION_THRESHOLD} and credible quality. Scores are integers from 0 to 100.`,
+      "Each item must include canonicalId, isPaper, recommended, relevanceScore, qualityScore, recommendationTier, readMinutes, readDepth, summaryZh, summaryEn, whyReadZh, whyReadEn, problemZh, problemEn, methodZh, methodEn, contributionZh, contributionEn, limitationsZh, limitationsEn, readingFocusZh, readingFocusEn, researchQuestionsZh, researchQuestionsEn, screeningReason, trackId, mapRole, mapRationaleZh, mapRationaleEn.",
+      "For a recommended paper, keep each bilingual narrative concrete but concise and grounded only in the title, abstract, authors, venue, date, and citations supplied. For a rejected paper, leave narrative fields empty and explain the rejection briefly.",
+      `Research space: ${space.name} — ${cleanText(space.description).slice(0, 600)}`,
+      `Research-map directions: ${JSON.stringify(compactMapTracks.map((track) => ({ id: track.id, titleZh: track.titleZh, titleEn: track.titleEn, summaryEn: track.summaryEn })))}`,
+      `Records: ${JSON.stringify(batchRecords)}`,
     ].join("\n");
 
     let parsed: { reviews?: Array<Partial<PaperReview>> } | null = null;
@@ -2626,12 +2652,12 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
             model: MONITOR_MODEL,
             messages: [
               { role: "system", content: "You are Pi Research's evidence-disciplined paper screening and briefing editor. Produce strict JSON." },
-              { role: "user", content: prompt },
+              { role: "user", content: attempt === 0 ? prompt : compactRetryPrompt },
             ],
-            thinking: { type: attempt === 0 ? "enabled" : "disabled" },
-            reasoning_effort: attempt === 0 ? "medium" : "low",
+            thinking: { type: "disabled" },
+            reasoning_effort: "low",
             response_format: { type: "json_object" },
-            max_tokens: Math.min(attempt === 0 ? 4800 : 3200, 700 + batch.length * (attempt === 0 ? 1800 : 1500)),
+            max_tokens: Math.min(attempt === 0 ? 2600 : 1800, 650 + batch.length * (attempt === 0 ? 1750 : 1150)),
             stream: false,
           }),
           signal: AbortSignal.timeout(attempt === 0 ? DEEP_REVIEW_PRIMARY_TIMEOUT_MS : DEEP_REVIEW_RETRY_TIMEOUT_MS),
@@ -3013,7 +3039,7 @@ async function generateDailyBrief(
   jobId: string,
   candidates: Candidate[],
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; deepDeferred?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
   now: Date,
   apiKey: string,
   deferLlm = false,
@@ -3045,17 +3071,23 @@ async function generateDailyBrief(
     headlineZh: selected.length ? `今天有 ${selected.length} 篇论文通过严格筛选` : "今天没有论文达到严格推荐门槛",
     headlineEn: selected.length ? `${selected.length} papers passed today's strict review` : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
-      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并为 ${metrics.evidenceDeepened || 0} 篇高潜力论文补强原文证据，最终保留 ${selected.length} 篇。其余结果仍在探索账本中。`
-      : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。`,
+      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并为 ${metrics.evidenceDeepened || 0} 篇高潜力论文补强原文证据，最终保留 ${selected.length} 篇。${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
+      : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
     overviewEn: selected.length
-      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and retained ${selected.length}. Other discoveries remain in the exploration ledger.`
-      : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.`,
+      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and retained ${selected.length}. ${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
+      : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`,
     signalsZh: selected.slice(0, 6).map((review) => review.contributionZh || review.summaryZh || review.whyReadZh).filter(Boolean),
     signalsEn: selected.slice(0, 6).map((review) => review.contributionEn || review.summaryEn || review.whyReadEn).filter(Boolean),
     readingPlanZh: selected.slice(0, 6).map((review) => review.readingFocusZh || review.whyReadZh || review.summaryZh).filter(Boolean),
     readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn).filter(Boolean),
-    watchlistZh: selected.length ? [] : ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"],
-    watchlistEn: selected.length ? [] : ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."],
+    watchlistZh: [
+      ...(metrics.deepDeferred ? [`${metrics.deepDeferred} 篇响应较慢的论文会在后续扫描中重试，不会重复处理已完成论文。`] : []),
+      ...(!selected.length ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
+    ],
+    watchlistEn: [
+      ...(metrics.deepDeferred ? [`${metrics.deepDeferred} slow papers will be retried in a later scan without repeating completed reviews.`] : []),
+      ...(!selected.length ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
+    ],
     paperIds, metrics, model: "evidence-summary", error: enhancementError || null,
   });
     if (enhancementError) await recordReliabilityEvent(database, {
@@ -3202,7 +3234,7 @@ async function createScanNotifications(
   spaceId: string,
   briefDate: string,
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepReviewed?: number; deepDeferred?: number; recommended: number; rejected: number },
   resumed: boolean,
 ) {
   const brief = await database.prepare(
@@ -4431,6 +4463,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         candidateCount: scanWork?.candidateIds.length || 0,
         deepCandidateCount: scanWork?.deepIds.length || 0,
         deepCompletedCount: scanWork?.deepCompletedIds.length || 0,
+        deepDeferredCount: scanWork?.deepDeferredIds.length || 0,
         evidenceTargetCount: scanWork?.evidenceIds.length || 0,
         evidenceCompletedCount: scanWork?.evidenceCompletedIds.length || 0,
         horizonStats: scanHorizonStats,
@@ -4672,6 +4705,7 @@ function parseFrozenQueryPlan(value: unknown): QueryPlan | undefined {
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
+    deepDeferredIds: [], retryDeepIds: [],
     evidenceIds: [], evidenceCompletedIds: [],
     rescueScreenIds: [], rescueScreened: false, screenFailureCount: 0, deepFailureCount: 0,
     pipelineVersion: "", horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
@@ -4699,6 +4733,8 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       })) : [],
       deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      deepDeferredIds: Array.isArray(parsed.deepDeferredIds) ? parsed.deepDeferredIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      retryDeepIds: Array.isArray(parsed.retryDeepIds) ? parsed.retryDeepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_CARRYOVER_LIMIT) : [],
       evidenceIds: Array.isArray(parsed.evidenceIds) ? parsed.evidenceIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
       evidenceCompletedIds: Array.isArray(parsed.evidenceCompletedIds) ? parsed.evidenceCompletedIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
       rescueScreenIds: Array.isArray(parsed.rescueScreenIds) ? parsed.rescueScreenIds.filter((id): id is string => typeof id === "string").slice(0, RESCUE_SCREEN_LIMIT) : [],
@@ -4720,6 +4756,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
 function newScanWorkQueue(): ScanWorkQueue {
   return {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
+    deepDeferredIds: [], retryDeepIds: [],
     evidenceIds: [], evidenceCompletedIds: [],
     rawCandidateCount: 0, newCandidateCount: 0, screenFailureCount: 0, deepFailureCount: 0,
     pipelineVersion: MONITOR_PIPELINE_VERSION, horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
@@ -4737,7 +4774,7 @@ function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_s
   if (work.evidenceIds.length && work.evidenceCompletedIds.length < work.evidenceIds.length) return "evidence_deepening";
   if (work.evidenceIds.length && work.evidenceCompletedIds.length >= work.evidenceIds.length) return "finalizing";
   if (work.deepIds.length) {
-    return work.deepCompletedIds.length ? "deep_reviewing" : "enriching_abstracts";
+    return work.deepCompletedIds.length || work.deepDeferredIds.length ? "deep_reviewing" : "enriching_abstracts";
   }
   if (work.rescueScreenIds.length && !work.rescueScreened) return "rescue_screening";
   if (work.screens.length || /筛选|screen/i.test(job.current_source)) return "screening";
@@ -4780,6 +4817,8 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     ...work.screens.map((screen) => screen.canonicalId),
     ...work.deepIds,
     ...work.deepCompletedIds,
+    ...work.deepDeferredIds,
+    ...work.retryDeepIds,
     ...work.evidenceIds,
     ...work.evidenceCompletedIds,
     ...work.rescueScreenIds,
@@ -4799,12 +4838,16 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
     deepCompletedIds: work.deepCompletedIds,
+    deepDeferredIds: work.deepDeferredIds,
+    retryDeepIds: work.retryDeepIds,
     evidenceIds: work.evidenceIds,
     evidenceCompletedIds: work.evidenceCompletedIds,
     rescueScreenIds: work.rescueScreenIds,
   });
   const retained = retainReviewableScanWork(work, reviewableIds);
   Object.assign(work, retained);
+  work.deepDeferredIds = work.deepDeferredIds.filter((id) => reviewableIds.has(id));
+  work.retryDeepIds = work.retryDeepIds.filter((id) => reviewableIds.has(id));
   work.evidenceIds = work.evidenceIds.filter((id) => reviewableIds.has(id));
   work.evidenceCompletedIds = work.evidenceCompletedIds.filter((id) => reviewableIds.has(id));
   return before !== JSON.stringify({
@@ -4812,6 +4855,8 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
     deepCompletedIds: work.deepCompletedIds,
+    deepDeferredIds: work.deepDeferredIds,
+    retryDeepIds: work.retryDeepIds,
     evidenceIds: work.evidenceIds,
     evidenceCompletedIds: work.evidenceCompletedIds,
     rescueScreenIds: work.rescueScreenIds,
@@ -5011,7 +5056,7 @@ async function runIncrementalDeepReview(
   onReviewsSaved: (reviews: PaperReview[]) => Promise<void>,
 ) {
   const queue = candidates.slice(0, DEEP_REVIEW_CONCURRENCY);
-  if (!queue.length) return { reviews: [] as PaperReview[], errors: [] as unknown[] };
+  if (!queue.length) return { reviews: [] as PaperReview[], errors: [] as unknown[], failedIds: [] as string[] };
   let saveQueue = Promise.resolve();
   const settled = await Promise.all(queue.map(async (candidate) => {
     try {
@@ -5020,14 +5065,15 @@ async function runIncrementalDeepReview(
         saveQueue = saveQueue.then(() => onReviewsSaved(reviews));
         await saveQueue;
       }
-      return { reviews, error: null as unknown };
+      return { canonicalId: candidate.canonicalId, reviews, error: null as unknown };
     } catch (error) {
-      return { reviews: [] as PaperReview[], error };
+      return { canonicalId: candidate.canonicalId, reviews: [] as PaperReview[], error };
     }
   }));
   return {
     reviews: settled.flatMap((result) => result.reviews),
     errors: settled.flatMap((result) => result.error ? [result.error] : []),
+    failedIds: settled.flatMap((result) => result.error ? [result.canonicalId] : []),
   };
 }
 
@@ -5271,6 +5317,9 @@ export async function POST(request: Request) {
       }
       const initialCheckpoint = resumable ? resumeCheckpoint : "planning";
       const initialWork = resumable ? previousWork : newScanWorkQueue();
+      if (!resumable && previousJob?.status === "ready" && previousWork.deepDeferredIds.length) {
+        initialWork.retryDeepIds = previousWork.deepDeferredIds.slice(0, DEEP_REVIEW_CARRYOVER_LIMIT);
+      }
       const initialStatus = statusForCheckpoint(initialCheckpoint);
       const initialProgress = resumable ? Math.max(previousJob?.progress || 3, monitorProgressByCheckpoint(initialCheckpoint)) : 3;
       const initialSource = resumable
@@ -5279,7 +5328,7 @@ export async function POST(request: Request) {
           : initialCheckpoint === "evidence_deepening"
             ? `从已保存进度继续 · ${previousWork.evidenceCompletedIds.length} / ${previousWork.evidenceIds.length} 篇已补强原文证据`
           : initialCheckpoint === "deep_reviewing" || initialCheckpoint === "enriching_abstracts"
-            ? `从已保存进度继续 · ${previousWork.deepCompletedIds.length} / ${previousWork.deepIds.length} 篇已深度解读`
+            ? `从已保存进度继续 · ${new Set([...previousWork.deepCompletedIds, ...previousWork.deepDeferredIds]).size} / ${previousWork.deepIds.length} 篇已处理`
             : "从已保存检查点继续本轮扫描"
         : "Pi 正在制定本轮检索计划";
       await database.prepare(
@@ -5436,6 +5485,7 @@ export async function POST(request: Request) {
         reviewed: finalizedReviews.length,
         screened: work.screens.length,
         deepReviewed: finalizedReviews.length,
+        deepDeferred: work.deepDeferredIds.length,
         evidenceDeepened,
         fulltextVerified,
         recommended,
@@ -5444,7 +5494,8 @@ export async function POST(request: Request) {
       try {
         await createScanNotifications(database, space.id, shanghaiDateKey(completedAt), finalizedReviews, {
           scanned: job.discovered_count, newCandidates: work.newCandidateCount, duplicates: duplicateCount,
-          reviewed: finalizedReviews.length, screened: work.screens.length, deepReviewed: finalizedReviews.length, recommended, rejected,
+          reviewed: finalizedReviews.length, screened: work.screens.length, deepReviewed: finalizedReviews.length,
+          deepDeferred: work.deepDeferredIds.length, recommended, rejected,
         }, Boolean(job.resume_of_job_id));
       } catch (notificationError) {
         console.error("Failed to create staged scan notifications", notificationError);
@@ -5457,23 +5508,27 @@ export async function POST(request: Request) {
         ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), recommended, job.discovered_count, space.id, lockToken),
         database.prepare(
           `UPDATE monitor_scan_jobs SET status = 'ready', checkpoint = 'main_complete', current_horizon = '',
-           current_source = '推荐已可阅读，Pi 正在后台整理今日简报', progress = 100, new_candidate_count = ?,
+           current_source = ?, progress = 100, new_candidate_count = ?,
            duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?,
            error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        ).bind(work.newCandidateCount, duplicateCount, work.screens.length, recommended, rejected, completedAt.toISOString(), job.id),
+        ).bind(work.deepDeferredIds.length
+          ? `本轮已完成；${work.deepDeferredIds.length} 篇响应较慢的论文已延后重试`
+          : "推荐已可阅读，Pi 正在后台整理今日简报",
+        work.newCandidateCount, duplicateCount, work.screens.length, recommended, rejected, completedAt.toISOString(), job.id),
       ]);
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: job.id,
-        kind: "scan_completed",
+        kind: work.deepDeferredIds.length ? "scan_completed_partial" : "scan_completed",
         stage: "main_complete",
-        outcome: "success",
+        outcome: work.deepDeferredIds.length ? "degraded" : "success",
         durationMs: Math.max(0, completedAt.getTime() - databaseTime(job.started_at)),
         metadata: {
           discovered: job.discovered_count,
           newCandidates: work.newCandidateCount,
           screened: work.screens.length,
           deepReviewed: finalizedReviews.length,
+          deepDeferred: work.deepDeferredIds.length,
           recommended,
           evidenceDeepened,
           fulltextVerified,
@@ -5522,10 +5577,14 @@ export async function POST(request: Request) {
       } else if (job.checkpoint === "deduplicating") {
         const pendingQueue = await pendingCandidateQueue(database, space.id);
         const selected = selectCurrentAndBacklogReviewBatch(pendingQueue, work.candidateIds);
-        work.candidateIds = selected.map((candidate) => candidate.canonicalId);
+        work.candidateIds = Array.from(new Set([
+          ...selected.map((candidate) => candidate.canonicalId),
+          ...work.retryDeepIds,
+        ])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
         work.screens = await loadCachedQuickScreens(database, space.id, work.candidateIds);
         work.deepIds = [];
         work.deepCompletedIds = [];
+        work.deepDeferredIds = [];
         work.evidenceIds = [];
         work.evidenceCompletedIds = [];
         work.rescueScreenIds = [];
@@ -5538,7 +5597,7 @@ export async function POST(request: Request) {
         await database.prepare(
           "UPDATE monitor_scan_jobs SET duplicate_count = ?, reviewed_count = 0, recommended_count = 0, rejected_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(Math.max(0, work.rawCandidateCount - work.newCandidateCount), job.id).run();
-        if (!selected.length) return finalizeMain([], []);
+        if (!work.candidateIds.length) return finalizeMain([], []);
         await setStage("enriching_screening_abstracts", "screening", 54,
           work.screens.length
             ? `已从长期候选池接续 ${work.screens.length} 篇既有筛选结果；正在补全本轮新候选证据`
@@ -5609,6 +5668,13 @@ export async function POST(request: Request) {
               ...chooseContinuityCandidateIds(candidates, work.screens, work.deepIds, Math.min(CONTINUITY_DEEP_REVIEW_LIMIT, DEEP_REVIEW_LIMIT - work.deepIds.length)),
             ])).slice(0, DEEP_REVIEW_LIMIT);
           }
+          if (work.retryDeepIds.length) {
+            work.deepIds = Array.from(new Set([
+              ...work.deepIds,
+              ...work.retryDeepIds,
+            ])).slice(0, DEEP_REVIEW_MAX_LIMIT);
+            work.retryDeepIds = [];
+          }
           await saveScanWorkQueue(database, job.id, work);
           if (!work.deepIds.length) return finalizeMain([], []);
           await setStage("enriching_abstracts", "deep_reviewing", 76, `正在为 ${work.deepIds.length} 篇高潜力论文补全摘要证据`);
@@ -5650,7 +5716,8 @@ export async function POST(request: Request) {
         await setStage("deep_reviewing", "deep_reviewing", 80, source);
       } else if (job.checkpoint === "deep_reviewing") {
         const completedIds = new Set(work.deepCompletedIds);
-        const remainingIds = work.deepIds.filter((id) => !completedIds.has(id));
+        const deferredIds = new Set(work.deepDeferredIds);
+        const remainingIds = work.deepIds.filter((id) => !completedIds.has(id) && !deferredIds.has(id));
         if (remainingIds.length) {
           const concurrency = work.deepCompletedIds.length ? DEEP_REVIEW_CONCURRENCY : 1;
           const ids = remainingIds.slice(0, concurrency * DEEP_REVIEW_BATCH_SIZE);
@@ -5687,7 +5754,12 @@ export async function POST(request: Request) {
             }
           });
           work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...result.reviews.map((review) => review.canonicalId)]));
-          work.deepFailureCount = result.errors.length && !result.reviews.length ? work.deepFailureCount + 1 : 0;
+          const fatalError = result.errors.find((error) => isNonRetryableDeepSeekError(error));
+          if (!fatalError && result.failedIds.length) {
+            work.deepDeferredIds = Array.from(new Set([...work.deepDeferredIds, ...result.failedIds])).slice(0, DEEP_REVIEW_MAX_LIMIT);
+            work.deepFailureCount += result.failedIds.length;
+          }
+          if (!result.errors.length) work.deepFailureCount = 0;
           await saveScanWorkQueue(database, job.id, work);
           if (result.errors.length) await recordReliabilityEvent(database, {
             spaceId: space.id,
@@ -5698,20 +5770,24 @@ export async function POST(request: Request) {
             outcome: "degraded",
             errorCode: monitorErrorCode(result.errors[0]),
             message: normalizedMonitorError(result.errors[0]),
-            metadata: { requested: candidates.length, completed: result.reviews.length, failureCount: work.deepFailureCount },
+            metadata: {
+              requested: candidates.length,
+              completed: result.reviews.length,
+              deferred: result.failedIds.length,
+              failureCount: work.deepFailureCount,
+            },
           });
-          const fatalError = result.errors.find((error) => isNonRetryableDeepSeekError(error));
           if (fatalError) throw fatalError;
-          if (work.deepFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Deep review failed twice");
         }
         const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
         const recommended = persistedReviews.filter((review) => review.recommended).length;
-        const deepProgress = Math.min(94, 76 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 18));
+        const processedDeepCount = new Set([...work.deepCompletedIds, ...work.deepDeferredIds]).size;
+        const deepProgress = Math.min(94, 76 + Math.round(processedDeepCount / Math.max(1, work.deepIds.length) * 18));
         await database.prepare(
           "UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', reviewed_count = ?, recommended_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
-          `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${recommended} 篇已可阅读`, deepProgress, job.id).run();
-        if (work.deepCompletedIds.length >= work.deepIds.length) {
+          `已处理 ${processedDeepCount} / ${work.deepIds.length} 篇深度解读，${recommended} 篇已可阅读${work.deepDeferredIds.length ? `，${work.deepDeferredIds.length} 篇响应较慢已延后` : ""}`, deepProgress, job.id).run();
+        if (processedDeepCount >= work.deepIds.length) {
           if (!recommended && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
             const rescueIds = Array.from(new Set([

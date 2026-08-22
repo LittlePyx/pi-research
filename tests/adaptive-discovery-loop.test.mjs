@@ -91,7 +91,7 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /resumeCheckpoint/);
   assert.match(monitor, /isNonRetryableDeepSeekError/);
   assert.match(client, /advanceMonitorPipeline/);
-  assert.match(client, /step < 24/);
+  assert.match(client, /step < 64/);
   assert.match(client, /action: "enhance"/);
   assert.match(client, /每完成一批就会立即保存/);
   assert.match(client, /从断点继续/);

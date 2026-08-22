@@ -49,10 +49,10 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(route, /reviewCandidates/);
   assert.match(route, /MONITOR_MODEL = "deepseek-v4-pro"/);
   assert.match(route, /response_format: \{ type: "json_object" \}/);
-  assert.match(route, /thinking: \{ type: "enabled" \}/);
-  assert.match(route, /max_tokens: Math\.min\(attempt === 0 \? 4800 : 3200/);
-  assert.match(route, /DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 28_000/);
-  assert.match(route, /DEEP_REVIEW_RETRY_TIMEOUT_MS = 12_000/);
+  assert.match(route, /thinking: \{ type: "disabled" \}/);
+  assert.match(route, /max_tokens: Math\.min\(attempt === 0 \? 2600 : 1800/);
+  assert.match(route, /DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000/);
+  assert.match(route, /DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000/);
   assert.match(route, /llm_recommended = 1/);
   assert.match(route, /discovering_\$\{horizon\.key\}/);
   assert.match(route, /horizonStats\[horizonKey\]/);

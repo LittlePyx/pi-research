@@ -407,6 +407,7 @@ type MonitorState = {
     candidateCount?: number;
     deepCandidateCount?: number;
     deepCompletedCount?: number;
+    deepDeferredCount?: number;
     evidenceTargetCount?: number;
     evidenceCompletedCount?: number;
     horizonStats?: Array<{
@@ -1489,7 +1490,7 @@ async function advanceMonitorPipeline(
   isCancelled: () => boolean = () => false,
 ) {
   let current = initialMonitor;
-  for (let step = 0; step < 24 && !isCancelled(); step += 1) {
+  for (let step = 0; step < 64 && !isCancelled(); step += 1) {
     if (["ready", "error"].includes(current.status)) break;
     const response = await fetch("/api/monitor", {
       method: "POST",
@@ -2913,6 +2914,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const dailyBriefEntryCount = Math.min(6, Math.max(dailyBriefPapers.length, dailySignals.length, dailyReadingPlan.length));
   const latestQuickScreenedCount = monitor?.scanJob?.reviewedCount || monitor?.dailyBrief?.metrics.screened || monitor?.dailyBrief?.metrics.reviewed || 0;
   const latestDeepReviewedCount = monitor?.scanJob?.deepCompletedCount || monitor?.dailyBrief?.metrics.deepReviewed || Math.min(monitor?.dailyBrief?.metrics.reviewed || 0, 8);
+  const latestDeepDeferredCount = monitor?.scanJob?.deepDeferredCount || monitor?.dailyBrief?.metrics.deepDeferred || 0;
   const dailyBriefPaperIds = new Set(monitor?.dailyBrief?.paperIds || []);
   const additionalTodayPapers = rankedMonitorPapers.filter((paper) => !dailyBriefPaperIds.has(paper.id)).slice(0, 6);
   const pendingActionNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => ACTION_NOTIFICATION_KINDS.has(notification.kind) && !notification.readAt), [monitor?.notifications]);
@@ -4966,7 +4968,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     </details>;
                   })}
                 </div>
-                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "为什么今天没有推荐？" : "Why are there no recommendations today?"}</strong><p>{locale === "zh" ? `${latestQuickScreenedCount} 篇论文完成快速筛选，其中 ${latestDeepReviewedCount} 篇进入逐篇深度解读；它们没有同时通过研究相关性、论文质量、证据完整度与模型明确推荐四项门槛。` : `${latestQuickScreenedCount} papers passed fast screening and ${latestDeepReviewedCount} received paper-by-paper deep review; none cleared all four gates for research fit, quality, evidence completeness, and an explicit model recommendation.`}</p><small>{locale === "zh" ? "Pi 不会为了填满页面降低标准；首批高潜力论文为零入选时，会在本轮补全证据并追加临界论文复审。" : "Pi will not lower the bar to fill the page. When the first high-potential batch yields nothing, the same scan enriches evidence and adds a near-miss review batch."}</small></div>}
+                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "为什么今天没有推荐？" : "Why are there no recommendations today?"}</strong><p>{locale === "zh" ? `${latestQuickScreenedCount} 篇论文完成快速筛选，${latestDeepReviewedCount} 篇完成逐篇深度解读${latestDeepDeferredCount ? `，另有 ${latestDeepDeferredCount} 篇响应较慢已延后` : ""}；已完成论文没有同时通过研究相关性、论文质量、证据完整度与模型明确推荐四项门槛。` : `${latestQuickScreenedCount} papers passed fast screening and ${latestDeepReviewedCount} completed paper-by-paper deep review${latestDeepDeferredCount ? `; ${latestDeepDeferredCount} slow papers were deferred` : ""}. The completed papers did not clear all four gates for research fit, quality, evidence completeness, and an explicit model recommendation.`}</p><small>{locale === "zh" ? "Pi 不会为了填满页面降低标准；单篇响应过慢不会再阻塞整轮，首批零入选时仍会追加临界论文复审。" : "Pi will not lower the bar to fill the page. One slow paper no longer blocks the full run, and a zero-yield first batch still triggers a near-miss review batch."}</small></div>}
                 {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <aside><strong>{locale === "zh" ? "继续观察" : "Keep watching"}</strong><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></aside>}
               </div>
             </section>}
@@ -5011,6 +5013,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     {activeScanJob?.discoveredCount || monitor?.scannedCount || 0} {locale === "zh" ? "条候选" : "candidates"}
                     {["screening", "deep_reviewing", "reviewing"].includes(effectiveScanStatus) && <> · {activeScanJob?.reviewedCount || 0}{activeScanJob?.candidateCount ? ` / ${activeScanJob.candidateCount}` : ""} {locale === "zh" ? "篇已筛选保存" : "screened and saved"}</>}
                     {effectiveScanStatus === "deep_reviewing" && <> · {activeScanJob?.recommendedCount || 0} {locale === "zh" ? "篇已可阅读" : "ready to read"}</>}
+                    {effectiveScanStatus === "deep_reviewing" && Boolean(activeScanJob?.deepDeferredCount) && <> · {activeScanJob?.deepDeferredCount} {locale === "zh" ? "篇已延后，不阻塞本轮" : "deferred without blocking this scan"}</>}
                     {healthyCoverageCount > 0 && <> · {healthyCoverageCount} {locale === "zh" ? "类来源正常" : "source groups healthy"}</>}
                     {scanElapsedSeconds > 0 && <> · {scanElapsedSeconds < 60 ? `${scanElapsedSeconds}s` : `${Math.floor(scanElapsedSeconds / 60)}m ${scanElapsedSeconds % 60}s`}</>}
                     {locale === "zh" ? " · 上次推荐仍可继续阅读" : " · Previous recommendations remain readable"}
