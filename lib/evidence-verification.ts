@@ -12,7 +12,9 @@ function cleanText(value: unknown, limit: number) {
 
 function boundedScore(value: unknown) {
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : 0;
+  if (!Number.isFinite(numeric)) return 0;
+  const normalized = numeric >= 0 && numeric <= 1 ? numeric * 100 : numeric;
+  return Math.max(0, Math.min(100, Math.round(normalized)));
 }
 
 function allowedList(value: unknown, allowed: Set<string>, limit: number) {

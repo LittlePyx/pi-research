@@ -543,7 +543,7 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-evidence-v7-benchmark-calibrated";
+const MONITOR_PIPELINE_VERSION = "continuous-evidence-v8-yield-verified";
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
 const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
@@ -2194,7 +2194,7 @@ async function verifyRecommendationBatch(input: {
             : "Return {verifications:[{canonicalId,verdict:\"verified|revise|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,verdict:\"supported|qualified|unsupported\",reason}],reason]}.",
           correctionMode
             ? "Correct every supplied draft into a complete conservative bilingual replacement. Apply the supplied audit exactly, retain supported substance, remove or qualify unsupported claims, and do not add new claims."
-            : "Audit every supplied paper. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
+            : "Audit every supplied paper. coverageScore must be an integer from 0 to 100. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
           correctionMode
             ? "Every corrected field must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation."
             : "claimChecks must cover every populated substantive field. Every supported or qualified check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
@@ -2308,6 +2308,15 @@ async function verifyRecommendationBatch(input: {
         verificationCoverageScore: report.coverageScore,
         verificationReport: finalReport,
         verificationRetryable: false,
+        ...usage,
+      };
+    }
+    if (review.verificationReport?.correctionQueued === true) {
+      return {
+        ...degradedRecommendationReview(review, {
+          ...report,
+          reason: cleanText(`Post-correction verification still found unsupported claims. ${initial.reason}`).slice(0, 900),
+        }),
         ...usage,
       };
     }
@@ -3714,12 +3723,15 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
          OR (length(trim(i.abstract_text)) = 0 AND lower(i.screening_reason) LIKE '%abstract missing%')
        )))`;
   const candidateParameters = explicitlyRestricted ? restrictedIds : [MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT];
+  // A frozen in-flight queue must keep a paper addressable after it becomes
+  // recommended; final reconciliation and job counts still need that record.
+  const recommendationEligibility = explicitlyRestricted ? "1 = 1" : "COALESCE(i.ever_recommended, 0) = 0";
   const rows = await database.prepare(
     `SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
      p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
      WHERE p.space_id = ? AND ${candidateCondition}
-       AND COALESCE(i.ever_recommended, 0) = 0
+       AND ${recommendationEligibility}
        AND NOT EXISTS (
          SELECT 1 FROM paper_feedback suppressed
          WHERE suppressed.space_id = p.space_id AND suppressed.paper_id = p.id
@@ -6359,6 +6371,11 @@ export async function POST(request: Request) {
                 if (verificationAttempt >= VERIFICATION_ATTEMPT_LIMIT) {
                   work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
                 } else {
+                  const verificationPhase = persistedReview.verificationReport?.correctionRequested === true
+                    ? "Independent audit completed; a conservative correction is queued"
+                    : persistedReview.verificationReport?.correctionQueued === true
+                      ? "A corrected draft was saved and queued for one fresh independent verification pass"
+                      : "Independent verification remains pending and will retry without rerunning discovery";
                   await recordReliabilityEvent(database, {
                     spaceId: space.id,
                     scanJobId: job.id,
@@ -6366,8 +6383,12 @@ export async function POST(request: Request) {
                     stage: "verifying_recommendations",
                     source: MONITOR_MODEL,
                     outcome: "info",
-                    message: "A corrected draft was saved and queued for one fresh independent verification pass",
-                    metadata: { canonicalId, verificationAttempt, draftPreserved: true, retryScope: "verification_only" },
+                    message: verificationPhase,
+                    metadata: {
+                      canonicalId, verificationAttempt, draftPreserved: true, retryScope: "verification_only",
+                      correctionRequested: persistedReview.verificationReport?.correctionRequested === true,
+                      correctionQueued: persistedReview.verificationReport?.correctionQueued === true,
+                    },
                   });
                 }
               } else {

@@ -50,7 +50,7 @@ test("durable recommendation history protects prior results and exposes saved ve
   assert.match(repository, /WHERE audit\.space_id = paper_insights\.space_id[^]*audit\.recommended = 1/);
   assert.match(route, /CASE WHEN ever_recommended = 1 THEN analysis_source ELSE \? END/);
   assert.match(route, /paper_insights\.ever_recommended = 1 AND excluded\.ever_recommended = 0/);
-  assert.match(route, /COALESCE\(i\.ever_recommended, 0\) = 0/);
+  assert.match(route, /recommendationEligibility = explicitlyRestricted \? "1 = 1" : "COALESCE\(i\.ever_recommended, 0\) = 0"/);
   assert.match(route, /savedCandidatePapers/);
   assert.match(app, /已保留的高潜力论文/);
   assert.match(app, /不会再因重扫、超时或本轮零入选而消失/);

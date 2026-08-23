@@ -39,6 +39,30 @@ test("verification retains only real evidence ids", () => {
   assert.equal(result.claimChecks[0].evidenceQuote, "The source contains bounded evidence.");
 });
 
+test("verification normalizes a fractional coverage score without weakening evidence checks", () => {
+  const evidence = "The abstract states the bounded contribution used by this recommendation.";
+  const result = sanitizeEvidenceVerificationDraft({
+    verdict: "verified",
+    coverageScore: 0.96,
+    supportedFields: ["summary"],
+    supportedEvidenceIds: ["abstract:1"],
+    claimChecks: [{
+      field: "summary",
+      claimExcerpt: "The paper states a bounded contribution.",
+      evidenceId: "abstract:1",
+      verdict: "supported",
+      reason: "Directly stated in the supplied abstract.",
+    }],
+  }, {
+    allowedFields: ["summary"],
+    allowedEvidenceIds: new Set(["abstract:1"]),
+    evidenceById: new Map([["abstract:1", evidence]]),
+    requireAllFields: true,
+  });
+  assert.equal(result.coverageScore, 96);
+  assert.equal(result.clean, true);
+});
+
 test("abstract evidence is split into bounded stable units for compact verification prompts", () => {
   const units = abstractEvidenceUnits(
     "First result is supported. Second result adds a bounded method. Third sentence records a limitation.",
@@ -115,6 +139,9 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /Do not rewrite the draft in this audit pass/);
   assert.match(monitor, /correctionRequested: true/);
   assert.match(monitor, /Corrected draft saved; a fresh independent verification pass is queued/);
+  assert.match(monitor, /Post-correction verification still found unsupported claims/);
+  assert.match(monitor, /Independent audit completed; a conservative correction is queued/);
+  assert.match(monitor, /coverageScore must be an integer from 0 to 100/);
   assert.match(monitor, /recommendationVerificationEvidence/);
   assert.match(monitor, /document\.status IN \('ready', 'partial'\)/);
   assert.match(monitor, /abstractEvidenceUnits/);

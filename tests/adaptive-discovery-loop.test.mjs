@@ -74,6 +74,9 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DEEP_REVIEW_RESCUE_LIMIT = 4/);
   assert.match(monitor, /DEEP_REVIEW_MAX_LIMIT/);
   assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 3/);
+  assert.match(monitor, /continuous-evidence-v8-yield-verified/);
+  assert.match(monitor, /recommendationEligibility = explicitlyRestricted \? "1 = 1"/);
+  assert.match(monitor, /final reconciliation and job counts still need that record/);
   assert.match(monitor, /recommendationShortfall/);
   assert.match(monitor, /目前形成 \$\{potentialRecommendations\} 篇高潜力稿/);
   assert.match(monitor, /Math\.ceil\(limit \/ 2\)/);

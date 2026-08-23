@@ -52,6 +52,18 @@ test("legacy empty-draft degradations are eligible for one clean re-draft", () =
     screeningReason: "The abstract does not support the claimed optimality result",
     verificationReport: {},
   }), false);
+  assert.equal(isRetryableEmptyDraftDegradation({
+    verificationStatus: "degraded",
+    screeningReason: "Independent evidence gate withheld this recommendation",
+    verificationReport: {
+      coverageScore: 1,
+      supportedFields: ["summary", "problem", "method", "contribution"],
+      claimChecks: [{}, {}, {}, {}],
+      unsupportedFields: [],
+      overstatements: [],
+      contradictionRisks: [],
+    },
+  }), true);
 });
 
 test("monitor preserves pending and failed verification counts during brief enhancement", async () => {
