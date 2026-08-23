@@ -20,3 +20,12 @@ test("archived discoveries are visible without being mislabeled as recommendatio
   assert.match(app, /不等同于推荐/);
   assert.match(app, /if \(libraryFilter === "inbox" && !belongsToRecommendationInbox\) return false/);
 });
+
+test("library overview counts the archive instead of repeating recommendation inbox metrics", () => {
+  assert.match(app, /const libraryArchiveCounts = useMemo/);
+  assert.match(app, /all: historyPapers\.length/);
+  assert.match(app, /libraryArchiveCounts\.all}<\/strong><b>{locale === "zh" \? "全部发现"/);
+  assert.match(app, /"已完成评审"/);
+  assert.match(app, /"待处理推荐"/);
+  assert.doesNotMatch(app, /monitor\?\.historyCounts\?\.unseen \|\| 0}<\/strong><b>{t\.unseen/);
+});

@@ -12,6 +12,7 @@ type Locale = "zh" | "en";
 type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
 type LibraryFilter = "inbox" | "accepted" | "all" | "dismissed";
 type InboxFilter = "all" | "unseen" | "seen" | "snoozed";
+type LibraryStageFilter = "all" | "evaluated";
 type LibrarySort = "priority" | "newest" | "quality";
 type ResearchMapMode = "directions" | "papers";
 type ResearchRouteTab = "problem" | "assessment" | "evidence" | "gaps" | "agenda";
@@ -2787,6 +2788,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [feedbackPrompt, setFeedbackPrompt] = useState<{ paper: MonitorPaper; kind: "relevant" | "not_relevant" } | null>(null);
   const [feedbackNote, setFeedbackNote] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
+  const [libraryStageFilter, setLibraryStageFilter] = useState<LibraryStageFilter>("all");
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>("all");
   const [librarySearch, setLibrarySearch] = useState("");
   const [librarySort, setLibrarySort] = useState<LibrarySort>("priority");
@@ -2840,6 +2842,10 @@ export default function ResearchApp({ user }: { user: User }) {
     [monitor?.papers],
   );
   const historyPapers = useMemo(() => monitor?.historyPapers || monitor?.papers || [], [monitor?.historyPapers, monitor?.papers]);
+  const libraryArchiveCounts = useMemo(() => ({
+    all: historyPapers.length,
+    evaluated: historyPapers.filter((paper) => ["reviewed", "reviewing", "recommended"].includes(paper.qualityStage || "")).length,
+  }), [historyPapers]);
   const todayPaperIdentity = useMemo(() => (monitor?.papers || []).map((paper) => paper.id).join("|"), [monitor?.papers]);
   const selectedMonitorPaperId = selectedMonitorPaper?.id || "";
   const engagementEventKey = (paperId: string, kind: string) => {
@@ -2872,6 +2878,7 @@ export default function ResearchApp({ user }: { user: User }) {
     return historyPapers.filter((paper) => {
       const belongsToRecommendationInbox = paper.qualityStage === "recommended" || paper.qualityStage === "reviewing"
         || paper.saved || Boolean(paper.feedback) || paper.readingStatus !== "unread";
+      if (libraryStageFilter === "evaluated" && !["reviewed", "reviewing", "recommended"].includes(paper.qualityStage || "")) return false;
       if (libraryFilter === "inbox" && !belongsToRecommendationInbox) return false;
       if (libraryFilter === "inbox" && ["accepted", "dismissed"].includes(paper.userState)) return false;
       if (libraryFilter === "accepted" && paper.userState !== "accepted") return false;
@@ -2887,7 +2894,7 @@ export default function ResearchApp({ user }: { user: User }) {
         || second.qualityScore - first.qualityScore
         || timeValue(first.firstShownAt) - timeValue(second.firstShownAt);
     });
-  }, [historyPapers, inboxFilter, libraryFilter, librarySearch, librarySort]);
+  }, [historyPapers, inboxFilter, libraryFilter, librarySearch, librarySort, libraryStageFilter]);
   const visibleLibraryPapers = useMemo(() => libraryPapers.slice(0, libraryVisibleCount), [libraryPapers, libraryVisibleCount]);
   const scanIsActive = monitoring || isMonitorScanning(monitor?.status);
   const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
@@ -4080,7 +4087,7 @@ export default function ResearchApp({ user }: { user: User }) {
     void markNotificationsRead(notification);
     const target = (["today", "threads", "library", "memory"] as View[]).includes(notification.actionView as View)
       ? notification.actionView as View : "today";
-    if (target === "library") { setLibraryFilter("inbox"); setInboxFilter("all"); }
+    if (target === "library") { setLibraryFilter("inbox"); setLibraryStageFilter("all"); setInboxFilter("all"); }
     navigate(target);
   };
 
@@ -4954,7 +4961,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <section className="v2-today-briefing" aria-label={locale === "zh" ? "今日科研简报" : "Today's research briefing"}>
                 <button type="button" onClick={() => rankedMonitorPapers[0] && openMonitorPaper(rankedMonitorPapers[0])} disabled={!rankedMonitorPapers.length}><span>01</span><strong>{mustReadCount}</strong><div><b>{locale === "zh" ? "今日必读" : "Must read"}</b><small>{locale === "zh" ? "最值得优先投入时间" : "Highest priority for your time"}</small></div><i>→</i></button>
                 <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor ? monitor.mapChanges?.length || 0 : "—"}</strong><div><b>{locale === "zh" ? "近 7 天路线变化" : "7-day route changes"}</b><small>{locale === "zh" ? "结构更新与全文达标证据分开记录" : "Structural updates and full-text evidence are tracked separately"}</small></div><i>→</i></button>
-                <button type="button" onClick={() => { setLibraryFilter("accepted"); navigate("library"); }}><span>03</span><strong>{activeReadingCount}</strong><div><b>{locale === "zh" ? "待读与在读" : "Reading queue"}</b><small>{locale === "zh" ? "继续未完成的阅读" : "Continue unfinished reading"}</small></div><i>→</i></button>
+                <button type="button" onClick={() => { setLibraryFilter("accepted"); setLibraryStageFilter("all"); navigate("library"); }}><span>03</span><strong>{activeReadingCount}</strong><div><b>{locale === "zh" ? "待读与在读" : "Reading queue"}</b><small>{locale === "zh" ? "继续未完成的阅读" : "Continue unfinished reading"}</small></div><i>→</i></button>
               </section>
             </section>
 
@@ -5050,7 +5057,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   return <article className={item.status} key={item.horizon}><header><span><i />{label}</span><b>{statusLabel}</b></header><strong>{item.candidates === null ? purpose : `${item.candidates} ${locale === "zh" ? "篇候选" : "candidates"}`}</strong><small>{item.candidates === null ? (locale === "zh" ? "下次扫描会显示实际候选和入筛数量" : "The next scan will show retrieved and queued counts") : (locale === "zh" ? `${item.newCandidates || 0} 篇本轮新发现 · ${item.queued || 0} 篇进入筛选` : `${item.newCandidates || 0} new this run · ${item.queued || 0} queued`)}</small></article>;
                 })}
               </div>
-              <div className="v2-monitor-meta"><button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); navigate("library"); }}><span>{monitor?.historyCounts?.inbox || 0} {t.inbox}</span><small>{monitor?.historyCounts?.unseen || 0} {t.unseen} · {locale === "zh" ? "未处理内容会保留" : "Unresolved papers stay here"}</small><b>→</b></button>
+              <div className="v2-monitor-meta"><button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setLibraryStageFilter("all"); setInboxFilter("all"); navigate("library"); }}><span>{monitor?.historyCounts?.inbox || 0} {t.inbox}</span><small>{monitor?.historyCounts?.unseen || 0} {t.unseen} · {locale === "zh" ? "未处理内容会保留" : "Unresolved papers stay here"}</small><b>→</b></button>
               <details className="v2-scan-details">
                 <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
                 <div className="v2-source-profile"><div><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor?.preferences?.profileNameZh : monitor?.preferences?.profileNameEn}</strong><em>{monitor?.preferences?.userModified ? t.userCustomized : t.systemProvided}</em></div><div><span>{t.prioritySources}</span><p>{monitor?.preferences?.priorityVenues.slice(0, 6).map((venue) => <i key={venue}>{venue}</i>)}</p></div>{Boolean(monitor?.preferences?.trackedAuthors?.length) && <div><span>{locale === "zh" ? "追踪作者" : "Tracked authors"}</span><p>{monitor?.preferences?.trackedAuthors.slice(0, 6).map((author) => <i key={author}>{author}</i>)}</p></div>}</div>
@@ -5268,15 +5275,15 @@ export default function ResearchApp({ user }: { user: User }) {
             <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.libraryTitle}</h1><p>{t.historyPromise}</p></div><div className="v2-library-head-actions"><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=bibtex&scope=accepted`}>BibTeX ↓</a><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=ris&scope=accepted`}>RIS / Zotero ↓</a><button type="button" onClick={() => navigate("today")}>← {locale === "zh" ? "今日推荐" : "Today"}</button></div></section>
             <section className="v2-library-overview" aria-label={t.historyOverview}>
               <div><p className="v2-kicker">{t.historyOverview}</p><h2>{locale === "zh" ? "每篇论文都有明确去处" : "Every paper has a clear place"}</h2><p>{t.libraryIntro}</p></div>
-              <button className={libraryFilter === "inbox" && inboxFilter === "unseen" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("unseen"); }}><span>01</span><strong>{monitor?.historyCounts?.unseen || 0}</strong><b>{t.unseen}</b><small>{t.neverViewed}</small></button>
-              <button className={libraryFilter === "inbox" && inboxFilter === "seen" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("seen"); }}><span>02</span><strong>{monitor?.historyCounts?.seen || 0}</strong><b>{t.seenPending}</b><small>{t.decisionNeeded}</small></button>
-              <button className={libraryFilter === "inbox" && inboxFilter === "snoozed" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("snoozed"); }}><span>03</span><strong>{monitor?.historyCounts?.snoozed || 0}</strong><b>{t.snoozed}</b><small>{locale === "zh" ? "到期后自动回到推荐队列" : "Returns automatically when due"}</small></button>
+              <button className={libraryFilter === "all" && libraryStageFilter === "all" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("all"); setLibraryStageFilter("all"); }}><span>01</span><strong>{libraryArchiveCounts.all}</strong><b>{locale === "zh" ? "全部发现" : "All discoveries"}</b><small>{locale === "zh" ? "扫描找到且已保存的论文" : "Papers found and retained by scans"}</small></button>
+              <button className={libraryFilter === "all" && libraryStageFilter === "evaluated" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("all"); setLibraryStageFilter("evaluated"); }}><span>02</span><strong>{libraryArchiveCounts.evaluated}</strong><b>{locale === "zh" ? "已完成评审" : "Evaluated"}</b><small>{locale === "zh" ? "已进入 Pi 质量判断流程" : "Passed through Pi's quality review"}</small></button>
+              <button className={libraryFilter === "inbox" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setLibraryStageFilter("all"); setInboxFilter("all"); }}><span>03</span><strong>{monitor?.historyCounts?.inbox || 0}</strong><b>{locale === "zh" ? "待处理推荐" : "Recommendation inbox"}</b><small>{locale === "zh" ? "需要阅读或给出判断" : "Needs reading or a decision"}</small></button>
             </section>
             <div className="v2-library-tabs">
-              <button className={libraryFilter === "inbox" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setInboxFilter("all"); }}>{t.inbox}<span>{monitor?.historyCounts?.inbox || 0}</span></button>
-              <button className={libraryFilter === "accepted" ? "active" : ""} type="button" onClick={() => setLibraryFilter("accepted")}>{t.accepted}<span>{monitor?.historyCounts?.accepted || 0}</span></button>
-              <button className={libraryFilter === "dismissed" ? "active" : ""} type="button" onClick={() => setLibraryFilter("dismissed")}>{t.ignored}<span>{monitor?.historyCounts?.dismissed || 0}</span></button>
-              <button className={libraryFilter === "all" ? "active" : ""} type="button" onClick={() => setLibraryFilter("all")}>{locale === "zh" ? "全部发现" : "All discoveries"}<span>{historyPapers.length}</span></button>
+              <button className={libraryFilter === "inbox" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setLibraryStageFilter("all"); setInboxFilter("all"); }}>{t.inbox}<span>{monitor?.historyCounts?.inbox || 0}</span></button>
+              <button className={libraryFilter === "accepted" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("accepted"); setLibraryStageFilter("all"); }}>{t.accepted}<span>{monitor?.historyCounts?.accepted || 0}</span></button>
+              <button className={libraryFilter === "dismissed" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("dismissed"); setLibraryStageFilter("all"); }}>{t.ignored}<span>{monitor?.historyCounts?.dismissed || 0}</span></button>
+              <button className={libraryFilter === "all" && libraryStageFilter === "all" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("all"); setLibraryStageFilter("all"); }}>{locale === "zh" ? "全部发现" : "All discoveries"}<span>{historyPapers.length}</span></button>
             </div>
             <div className="v2-library-toolbar">
               <label><span>⌕</span><input value={librarySearch} onChange={(event) => setLibrarySearch(event.target.value)} placeholder={t.historySearch} aria-label={t.historySearch} /></label>
