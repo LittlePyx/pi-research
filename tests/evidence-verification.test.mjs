@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
+  abstractEvidenceUnits,
   evidenceVerificationReport,
   resolvedEvidenceVerificationStatus,
   sanitizeEvidenceVerificationDraft,
@@ -31,10 +32,20 @@ test("verification retains only real evidence ids", () => {
     coverageScore: 95,
     supportedFields: fields,
     supportedEvidenceIds: ["claim-a", "invented"],
-    claimChecks: fields.map((field) => ({ field, claimExcerpt: `${field} statement`, evidenceId: "claim-a", evidenceQuote: "bounded evidence", verdict: "supported" })),
+    claimChecks: fields.map((field) => ({ field, claimExcerpt: `${field} statement`, evidenceId: "claim-a", verdict: "supported" })),
   }, { allowedFields: fields, allowedEvidenceIds: new Set(["claim-a"]), evidenceById: new Map([["claim-a", "The source contains bounded evidence."]]), requireAllFields: true });
   assert.equal(result.clean, true);
   assert.deepEqual(result.supportedEvidenceIds, ["claim-a"]);
+  assert.equal(result.claimChecks[0].evidenceQuote, "The source contains bounded evidence.");
+});
+
+test("abstract evidence is split into bounded stable units for compact verification prompts", () => {
+  const units = abstractEvidenceUnits(
+    "First result is supported. Second result adds a bounded method. Third sentence records a limitation.",
+    { prefix: "doi:10.1/test", maxUnits: 2, maxChars: 160 },
+  );
+  assert.deepEqual(units.map((unit) => unit.id), ["doi:10-1-test:1", "doi:10-1-test:2"]);
+  assert.ok(units.every((unit) => unit.text.length <= 160));
 });
 
 test("one clean post-revision pass is recorded as revised; a second failure degrades", () => {
@@ -92,12 +103,18 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /verificationStatus: "pending"/);
   assert.match(monitor, /checkpoint === "verifying_recommendations"/);
   assert.match(monitor, /draftPreserved: true, retryScope: "verification_only"/);
-  assert.match(monitor, /work\.verificationFailureCount >= 2/);
+  assert.match(monitor, /VERIFICATION_ATTEMPT_LIMIT = 2/);
+  assert.match(monitor, /work\.verificationAttempts\[canonicalId\]/);
+  assert.match(monitor, /work\.verificationFailureCount >= VERIFICATION_CIRCUIT_FAILURE_LIMIT/);
   assert.match(monitor, /remaining drafts were deferred without more model calls/);
   assert.match(monitor, /verificationCarryover/);
   assert.match(monitor, /previousWork\.verificationDeferredIds = \[\]/);
   assert.match(monitor, /i\.verification_status = 'degraded'[\s\S]*lower\(i\.screening_reason\) LIKE '%timeout%'/);
-  assert.match(monitor, /AbortSignal\.timeout\(attempt === 0 \? 18_000 : 12_000\)/);
+  assert.match(monitor, /AbortSignal\.timeout\(VERIFICATION_TIMEOUT_MS\)/);
+  assert.match(monitor, /recommendationVerificationEvidence/);
+  assert.match(monitor, /document\.status IN \('ready', 'partial'\)/);
+  assert.match(monitor, /abstractEvidenceUnits/);
+  assert.doesNotMatch(monitor, /for \(let attempt = 0; attempt < 2 && !data;/);
   assert.match(monitor, /thinking: \{ type: "disabled" \}/);
   assert.match(monitor, /isPublishedRecommendation\(review\) \? 1 : 0/);
   assert.match(monitor, /deepseek_verification_pending/);

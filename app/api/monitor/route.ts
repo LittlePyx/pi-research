@@ -26,9 +26,11 @@ import {
 } from "../../../lib/recommendation-draft.mjs";
 import {
   RECOMMENDATION_VERIFICATION_FIELDS,
+  abstractEvidenceUnits,
   evidenceVerificationReport,
   sanitizeEvidenceVerificationDraft,
   type EvidenceVerificationStatus,
+  type VerificationEvidenceUnit,
 } from "../../../lib/evidence-verification";
 import {
   MONITOR_AUTOMATION_LIMITS,
@@ -475,6 +477,7 @@ type ScanWorkQueue = {
   verificationIds: string[];
   verificationCompletedIds: string[];
   verificationDeferredIds: string[];
+  verificationAttempts: Record<string, number>;
   evidenceIds: string[];
   evidenceCompletedIds: string[];
   rescueScreenIds: string[];
@@ -546,6 +549,9 @@ const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
 const QUICK_SCREEN_RETRY_TIMEOUT_MS = 12_000;
 const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000;
 const DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000;
+const VERIFICATION_TIMEOUT_MS = 20_000;
+const VERIFICATION_ATTEMPT_LIMIT = 2;
+const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
 const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48;
@@ -2098,6 +2104,52 @@ function degradedRecommendationReview(review: PaperReview, report: ReturnType<ty
   };
 }
 
+type RecommendationVerificationEvidence = {
+  source: "stored_fulltext" | "stored_abstract" | "abstract";
+  units: VerificationEvidenceUnit[];
+};
+
+async function recommendationVerificationEvidence(
+  database: D1Database,
+  spaceId: string,
+  candidate: Candidate,
+): Promise<RecommendationVerificationEvidence> {
+  try {
+    const stored = await database.prepare(
+      `SELECT claim.id, claim.evidence_quote, document.evidence_level
+       FROM monitored_papers paper
+       JOIN paper_evidence_documents document ON document.paper_id = paper.id AND document.space_id = paper.space_id
+       JOIN paper_evidence_claims claim ON claim.document_id = document.id
+        AND claim.paper_id = paper.id AND claim.space_id = paper.space_id
+       WHERE paper.space_id = ? AND paper.canonical_id = ? AND claim.grounded = 1
+        AND document.status IN ('ready', 'partial') AND length(trim(claim.evidence_quote)) >= 24
+       ORDER BY CASE document.evidence_level WHEN 'fulltext' THEN 0 ELSE 1 END,
+        document.updated_at DESC, claim.position
+       LIMIT 10`,
+    ).bind(spaceId, candidate.canonicalId).all<{ id: string; evidence_quote: string; evidence_level: string }>();
+    const units = stored.results.flatMap((row) => {
+      const text = cleanText(row.evidence_quote).slice(0, 700);
+      return row.id && text ? [{ id: row.id, text }] : [];
+    });
+    if (units.length) {
+      return {
+        source: stored.results.some((row) => row.evidence_level === "fulltext") ? "stored_fulltext" : "stored_abstract",
+        units,
+      };
+    }
+  } catch {
+    // Existing stored evidence is an optimization. Abstract sentence evidence remains a safe fallback.
+  }
+  return {
+    source: "abstract",
+    units: abstractEvidenceUnits(candidate.abstractText, {
+      prefix: candidate.canonicalId,
+      maxUnits: 10,
+      maxChars: 420,
+    }),
+  };
+}
+
 async function verifyRecommendationBatch(input: {
   database: D1Database;
   spaceId: string;
@@ -2115,76 +2167,64 @@ async function verifyRecommendationBatch(input: {
     throw new Error(`Recommendation draft incomplete: ${incompleteDraft.canonicalId} is missing ${recommendationDraftMissingFields(incompleteDraft).join(", ")}`);
   }
   const candidateById = new Map(input.candidates.map((candidate) => [candidate.canonicalId, candidate]));
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  const call = async (items: PaperReview[], allowCorrection: boolean) => {
-    let data: DeepSeekResponse | null = null;
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < 2 && !data; attempt += 1) {
-      try {
-        const response = await fetch("https://api.deepseek.com/chat/completions", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: MONITOR_MODEL,
-            messages: [
-              { role: "system", content: "You are Pi Research's fast independent recommendation evidence verifier. Audit only against supplied metadata and abstract. Return strict JSON without hidden chain-of-thought." },
-              { role: "user", content: [
-            `Return {verifications:[{canonicalId,verdict:"verified|revise|insufficient",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,evidenceQuote,verdict:"supported|qualified|unsupported",reason}],reason${allowCorrection ? ",corrected:{summaryZh,summaryEn,whyReadZh,whyReadEn,problemZh,problemEn,methodZh,methodEn,contributionZh,contributionEn,limitationsZh,limitationsEn,readingFocusZh,readingFocusEn,researchQuestionsZh,researchQuestionsEn,researchProblemImpactZh,researchProblemImpactEn,researchDecisionZh,researchDecisionEn}" : ""}}]}.`,
-            "Audit every supplied paper. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
-            "claimChecks must cover every populated substantive field. evidenceQuote must be an exact contiguous quote from the supplied abstract; evidenceId must be empty because this stage has abstract evidence rather than stored claim IDs.",
-            "Treat title, authors, venue, date, and citation count only as metadata. The abstract may support only what it states or directly entails. Route context and user fit do not prove paper findings.",
-            "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless the abstract explicitly entails it. A limitation inferred only from missing abstract detail must be written as unknown, not as a paper limitation.",
-            allowCorrection
-              ? "For revise, corrected must be a complete conservative bilingual replacement. For insufficient, omit corrected."
-              : "This is the post-revision check. Do not suggest another rewrite; use insufficient if any substantive unsupported statement remains.",
-            "Drafts and evidence: " + JSON.stringify(items.map((review) => {
-              const candidate = candidateById.get(review.canonicalId);
-              return {
-                canonicalId: review.canonicalId,
-                evidence: candidate ? {
-                  title: candidate.title, authors: candidate.authors, venue: candidate.venue,
-                  publishedAt: candidate.publishedAt, citations: candidate.citationCount,
-                  abstract: candidate.abstractText.slice(0, 1800),
-                } : null,
-                draft: recommendationVerificationPayload(review),
-              };
-            })),
-              ].join("\n") },
-            ],
-            thinking: { type: "disabled" },
-            reasoning_effort: "low",
-            response_format: { type: "json_object" },
-            max_tokens: Math.min(attempt === 0 ? 3600 : 2600, 900 + items.length * 1400),
-            stream: false,
-          }),
-          signal: AbortSignal.timeout(attempt === 0 ? 18_000 : 12_000),
-        });
-        const responseData = await response.json() as DeepSeekResponse;
-        if (!response.ok) throw new Error(responseData.error?.message || "Recommendation evidence verification failed");
-        if (!responseData.choices?.[0]?.message?.content?.trim()) throw new Error("Recommendation evidence verifier returned an empty response");
-        data = responseData;
-      } catch (error) {
-        lastError = error;
-        if (isNonRetryableDeepSeekError(error)) throw error;
-      }
-    }
-    if (!data) throw lastError instanceof Error ? lastError : new Error("Recommendation evidence verification timed out twice");
-    const callInputTokens = data.usage?.prompt_tokens || 0;
-    const callOutputTokens = data.usage?.completion_tokens || 0;
-    totalInputTokens += callInputTokens;
-    totalOutputTokens += callOutputTokens;
-    await Promise.all([
-      recordUsage(input.database, "monitor:global", input.usageDate, callInputTokens, callOutputTokens),
-      recordUsage(input.database, input.workspaceScope, input.usageDate, callInputTokens, callOutputTokens),
-      recordUsage(input.database, input.spaceScope, input.usageDate, callInputTokens, callOutputTokens),
-    ]);
-    const content = data.choices?.[0]?.message?.content || "";
-    const parsed = parseJsonObject(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { verifications?: unknown[] };
-    return Array.isArray(parsed.verifications) ? parsed.verifications : [];
-  };
-
-  const initialRaw = await call(recommended, true);
+  const evidenceEntries = await Promise.all(recommended.map(async (review) => {
+    const candidate = candidateById.get(review.canonicalId);
+    return [review.canonicalId, candidate
+      ? await recommendationVerificationEvidence(input.database, input.spaceId, candidate)
+      : { source: "abstract" as const, units: [] }] as const;
+  }));
+  const evidenceByReview = new Map(evidenceEntries);
+  const response = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: MONITOR_MODEL,
+      messages: [
+        { role: "system", content: "You are Pi Research's fast independent recommendation evidence verifier. Audit only against the supplied metadata and numbered evidence units. Return strict JSON without hidden chain-of-thought." },
+        { role: "user", content: [
+          "Return {verifications:[{canonicalId,verdict:\"verified|revise|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,evidenceQuote,verdict:\"supported|qualified|unsupported\",reason}],reason,corrected:{summaryZh,summaryEn,whyReadZh,whyReadEn,problemZh,problemEn,methodZh,methodEn,contributionZh,contributionEn,limitationsZh,limitationsEn,readingFocusZh,readingFocusEn,researchQuestionsZh,researchQuestionsEn,researchProblemImpactZh,researchProblemImpactEn,researchDecisionZh,researchDecisionEn}}]}.",
+          "Audit every supplied paper. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
+          "claimChecks must cover every populated substantive field. Every supported or qualified check must reference one supplied evidenceId. evidenceQuote may be omitted; if included it must be an exact contiguous quote from that evidence unit.",
+          "Treat title, authors, venue, date, and citation count only as metadata. Evidence units support only what they state or directly entail. Route context and user fit do not prove paper findings.",
+          "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it. Missing detail must be described as unknown, not invented as a limitation.",
+          "For revise, corrected must be a complete conservative bilingual replacement. For insufficient, omit corrected. Keep reasons and claim excerpts concise.",
+          "Drafts and evidence: " + JSON.stringify(recommended.map((review) => {
+            const candidate = candidateById.get(review.canonicalId);
+            const evidence = evidenceByReview.get(review.canonicalId);
+            return {
+              canonicalId: review.canonicalId,
+              metadata: candidate ? {
+                title: candidate.title, authors: candidate.authors, venue: candidate.venue,
+                publishedAt: candidate.publishedAt, citations: candidate.citationCount,
+              } : null,
+              evidenceSource: evidence?.source || "abstract",
+              evidenceUnits: evidence?.units || [],
+              draft: recommendationVerificationPayload(review),
+            };
+          })),
+        ].join("\n") },
+      ],
+      thinking: { type: "disabled" },
+      reasoning_effort: "low",
+      response_format: { type: "json_object" },
+      max_tokens: Math.min(3000, 1400 + recommended.length * 1500),
+      stream: false,
+    }),
+    signal: AbortSignal.timeout(VERIFICATION_TIMEOUT_MS),
+  });
+  const data = await response.json() as DeepSeekResponse;
+  if (!response.ok) throw new Error(data.error?.message || "Recommendation evidence verification failed");
+  if (!data.choices?.[0]?.message?.content?.trim()) throw new Error("Recommendation evidence verifier returned an empty response");
+  const totalInputTokens = data.usage?.prompt_tokens || 0;
+  const totalOutputTokens = data.usage?.completion_tokens || 0;
+  await Promise.all([
+    recordUsage(input.database, "monitor:global", input.usageDate, totalInputTokens, totalOutputTokens),
+    recordUsage(input.database, input.workspaceScope, input.usageDate, totalInputTokens, totalOutputTokens),
+    recordUsage(input.database, input.spaceScope, input.usageDate, totalInputTokens, totalOutputTokens),
+  ]);
+  const content = data.choices?.[0]?.message?.content || "";
+  const parsed = parseJsonObject(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { verifications?: unknown[] };
+  const initialRaw = Array.isArray(parsed.verifications) ? parsed.verifications : [];
   const initialById = new Map(initialRaw.flatMap((raw) => {
     if (!raw || typeof raw !== "object") return [];
     const item = raw as Record<string, unknown>;
@@ -2198,10 +2238,13 @@ async function verifyRecommendationBatch(input: {
     if (verifierContradictsCompleteDraft(raw.reason, review)) {
       throw new Error(`Recommendation verifier contradicted a complete draft for ${review.canonicalId}`);
     }
-    const candidate = candidateById.get(review.canonicalId);
+    const evidence = evidenceByReview.get(review.canonicalId) || { source: "abstract" as const, units: [] };
+    const evidenceById = new Map(evidence.units.map((unit) => [unit.id, unit.text]));
     const report = sanitizeEvidenceVerificationDraft(raw, {
       allowedFields: recommendationVerificationFields(review),
-      evidenceTexts: candidate?.abstractText ? [candidate.abstractText] : [],
+      allowedEvidenceIds: new Set(evidenceById.keys()),
+      evidenceById,
+      evidenceTexts: evidence.units.map((unit) => unit.text),
       requireAllFields: true,
     });
     initialReports.set(review.canonicalId, report);
@@ -2210,36 +2253,44 @@ async function verifyRecommendationBatch(input: {
       if (next) corrected.set(review.canonicalId, next);
     }
   }
-  let revisedById = new Map<string, ReturnType<typeof sanitizeEvidenceVerificationDraft>>();
-  if (corrected.size) {
-    const revisedRaw = await call(Array.from(corrected.values()), false);
-    revisedById = new Map(revisedRaw.flatMap((raw) => {
-      if (!raw || typeof raw !== "object") return [];
-      const item = raw as Record<string, unknown>;
-      const canonicalId = cleanText(String(item.canonicalId || ""));
-      const review = corrected.get(canonicalId);
-      const candidate = candidateById.get(canonicalId);
-      return canonicalId && review ? [[canonicalId, sanitizeEvidenceVerificationDraft(item, {
-        allowedFields: recommendationVerificationFields(review),
-        evidenceTexts: candidate?.abstractText ? [candidate.abstractText] : [],
-        requireAllFields: true,
-      })] as const] : [];
-    }));
-  }
   const denominator = Math.max(1, recommended.length);
   return input.reviews.map((review) => {
     if (!review.recommended) return review;
     const initial = initialReports.get(review.canonicalId)
       || sanitizeEvidenceVerificationDraft({ verdict: "insufficient", reason: "Verification result missing" }, { allowedFields: recommendationVerificationFields(review) });
-    const revised = revisedById.get(review.canonicalId) || null;
-    const report = evidenceVerificationReport({ initial, revised });
+    const report = evidenceVerificationReport({ initial });
     const usage = {
       verificationInputTokens: allocatedTokenShare(totalInputTokens, denominator, recommended.indexOf(review)),
       verificationOutputTokens: allocatedTokenShare(totalOutputTokens, denominator, recommended.indexOf(review)),
     };
-    if (initial.clean) return { ...review, verificationStatus: "verified" as const, verificationCoverageScore: report.coverageScore, verificationReport: report, verificationRetryable: false, ...usage };
+    if (initial.clean) {
+      const wasCorrected = review.verificationReport?.correctionQueued === true;
+      const finalReport = wasCorrected ? { ...report, status: "revised", revised: initial } : report;
+      return {
+        ...review,
+        verificationStatus: wasCorrected ? "revised" as const : "verified" as const,
+        verificationCoverageScore: report.coverageScore,
+        verificationReport: finalReport,
+        verificationRetryable: false,
+        ...usage,
+      };
+    }
     const correctedReview = corrected.get(review.canonicalId);
-    if (correctedReview && revised?.clean) return { ...correctedReview, verificationStatus: "revised" as const, verificationCoverageScore: report.coverageScore, verificationReport: report, verificationRetryable: false, ...usage };
+    if (correctedReview) {
+      const evidence = evidenceByReview.get(review.canonicalId);
+      return {
+        ...pendingRecommendationReview(correctedReview, "Verifier corrected the draft; a fresh independent verification pass is queued"),
+        verificationCoverageScore: initial.coverageScore,
+        verificationReport: {
+          status: "pending",
+          reason: "Verifier corrected the draft; a fresh independent verification pass is queued",
+          evidenceSource: evidence?.source || "abstract",
+          correctionQueued: true,
+          initial,
+        },
+        ...usage,
+      };
+    }
     return { ...degradedRecommendationReview(review, report), ...usage };
   });
 }
@@ -4931,6 +4982,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
+    verificationAttempts: {},
     evidenceIds: [], evidenceCompletedIds: [],
     rescueScreenIds: [], rescueScreened: false, screenFailureCount: 0, deepFailureCount: 0, verificationFailureCount: 0,
     pipelineVersion: "", horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
@@ -4963,6 +5015,10 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       verificationIds: Array.isArray(parsed.verificationIds) ? parsed.verificationIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       verificationCompletedIds: Array.isArray(parsed.verificationCompletedIds) ? parsed.verificationCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       verificationDeferredIds: Array.isArray(parsed.verificationDeferredIds) ? parsed.verificationDeferredIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      verificationAttempts: parsed.verificationAttempts && typeof parsed.verificationAttempts === "object" && !Array.isArray(parsed.verificationAttempts)
+        ? Object.fromEntries(Object.entries(parsed.verificationAttempts).filter(([id]) => id).slice(0, DEEP_REVIEW_MAX_LIMIT)
+          .map(([id, count]) => [id, Math.max(0, Math.min(VERIFICATION_ATTEMPT_LIMIT, Number(count) || 0))]))
+        : {},
       evidenceIds: Array.isArray(parsed.evidenceIds) ? parsed.evidenceIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
       evidenceCompletedIds: Array.isArray(parsed.evidenceCompletedIds) ? parsed.evidenceCompletedIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
       rescueScreenIds: Array.isArray(parsed.rescueScreenIds) ? parsed.rescueScreenIds.filter((id): id is string => typeof id === "string").slice(0, RESCUE_SCREEN_LIMIT) : [],
@@ -4987,6 +5043,7 @@ function newScanWorkQueue(): ScanWorkQueue {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
+    verificationAttempts: {},
     evidenceIds: [], evidenceCompletedIds: [],
     rawCandidateCount: 0, newCandidateCount: 0, screenFailureCount: 0, deepFailureCount: 0, verificationFailureCount: 0,
     pipelineVersion: MONITOR_PIPELINE_VERSION, horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
@@ -5580,7 +5637,10 @@ export async function POST(request: Request) {
         previousWork.screenFailureCount = 0;
         previousWork.deepFailureCount = 0;
         previousWork.verificationFailureCount = 0;
-        if (verificationCarryover) previousWork.verificationDeferredIds = [];
+        if (verificationCarryover) {
+          previousWork.verificationDeferredIds = [];
+          previousWork.verificationAttempts = {};
+        }
         if (incompleteDraftCarryoverIds.length) {
           const retryIds = new Set(incompleteDraftCarryoverIds);
           previousWork.deepIds = Array.from(new Set([...previousWork.deepIds, ...incompleteDraftCarryoverIds])).slice(0, DEEP_REVIEW_MAX_LIMIT);
@@ -5589,6 +5649,7 @@ export async function POST(request: Request) {
           previousWork.verificationIds = previousWork.verificationIds.filter((id) => !retryIds.has(id));
           previousWork.verificationCompletedIds = previousWork.verificationCompletedIds.filter((id) => !retryIds.has(id));
           previousWork.verificationDeferredIds = previousWork.verificationDeferredIds.filter((id) => !retryIds.has(id));
+          for (const id of retryIds) delete previousWork.verificationAttempts[id];
         }
       }
       const initialCheckpoint = resumable ? resumeCheckpoint : "planning";
@@ -6188,6 +6249,8 @@ export async function POST(request: Request) {
           ]));
           work.verificationCompletedIds = work.verificationCompletedIds.filter((id) => work.verificationIds.includes(id));
           work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => work.verificationIds.includes(id));
+          work.verificationAttempts = Object.fromEntries(Object.entries(work.verificationAttempts)
+            .filter(([id]) => work.verificationIds.includes(id)));
           await saveScanWorkQueue(database, job.id, work);
           if (work.verificationIds.length) {
             await setStage("verifying_recommendations", "deep_reviewing", 94,
@@ -6219,6 +6282,7 @@ export async function POST(request: Request) {
             work.verificationIds = work.verificationIds.filter((id) => !retryIds.has(id));
             work.verificationCompletedIds = work.verificationCompletedIds.filter((id) => !retryIds.has(id));
             work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => !retryIds.has(id));
+            delete work.verificationAttempts[canonicalId];
             await saveScanWorkQueue(database, job.id, work);
             await setStage("deep_reviewing", "deep_reviewing", 86,
               `发现 1 篇解读结构不完整，正在自动重新生成；已完成论文不会重做`);
@@ -6226,10 +6290,14 @@ export async function POST(request: Request) {
           }
           if (!draft || !candidates.length) {
             work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
+            delete work.verificationAttempts[canonicalId];
           } else {
             const usageDate = new Date().toISOString().slice(0, 10);
             const workspaceScope = "monitor-workspace:" + user.userId.replace(/^anonymous:/, "");
             const spaceScope = "monitor-space:" + space.id;
+            const verificationAttempt = Math.min(VERIFICATION_ATTEMPT_LIMIT, (work.verificationAttempts[canonicalId] || 0) + 1);
+            work.verificationAttempts[canonicalId] = verificationAttempt;
+            await saveScanWorkQueue(database, job.id, work);
             try {
               const verified = await verifyRecommendationBatch({
                 database, spaceId: space.id, usageDate, workspaceScope, spaceScope,
@@ -6237,24 +6305,46 @@ export async function POST(request: Request) {
               });
               const persisted = await persistReviewBatch(database, space.id, job.id, candidates, verified);
               await persistRecommendationAuditBatch(database, space.id, job.id, candidates, persisted, 0, 0);
-              work.verificationCompletedIds = Array.from(new Set([...work.verificationCompletedIds, canonicalId]));
               work.verificationFailureCount = 0;
+              const persistedReview = persisted.find((review) => review.canonicalId === canonicalId);
+              if (persistedReview?.verificationRetryable) {
+                if (verificationAttempt >= VERIFICATION_ATTEMPT_LIMIT) {
+                  work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
+                } else {
+                  await recordReliabilityEvent(database, {
+                    spaceId: space.id,
+                    scanJobId: job.id,
+                    kind: "verification_retry_scheduled",
+                    stage: "verifying_recommendations",
+                    source: MONITOR_MODEL,
+                    outcome: "info",
+                    message: "A corrected draft was saved and queued for one fresh independent verification pass",
+                    metadata: { canonicalId, verificationAttempt, draftPreserved: true, retryScope: "verification_only" },
+                  });
+                }
+              } else {
+                work.verificationCompletedIds = Array.from(new Set([...work.verificationCompletedIds, canonicalId]));
+                delete work.verificationAttempts[canonicalId];
+              }
             } catch (verificationError) {
               if (isNonRetryableDeepSeekError(verificationError)) throw verificationError;
-              work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
               work.verificationFailureCount += 1;
+              const retryScheduled = verificationAttempt < VERIFICATION_ATTEMPT_LIMIT;
+              if (!retryScheduled) {
+                work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
+              }
               await recordReliabilityEvent(database, {
                 spaceId: space.id,
                 scanJobId: job.id,
-                kind: "verification_deferred",
+                kind: retryScheduled ? "verification_retry_scheduled" : "verification_deferred",
                 stage: "verifying_recommendations",
                 source: MONITOR_MODEL,
                 outcome: "degraded",
                 errorCode: monitorErrorCode(verificationError),
                 message: normalizedMonitorError(verificationError),
-                metadata: { canonicalId, draftPreserved: true, retryScope: "verification_only" },
+                metadata: { canonicalId, verificationAttempt, retryScheduled, draftPreserved: true, retryScope: "verification_only" },
               });
-              if (work.verificationFailureCount >= 2) {
+              if (work.verificationFailureCount >= VERIFICATION_CIRCUIT_FAILURE_LIMIT) {
                 const alreadyHandled = new Set([...work.verificationCompletedIds, ...work.verificationDeferredIds]);
                 const circuitDeferred = work.verificationIds.filter((id) => !alreadyHandled.has(id));
                 work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, ...circuitDeferred]));
@@ -6266,7 +6356,7 @@ export async function POST(request: Request) {
                   source: MONITOR_MODEL,
                   outcome: "degraded",
                   errorCode: monitorErrorCode(verificationError),
-                  message: "Repeated verifier timeouts; remaining drafts were deferred without more model calls",
+                  message: "Repeated verifier failures; remaining drafts were deferred without more model calls",
                   metadata: { consecutiveFailures: work.verificationFailureCount, newlyDeferred: circuitDeferred.length },
                 });
               }
@@ -6278,12 +6368,14 @@ export async function POST(request: Request) {
         const verificationReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
         const published = verificationReviews.filter(isPublishedRecommendation).length;
         const pending = verificationReviews.filter((review) => review.verificationRetryable).length;
+        const retrying = work.verificationIds.filter((id) => !work.verificationCompletedIds.includes(id)
+          && !work.verificationDeferredIds.includes(id) && (work.verificationAttempts[id] || 0) > 0).length;
         const verificationProgress = Math.min(96, 94 + Math.round(verificationProcessed
           / Math.max(1, work.verificationIds.length) * 2));
         await database.prepare(
           "UPDATE monitor_scan_jobs SET recommended_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(published,
-          `独立核验 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已确认，${pending} 篇高潜力解读等待后续核验`,
+          `独立核验 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已确认${retrying ? `，${retrying} 篇正在自动进行仅核验重试` : `，${pending} 篇高潜力解读等待后续核验`}`,
           verificationProgress, job.id).run();
         if (verificationProcessed >= work.verificationIds.length) {
           work.evidenceIds = choosePrePublicationEvidenceIds(verificationReviews);

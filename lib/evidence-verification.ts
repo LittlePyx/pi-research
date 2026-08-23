@@ -25,6 +25,39 @@ function textList(value: unknown, limit: number, itemLimit = 320) {
   return Array.from(new Set(value.map((item) => cleanText(item, itemLimit)).filter(Boolean))).slice(0, limit);
 }
 
+export type VerificationEvidenceUnit = {
+  id: string;
+  text: string;
+};
+
+export function abstractEvidenceUnits(
+  value: unknown,
+  options: { prefix?: string; maxUnits?: number; maxChars?: number } = {},
+): VerificationEvidenceUnit[] {
+  const text = cleanText(value, 12_000);
+  if (!text) return [];
+  const maxUnits = Math.max(1, Math.min(24, Math.round(options.maxUnits || 12)));
+  const maxChars = Math.max(160, Math.min(900, Math.round(options.maxChars || 480)));
+  const prefix = cleanText(options.prefix || "abstract", 80).replace(/[^a-zA-Z0-9:_-]+/g, "-") || "abstract";
+  const sentences = text.match(/[^.!?。！？]+[.!?。！？]+|[^.!?。！？]+$/g) || [text];
+  const chunks: string[] = [];
+  for (const sentence of sentences) {
+    let remaining = cleanText(sentence, 4_000);
+    while (remaining && chunks.length < maxUnits) {
+      if (remaining.length <= maxChars) {
+        chunks.push(remaining);
+        break;
+      }
+      const boundary = remaining.slice(0, maxChars + 1).lastIndexOf(" ");
+      const cut = boundary >= Math.floor(maxChars * 0.55) ? boundary : maxChars;
+      chunks.push(remaining.slice(0, cut).trim());
+      remaining = remaining.slice(cut).trim();
+    }
+    if (chunks.length >= maxUnits) break;
+  }
+  return chunks.filter(Boolean).map((unit, index) => ({ id: `${prefix}:${index + 1}`, text: unit }));
+}
+
 export function sanitizeEvidenceVerificationDraft(
   value: unknown,
   options: {
@@ -56,16 +89,17 @@ export function sanitizeEvidenceVerificationDraft(
     const verdict = item.verdict === "supported" || item.verdict === "qualified" ? item.verdict : "unsupported";
     if (!allowedFields.has(field) || !claimExcerpt) return [];
     const normalizedQuote = evidenceQuote.toLowerCase();
-    const idEvidence = evidenceId && allowedEvidenceIds.has(evidenceId)
-      ? cleanText(options.evidenceById?.get(evidenceId) || "", 12_000).toLowerCase() : "";
-    const quoteVerified = Boolean(normalizedQuote) && (idEvidence
-      ? idEvidence.includes(normalizedQuote)
-      : normalizedEvidenceTexts.some((text) => text.includes(normalizedQuote)));
+    const rawIdEvidence = evidenceId && allowedEvidenceIds.has(evidenceId)
+      ? cleanText(options.evidenceById?.get(evidenceId) || "", 12_000) : "";
+    const idEvidence = rawIdEvidence.toLowerCase();
+    const quoteVerified = idEvidence
+      ? (!normalizedQuote || idEvidence.includes(normalizedQuote))
+      : Boolean(normalizedQuote) && normalizedEvidenceTexts.some((text) => text.includes(normalizedQuote));
     return [{
       field,
       claimExcerpt,
       evidenceId: idEvidence ? evidenceId : "",
-      evidenceQuote: quoteVerified ? evidenceQuote : "",
+      evidenceQuote: quoteVerified ? (evidenceQuote || rawIdEvidence) : "",
       verdict: quoteVerified ? verdict : "unsupported" as const,
       reason: cleanText(item.reason, 500),
       grounded: quoteVerified && verdict !== "unsupported",
