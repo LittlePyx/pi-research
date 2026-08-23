@@ -4,12 +4,20 @@ import test from "node:test";
 
 import {
   DISCOVERY_BENCHMARK_GATES,
+  DISCOVERY_GOLD_SETS,
   benchmarkTitleSimilarity,
   buildBenchmarkReplayRecords,
   discoveryCalibrationSignals,
   evaluateDiscoveryRanking,
   mergeBenchmarkQueryCoverage,
 } from "../lib/discovery/benchmark.mjs";
+
+test("live gold checks contain only source-verifiable paper titles", () => {
+  const titles = DISCOVERY_GOLD_SETS.information_theory.positives.map((item) => item.title);
+  assert.ok(!titles.includes("Semantic Compression with Side Information: A Rate-Distortion Perspective"));
+  assert.ok(titles.includes("Rate-Distortion Limits for Task-Oriented Compression with Side Information"));
+  assert.ok(DISCOVERY_GOLD_SETS.information_theory.positives.filter((item) => item.liveCheck).length >= 4);
+});
 
 test("benchmark title matching is stable across academic punctuation", () => {
   const similarity = benchmarkTitleSimilarity(
@@ -60,9 +68,16 @@ for (const profileKey of ["information_theory", "applied_mathematics"]) {
 }
 
 test("monitor retrieval and both LLM review passes consume benchmark calibration", async () => {
-  const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
+  const [monitor, liveBenchmark] = await Promise.all([
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/run-discovery-benchmark.mjs", import.meta.url), "utf8"),
+  ]);
   assert.match(monitor, /mergeBenchmarkQueryCoverage/);
   assert.match(monitor, /discoveryCalibrationSignals/);
   assert.ok((monitor.match(/benchmarkCalibrationPrompt/g) || []).length >= 3);
   assert.match(monitor, /continuous-evidence-v7-benchmark-calibrated/);
+  assert.match(liveBenchmark, /response\.headers\.get\("retry-after"\)/);
+  assert.match(liveBenchmark, /pacedOpenAlexRequest/);
+  assert.match(liveBenchmark, /openAlexBlockedUntil/);
+  assert.match(liveBenchmark, /Promise\.allSettled\(\[openAlexSearch\(query, 10\), crossrefSearch\(query, 10\)\]\)/);
 });

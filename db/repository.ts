@@ -198,6 +198,15 @@ async function ensureResearchNetworkColumns(database: D1Database) {
   for (const [name, sql] of additions) if (!expansionExisting.has(name)) await database.prepare(sql).run();
 }
 
+async function ensureLearningPathColumns(database: D1Database) {
+  const columns = await database.prepare("PRAGMA table_info(learning_paths)").all<{ name: string }>();
+  const existing = new Set(columns.results.map((column) => column.name));
+  if (!existing.has("target_track_id")) {
+    await database.prepare("ALTER TABLE learning_paths ADD COLUMN target_track_id TEXT REFERENCES research_tracks(id) ON DELETE SET NULL").run();
+  }
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_paths_space_target_updated ON learning_paths(space_id, target_track_id, updated_at)").run();
+}
+
 export async function ensureSchema(database = getDatabase()) {
   await database.batch([
     database.prepare("CREATE TABLE IF NOT EXISTS research_spaces (id TEXT PRIMARY KEY NOT NULL, owner_user_id TEXT NOT NULL, name TEXT NOT NULL, member_name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', accent TEXT NOT NULL DEFAULT 'blue', preferred_locale TEXT NOT NULL DEFAULT 'zh', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
@@ -217,7 +226,6 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE INDEX IF NOT EXISTS idx_semantic_scholar_throttles_next ON semantic_scholar_throttles(next_allowed_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', last_run_at TEXT, next_run_at TEXT, new_count INTEGER NOT NULL DEFAULT 0, scanned_count INTEGER NOT NULL DEFAULT 0, discovery_round INTEGER NOT NULL DEFAULT 0, lock_token TEXT, lock_expires_at TEXT, last_trigger TEXT NOT NULL DEFAULT 'visit', last_user_activity_at TEXT, scheduled_runs_since_activity INTEGER NOT NULL DEFAULT 0, automation_paused_at TEXT, automation_pause_reason TEXT NOT NULL DEFAULT '', error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_runs_space ON monitor_runs(space_id)"),
-    database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_runs_automation_due ON monitor_runs(automation_paused_at, status, next_run_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_scheduler_ticks (id TEXT PRIMARY KEY NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, due_space_count INTEGER NOT NULL DEFAULT 0, started_count INTEGER NOT NULL DEFAULT 0, advanced_count INTEGER NOT NULL DEFAULT 0, completed_count INTEGER NOT NULL DEFAULT 0, paused_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_scheduler_ticks_created ON monitor_scheduler_ticks(created_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_discovery_pages (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, horizon TEXT NOT NULL, query_key TEXT NOT NULL, next_offset INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
@@ -323,14 +331,14 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_expansion_state_fresh ON research_network_expansion_states(space_id, expires_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS learning_paths (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, target TEXT NOT NULL, target_track_id TEXT REFERENCES research_tracks(id) ON DELETE SET NULL, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', analysis_model TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_paths_space_updated ON learning_paths(space_id, updated_at)"),
-    database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_paths_space_target_updated ON learning_paths(space_id, target_track_id, updated_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS learning_path_steps (id TEXT PRIMARY KEY NOT NULL, path_id TEXT NOT NULL REFERENCES learning_paths(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, kind TEXT NOT NULL DEFAULT 'foundation', title_zh TEXT NOT NULL, title_en TEXT NOT NULL, goal_zh TEXT NOT NULL DEFAULT '', goal_en TEXT NOT NULL DEFAULT '', why_zh TEXT NOT NULL DEFAULT '', why_en TEXT NOT NULL DEFAULT '', read_focus_zh TEXT NOT NULL DEFAULT '', read_focus_en TEXT NOT NULL DEFAULT '', checkpoint_zh TEXT NOT NULL DEFAULT '', checkpoint_en TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', position INTEGER NOT NULL DEFAULT 0, resources_json TEXT NOT NULL DEFAULT '[]', completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_path_steps_path_position ON learning_path_steps(path_id, position)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_path_steps_space_status ON learning_path_steps(space_id, status)"),
   ]);
+  await ensureLearningPathColumns(database);
+  await ensureEvidenceVerificationColumns(database);
   await ensurePaperInsightReviewColumns(database);
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_recommendation_history ON paper_insights(space_id, ever_recommended, last_recommended_at)").run();
-  await ensureEvidenceVerificationColumns(database);
   await ensureGrowthMapColumns(database);
   await ensureResearchNetworkColumns(database);
   const feedbackColumns = await database.prepare("PRAGMA table_info(paper_feedback)").all<{ name: string }>();

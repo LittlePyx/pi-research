@@ -4,7 +4,7 @@
  * imported by the UI. It is shared by the runtime calibration layer and the
  * repeatable benchmark scripts.
  */
-export const DISCOVERY_BENCHMARK_VERSION = "2026-08-23.v1";
+export const DISCOVERY_BENCHMARK_VERSION = "2026-08-23.v2";
 
 export const DISCOVERY_BENCHMARK_GATES = Object.freeze({
   recallAtK: 0.8,
@@ -68,11 +68,6 @@ export const DISCOVERY_GOLD_SETS = Object.freeze({
         liveCheck: true,
       },
       {
-        title: "Semantic Compression with Side Information: A Rate-Distortion Perspective",
-        facet: "semantic_task",
-        liveCheck: true,
-      },
-      {
         title: "On Information and Sufficiency",
         facet: "information_measures",
         liveCheck: true,
@@ -80,11 +75,16 @@ export const DISCOVERY_GOLD_SETS = Object.freeze({
       {
         title: "Rate-Distortion Limits for Task-Oriented Compression with Side Information",
         facet: "semantic_task",
-        liveCheck: false,
+        liveCheck: true,
       },
       {
         title: "The Information Bottleneck Method",
         facet: "information_measures",
+        liveCheck: true,
+      },
+      {
+        title: "The Rate-Distortion Function for Source Coding with Side Information at the Decoder",
+        facet: "semantic_task",
         liveCheck: false,
       },
       {

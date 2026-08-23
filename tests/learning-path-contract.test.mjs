@@ -51,7 +51,12 @@ test("direction-scoped learning paths validate and persist their target track", 
   assert.match(types, /targetTrackId: string \| null/);
   assert.match(schema, /targetTrackId: text\("target_track_id"\).*onDelete: "set null"/);
   assert.match(repository, /CREATE TABLE IF NOT EXISTS learning_paths [^\n]*target_track_id TEXT REFERENCES research_tracks\(id\) ON DELETE SET NULL/);
-  assert.doesNotMatch(repository, /ALTER TABLE learning_paths ADD COLUMN target_track_id/);
+  assert.match(repository, /ALTER TABLE learning_paths ADD COLUMN target_track_id TEXT REFERENCES research_tracks\(id\) ON DELETE SET NULL/);
+  assert.ok(
+    repository.indexOf("ALTER TABLE learning_paths ADD COLUMN target_track_id")
+      < repository.indexOf("CREATE INDEX IF NOT EXISTS idx_learning_paths_space_target_updated"),
+    "legacy learning-path columns must be added before their index is created",
+  );
   assert.match(migration, /ADD `target_track_id` text REFERENCES research_tracks\(id\) ON DELETE SET NULL/);
   assert.match(post, /trackId\?: string \| null/);
   assert.match(post, /WHERE id = \? AND space_id = \? LIMIT 1/);

@@ -44,5 +44,15 @@ test("scheduled monitoring persists heartbeats and advances only a bounded check
   assert.match(route, /automationPaused: true/);
   assert.match(schema, /monitorSchedulerTicks/);
   assert.match(repository, /idx_monitor_runs_automation_due/);
+  assert.ok(
+    repository.indexOf("ALTER TABLE monitor_runs ADD COLUMN automation_paused_at TEXT")
+      < repository.indexOf("CREATE INDEX IF NOT EXISTS idx_monitor_runs_automation_due"),
+    "legacy monitor_runs columns must be added before the automation index is created",
+  );
+  assert.ok(
+    repository.indexOf("await ensureEvidenceVerificationColumns(database)")
+      < repository.indexOf("await ensurePaperInsightReviewColumns(database)"),
+    "legacy audit verification columns must exist before recommendation history is backfilled",
+  );
   assert.match(client, /等待你处理后恢复/);
 });

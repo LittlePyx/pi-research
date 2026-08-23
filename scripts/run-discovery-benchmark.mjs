@@ -14,15 +14,49 @@ const headers = {
   Accept: "application/json",
   "User-Agent": "PiResearch/1.0 (internal discovery benchmark; pi-research@qiudao-pika.chatgpt.site)",
 };
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+let openAlexQueue = Promise.resolve();
+let lastOpenAlexRequestAt = 0;
+let openAlexBlockedUntil = 0;
+
+function retryDelay(response, attempt) {
+  const retryAfter = response.headers.get("retry-after")?.trim() || "";
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(30_000, Math.max(1_000, seconds * 1_000));
+  const retryAt = Date.parse(retryAfter);
+  if (Number.isFinite(retryAt)) return Math.min(30_000, Math.max(1_000, retryAt - Date.now()));
+  return Math.min(6_000, 1_000 * (2 ** attempt));
+}
+
+async function pacedOpenAlexRequest(task) {
+  const request = openAlexQueue.then(async () => {
+    if (Date.now() < openAlexBlockedUntil) throw new Error("OpenAlex HTTP 429 circuit open");
+    await sleep(Math.max(0, lastOpenAlexRequestAt + 450 - Date.now()));
+    try {
+      return await task();
+    } catch (error) {
+      if (error instanceof Error && /HTTP 429/.test(error.message)) openAlexBlockedUntil = Date.now() + 60_000;
+      throw error;
+    } finally {
+      lastOpenAlexRequestAt = Date.now();
+    }
+  });
+  openAlexQueue = request.catch(() => undefined);
+  return request;
+}
 
 async function fetchJson(url, attempts = 3) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch(url, { headers, signal: AbortSignal.timeout(25_000) });
+      if (response.status === 429 && new URL(url).hostname === "api.openalex.org") {
+        openAlexBlockedUntil = Date.now() + retryDelay(response, attempt);
+        throw new Error("OpenAlex HTTP 429 circuit open");
+      }
       if (response.status === 429 || response.status >= 500) {
         if (attempt + 1 < attempts) {
-          await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+          await sleep(retryDelay(response, attempt));
           continue;
         }
       }
@@ -30,7 +64,8 @@ async function fetchJson(url, attempts = 3) {
       return await response.json();
     } catch (error) {
       lastError = error;
-      if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      if (error instanceof Error && /OpenAlex HTTP 429/.test(error.message)) throw error;
+      if (attempt + 1 < attempts) await sleep(Math.min(8_000, 750 * (2 ** attempt)));
     }
   }
   throw lastError instanceof Error ? lastError : new Error("source request failed");
@@ -42,7 +77,7 @@ async function openAlexSearch(query, perPage = 10) {
   endpoint.searchParams.set("filter", "is_paratext:false");
   endpoint.searchParams.set("per-page", String(perPage));
   endpoint.searchParams.set("select", "id,doi,display_name,publication_date,cited_by_count,relevance_score,primary_location");
-  const data = await fetchJson(endpoint);
+  const data = await pacedOpenAlexRequest(() => fetchJson(endpoint));
   return (data.results || []).map((item, index) => ({
     title: item.display_name || "",
     venue: item.primary_location?.source?.display_name || "",
@@ -124,7 +159,13 @@ async function exactTitleRecall(profileKey, benchmark) {
 
 async function broadQueryQuality(profileKey, benchmark) {
   const queries = Object.values(benchmark.baselineQueries).flat();
-  const batches = await mapLimit(queries, 3, async (query) => openAlexSearch(query, 10));
+  const providerErrors = { openalex: 0, crossref: 0 };
+  const batches = await mapLimit(queries, 2, async (query) => {
+    const providers = await Promise.allSettled([openAlexSearch(query, 10), crossrefSearch(query, 10)]);
+    if (providers[0].status === "rejected") providerErrors.openalex += 1;
+    if (providers[1].status === "rejected") providerErrors.crossref += 1;
+    return providers.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  });
   const ranked = rankBenchmarkRecords(profileKey, dedupeTitles(batches.flat())).slice(0, 10);
   const judged = ranked.map((record) => ({ record, signals: discoveryCalibrationSignals(profileKey, record) }));
   const directFit = judged.filter(({ signals }) => signals.facetIds.length > 0 && !signals.likelyWrongType).length;
@@ -134,6 +175,7 @@ async function broadQueryQuality(profileKey, benchmark) {
     precisionAt10: directFit / Math.max(1, judged.length),
     wrongTypeRate: wrongType / Math.max(1, judged.length),
     facetCoverage: facets.size / Math.max(1, benchmark.facets.length),
+    providerErrors,
     top10: judged.map(({ record, signals }) => ({
       title: record.title,
       score: Math.round(record.benchmarkScore),
@@ -178,7 +220,7 @@ if (live) {
       wrongTypeRate: metrics.wrongTypeRate <= DISCOVERY_BENCHMARK_GATES.wrongTypeRate,
       facetCoverage: metrics.facetCoverage >= DISCOVERY_BENCHMARK_GATES.facetCoverage,
     };
-    report.live.push({ profileKey, passed: Object.values(gates).every(Boolean), metrics, gates, retrieval: retrieval.checks, top10: broad.top10 });
+    report.live.push({ profileKey, passed: Object.values(gates).every(Boolean), metrics, gates, providerErrors: broad.providerErrors, retrieval: retrieval.checks, top10: broad.top10 });
   }
 }
 
