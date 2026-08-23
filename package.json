@@ -11,6 +11,8 @@
     "start": "vinext start",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:live": "node scripts/verify-live-sources.mjs",
+    "test:discovery": "node scripts/run-discovery-benchmark.mjs",
+    "test:discovery:live": "node scripts/run-discovery-benchmark.mjs --live",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

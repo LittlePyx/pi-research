@@ -1,5 +1,10 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
+import {
+  benchmarkCalibrationPrompt,
+  discoveryCalibrationSignals,
+  mergeBenchmarkQueryCoverage,
+} from "../../../lib/discovery/benchmark.mjs";
 import { hasStrongFitScoreContradiction, inferModelScoreScale, normalizeModelScore } from "../../../lib/discovery/model-score";
 import { passesRecommendationGate } from "../../../lib/discovery/review-gate";
 import {
@@ -533,8 +538,8 @@ const HORIZONS = [
 ] as const;
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
-const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-19T09:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-evidence-v6-resilient-verification";
+const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
+const MONITOR_PIPELINE_VERSION = "continuous-evidence-v7-benchmark-calibrated";
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
 const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
@@ -1289,8 +1294,16 @@ async function fetchHorizon(
   const unique = new Map<string, Candidate>();
   for (const item of normalized
     .filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item))
-    .map((item) => ({ item, signals: relevanceSignals(`${item.title} ${item.abstractText} ${item.venue}`, space, profileKey) }))
-    .map(({ item, signals }) => scoreCandidate({ ...item, relevanceScore: item.relevanceScore + signals.score * 20 }, priorityVenues, now))) {
+    .map((item) => ({
+      item,
+      signals: relevanceSignals(`${item.title} ${item.abstractText} ${item.venue}`, space, profileKey),
+      calibration: discoveryCalibrationSignals(profileKey, item),
+    }))
+    .map(({ item, signals, calibration }) => {
+      const rawRelevance = item.relevanceScore + signals.score * 20 + calibration.priorityBoost;
+      const calibratedRelevance = calibration.likelyWrongType ? Math.min(5, rawRelevance) : rawRelevance;
+      return scoreCandidate({ ...item, relevanceScore: Math.max(0, calibratedRelevance) }, priorityVenues, now);
+    })) {
     const workKey = normalizeWorkTitle(item.title) || item.canonicalId;
     const previous = unique.get(workKey);
     if (!previous) {
@@ -1713,6 +1726,7 @@ async function ensureDailyQueryPlan(
   apiKey: string,
 ): Promise<QueryPlan> {
   const planDate = new Date().toISOString().slice(0, 10);
+  const queryCoverageLimit = preference.explorationMode === "focused" ? 2 : preference.explorationMode === "open" ? 4 : 3;
   const [existing, guidanceTracks, guidance, confirmedEvidence] = await Promise.all([
     database.prepare(
       "SELECT plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error, created_at FROM monitor_query_plans WHERE space_id = ? AND plan_date = ? LIMIT 1",
@@ -1755,11 +1769,11 @@ async function ensureDailyQueryPlan(
     return {
       planDate: existing.plan_date,
       explorationMode: preference.explorationMode,
-      queries: {
-        days: normalizePlannedQueries(existingQueries.days, 3),
-        months: normalizePlannedQueries(existingQueries.months, 3),
-        years: normalizePlannedQueries(existingQueries.years, 3),
-      },
+      queries: mergeBenchmarkQueryCoverage(preference.profileKey, {
+        days: normalizePlannedQueries(existingQueries.days, 4),
+        months: normalizePlannedQueries(existingQueries.months, 4),
+        years: normalizePlannedQueries(existingQueries.years, 4),
+      }, planDate, queryCoverageLimit),
       rationaleZh: existing.rationale_zh,
       rationaleEn: existing.rationale_en,
       model: existing.model,
@@ -1844,6 +1858,7 @@ async function ensureDailyQueryPlan(
             { role: "user", content: [
               `Build today's query plan for ${space.name}: ${space.description}.`,
               `Exploration mode: ${preference.explorationMode}. Return exactly ${queryLimit} concise English bibliographic query strings per horizon.`,
+              benchmarkCalibrationPrompt(preference.profileKey),
               "The three horizons are simultaneous: days = newest 14 days; months = new and high-quality 6 months; years = durable, foundational, methodologically useful 5 years.",
               "Move beyond yesterday's obvious wording. Cover core depth, one adjacent bridge when mode allows, unresolved questions, under-covered subdirections, methods, and representative venues. When a grounded cross-paper synthesis or direction assessment contains an evidence gap or nextSearchQuery, use at least one horizon slot to test that gap instead of merely repeating broad topic keywords. Do not include dates, API syntax, Boolean operators, journal names alone, or generic words such as research/study/paper.",
               "Return {\"days\":[...],\"months\":[...],\"years\":[...],\"rationaleZh\":\"...\",\"rationaleEn\":\"...\"}.",
@@ -1887,6 +1902,7 @@ async function ensureDailyQueryPlan(
       model = "deterministic-fallback";
     }
   }
+  queries = mergeBenchmarkQueryCoverage(preference.profileKey, queries, planDate, queryCoverageLimit);
   await database.prepare(
     `INSERT INTO monitor_query_plans
      (id, space_id, plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error)
@@ -2243,7 +2259,12 @@ async function quickScreenBatch(
   mode: "fast" | "rescue" = "fast",
 ) {
   const deliberate = mode === "rescue";
-  const routeTitles = await loadRouteReviewTitles(database, space.id, candidates);
+  const [routeTitles, preferenceRow] = await Promise.all([
+    loadRouteReviewTitles(database, space.id, candidates),
+    database.prepare("SELECT profile_key FROM monitor_preferences WHERE space_id = ? LIMIT 1")
+      .bind(space.id).first<{ profile_key: string }>(),
+  ]);
+  const benchmarkProfileKey = preferenceRow?.profile_key || inferDomainProfile(space.name, space.description).key;
   const prompt = [
     "Return one JSON object only with shape {\"screens\":[...]}. Screen every supplied record.",
     "Each screen must contain canonicalId, isPaper, relevanceScore, qualityScore, and screeningReason.",
@@ -2254,6 +2275,7 @@ async function quickScreenBatch(
     "Judge direct fit to the research space, evidence quality, durable usefulness, and the different standards for 14 days, 6 months, and 5 years.",
     "Calibrate relevance consistently: 80-100 means a direct advance; 65-79 means a credible theoretical, methodological, or foundational contribution to a confirmed route; 55-64 means useful adjacent support; below 55 means genuinely weak fit. Do not require the title to repeat the research-space keywords when the supplied abstract or route context establishes the connection.",
     "Route origins are discovery context only. Use them to test the paper's concrete relationship to that direction, but never treat route discovery as recommendation permission, evidence that the paper is good, or a score boost.",
+    benchmarkCalibrationPrompt(benchmarkProfileKey),
     "Do not write summaries or reading advice in this pass. Keep screeningReason under 35 words and use only supplied metadata.",
     `Research space: ${space.name} — ${space.description}`,
     `Confirmed research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
@@ -2640,6 +2662,9 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
   const boundedMemoryContext = cleanText(space.memoryContext || "No confirmed imported profile yet").slice(0, 1800);
   const boundedPositiveExamples = cleanText(space.positiveExamples || "No positive paper feedback yet").slice(0, 1000);
   const boundedNegativeExamples = cleanText(space.negativeExamples || "No negative paper feedback yet").slice(0, 800);
+  const benchmarkPreference = await database.prepare("SELECT profile_key FROM monitor_preferences WHERE space_id = ? LIMIT 1")
+    .bind(space.id).first<{ profile_key: string }>();
+  const benchmarkProfileKey = benchmarkPreference?.profile_key || inferDomainProfile(space.name, space.description).key;
   const compactMapTracks = mapTracks.results.map((track) => ({
     id: track.id,
     titleZh: track.title_zh,
@@ -2701,6 +2726,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "When research-map directions are supplied, assign every recommended paper to the single best-fitting trackId whenever a credible direct or supporting relationship exists. Use an empty trackId only when every available direction would create a misleading relationship.",
       "For a track assignment, use mapRole=foundation for a field-defining prerequisite, milestone for a durable development, or frontier for current active work, and write a concrete bilingual map rationale explaining how it extends that direction. For no assignment, keep both map rationales empty.",
       `Research space: ${space.name} — ${space.description}`,
+      benchmarkCalibrationPrompt(benchmarkProfileKey),
       `User-confirmed imported research memory: ${boundedMemoryContext}`,
       `Papers the user explicitly valued or saved: ${boundedPositiveExamples}`,
       `Papers the user explicitly marked not relevant: ${boundedNegativeExamples}`,
