@@ -527,6 +527,7 @@ const DEEP_REVIEW_CONCURRENCY = 2;
 const DEEP_REVIEW_LIMIT = 8;
 const DEEP_REVIEW_RESCUE_LIMIT = 4;
 const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
+const HIGH_POTENTIAL_DRAFT_TARGET = 3;
 const DEEP_REVIEW_CARRYOVER_LIMIT = 2;
 const PRE_PUBLICATION_EVIDENCE_LIMIT = 4;
 const RESCUE_SCREEN_LIMIT = 8;
@@ -550,7 +551,10 @@ const QUICK_SCREEN_RETRY_TIMEOUT_MS = 12_000;
 const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000;
 const DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000;
 const VERIFICATION_TIMEOUT_MS = 20_000;
-const VERIFICATION_ATTEMPT_LIMIT = 2;
+const VERIFICATION_CORRECTION_TIMEOUT_MS = 28_000;
+// Three successful requests may be needed (audit, correction, fresh audit).
+// Keep two additional slots for transient timeouts without rerunning discovery or deep review.
+const VERIFICATION_ATTEMPT_LIMIT = 5;
 const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
@@ -2174,20 +2178,29 @@ async function verifyRecommendationBatch(input: {
       : { source: "abstract" as const, units: [] }] as const;
   }));
   const evidenceByReview = new Map(evidenceEntries);
+  const correctionMode = recommended.every((review) => review.verificationReport?.correctionRequested === true);
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: MONITOR_MODEL,
       messages: [
-        { role: "system", content: "You are Pi Research's fast independent recommendation evidence verifier. Audit only against the supplied metadata and numbered evidence units. Return strict JSON without hidden chain-of-thought." },
+        { role: "system", content: correctionMode
+          ? "You are Pi Research's conservative recommendation editor. Correct only the supplied draft using the audit findings and numbered evidence units. Return strict JSON without hidden chain-of-thought."
+          : "You are Pi Research's fast independent recommendation evidence verifier. Audit only against the supplied metadata and numbered evidence units. Return strict JSON without hidden chain-of-thought." },
         { role: "user", content: [
-          "Return {verifications:[{canonicalId,verdict:\"verified|revise|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,evidenceQuote,verdict:\"supported|qualified|unsupported\",reason}],reason,corrected:{summaryZh,summaryEn,whyReadZh,whyReadEn,problemZh,problemEn,methodZh,methodEn,contributionZh,contributionEn,limitationsZh,limitationsEn,readingFocusZh,readingFocusEn,researchQuestionsZh,researchQuestionsEn,researchProblemImpactZh,researchProblemImpactEn,researchDecisionZh,researchDecisionEn}}]}.",
-          "Audit every supplied paper. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
-          "claimChecks must cover every populated substantive field. Every supported or qualified check must reference one supplied evidenceId. evidenceQuote may be omitted; if included it must be an exact contiguous quote from that evidence unit.",
+          correctionMode
+            ? "Return {corrections:[{canonicalId,corrected:{summaryZh,summaryEn,whyReadZh,whyReadEn,problemZh,problemEn,methodZh,methodEn,contributionZh,contributionEn,limitationsZh,limitationsEn,readingFocusZh,readingFocusEn,researchQuestionsZh,researchQuestionsEn,researchProblemImpactZh,researchProblemImpactEn,researchDecisionZh,researchDecisionEn}}]}."
+            : "Return {verifications:[{canonicalId,verdict:\"verified|revise|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,verdict:\"supported|qualified|unsupported\",reason}],reason]}.",
+          correctionMode
+            ? "Correct every supplied draft into a complete conservative bilingual replacement. Apply the supplied audit exactly, retain supported substance, remove or qualify unsupported claims, and do not add new claims."
+            : "Audit every supplied paper. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
+          correctionMode
+            ? "Every corrected field must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation."
+            : "claimChecks must cover every populated substantive field. Every supported or qualified check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
           "Treat title, authors, venue, date, and citation count only as metadata. Evidence units support only what they state or directly entail. Route context and user fit do not prove paper findings.",
-          "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it. Missing detail must be described as unknown, not invented as a limitation.",
-          "For revise, corrected must be a complete conservative bilingual replacement. For insufficient, omit corrected. Keep reasons and claim excerpts concise.",
+          "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it.",
+          correctionMode ? "Keep the correction concise while preserving every required bilingual field." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
           "Drafts and evidence: " + JSON.stringify(recommended.map((review) => {
             const candidate = candidateById.get(review.canonicalId);
             const evidence = evidenceByReview.get(review.canonicalId);
@@ -2199,6 +2212,7 @@ async function verifyRecommendationBatch(input: {
               } : null,
               evidenceSource: evidence?.source || "abstract",
               evidenceUnits: evidence?.units || [],
+              priorAudit: correctionMode ? review.verificationReport?.audit || null : undefined,
               draft: recommendationVerificationPayload(review),
             };
           })),
@@ -2207,10 +2221,10 @@ async function verifyRecommendationBatch(input: {
       thinking: { type: "disabled" },
       reasoning_effort: "low",
       response_format: { type: "json_object" },
-      max_tokens: Math.min(3000, 1400 + recommended.length * 1500),
+      max_tokens: correctionMode ? Math.min(3000, 1400 + recommended.length * 1500) : Math.min(1800, 850 + recommended.length * 850),
       stream: false,
     }),
-    signal: AbortSignal.timeout(VERIFICATION_TIMEOUT_MS),
+    signal: AbortSignal.timeout(correctionMode ? VERIFICATION_CORRECTION_TIMEOUT_MS : VERIFICATION_TIMEOUT_MS),
   });
   const data = await response.json() as DeepSeekResponse;
   if (!response.ok) throw new Error(data.error?.message || "Recommendation evidence verification failed");
@@ -2223,7 +2237,35 @@ async function verifyRecommendationBatch(input: {
     recordUsage(input.database, input.spaceScope, input.usageDate, totalInputTokens, totalOutputTokens),
   ]);
   const content = data.choices?.[0]?.message?.content || "";
-  const parsed = parseJsonObject(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { verifications?: unknown[] };
+  const parsed = parseJsonObject(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { verifications?: unknown[]; corrections?: unknown[] };
+  const denominator = Math.max(1, recommended.length);
+  if (correctionMode) {
+    const correctionById = new Map((Array.isArray(parsed.corrections) ? parsed.corrections : []).flatMap((raw) => {
+      if (!raw || typeof raw !== "object") return [];
+      const item = raw as Record<string, unknown>;
+      const canonicalId = cleanText(String(item.canonicalId || ""));
+      return canonicalId ? [[canonicalId, item.corrected] as const] : [];
+    }));
+    return input.reviews.map((review) => {
+      if (!review.recommended) return review;
+      const correctedReview = correctedRecommendationReview(review, correctionById.get(review.canonicalId));
+      if (!correctedReview) throw new Error(`Recommendation correction incomplete: ${review.canonicalId}`);
+      const evidence = evidenceByReview.get(review.canonicalId);
+      return {
+        ...pendingRecommendationReview(correctedReview, "Corrected draft saved; a fresh independent verification pass is queued"),
+        verificationReport: {
+          status: "pending",
+          reason: "Corrected draft saved; a fresh independent verification pass is queued",
+          evidenceSource: evidence?.source || "abstract",
+          correctionQueued: true,
+          correctionRequested: false,
+          priorAudit: review.verificationReport?.audit || null,
+        },
+        verificationInputTokens: allocatedTokenShare(totalInputTokens, denominator, recommended.indexOf(review)),
+        verificationOutputTokens: allocatedTokenShare(totalOutputTokens, denominator, recommended.indexOf(review)),
+      };
+    });
+  }
   const initialRaw = Array.isArray(parsed.verifications) ? parsed.verifications : [];
   const initialById = new Map(initialRaw.flatMap((raw) => {
     if (!raw || typeof raw !== "object") return [];
@@ -2232,7 +2274,6 @@ async function verifyRecommendationBatch(input: {
     return canonicalId ? [[canonicalId, item] as const] : [];
   }));
   const initialReports = new Map<string, ReturnType<typeof sanitizeEvidenceVerificationDraft>>();
-  const corrected = new Map<string, PaperReview>();
   for (const review of recommended) {
     const raw = initialById.get(review.canonicalId) || { verdict: "insufficient", reason: "Verifier omitted this paper" };
     if (verifierContradictsCompleteDraft(raw.reason, review)) {
@@ -2248,12 +2289,7 @@ async function verifyRecommendationBatch(input: {
       requireAllFields: true,
     });
     initialReports.set(review.canonicalId, report);
-    if (!report.clean && report.verdict === "revise") {
-      const next = correctedRecommendationReview(review, raw.corrected);
-      if (next) corrected.set(review.canonicalId, next);
-    }
   }
-  const denominator = Math.max(1, recommended.length);
   return input.reviews.map((review) => {
     if (!review.recommended) return review;
     const initial = initialReports.get(review.canonicalId)
@@ -2275,18 +2311,18 @@ async function verifyRecommendationBatch(input: {
         ...usage,
       };
     }
-    const correctedReview = corrected.get(review.canonicalId);
-    if (correctedReview) {
+    if (initial.verdict === "revise") {
       const evidence = evidenceByReview.get(review.canonicalId);
       return {
-        ...pendingRecommendationReview(correctedReview, "Verifier corrected the draft; a fresh independent verification pass is queued"),
+        ...pendingRecommendationReview(review, "Independent audit requested a conservative correction; correction is queued"),
         verificationCoverageScore: initial.coverageScore,
         verificationReport: {
           status: "pending",
-          reason: "Verifier corrected the draft; a fresh independent verification pass is queued",
+          reason: "Independent audit requested a conservative correction; correction is queued",
           evidenceSource: evidence?.source || "abstract",
-          correctionQueued: true,
-          initial,
+          correctionQueued: false,
+          correctionRequested: true,
+          audit: initial,
         },
         ...usage,
       };
@@ -2460,7 +2496,7 @@ async function persistQuickScreens(database: D1Database, spaceId: string, screen
        analysis_model = CASE WHEN ever_recommended = 1 THEN analysis_model ELSE ? END,
        llm_recommended = CASE WHEN ever_recommended = 1 THEN llm_recommended ELSE 0 END,
        llm_relevance_score = CASE WHEN ever_recommended = 1 THEN llm_relevance_score ELSE ? END,
-       quality_score = MAX(quality_score, ?),
+       quality_score = CASE WHEN ever_recommended = 1 THEN quality_score ELSE ? END,
        screening_reason = CASE WHEN ever_recommended = 1 THEN screening_reason ELSE ? END,
        updated_at = CURRENT_TIMESTAMP
        WHERE paper_id = ? AND space_id = ?
@@ -2507,7 +2543,8 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
        summary_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.summary_en ELSE excluded.summary_en END,
        why_read_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.why_read_zh ELSE excluded.why_read_zh END,
        why_read_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.why_read_en ELSE excluded.why_read_en END,
-       quality_score = MAX(paper_insights.quality_score, excluded.quality_score),
+       quality_score = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0
+        THEN paper_insights.quality_score ELSE excluded.quality_score END,
        priority_venue = MAX(paper_insights.priority_venue, excluded.priority_venue),
        analysis_source = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.analysis_source ELSE excluded.analysis_source END,
        analysis_model = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.analysis_model ELSE excluded.analysis_model END,
@@ -3159,6 +3196,7 @@ function selectDiverseItems<T>(
   groupKey: (item: T) => string,
   horizonKey: (item: T) => Horizon,
   limit = 6,
+  coreCount = 0,
 ) {
   const selected: T[] = [];
   const selectedSet = new Set<T>();
@@ -3171,6 +3209,7 @@ function selectDiverseItems<T>(
     groupCounts.set(group, (groupCounts.get(group) || 0) + 1);
     return true;
   };
+  for (const item of rankedItems.slice(0, Math.min(limit, Math.max(0, coreCount)))) add(item);
   for (const horizon of ["days", "months", "years"] as Horizon[]) {
     const item = rankedItems.find((candidate) => !selectedSet.has(candidate) && horizonKey(candidate) === horizon && !(groupCounts.get(groupKey(candidate)) || 0));
     if (item) add(item);
@@ -5174,6 +5213,7 @@ function chooseDeepCandidateIds(candidates: Candidate[], screens: QuickScreen[],
     (screen) => candidateDirectionKey(candidateById.get(screen.canonicalId)!),
     (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
     limit,
+    Math.ceil(limit / 2),
   ).map((screen) => screen.canonicalId);
 }
 
@@ -5987,6 +6027,7 @@ export async function POST(request: Request) {
         work.verificationIds = [];
         work.verificationCompletedIds = [];
         work.verificationDeferredIds = [];
+        work.verificationAttempts = {};
         work.verificationFailureCount = 0;
         work.evidenceIds = [];
         work.evidenceCompletedIds = [];
@@ -6230,16 +6271,23 @@ export async function POST(request: Request) {
         ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
           `已处理 ${processedDeepCount} / ${work.deepIds.length} 篇深度解读，${verificationPending} 篇高潜力解读待核验${recommended ? `，${recommended} 篇已可阅读` : ""}${work.deepDeferredIds.length ? `，${work.deepDeferredIds.length} 篇响应较慢已延后` : ""}`, deepProgress, job.id).run();
         if (processedDeepCount >= work.deepIds.length) {
-          if (!potentialRecommendations && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
+          const recommendationShortfall = Math.max(0, HIGH_POTENTIAL_DRAFT_TARGET - potentialRecommendations);
+          if (recommendationShortfall && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
+            const secondWaveLimit = Math.min(
+              DEEP_REVIEW_RESCUE_LIMIT,
+              DEEP_REVIEW_MAX_LIMIT - work.deepIds.length,
+              Math.max(2, recommendationShortfall * 2),
+            );
             const rescueIds = Array.from(new Set([
-              ...chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, DEEP_REVIEW_RESCUE_LIMIT),
-              ...chooseContinuityCandidateIds(allCandidates, work.screens, work.deepIds, CONTINUITY_DEEP_REVIEW_LIMIT),
-            ])).slice(0, DEEP_REVIEW_RESCUE_LIMIT);
+              ...chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, secondWaveLimit),
+              ...chooseContinuityCandidateIds(allCandidates, work.screens, work.deepIds, Math.min(CONTINUITY_DEEP_REVIEW_LIMIT, secondWaveLimit)),
+            ])).slice(0, secondWaveLimit);
             if (rescueIds.length) {
               work.deepIds = [...work.deepIds, ...rescueIds];
               await saveScanWorkQueue(database, job.id, work);
-              await setStage("enriching_abstracts", "deep_reviewing", 76, `首批高潜力论文未入选，正在追加 ${rescueIds.length} 篇第二批评审`);
+              await setStage("enriching_abstracts", "deep_reviewing", 76,
+                `目前形成 ${potentialRecommendations} 篇高潜力稿，正在追加 ${rescueIds.length} 篇第二批评审，目标补足到 ${HIGH_POTENTIAL_DRAFT_TARGET} 篇`);
               return Response.json(await readState(database, space, { rescueReview: true }), { status: 202 });
             }
           }

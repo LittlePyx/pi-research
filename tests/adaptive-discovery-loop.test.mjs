@@ -73,8 +73,12 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DEEP_REVIEW_LIMIT = 8/);
   assert.match(monitor, /DEEP_REVIEW_RESCUE_LIMIT = 4/);
   assert.match(monitor, /DEEP_REVIEW_MAX_LIMIT/);
+  assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 3/);
+  assert.match(monitor, /recommendationShortfall/);
+  assert.match(monitor, /目前形成 \$\{potentialRecommendations\} 篇高潜力稿/);
+  assert.match(monitor, /Math\.ceil\(limit \/ 2\)/);
   assert.match(monitor, /rescueReview: true/);
-  assert.match(monitor, /首批高潜力论文未入选/);
+  assert.match(monitor, /正在追加 \$\{rescueIds\.length\} 篇第二批评审/);
   assert.match(monitor, /DEEP_REVIEW_BATCH_SIZE = 1/);
   assert.match(monitor, /DEEP_REVIEW_CONCURRENCY = 2/);
   assert.match(monitor, /MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120/);
@@ -111,6 +115,8 @@ test("screening refreshes stale fallback plans and enriches evidence before deep
   assert.match(monitor, /0-100 scale, never decimals on a 0-1 scale/);
   assert.match(monitor, /inferModelScoreScale/);
   assert.match(monitor, /candidateScreeningPriority/);
+  assert.match(monitor, /quality_score = CASE WHEN ever_recommended = 1 THEN quality_score ELSE \? END/);
+  assert.match(monitor, /THEN paper_insights\.quality_score ELSE excluded\.quality_score END/);
   assert.match(monitor, /fetchSemanticScholarAbstracts/);
   assert.match(monitor, /fetchOpenAlexAbstract/);
   assert.match(monitor, /checkpoint === "enriching_abstracts"/);
