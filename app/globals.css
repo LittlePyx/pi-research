@@ -1075,7 +1075,10 @@ main { min-width: 0; }
 .v2-model-status-card { margin: 0 26px 18px; padding: 18px; display: flex; align-items: center; gap: 14px; border: 1px solid #d5dbd6; border-radius: 10px; background: white; }
 .v2-model-status-card > span { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: #eef2ef; }
 .v2-model-status-card > span i { width: 10px; height: 10px; border-radius: 50%; background: #b18c4e; box-shadow: 0 0 0 5px rgba(177,140,78,.13); }
-.v2-model-status-card.live > span i { background: #5a8b70; box-shadow: 0 0 0 5px rgba(90,139,112,.14); }
+.v2-model-status-card.connected > span i { background: #5a8b70; box-shadow: 0 0 0 5px rgba(90,139,112,.14); }
+.v2-model-status-card.checking > span i { background: #b18c4e; box-shadow: 0 0 0 5px rgba(177,140,78,.13); }
+.v2-model-status-card.invalid { border-color: #e1c6bf; background: #fff9f7; }
+.v2-model-status-card.invalid > span i { background: #a95849; box-shadow: 0 0 0 5px rgba(169,88,73,.13); }
 .v2-model-status-card div { display: grid; gap: 3px; }
 .v2-model-status-card small { color: #788179; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .v2-model-status-card strong { color: #27372e; font: 21px/1.2 Georgia, serif; }
@@ -1088,6 +1091,11 @@ main { min-width: 0; }
 .v2-model-key-form input { min-width: 0; height: 100%; flex: 1; padding: 0 13px; border: 0; outline: 0; background: transparent; color: #25352c; font: 14px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .v2-model-key-form label > div > button { align-self: stretch; padding: 0 13px; border: 0; border-left: 1px solid #dce2dd; background: #f1f5f2; color: #5b6b61; font-size: 12px; font-weight: 800; cursor: pointer; }
 .v2-model-key-error { margin: 10px 0 0; padding: 9px 10px; border-radius: 6px; background: #fff1ef; color: #9a4339; font-size: 12px; line-height: 1.45; }
+.v2-model-resume-card { margin: 0 26px 18px; padding: 13px 15px; display: grid; grid-template-columns: 24px minmax(0,1fr) auto; gap: 10px; align-items: center; border: 1px solid #c9dbce; border-radius: 9px; background: #edf5ef; }
+.v2-model-resume-card > b { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: #d8e9dd; color: #34704b; font-size: 11px; }
+.v2-model-resume-card strong { color: #34533f; font-size: 13px; }
+.v2-model-resume-card p { margin: 3px 0 0; color: #66766b; font-size: 11px; line-height: 1.45; }
+.v2-model-resume-card button { padding: 9px 12px; border: 0; border-radius: 7px; background: #2d6548; color: white; font-size: 12px; font-weight: 800; cursor: pointer; }
 .v2-model-key-actions { margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .v2-model-key-actions button { min-height: 38px; padding: 0 14px; border-radius: 7px; font-size: 12px; font-weight: 800; cursor: pointer; }
 .v2-model-key-actions .save { border: 0; background: #275d43; color: white; }
@@ -1115,7 +1123,10 @@ main { min-width: 0; }
   background: #987256;
   box-shadow: 0 0 0 3px #eee6df;
 }
-.v2-openai-state.live > i { background: #5c7b64; box-shadow: 0 0 0 3px #e0e8e2; }
+.v2-openai-state.connected > i { background: #5c7b64; box-shadow: 0 0 0 3px #e0e8e2; }
+.v2-openai-state.checking > i { background: #b18c4e; box-shadow: 0 0 0 3px #eee8d9; }
+.v2-openai-state.invalid { border-color: #dec8c1; background: #fff9f7; }
+.v2-openai-state.invalid > i { background: #a95849; box-shadow: 0 0 0 3px #f1dfda; }
 .v2-openai-state strong, .v2-openai-state small { display: block; }
 .v2-openai-state strong { font-size: 8px; }
 .v2-openai-state small { margin-top: 4px; color: #8a8f87; font-size: 6px; }
@@ -2370,6 +2381,8 @@ main { min-width: 0; }
   .v2-model-key-actions { align-items: stretch; flex-direction: column-reverse; }
   .v2-model-key-actions button { width: 100%; }
   .v2-model-key-actions > span { display: none; }
+  .v2-model-resume-card { grid-template-columns: 24px minmax(0,1fr); }
+  .v2-model-resume-card button { grid-column: 1 / -1; width: 100%; }
 }
 
 /* Pi Research V7 — durable reading inbox and calmer navigation */
@@ -3354,6 +3367,10 @@ main { min-width: 0; }
 .v2-scan-budget-note { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px; border: 1px solid rgba(151, 112, 71, .22); border-radius: 7px; background: rgba(250, 246, 239, .58); color: #725d49; font-size: 10px; }
 .v2-scan-budget-note span { flex: 0 0 auto; color: #9a744d; }
 .v2-scan-budget-note p { margin: 0; line-height: 1.45; }
+.v2-scan-credential-restored { display: flex; align-items: center; gap: 9px; margin-top: 9px; padding: 8px 10px; border: 1px solid rgba(73,126,91,.22); border-radius: 7px; background: rgba(238,247,241,.72); }
+.v2-scan-credential-restored > span { width: 21px; height: 21px; display: grid; flex: 0 0 21px; place-items: center; border-radius: 50%; background: #dcece1; color: #37724e; font-size: 10px; font-weight: 800; }
+.v2-scan-credential-restored strong { display: block; color: #3d6049; font-size: 11px; }
+.v2-scan-credential-restored p { margin: 2px 0 0; color: #6d7f72; font-size: 10px; line-height: 1.45; }
 
 /* Pi Research V48 — quiet discovery control with visible horizon work */
 .v2-today .v2-monitor-compact {

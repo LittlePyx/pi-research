@@ -253,8 +253,8 @@ function degradedResearchAction(kind: ResearchActionKind, report: ReturnType<typ
   return {
     headlineZh: "当前证据不足以可靠完成这项行动",
     headlineEn: "Current evidence is insufficient for a reliable deliverable",
-    resultZh: "Pi 已完成独立核验，但当前材料仍不足以支持原拟交付内容，因此没有把未经支持的判断交给你。",
-    resultEn: "Pi completed an independent verification pass, but the current material does not support the proposed deliverable, so unsupported conclusions were withheld.",
+    resultZh: "Pi 已完成书目与摘要证据核对，但当前材料仍不足以支持原拟交付内容，因此没有把未经支持的判断交给你。",
+    resultEn: "Pi completed bibliographic and abstract evidence checks, but the current material does not support the proposed deliverable, so unsupported conclusions were withheld.",
     decisionZh: kind === "search" ? "先补充可核验来源，再生成定向检索。" : "先补充摘要、出版信息或其他可核验来源，再重新执行这项行动。",
     decisionEn: kind === "search" ? "Add verifiable sources before generating a targeted query." : "Add abstracts, publication metadata, or other verifiable sources, then rerun this action.",
     limitationsZh: issue || report.reason || "缺少能够逐条支持结论的证据。",

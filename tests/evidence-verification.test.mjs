@@ -138,7 +138,7 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /AbortSignal\.timeout\(correctionMode \? VERIFICATION_CORRECTION_TIMEOUT_MS : VERIFICATION_TIMEOUT_MS\)/);
   assert.match(monitor, /Do not rewrite the draft in this audit pass/);
   assert.match(monitor, /correctionRequested: true/);
-  assert.match(monitor, /Corrected draft saved; a fresh independent verification pass is queued/);
+  assert.match(monitor, /Corrected draft saved; a fresh evidence-check pass is queued/);
   assert.match(monitor, /Post-correction verification still found unsupported claims/);
   assert.match(monitor, /Independent audit completed; a conservative correction is queued/);
   assert.match(monitor, /coverageScore must be an integer from 0 to 100/);
@@ -150,7 +150,7 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /isPublishedRecommendation\(review\) \? 1 : 0/);
   assert.match(monitor, /deepseek_verification_pending/);
   assert.doesNotMatch(monitor, /\.\.\.degradedRecommendationReview\(review, evidenceVerificationReport\(\{ initial \}\)\),\s*verificationRetryable: true/);
-  assert.match(client, /正在逐篇独立核验推荐证据/);
+  assert.match(client, /正在逐篇核对推荐证据/);
   assert.match(client, /篇待处理/);
 });
 

@@ -9,6 +9,7 @@ import { paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCan
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
 
 type Locale = "zh" | "en";
+type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid";
 type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
 type LibraryFilter = "inbox" | "accepted" | "all" | "dismissed";
 type InboxFilter = "all" | "unseen" | "seen" | "snoozed";
@@ -2705,6 +2706,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const learningRequestRef = useRef(0);
   const learningIntentRef = useRef<{ spaceId: string; trackId: string; target: string } | null>(null);
   const [modelConfigured, setModelConfigured] = useState(false);
+  const [modelConnectionState, setModelConnectionState] = useState<ModelConnectionState>("checking");
   const [connectedModel, setConnectedModel] = useState<string | null>(null);
   const [modelCredentialSource, setModelCredentialSource] = useState<"browser" | "server" | null>(null);
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
@@ -2852,7 +2854,7 @@ export default function ResearchApp({ user }: { user: User }) {
     ? Math.max(monitorProgressByStatus[effectiveScanStatus], activeScanJob?.progress || 0)
     : monitor?.status === "ready" ? 100 : 0;
   const baseScanPhase = verificationInProgress
-    ? (locale === "zh" ? "正在逐篇独立核验推荐证据" : "Independently verifying recommendation evidence")
+    ? (locale === "zh" ? "正在逐篇核对推荐证据" : "Checking recommendation evidence paper by paper")
     : monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
   const currentRunHasDiscovery = Boolean(activeScanJob && (activeScanJob.discoveredCount > 0
@@ -3251,12 +3253,32 @@ export default function ResearchApp({ user }: { user: User }) {
             setActiveSpaceId(data.spaces[0].id);
           }
         }
-        setModelConfigured(Boolean(data.modelConfigured));
+        const credentialPresent = Boolean(data.modelConfigured);
+        setModelConfigured(false);
+        setModelConnectionState(credentialPresent ? "checking" : "unconfigured");
         setConnectedModel(data.model || null);
         setModelCredentialSource(data.modelCredentialSource || null);
+        if (credentialPresent) {
+          setCheckingModel(true);
+          void fetch("/api/model-settings?verify=1", { cache: "no-store" })
+            .then(async (response) => {
+              const status = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
+              if (!response.ok || !status.configured) throw new Error(status.error || "model status unavailable");
+              setModelConfigured(true);
+              setModelConnectionState("connected");
+              setConnectedModel(status.model || null);
+              setModelCredentialSource(status.source || null);
+            })
+            .catch((error) => {
+              setModelConfigured(false);
+              setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
+            })
+            .finally(() => setCheckingModel(false));
+        }
       })
       .catch(() => {
         setSpaces(fallbackSpaces);
+        setModelConnectionState("checking");
       });
 
     return () => window.clearTimeout(hydrationTimer);
@@ -3842,6 +3864,7 @@ export default function ResearchApp({ user }: { user: User }) {
       setAnswerModel(data.model || null);
       if (data.mode === "deepseek") {
         setModelConfigured(true);
+        setModelConnectionState("connected");
         setConnectedModel(data.model || connectedModel);
       }
     } catch {
@@ -3858,16 +3881,32 @@ export default function ResearchApp({ user }: { user: User }) {
       setToast(locale === "zh" ? "研究空间尚未连接，请刷新页面后再试" : "The research space is not connected yet. Refresh the page and try again.");
       return;
     }
+    const resumingCheckpoint = Boolean(monitor?.status === "error" && monitor.scanJob
+      && (monitor.scanJob.candidateCount || monitor.scanJob.reviewedCount || monitor.scanJob.checkpoint === "retry_pending"));
     setMonitor((current) => current ? {
       ...current,
       status: "scanning",
-      scannedCount: 0,
       error: null,
-      coverage: [],
-      scanJob: null,
+      scanJob: resumingCheckpoint && current.scanJob ? {
+        ...current.scanJob,
+        status: "scanning",
+        error: null,
+        currentSource: locale === "zh" ? "正在检查模型并恢复已保存断点" : "Checking the model and restoring the saved checkpoint",
+      } : null,
     } : current);
     setMonitoring(true);
-    let stopPolling: () => void = () => undefined;
+    let pipelineDetached = false;
+    const stopPolling = startMonitorPolling(activeSpace.id, setMonitor);
+    const handlePipelineFailure = (error: unknown) => {
+      const message = monitorFailureMessage(error, locale);
+      setToast(message);
+      if (isModelCredentialFailure(error)) {
+        setModelConfigured(false);
+        setModelConnectionState("invalid");
+        setModelSettingsError(message);
+        setModelSettingsOpen(true);
+      }
+    };
     try {
       const response = await fetch("/api/monitor", {
         method: "POST",
@@ -3879,20 +3918,21 @@ export default function ResearchApp({ user }: { user: User }) {
       if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan unavailable");
       if (data.monitor.throttled) setToast(t.manualCooling);
       else if (!["ready", "error"].includes(data.monitor.status)) {
-        stopPolling = startMonitorPolling(activeSpace.id, setMonitor);
-        await advanceMonitorPipeline(activeSpace.id, data.monitor, setMonitor);
+        pipelineDetached = true;
+        void advanceMonitorPipeline(activeSpace.id, data.monitor, setMonitor)
+          .catch(handlePipelineFailure)
+          .finally(() => {
+            stopPolling();
+            setMonitoring(false);
+          });
       }
     } catch (error) {
-      const message = monitorFailureMessage(error, locale);
-      setToast(message);
-      if (isModelCredentialFailure(error)) {
-        setModelConfigured(false);
-        setModelSettingsError(message);
-        setModelSettingsOpen(true);
-      }
+      handlePipelineFailure(error);
     } finally {
-      stopPolling();
-      setMonitoring(false);
+      if (!pipelineDetached) {
+        stopPolling();
+        setMonitoring(false);
+      }
     }
   };
 
@@ -4362,7 +4402,7 @@ export default function ResearchApp({ user }: { user: User }) {
       ? (locale === "zh" ? `请基于当前真实论文，分析“${title}”的证据缺口，解释还缺什么证据，并给出下一步可核验的检索和阅读建议。` : `Using the current real papers, analyze the evidence gap in “${title}” and propose a verifiable next search and reading plan.`)
       : focus === "agenda"
         ? (locale === "zh" ? `请把“${title}”当前的关键机会、观察信号和证据缺口拆成一个可执行的研究议程，并明确每一步应核对哪些论文证据。` : `Turn the current opportunity, watch signal, and evidence gap for “${title}” into an actionable research agenda with paper evidence to verify at every step.`)
-        : (locale === "zh" ? `请基于“${title}”路线中的真实论文解释当前判断、关键机会和主要不确定性，并明确区分用户确认纳入的论文、Pi 策展材料与已通过独立核验的推荐证据。` : `Explain the current assessment, key opportunity, and main uncertainty for “${title}” using its real papers, separating user-confirmed route papers, Pi-curated material, and independently verified recommendation evidence.`);
+        : (locale === "zh" ? `请基于“${title}”路线中的真实论文解释当前判断、关键机会和主要不确定性，并明确区分用户确认纳入的论文、Pi 策展材料与已完成书目和摘要证据核对的推荐。` : `Explain the current assessment, key opportunity, and main uncertainty for “${title}” using its real papers, separating user-confirmed route papers, Pi-curated material, and recommendations that passed bibliographic and abstract evidence checks.`);
     setQuestion(focusPrompt);
     setAskOpen(true);
   };
@@ -4720,12 +4760,14 @@ export default function ResearchApp({ user }: { user: User }) {
   const refreshModelStatus = async () => {
     if (checkingModel) return;
     setCheckingModel(true);
+    setModelConnectionState("checking");
     setModelSettingsError("");
     try {
       const response = await fetch("/api/model-settings?verify=1", { cache: "no-store" });
       const data = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
       if (!response.ok) throw new Error(data.error || "model status unavailable");
       setModelConfigured(Boolean(data.configured));
+      setModelConnectionState(data.configured ? "connected" : "unconfigured");
       setConnectedModel(data.model || null);
       setModelCredentialSource(data.source || null);
       setToast(data.configured
@@ -4733,7 +4775,8 @@ export default function ResearchApp({ user }: { user: User }) {
         : (locale === "zh" ? "当前浏览器还没有可用的 API Key" : "This browser does not have a usable API key yet"));
     } catch (error) {
       const message = monitorFailureMessage(error, locale);
-      if (isModelCredentialFailure(error)) setModelConfigured(false);
+      setModelConfigured(false);
+      setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
       setModelSettingsError(message);
     } finally {
       setCheckingModel(false);
@@ -4744,6 +4787,7 @@ export default function ResearchApp({ user }: { user: User }) {
     const apiKey = modelApiKey.trim();
     if (!apiKey || checkingModel) return;
     setCheckingModel(true);
+    setModelConnectionState("checking");
     setModelSettingsError("");
     try {
       const response = await fetch("/api/model-settings", {
@@ -4754,12 +4798,15 @@ export default function ResearchApp({ user }: { user: User }) {
       const data = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
       if (!response.ok) throw new Error(data.error || "DeepSeek connection failed");
       setModelConfigured(true);
+      setModelConnectionState("connected");
       setConnectedModel(data.model || "deepseek-v4-pro");
       setModelCredentialSource("browser");
       setModelApiKey("");
       setShowModelApiKey(false);
       setToast(locale === "zh" ? "API Key 已验证并保存到当前浏览器" : "The API key was verified and saved in this browser");
     } catch (error) {
+      setModelConfigured(false);
+      setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
       setModelSettingsError(monitorFailureMessage(error, locale));
     } finally {
       setCheckingModel(false);
@@ -4769,6 +4816,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const removeBrowserModelCredential = async () => {
     if (checkingModel) return;
     setCheckingModel(true);
+    setModelConnectionState("checking");
     setModelSettingsError("");
     try {
       const response = await fetch("/api/model-settings", { method: "DELETE" });
@@ -4776,17 +4824,39 @@ export default function ResearchApp({ user }: { user: User }) {
       if (!response.ok) throw new Error(data.error || "Could not remove the key");
       setModelApiKey("");
       setShowModelApiKey(false);
-      const statusResponse = await fetch("/api/model-settings", { cache: "no-store" });
+      const statusResponse = await fetch("/api/model-settings?verify=1", { cache: "no-store" });
       const status = await statusResponse.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null };
       setModelConfigured(Boolean(status.configured));
+      setModelConnectionState(status.configured ? "connected" : "unconfigured");
       setConnectedModel(status.model || null);
       setModelCredentialSource(status.source || null);
       setToast(locale === "zh" ? "当前浏览器保存的 API Key 已删除" : "The browser-stored API key was removed");
     } catch (error) {
+      setModelConfigured(false);
+      setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
       setModelSettingsError(error instanceof Error ? error.message : (locale === "zh" ? "暂时无法删除 API Key" : "Could not remove the API key"));
     } finally {
       setCheckingModel(false);
     }
+  };
+
+  const modelConnectionCopy = modelConnectionState === "connected"
+    ? { title: t.connected, detail: modelDisplayName(connectedModel), modal: locale === "zh" ? "已验证" : "Verified" }
+    : modelConnectionState === "checking"
+      ? { title: locale === "zh" ? "AI 模型待检测" : "AI model check pending", detail: checkingModel ? (locale === "zh" ? "正在验证当前 Key" : "Verifying the current key") : (locale === "zh" ? "正在确认连接可用性" : "Confirming availability"), modal: checkingModel ? (locale === "zh" ? "检测中" : "Checking") : (locale === "zh" ? "待检测" : "Check pending") }
+      : modelConnectionState === "invalid"
+        ? { title: locale === "zh" ? "AI 模型连接失效" : "AI model connection expired", detail: locale === "zh" ? "打开更换或重新检测" : "Open to replace or check", modal: locale === "zh" ? "已失效" : "Invalid" }
+        : { title: t.setupRequired, detail: locale === "zh" ? "打开配置" : "Open setup", modal: locale === "zh" ? "尚未连接" : "Not connected" };
+  const credentialFailureRecovered = Boolean(modelConnectionState === "connected" && monitor?.status === "error" && isModelCredentialFailure(failedScanError));
+  const closeModelSettings = () => {
+    setModelSettingsOpen(false);
+    setModelApiKey("");
+    setModelSettingsError("");
+    setShowModelApiKey(false);
+  };
+  const resumeAfterModelConnection = () => {
+    closeModelSettings();
+    window.setTimeout(() => void runManualMonitor(), 0);
   };
 
   return (
@@ -4816,7 +4886,7 @@ export default function ResearchApp({ user }: { user: User }) {
         </nav>
 
         <div className="v2-sidebar-bottom">
-          <button className={"v2-openai-state " + (modelConfigured ? "live" : "pending")} type="button" onClick={() => setModelSettingsOpen(true)} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{modelConfigured ? t.connected : t.setupRequired}</strong><small>{modelConfigured ? modelDisplayName(connectedModel) : (locale === "zh" ? "打开配置" : "Open setup")}</small></span><b>›</b></button>
+          <button className={`v2-openai-state ${modelConnectionState}`} type="button" onClick={() => setModelSettingsOpen(true)} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{modelConnectionCopy.title}</strong><small>{modelConnectionCopy.detail}</small></span><b>›</b></button>
           <button className="v2-account" type="button" onClick={() => navigate("memory")}><span>◎</span><span><strong>Pi Workspace</strong><small>{t.workspaceLabel}</small></span><b>•••</b></button>
         </div>
       </aside>
@@ -4839,7 +4909,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "ready" ? (locale === "zh" ? "今日扫描已完成" : "Today's scan is ready") : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
               <section className="v2-today-briefing" aria-label={locale === "zh" ? "今日科研简报" : "Today's research briefing"}>
                 <button type="button" onClick={() => rankedMonitorPapers[0] && openMonitorPaper(rankedMonitorPapers[0])} disabled={!rankedMonitorPapers.length}><span>01</span><strong>{mustReadCount}</strong><div><b>{locale === "zh" ? "今日必读" : "Must read"}</b><small>{locale === "zh" ? "最值得优先投入时间" : "Highest priority for your time"}</small></div><i>→</i></button>
-                <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor ? monitor.mapChanges?.length || 0 : "—"}</strong><div><b>{locale === "zh" ? "近 7 天路线变化" : "7-day route changes"}</b><small>{locale === "zh" ? "结构更新与独立核验通过的证据分开记录" : "Structural updates and independently verified evidence are tracked separately"}</small></div><i>→</i></button>
+                <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor ? monitor.mapChanges?.length || 0 : "—"}</strong><div><b>{locale === "zh" ? "近 7 天路线变化" : "7-day route changes"}</b><small>{locale === "zh" ? "结构更新与通过推荐证据核对的变化分开记录" : "Structural updates and recommendation evidence checks are tracked separately"}</small></div><i>→</i></button>
                 <button type="button" onClick={() => { setLibraryFilter("accepted"); setLibraryStageFilter("all"); navigate("library"); }}><span>03</span><strong>{activeReadingCount}</strong><div><b>{locale === "zh" ? "待读与在读" : "Reading queue"}</b><small>{locale === "zh" ? "继续未完成的阅读" : "Continue unfinished reading"}</small></div><i>→</i></button>
               </section>
             </section>
@@ -4871,8 +4941,8 @@ export default function ResearchApp({ user }: { user: User }) {
             </section>}
 
             {Boolean(monitor?.savedCandidatePapers?.length) && <section className="v2-today-more v2-saved-candidates">
-              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "已保留的高潜力论文" : "SAVED HIGH-POTENTIAL PAPERS"}</p><h2>{locale === "zh" ? "达到深度评审门槛，但核验尚未完成" : "Passed deep review; verification is not complete"}</h2><p>{locale === "zh" ? "这些论文不计入正式推荐，但不会再因重扫、超时或本轮零入选而消失；Pi 会从已保存稿件继续核验。" : "These do not count as formal recommendations, but rescans, timeouts, and zero-yield runs will no longer erase them. Pi resumes from the saved draft."}</p></div><span>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇" : "papers"}</span></header>
-              <div className="v2-compact-list">{(monitor?.savedCandidatePapers || []).map((paper) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span className="v2-tier-badge reserve">{locale === "zh" ? "待恢复核验" : "Verification saved"}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</small></span><span className="v2-thread-chip">{locale === "zh" ? `相关性 ${paper.relevanceScore}` : `Fit ${paper.relevanceScore}`}</span><b>→</b></button>)}</div>
+              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "已保留的高潜力论文" : "SAVED HIGH-POTENTIAL PAPERS"}</p><h2>{locale === "zh" ? "达到深度评审门槛，证据核对尚未完成" : "Passed deep review; evidence checks are not complete"}</h2><p>{locale === "zh" ? "这里只核对书目、摘要和可追溯来源，不读取全文。论文不会再因重扫、超时或本轮零入选而消失。" : "Pi checks bibliographic data, abstracts, and traceable sources here without reading full text. Rescans, timeouts, and zero-yield runs will not erase these papers."}</p></div><span>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇" : "papers"}</span></header>
+              <div className="v2-compact-list">{(monitor?.savedCandidatePapers || []).map((paper) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span className="v2-tier-badge reserve">{locale === "zh" ? "待恢复证据核对" : "Evidence check saved"}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</small></span><span className="v2-thread-chip">{locale === "zh" ? `相关性 ${paper.relevanceScore}` : `Fit ${paper.relevanceScore}`}</span><b>→</b></button>)}</div>
             </section>}
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
@@ -4892,7 +4962,10 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
               {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><span>◷</span><p>{locale === "zh" ? `今天还剩 ${monitor?.analysisBudget?.remaining || 0} 次智能调用，不足以完成下一批；Pi 不会重复检索，现有论文与断点均已保留。` : `${monitor?.analysisBudget?.remaining || 0} AI calls remain today, not enough for the next batch. Pi will not repeat retrieval, and all papers and checkpoints are preserved.`}</p></div>}
               {monitor?.scanJob?.needsRefresh && !scanIsActive && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先补全摘要、按研究方向分配名额，并在首批零入选时复审临界论文。重新扫描不受本小时冷却限制。" : "The new method enriches abstracts, allocates slots by research direction, and rechecks near-miss papers when the first batch yields nothing. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}
-              {monitor?.status === "error" && (
+              {monitor?.status === "error" && credentialFailureRecovered && (
+                <div className="v2-scan-credential-restored" role="status"><span>✓</span><div><strong>{locale === "zh" ? "模型连接已恢复，扫描断点仍在" : "Model connection restored; checkpoint preserved"}</strong><p>{locale === "zh" ? "无需重新检索候选；使用上方“从断点继续”即可恢复。" : "Candidates will not be retrieved again; use Resume above to continue."}</p></div></div>
+              )}
+              {monitor?.status === "error" && !credentialFailureRecovered && (
                 <details className={`v2-scan-failure ${isModelCredentialFailure(failedScanError) ? "credential" : ""}`} role="alert">
                   <summary>
                     <span>!</span>
@@ -4916,7 +4989,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     {activeScanJob?.discoveredCount || 0} {locale === "zh" ? "条候选" : "candidates"}
                     {["screening", "deep_reviewing", "reviewing"].includes(effectiveScanStatus) && <> · {activeScanJob?.reviewedCount || 0}{activeScanJob?.candidateCount ? ` / ${activeScanJob.candidateCount}` : ""} {locale === "zh" ? "篇已筛选保存" : "screened and saved"}</>}
                     {effectiveScanStatus === "deep_reviewing" && !verificationInProgress && <> · {activeScanJob?.deepCompletedCount || 0} {locale === "zh" ? "篇深度解读已保存" : "deep interpretations saved"}</>}
-                    {verificationInProgress && <> · {activeScanJob?.verificationCompletedCount || 0} / {activeScanJob?.verificationTargetCount || 0} {locale === "zh" ? "篇已核验" : "verified"}</>}
+                    {verificationInProgress && <> · {activeScanJob?.verificationCompletedCount || 0} / {activeScanJob?.verificationTargetCount || 0} {locale === "zh" ? "篇证据已核对" : "evidence checks complete"}</>}
                     {verificationInProgress && Boolean(activeScanJob?.verificationPendingCount) && <> · {activeScanJob?.verificationPendingCount} {locale === "zh" ? "篇待处理" : "remaining"}</>}
                     {effectiveScanStatus === "deep_reviewing" && Boolean(activeScanJob?.deepDeferredCount) && <> · {activeScanJob?.deepDeferredCount} {locale === "zh" ? "篇已延后，不阻塞本轮" : "deferred without blocking this scan"}</>}
                     {healthyCoverageCount > 0 && <> · {healthyCoverageCount} {locale === "zh" ? "类来源正常" : "source groups healthy"}</>}
@@ -5285,10 +5358,11 @@ export default function ResearchApp({ user }: { user: User }) {
 
       {modelSettingsOpen && (
         <div className="v2-modal" role="dialog" aria-modal="true" aria-label={locale === "zh" ? "AI 模型设置" : "AI model settings"}>
-          <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => { setModelSettingsOpen(false); setModelApiKey(""); setModelSettingsError(""); setShowModelApiKey(false); }} />
+          <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={closeModelSettings} />
           <div className="v2-model-settings">
-            <div className="v2-modal-head"><div><p className="v2-kicker">π {locale === "zh" ? "浏览器自带密钥" : "BRING YOUR OWN KEY"}</p><h2>{locale === "zh" ? "连接 DeepSeek" : "Connect DeepSeek"}</h2><p>{locale === "zh" ? "直接粘贴 API Key。Pi 会先验证连接，再把它安全保存在当前浏览器。" : "Paste an API key directly. Pi verifies the connection before saving it securely in this browser."}</p></div><button type="button" onClick={() => { setModelSettingsOpen(false); setModelApiKey(""); setModelSettingsError(""); setShowModelApiKey(false); }}>×</button></div>
-            <section className={"v2-model-status-card " + (modelConfigured ? "live" : "pending")}><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConfigured ? (locale === "zh" ? "已连接" : "Connected") : (locale === "zh" ? "尚未连接" : "Not connected")}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-v4-pro")}{modelConfigured ? ` · ${modelCredentialSource === "browser" ? (locale === "zh" ? "当前浏览器 Key" : "browser key") : (locale === "zh" ? "平台 Key" : "host key")}` : ""}</p></div><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{locale === "zh" ? "检测" : "Check"}</button></section>
+            <div className="v2-modal-head"><div><p className="v2-kicker">π {locale === "zh" ? "浏览器自带密钥" : "BRING YOUR OWN KEY"}</p><h2>{locale === "zh" ? "连接 DeepSeek" : "Connect DeepSeek"}</h2><p>{locale === "zh" ? "直接粘贴 API Key。Pi 会先验证连接，再把它安全保存在当前浏览器。" : "Paste an API key directly. Pi verifies the connection before saving it securely in this browser."}</p></div><button type="button" onClick={closeModelSettings}>×</button></div>
+            <section className={`v2-model-status-card ${modelConnectionState}`} aria-live="polite"><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConnectionCopy.modal}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-v4-pro")}{modelCredentialSource ? ` · ${modelCredentialSource === "browser" ? (locale === "zh" ? "当前浏览器 Key" : "browser key") : (locale === "zh" ? "平台 Key" : "host key")}` : ""}</p></div><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{checkingModel ? (locale === "zh" ? "检测中…" : "Checking…") : (locale === "zh" ? "重新检测" : "Check again")}</button></section>
+            {credentialFailureRecovered && <section className="v2-model-resume-card"><b>✓</b><div><strong>{locale === "zh" ? "连接已经恢复，扫描断点仍在" : "Connection restored; the scan checkpoint is intact"}</strong><p>{locale === "zh" ? `${monitor?.scanJob?.discoveredCount || 0} 篇候选和 ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} 篇筛选进度均已保留。` : `${monitor?.scanJob?.discoveredCount || 0} candidates and ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} screening progress are preserved.`}</p></div><button type="button" onClick={resumeAfterModelConnection}>{locale === "zh" ? "关闭并从断点继续" : "Close and resume"} →</button></section>}
             <form className="v2-model-key-form" onSubmit={(event) => { event.preventDefault(); void saveModelCredential(); }}>
               <label><span>{locale === "zh" ? (modelCredentialSource === "browser" ? "粘贴新 Key 以替换" : "DeepSeek API Key") : (modelCredentialSource === "browser" ? "Paste a new key to replace it" : "DeepSeek API key")}</span><div><input type={showModelApiKey ? "text" : "password"} value={modelApiKey} onChange={(event) => { setModelApiKey(event.target.value); setModelSettingsError(""); }} placeholder="sk-…" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowModelApiKey((current) => !current)}>{showModelApiKey ? (locale === "zh" ? "隐藏" : "Hide") : (locale === "zh" ? "显示" : "Show")}</button></div></label>
               {modelSettingsError && <p className="v2-model-key-error" role="alert">{modelSettingsError}</p>}

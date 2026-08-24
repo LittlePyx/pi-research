@@ -72,6 +72,7 @@ export async function GET(request: Request) {
       spaces: result.results.map(toSpace),
       user,
       modelConfigured,
+      modelConnectionState: modelConfigured ? "checking" : "unconfigured",
       provider: modelConfigured ? "deepseek" : null,
       model: modelConfigured ? "deepseek-v4-pro" : null,
       modelCredentialSource: credential.source,
