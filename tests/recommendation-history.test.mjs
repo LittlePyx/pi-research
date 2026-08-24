@@ -56,9 +56,11 @@ test("durable recommendation history protects prior results and exposes saved ve
   assert.match(route, /function databaseTime\(value: string \| null \| undefined\)/);
   assert.match(route, /if \(!value\) return 0/);
   assert.match(route, /databaseTime\(right\.last_recommended_at\) - databaseTime\(left\.last_recommended_at\)/);
+  assert.match(route, /\(paper\) => paper\.horizon,\s*6,\s*1,/);
   assert.match(app, /Pi 正在后台完成/);
   assert.match(app, /暂时无响应时会从保存点自动续跑/);
   assert.match(app, /积压候选复评/);
+  assert.match(app, /timeValue\(second\.recommendedAt\) - timeValue\(first\.recommendedAt\)/);
 });
 
 test("the production review upsert cannot downgrade a previously published recommendation", () => {

@@ -2799,7 +2799,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const rankedMonitorPapers = useMemo(
     () => {
       const tierRank: Record<MonitorPaper["recommendationTier"], number> = { must_read: 0, browse: 1, reserve: 2 };
-      return [...(monitor?.papers || [])].sort((first, second) => (tierRank[first.recommendationTier || "browse"] - tierRank[second.recommendationTier || "browse"])
+      return [...(monitor?.papers || [])].sort((first, second) => timeValue(second.recommendedAt) - timeValue(first.recommendedAt)
+        || (tierRank[first.recommendationTier || "browse"] - tierRank[second.recommendationTier || "browse"])
         || second.qualityScore - first.qualityScore || second.relevanceScore - first.relevanceScore);
     },
     [monitor?.papers],

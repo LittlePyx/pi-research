@@ -4514,6 +4514,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     (paper) => paper.track_id || paper.discovery_route_id || `horizon:${paper.horizon}`,
     (paper) => paper.horizon,
     6,
+    1,
   );
   // The paper library is a durable discovery archive, not a synonym for today's recommendation queue.
   // Keep every discovered paper visible while quality_stage makes clear how far Pi has evaluated it.
