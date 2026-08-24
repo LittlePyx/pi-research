@@ -53,6 +53,8 @@ test("durable recommendation history protects prior results and exposes saved ve
   assert.match(route, /recommendationEligibility = explicitlyRestricted \? "1 = 1" : "COALESCE\(i\.ever_recommended, 0\) = 0"/);
   assert.match(route, /savedCandidatePapers/);
   assert.match(route, /i\.last_recommended_at/);
+  assert.match(route, /function databaseTime\(value: string \| null \| undefined\)/);
+  assert.match(route, /if \(!value\) return 0/);
   assert.match(route, /databaseTime\(right\.last_recommended_at\) - databaseTime\(left\.last_recommended_at\)/);
   assert.match(app, /Pi 正在后台完成/);
   assert.match(app, /暂时无响应时会从保存点自动续跑/);

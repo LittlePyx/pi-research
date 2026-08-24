@@ -4021,7 +4021,8 @@ function paperUserState(paper: PaperRow, now: number) {
   return "unseen" as const;
 }
 
-function databaseTime(value: string) {
+function databaseTime(value: string | null | undefined) {
+  if (!value) return 0;
   return Date.parse(value.includes("T") ? value : value.replace(" ", "T") + "Z");
 }
 
