@@ -39,7 +39,10 @@ test("scheduled monitoring persists heartbeats and advances only a bounded check
   assert.match(worker, /SCHEDULED_ADVANCE_STEPS = 3/);
   assert.match(worker, /monitor_scheduler_ticks/);
   assert.match(worker, /r\.automation_paused_at IS NULL/);
+  assert.match(worker, /automationDeferred/);
   assert.match(route, /monitorAutomationPauseReason/);
+  assert.match(route, /deferMonitorAutomation/);
+  assert.match(route, /budget\.resetsAt/);
   assert.match(route, /scheduled_runs_since_activity = scheduled_runs_since_activity \+ \?/);
   assert.match(route, /automationPaused: true/);
   assert.match(schema, /monitorSchedulerTicks/);

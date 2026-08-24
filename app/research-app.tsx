@@ -91,6 +91,7 @@ type MonitorPaper = {
   researchDecisionEn: string;
   verificationStatus: "not_required" | "pending" | "verified" | "revised" | "degraded";
   verificationCoverageScore: number;
+  verificationPhase?: "not_required" | "awaiting_audit" | "awaiting_correction" | "awaiting_recheck" | "verified" | "revised" | "withheld";
   discoveryOrigin?: {
     kind: RouteDiscoveryKind;
     trackId: string;
@@ -331,6 +332,8 @@ type MonitorState = {
   knownCount: number;
   explorationRound?: number;
   error: string | null;
+  alreadyAdvancing?: boolean;
+  automationDeferred?: boolean;
   cadenceHours: number;
   lastTrigger?: string;
   automation?: {
@@ -1139,6 +1142,12 @@ function RecommendationVerificationBadge({ paper, locale }: { paper: MonitorPape
   return verificationLabel ? <span className={`v2-verification-badge ${paper.verificationStatus}`} title={locale === "zh" ? `关键表述证据覆盖 ${paper.verificationCoverageScore}%` : `${paper.verificationCoverageScore}% evidence coverage for substantive statements`}><i />{verificationLabel}</span> : null;
 }
 
+function recommendationAuditPhaseLabel(paper: MonitorPaper, locale: Locale) {
+  if (paper.verificationPhase === "awaiting_correction") return locale === "zh" ? "初审完成 · 正在自动改写" : "Audited · correcting automatically";
+  if (paper.verificationPhase === "awaiting_recheck") return locale === "zh" ? "已自动改写 · 等待复核" : "Corrected · awaiting recheck";
+  return locale === "zh" ? "正在进行首次证据审计" : "Initial evidence audit in progress";
+}
+
 function PaperDiscoverySourceBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
   const sources = paper.discoverySources || [];
   if (!sources.length) return null;
@@ -1461,6 +1470,7 @@ async function advanceMonitorPipeline(
       if (!isCancelled()) onUpdate(current);
     }
     if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan stage unavailable");
+    if (data.monitor.alreadyAdvancing) await new Promise((resolve) => window.setTimeout(resolve, 900));
   }
   if (!isCancelled() && current.status === "ready" && current.scanJob?.checkpoint === "main_complete") {
     void fetch("/api/monitor", {
@@ -4927,7 +4937,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <header><p className="v2-kicker">π {locale === "zh" ? "今日研究判断" : "TODAY'S RESEARCH JUDGMENT"}</p><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.model === "evidence-summary" ? (locale === "zh" ? "可核验证据简报" : "Evidence-first brief") : monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
                 <h2>{locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn}</h2>
                 <p className="v2-daily-brief-overview">{locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn}</p>
-                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "快速筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深度解读" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div>{Boolean(monitor.dailyBrief.metrics.verificationPending) && <div><dt>{locale === "zh" ? "待核验" : "Pending verification"}</dt><dd>{monitor.dailyBrief.metrics.verificationPending}</dd></div>}<div><dt>{locale === "zh" ? "内容核验" : "Verified"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div></dl>
+                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "快速筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深度解读" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div>{Boolean(monitor.dailyBrief.metrics.verificationPending) && <div><dt>{locale === "zh" ? "后台审计" : "Background audit"}</dt><dd>{monitor.dailyBrief.metrics.verificationPending}</dd></div>}<div><dt>{locale === "zh" ? "审计通过" : "Verified"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div></dl>
                 {Boolean(dailyBriefPapers.length) && <footer><button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button><button className="secondary" type="button" onClick={() => shareSnapshot("daily", dailyBriefPapers)} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily}</button></footer>}
               </div>
               <div className="v2-daily-paper-queue">
@@ -4949,8 +4959,8 @@ export default function ResearchApp({ user }: { user: User }) {
             </section>}
 
             {Boolean(monitor?.savedCandidatePapers?.length) && <section className="v2-today-more v2-saved-candidates">
-              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "已保留的高潜力论文" : "SAVED HIGH-POTENTIAL PAPERS"}</p><h2>{locale === "zh" ? "达到深度评审门槛，证据核对尚未完成" : "Passed deep review; evidence checks are not complete"}</h2><p>{locale === "zh" ? "这里只核对书目、摘要和可追溯来源，不读取全文。论文不会再因重扫、超时或本轮零入选而消失。" : "Pi checks bibliographic data, abstracts, and traceable sources here without reading full text. Rescans, timeouts, and zero-yield runs will not erase these papers."}</p></div><span>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇" : "papers"}</span></header>
-              <div className="v2-compact-list">{(monitor?.savedCandidatePapers || []).map((paper) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span className="v2-tier-badge reserve">{locale === "zh" ? "待恢复证据核对" : "Evidence check saved"}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</small><PaperDiscoverySourceBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{locale === "zh" ? `相关性 ${paper.relevanceScore}` : `Fit ${paper.relevanceScore}`}</span><b>→</b></button>)}</div>
+              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "Pi 正在后台完成" : "PI IS FINISHING IN THE BACKGROUND"}</p><h2>{locale === "zh" ? "这些论文已完成深度评审，后续审计无需你确认" : "Deep review is complete; no user confirmation is needed"}</h2><p>{locale === "zh" ? "Pi 会依据书目信息、摘要和可追溯来源自动完成保守改写与复核，不读取全文，也不会重新检索或撰写。暂时无响应时会从保存点自动续跑。" : "Pi automatically completes conservative corrections and rechecks against bibliographic data, abstracts, and traceable sources. It does not read full text or repeat discovery and drafting, and resumes from saved progress after transient failures."}</p></div><span>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇处理中" : "in progress"}</span></header>
+              <div className="v2-compact-list">{(monitor?.savedCandidatePapers || []).map((paper) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span className="v2-tier-badge reserve">{recommendationAuditPhaseLabel(paper, locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</small><PaperDiscoverySourceBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{locale === "zh" ? `相关性 ${paper.relevanceScore}` : `Fit ${paper.relevanceScore}`}</span><b>→</b></button>)}</div>
             </section>}
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
@@ -5259,7 +5269,7 @@ export default function ResearchApp({ user }: { user: User }) {
               {visibleLibraryPapers.map((paper) => (
                 <article className={"v2-library-paper " + paper.userState} key={paper.id}>
                   <button className="v2-library-paper-main" type="button" onClick={() => openMonitorPaper(paper)}>
-                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? (locale === "zh" ? "高潜力待核验" : "High potential") : paper.qualityStage === "reviewed" ? (locale === "zh" ? "已评审归档" : "Reviewed archive") : (locale === "zh" ? "发现归档" : "Discovery archive")}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span>{paper.qualityStage === "recommended" && <span>{t.qualityScore} {displayQualityScore(paper.qualityScore)}</span>}<PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>
+                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(paper, locale) : paper.qualityStage === "reviewed" ? (locale === "zh" ? "已评审归档" : "Reviewed archive") : (locale === "zh" ? "发现归档" : "Discovery archive")}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span>{paper.qualityStage === "recommended" && <span>{t.qualityScore} {displayQualityScore(paper.qualityScore)}</span>}<PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>
                     <h2>{paper.title}</h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p>
                     <p className="v2-library-paper-why"><b>{paper.qualityStage === "recommended" || paper.qualityStage === "reviewing" ? t.whySuitable : locale === "zh" ? "归档说明" : "Archive note"}</b>{(locale === "zh" ? paper.whyReadZh : paper.whyReadEn) || (paper.qualityStage === "reviewed" ? (locale === "zh" ? "Pi 已完成质量评审，但它没有进入正式推荐队列；保留在论文库供后续检索。" : "Pi reviewed this paper, but it did not enter the formal recommendation queue. It remains searchable in the library.") : (locale === "zh" ? "扫描过程中发现的真实论文，尚未完成深度解读；保留在论文库，不等同于推荐。" : "A real paper found during discovery. Deep analysis is not complete; archiving it does not mean it is recommended."))}</p>
                     <footer><span>◎ {reminderLabel(paper, locale)}</span><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><b>{t.viewAnalysis} →</b></footer>

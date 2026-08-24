@@ -46,7 +46,9 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext) {
        JOIN monitor_runs r ON r.space_id = s.id
        WHERE s.owner_user_id LIKE 'anonymous:%' AND r.automation_paused_at IS NULL AND (
          (r.status IN ('ready', 'error', 'idle') AND (r.next_run_at IS NULL OR datetime(r.next_run_at) <= CURRENT_TIMESTAMP))
-         OR (r.status NOT IN ('ready', 'error', 'idle') AND (r.lock_expires_at IS NULL OR datetime(r.lock_expires_at) <= CURRENT_TIMESTAMP))
+         OR (r.status NOT IN ('ready', 'error', 'idle')
+          AND (r.next_run_at IS NULL OR datetime(r.next_run_at) <= CURRENT_TIMESTAMP)
+          AND (r.lock_expires_at IS NULL OR datetime(r.lock_expires_at) <= CURRENT_TIMESTAMP))
        )
        ORDER BY COALESCE(r.next_run_at, r.last_run_at, r.updated_at) ASC LIMIT ?`,
     ).bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
@@ -63,12 +65,15 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext) {
       let state = await response.json().catch(() => ({})) as {
         monitor?: {
           status?: string;
+          automationDeferred?: boolean;
           automation?: { paused?: boolean };
           scanJob?: { id?: string; checkpoint?: string } | null;
         };
       };
       if (!response.ok || !state.monitor) throw new Error(`Scheduled monitor start returned ${response.status}`);
-      if (state.monitor.automation?.paused) return { paused: true, advanced: 0, completed: false };
+      if (state.monitor.automation?.paused || state.monitor.automationDeferred) {
+        return { paused: Boolean(state.monitor.automation?.paused), deferred: Boolean(state.monitor.automationDeferred), advanced: 0, completed: false };
+      }
       startedCount += 1;
       let advanced = 0;
       for (let step = 0; step < SCHEDULED_ADVANCE_STEPS && state.monitor && !["ready", "error"].includes(state.monitor.status || ""); step += 1) {
@@ -89,7 +94,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext) {
         }), env, ctx);
         if (!enhanceResponse.ok) throw new Error(`Scheduled monitor enhancement returned ${enhanceResponse.status}`);
       }
-      return { paused: false, advanced, completed: state.monitor?.status === "ready" };
+      return { paused: false, deferred: false, advanced, completed: state.monitor?.status === "ready" };
     }));
     for (const result of results) {
       if (result.status === "rejected") {

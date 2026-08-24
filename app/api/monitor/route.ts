@@ -299,6 +299,7 @@ type PaperRow = {
   research_decision_en: string;
   verification_status: EvidenceVerificationStatus;
   verification_coverage_score: number;
+  verification_json: string;
   track_id: string;
   discovery_provider: string;
   discovery_channels: string;
@@ -551,13 +552,15 @@ const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000;
 const DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000;
 const VERIFICATION_TIMEOUT_MS = 20_000;
 const VERIFICATION_CORRECTION_TIMEOUT_MS = 28_000;
-// Do not let one difficult paper hold the whole daily queue for several minutes.
-// A pending draft is durable and can be retried in a later run without repeating discovery.
-const VERIFICATION_ATTEMPT_LIMIT = 2;
+// A conservative evidence workflow can require audit -> correction -> fresh audit.
+// Leave room for two transient failures so a normal correction never has to wait for another scan.
+const VERIFICATION_ATTEMPT_LIMIT = 5;
 const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
+const BACKGROUND_VERIFICATION_RETRY_MS = 10 * 60 * 1000;
+const ADVANCE_LOCK_LEASE_MS = 45_000;
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
-const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48;
+const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 64;
 const MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS = 16;
 const MONITOR_SEMANTIC_SCHOLAR_DAILY_LIMIT = 90;
 const MONITOR_MODEL = "deepseek-v4-pro";
@@ -1704,6 +1707,14 @@ async function pauseMonitorAutomation(database: D1Database, spaceId: string, rea
      automation_pause_reason = ?, lock_token = NULL, lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE space_id = ?`,
   ).bind(reason, spaceId).run();
+}
+
+async function deferMonitorAutomation(database: D1Database, spaceId: string, resumeAt: string) {
+  await database.prepare(
+    `UPDATE monitor_runs SET next_run_at = ?, lock_token = NULL, lock_expires_at = NULL,
+     automation_paused_at = NULL, automation_pause_reason = '', updated_at = CURRENT_TIMESTAMP
+     WHERE space_id = ?`,
+  ).bind(resumeAt, spaceId).run();
 }
 
 async function recordUsage(database: D1Database, scope: string, date: string, inputTokens: number, outputTokens: number) {
@@ -3304,28 +3315,28 @@ async function generateDailyBrief(
     await saveDailyBrief(database, {
     spaceId: space.id, briefDate, jobId, status: analysisUnavailable ? "degraded" : "ready",
     headlineZh: selected.length
-      ? `今天 ${selected.length} 篇已确认${verificationPending ? `，${verificationPending} 篇待核验` : ""}`
-      : verificationPending ? `${verificationPending} 篇高潜力论文等待证据确认`
+      ? `今天 ${selected.length} 篇已确认${verificationPending ? `，${verificationPending} 篇后台审计中` : ""}`
+      : verificationPending ? `${verificationPending} 篇高潜力论文正在后台完成审计`
         : analysisUnavailable ? "候选已保存，AI 解读暂未完成"
           : verificationFailed ? `本轮暂无正式推荐，${verificationFailed} 篇证据未通过` : "今天没有论文达到严格推荐门槛",
     headlineEn: selected.length
-      ? `${selected.length} confirmed today${verificationPending ? `; ${verificationPending} awaiting verification` : ""}`
-      : verificationPending ? `${verificationPending} high-potential papers await evidence verification`
+      ? `${selected.length} confirmed today${verificationPending ? `; ${verificationPending} completing background audits` : ""}`
+      : verificationPending ? `${verificationPending} high-potential papers are completing background audits`
         : analysisUnavailable ? "Candidates saved; AI review is pending"
           : verificationFailed ? `No formal recommendation; ${verificationFailed} failed the evidence gate` : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
-      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并完成书目与摘要证据核对，最终确认 ${selected.length} 篇。${verificationPending ? `${verificationPending} 篇仍在等待证据核对，不计入正式推荐。` : ""}${verificationFailed ? `${verificationFailed} 篇因证据不足未发布。` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
+      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并完成书目与摘要证据核对，最终确认 ${selected.length} 篇。${verificationPending ? `${verificationPending} 篇已保存审计进度，Pi 将在后台自动完成改写或复核，完成前不计入正式推荐。` : ""}${verificationFailed ? `${verificationFailed} 篇因证据不足未发布。` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
       : verificationPending
-        ? `Pi 已保存 ${verificationPending} 篇达到推荐分数的深度解读草稿；书目与摘要证据核对响应较慢，因此它们尚未作为正式推荐发布。后续只续跑证据核对，不会重新检索、筛选或撰写。${verificationFailed ? `另有 ${verificationFailed} 篇未通过证据核对，原因会保留在研究账本中。` : ""}`
+        ? `Pi 已保存 ${verificationPending} 篇达到推荐分数的深度解读及审计进度；Pi 会在后台自动完成必要的保守改写和复核，无需你确认，也不会重新检索、筛选或撰写。${verificationFailed ? `另有 ${verificationFailed} 篇未通过证据核对，原因会保留在研究账本中。` : ""}`
       : analysisUnavailable
         ? `Pi 已保存 ${metrics.scanned} 篇候选和 ${metrics.screened || 0} 篇快速筛选结果；本轮 ${metrics.deepScheduled || metrics.deepDeferred || 0} 篇高潜力论文因模型响应异常尚未完成解读。它们仍在待评审队列中，因此这不是“没有论文达标”的质量结论。`
         : verificationFailed
           ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；其中 ${verificationFailed} 篇达到高潜力阶段，但未通过独立证据核验，因此本轮正式推荐为 0。它们不是因技术等待被淘汰，核验原因已保留。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`
           : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
     overviewEn: selected.length
-      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, checked bibliographic and abstract evidence, and confirmed ${selected.length}. ${verificationPending ? `${verificationPending} still await evidence checks and are not counted as formal recommendations. ` : ""}${verificationFailed ? `${verificationFailed} were withheld for insufficient evidence. ` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
+      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, checked bibliographic and abstract evidence, and confirmed ${selected.length}. ${verificationPending ? `${verificationPending} have saved audit progress; Pi will finish corrections or rechecks automatically in the background before publishing them. ` : ""}${verificationFailed ? `${verificationFailed} were withheld for insufficient evidence. ` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
       : verificationPending
-        ? `Pi preserved ${verificationPending} deeply reviewed drafts that reached the recommendation score. Independent verification was slow, so they are not published as formal recommendations yet. A later run retries verification only, without repeating discovery, screening, or drafting.${verificationFailed ? ` Another ${verificationFailed} failed evidence verification and remain recorded in the research ledger.` : ""}`
+        ? `Pi preserved ${verificationPending} deeply reviewed drafts together with their audit progress. Pi will automatically finish any conservative correction and fresh evidence check in the background, without asking the user or repeating discovery, screening, or drafting.${verificationFailed ? ` Another ${verificationFailed} failed evidence verification and remain recorded in the research ledger.` : ""}`
       : analysisUnavailable
         ? `Pi saved ${metrics.scanned} candidates and ${metrics.screened || 0} fast-screen results. Model failures prevented this run from completing AI review of ${metrics.deepScheduled || metrics.deepDeferred || 0} high-potential papers. They remain queued, so this is not a finding that no paper met the quality bar.`
         : verificationFailed
@@ -3337,14 +3348,14 @@ async function generateDailyBrief(
     readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn).filter(Boolean),
     watchlistZh: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} 篇响应较慢的论文会在后续扫描中重试，不会重复处理已完成论文。`] : []),
-      ...(verificationPending ? [`${verificationPending} 篇高潜力论文处于待核验状态；这是技术等待，不是质量淘汰。`] : []),
+      ...(verificationPending ? [`${verificationPending} 篇高潜力论文已保存审计进度；Pi 会在后台自动完成改写或复核，无需用户操作。`] : []),
       ...(verificationFailed ? [`${verificationFailed} 篇论文未通过独立证据核验；它们与待核验论文分开统计。`] : []),
       ...(!selected.length && !analysisUnavailable && !verificationPending && !verificationFailed ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
       ...(analysisUnavailable ? ["模型恢复后将从保存点继续评审；已完成的检索与筛选不会重新消耗额度。"] : []),
     ],
     watchlistEn: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} slow papers will be retried in a later scan without repeating completed reviews.`] : []),
-      ...(verificationPending ? [`${verificationPending} high-potential papers are awaiting verification; this is a technical wait, not a quality rejection.`] : []),
+      ...(verificationPending ? [`${verificationPending} high-potential papers have saved audit progress; Pi will finish corrections or rechecks automatically without user action.`] : []),
       ...(verificationFailed ? [`${verificationFailed} papers failed bibliographic and abstract evidence checks and are counted separately from pending drafts.`] : []),
       ...(!selected.length && !analysisUnavailable && !verificationPending && !verificationFailed ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
       ...(analysisUnavailable ? ["When the model recovers, review resumes from the saved checkpoint without repeating completed discovery or screening."] : []),
@@ -4034,6 +4045,17 @@ function monitorDiscoverySources(provider: string, channels: string) {
   return sources.slice(0, 3);
 }
 
+function monitorVerificationPhase(status: EvidenceVerificationStatus, rawReport: string) {
+  if (status === "verified") return "verified" as const;
+  if (status === "revised") return "revised" as const;
+  if (status === "degraded") return "withheld" as const;
+  if (status !== "pending") return "not_required" as const;
+  const report = parseJsonObject(rawReport || "{}");
+  if (report.correctionQueued === true) return "awaiting_recheck" as const;
+  if (report.correctionRequested === true) return "awaiting_correction" as const;
+  return "awaiting_audit" as const;
+}
+
 function toPaper(paper: PaperRow, now: number) {
   const originKind = monitorRouteOriginKind(paper.discovery_source_key, paper.discovery_route_id);
   const discoveryType = originKind === "route_gap" ? "gap" as const
@@ -4102,6 +4124,7 @@ function toPaper(paper: PaperRow, now: number) {
     researchDecisionEn: paper.research_decision_en,
     verificationStatus: paper.verification_status,
     verificationCoverageScore: paper.verification_coverage_score,
+    verificationPhase: monitorVerificationPhase(paper.verification_status, paper.verification_json),
     trackId: paper.track_id || null,
     qualityStage: paper.quality_stage,
     ...(originKind && paper.discovery_route_id && sourceLabels ? {
@@ -4169,6 +4192,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.research_decision_en, '') AS research_decision_en,
        COALESCE(i.verification_status, 'not_required') AS verification_status,
        COALESCE(i.verification_coverage_score, 0) AS verification_coverage_score,
+       COALESCE(i.verification_json, '{}') AS verification_json,
        COALESCE((SELECT tp.track_id FROM research_track_papers tp
          WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
          ORDER BY tp.position LIMIT 1),
@@ -5626,14 +5650,17 @@ export async function POST(request: Request) {
   const action = payload.action || "start";
   const trigger: ScanTrigger = payload.trigger === "scheduled" || payload.trigger === "manual" || payload.trigger === "visit"
     ? payload.trigger : payload.force ? "manual" : "visit";
+  let advanceLockJobId = "";
+  let advanceLockToken = "";
   const enforceAnalysisBudget = async (minimumCalls: number) => {
     const budget = await readMonitorAnalysisBudget(database, user.userId, space.id, minimumCalls);
     if (budget.available) return null;
-    if (trigger === "scheduled") await pauseMonitorAutomation(database, space.id, "daily_budget");
+    if (trigger === "scheduled") await deferMonitorAutomation(database, space.id, budget.resetsAt);
     const state = await readState(database, space, {
       cached: true,
       throttled: true,
-      quotaActionRequired: true,
+      quotaActionRequired: trigger === "manual",
+      automationDeferred: trigger === "scheduled",
     });
     if (trigger !== "manual") return Response.json(state);
     return Response.json({ ...state, error: "monitor_analysis_budget_insufficient" }, { status: 429 });
@@ -5741,6 +5768,11 @@ export async function POST(request: Request) {
           now: now.getTime(),
         }) as AutomationPauseReason | null;
         if (pauseReason) {
+          if (pauseReason === "daily_budget") {
+            const budget = await readMonitorAnalysisBudget(database, user.userId, space.id, 1);
+            await deferMonitorAutomation(database, space.id, budget.resetsAt);
+            return Response.json(await readState(database, space, { cached: true, automationDeferred: true }));
+          }
           await pauseMonitorAutomation(database, space.id, pauseReason);
           return Response.json(await readState(database, space, { cached: true, automationPaused: true }));
         }
@@ -5831,7 +5863,7 @@ export async function POST(request: Request) {
             : "从已保存检查点继续本轮扫描"
         : "Pi 正在制定本轮检索计划";
       await database.prepare(
-        `UPDATE monitor_runs SET status = ?, lock_token = ?, lock_expires_at = ?, last_trigger = ?, error = NULL,
+        `UPDATE monitor_runs SET status = ?, next_run_at = CURRENT_TIMESTAMP, lock_token = ?, lock_expires_at = ?, last_trigger = ?, error = NULL,
          new_count = ?, scanned_count = ?, scheduled_runs_since_activity = scheduled_runs_since_activity + ?,
          automation_paused_at = NULL, automation_pause_reason = '', updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
       ).bind(initialStatus, lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), trigger,
@@ -5924,6 +5956,17 @@ export async function POST(request: Request) {
     if (action !== "advance") return Response.json({ error: "Unknown monitoring action" }, { status: 400 });
     if (!apiKey) return Response.json({ error: "请先在网页中连接 DeepSeek API Key" }, { status: 400 });
     if (["ready", "error"].includes(job.status)) return Response.json(await readState(database, space, { cached: true }));
+    advanceLockToken = crypto.randomUUID();
+    const advanceLock = await database.prepare(
+      `UPDATE monitor_scan_jobs SET advance_lock_token = ?, advance_lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND space_id = ? AND status NOT IN ('ready', 'error')
+        AND (advance_lock_token IS NULL OR advance_lock_expires_at IS NULL OR datetime(advance_lock_expires_at) <= CURRENT_TIMESTAMP)`,
+    ).bind(advanceLockToken, new Date(Date.now() + ADVANCE_LOCK_LEASE_MS).toISOString(), job.id, space.id).run();
+    if (!Number(advanceLock.meta?.changes || 0)) {
+      advanceLockToken = "";
+      return Response.json(await readState(database, space, { cached: true, alreadyAdvancing: true }), { status: 202 });
+    }
+    advanceLockJobId = job.id;
     const run = await database.prepare(
       "SELECT status, discovery_round, lock_token, lock_expires_at FROM monitor_runs WHERE space_id = ? LIMIT 1",
     ).bind(space.id).first<{ status: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null }>();
@@ -5975,6 +6018,7 @@ export async function POST(request: Request) {
       });
       const rejected = Math.max(0, work.screens.length - recommended);
       const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
+      const nextRunAt = new Date(completedAt.getTime() + (verificationPending ? BACKGROUND_VERIFICATION_RETRY_MS : CADENCE_MS)).toISOString();
       if (recommended && !firstRecommendationAt) {
         firstRecommendationAt = completedAt.toISOString();
         await database.prepare(
@@ -6047,7 +6091,7 @@ export async function POST(request: Request) {
           `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,
            discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, error = NULL,
            updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?`,
-        ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), recommended, job.discovered_count, space.id, lockToken),
+        ).bind(completedAt.toISOString(), nextRunAt, recommended, job.discovered_count, space.id, lockToken),
         database.prepare(
           `UPDATE monitor_scan_jobs SET status = 'ready', checkpoint = 'main_complete', current_horizon = '',
            current_source = ?, progress = 100, new_candidate_count = ?,
@@ -6056,7 +6100,7 @@ export async function POST(request: Request) {
         ).bind(completion.state === "analysis_unavailable"
           ? `候选与筛选结果已保存；${work.deepDeferredIds.length} 篇高潜力论文等待模型恢复后续评`
           : verificationPending
-            ? `本轮发现与解读已完成；${verificationPending} 篇等待书目与摘要证据核对${verificationFailed ? `，${verificationFailed} 篇证据未通过` : ""}`
+            ? `本轮发现与解读已完成；${verificationPending} 篇已保存审计进度，Pi 将在后台自动完成改写与复核，无需你确认${verificationFailed ? `；另有 ${verificationFailed} 篇证据未通过` : ""}`
           : verificationFailed
             ? `本轮严格评审已完成；${verificationFailed} 篇高潜力论文因证据不足未发布`
           : work.deepDeferredIds.length
@@ -6304,7 +6348,7 @@ export async function POST(request: Request) {
               `UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', recommended_count = ?,
                first_recommendation_at = CASE WHEN ? > 0 THEN COALESCE(first_recommendation_at, CURRENT_TIMESTAMP) ELSE first_recommendation_at END,
                current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            ).bind(ready, ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${pendingVerification} 篇高潜力解读已保存、等待证据核对`, progress, job.id).run();
+            ).bind(ready, ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${pendingVerification} 篇高潜力解读已保存并进入自动证据审计`, progress, job.id).run();
             if (ready && !firstRecommendationAt) {
               firstRecommendationAt = new Date().toISOString();
               await recordReliabilityEvent(database, {
@@ -6379,7 +6423,7 @@ export async function POST(request: Request) {
         await database.prepare(
           "UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', reviewed_count = ?, recommended_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
-          `已处理 ${processedDeepCount} / ${work.deepIds.length} 篇深度解读，${verificationPending} 篇高潜力解读待核验${recommended ? `，${recommended} 篇已可阅读` : ""}${work.deepDeferredIds.length ? `，${work.deepDeferredIds.length} 篇响应较慢已延后` : ""}`, deepProgress, job.id).run();
+          `已处理 ${processedDeepCount} / ${work.deepIds.length} 篇深度解读，${verificationPending} 篇高潜力解读进入自动审计${recommended ? `，${recommended} 篇已可阅读` : ""}${work.deepDeferredIds.length ? `，${work.deepDeferredIds.length} 篇响应较慢已延后` : ""}`, deepProgress, job.id).run();
         if (processedDeepCount >= work.deepIds.length) {
           const recommendationShortfall = Math.max(0, HIGH_POTENTIAL_DRAFT_TARGET - potentialRecommendations);
           if (recommendationShortfall && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
@@ -6537,7 +6581,7 @@ export async function POST(request: Request) {
         await database.prepare(
           "UPDATE monitor_scan_jobs SET recommended_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(published,
-          `证据核对 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已确认${retrying ? `，${retrying} 篇正在自动重试证据核对` : `，${pending} 篇高潜力解读等待后续核对`}`,
+          `证据审计 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已确认${retrying ? `，${retrying} 篇正在自动改写或复核` : `，${pending} 篇已保存进度并等待后台自动续跑`}`,
           verificationProgress, job.id).run();
         if (verificationProcessed >= work.verificationIds.length) {
           const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
@@ -6583,7 +6627,7 @@ export async function POST(request: Request) {
           work.evidenceCompletedIds = [];
           await saveScanWorkQueue(database, job.id, work);
           await setStage("finalizing", "deep_reviewing", 99,
-            pending ? `${pending} 篇高潜力解读已保存待证据核对，正在整理本轮结果` : "证据核对完成，正在整理今日推荐");
+            pending ? `${pending} 篇高潜力解读已保存审计进度，Pi 将在后台自动完成改写与复核` : "证据核对完成，正在整理今日推荐");
         }
       } else if (job.checkpoint === "evidence_deepening") {
         work.evidenceIds = [];
@@ -6629,5 +6673,11 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to run monitoring" }, { status: 500 });
+  } finally {
+    if (advanceLockJobId && advanceLockToken) {
+      await database.prepare(
+        "UPDATE monitor_scan_jobs SET advance_lock_token = NULL, advance_lock_expires_at = NULL WHERE id = ? AND advance_lock_token = ?",
+      ).bind(advanceLockJobId, advanceLockToken).run().catch(() => undefined);
+    }
   }
 }

@@ -10,11 +10,17 @@ test("scheduled monitoring uses a durable single-run lock and retry lineage", as
   ]);
   assert.match(schema, /lockToken: text\("lock_token"\)/);
   assert.match(schema, /resumeOfJobId: text\("resume_of_job_id"\)/);
+  assert.match(schema, /advanceLockToken: text\("advance_lock_token"\)/);
+  assert.match(schema, /advanceLockExpiresAt: text\("advance_lock_expires_at"\)/);
   assert.match(monitor, /WHERE space_id = \? AND \(lock_token IS NULL OR lock_expires_at IS NULL/);
   assert.match(monitor, /acquired\?\.lock_token !== lockToken/);
   assert.match(monitor, /checkpoint = 'retry_pending'/);
   assert.match(monitor, /schedulerCheckMinutes: 10/);
   assert.match(worker, /trigger: "scheduled"/);
+  assert.match(worker, /r\.next_run_at IS NULL OR datetime\(r\.next_run_at\) <= CURRENT_TIMESTAMP/);
+  assert.match(monitor, /alreadyAdvancing: true/);
+  assert.match(monitor, /advance_lock_token = NULL, advance_lock_expires_at = NULL/);
+  assert.match(monitor, /status = \?, next_run_at = CURRENT_TIMESTAMP, lock_token = \?/);
 });
 
 test("each completed scan persists an evidence-grounded bilingual daily brief", async () => {

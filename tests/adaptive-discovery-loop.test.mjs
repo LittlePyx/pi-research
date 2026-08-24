@@ -94,7 +94,7 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DEEP_REVIEW_BATCH_SIZE = 1/);
   assert.match(monitor, /DEEP_REVIEW_CONCURRENCY = 2/);
   assert.match(monitor, /MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120/);
-  assert.match(monitor, /MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48/);
+  assert.match(monitor, /MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 64/);
   assert.match(monitor, /spaceCount \+ groups\.length > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT/);
   assert.match(monitor, /runIncrementalDeepReview/);
   assert.match(monitor, /Non-blocking route reconciliation failed/);

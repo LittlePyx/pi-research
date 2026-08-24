@@ -52,8 +52,8 @@ test("durable recommendation history protects prior results and exposes saved ve
   assert.match(route, /paper_insights\.ever_recommended = 1 AND excluded\.ever_recommended = 0/);
   assert.match(route, /recommendationEligibility = explicitlyRestricted \? "1 = 1" : "COALESCE\(i\.ever_recommended, 0\) = 0"/);
   assert.match(route, /savedCandidatePapers/);
-  assert.match(app, /已保留的高潜力论文/);
-  assert.match(app, /不会再因重扫、超时或本轮零入选而消失/);
+  assert.match(app, /Pi 正在后台完成/);
+  assert.match(app, /暂时无响应时会从保存点自动续跑/);
 });
 
 test("the production review upsert cannot downgrade a previously published recommendation", () => {

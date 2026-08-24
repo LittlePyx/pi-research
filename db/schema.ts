@@ -181,6 +181,8 @@ export const monitorScanJobs = sqliteTable(
     checkpoint: text("checkpoint").notNull().default("queued"),
     workQueueJson: text("work_queue_json").notNull().default("{}"),
     firstRecommendationAt: text("first_recommendation_at"),
+    advanceLockToken: text("advance_lock_token"),
+    advanceLockExpiresAt: text("advance_lock_expires_at"),
     error: text("error"),
     startedAt: text("started_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     completedAt: text("completed_at"),
