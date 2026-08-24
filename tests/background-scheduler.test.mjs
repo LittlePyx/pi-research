@@ -40,6 +40,7 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /stale_scheduler_recovery/);
   assert.match(worker, /datetime\('now', '-20 minutes'\)/);
   assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 4/);
+  assert.match(worker, /datetime\(r\.last_user_activity_at\) DESC/);
   assert.match(worker, /MONITOR_SCHEDULER_SECRET/);
   assert.match(schema, /leaseToken: text\("lease_token"\)/);
   assert.match(schema, /recoveredJobCount: integer\("recovered_job_count"\)/);

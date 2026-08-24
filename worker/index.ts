@@ -144,6 +144,8 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
           AND (r.lock_expires_at IS NULL OR datetime(r.lock_expires_at) <= CURRENT_TIMESTAMP))
        )
        ORDER BY CASE WHEN r.status NOT IN ('ready', 'error', 'idle') THEN 0 ELSE 1 END,
+        CASE WHEN r.last_user_activity_at IS NULL THEN 1 ELSE 0 END,
+        datetime(r.last_user_activity_at) DESC,
         COALESCE(r.next_run_at, r.last_run_at, r.updated_at) ASC LIMIT ?`,
     ).bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
     dueSpaceCount = due.results.length;
@@ -164,10 +166,11 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
           scanJob?: { id?: string; checkpoint?: string } | null;
         };
       };
-      if (!response.ok || !state.monitor) throw new Error(`Scheduled monitor start returned ${response.status}`);
+      if (!state.monitor) throw new Error(`Scheduled monitor start returned ${response.status}`);
       if (state.monitor.automation?.paused || state.monitor.automationDeferred) {
         return { paused: Boolean(state.monitor.automation?.paused), deferred: Boolean(state.monitor.automationDeferred), advanced: 0, completed: false };
       }
+      if (!response.ok) throw new Error(`Scheduled monitor start returned ${response.status}`);
       startedCount += 1;
       let advanced = 0;
       for (let step = 0; step < SCHEDULED_ADVANCE_STEPS && state.monitor && !["ready", "error"].includes(state.monitor.status || ""); step += 1) {
