@@ -94,6 +94,10 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS = 16/);
   assert.match(monitor, /monitor_analysis_budget_insufficient/);
   assert.match(monitor, /minimumAnalysisCallsForCheckpoint/);
+  assert.match(monitor, /model_preflight_failed/);
+  assert.match(monitor, /const modelResponse = await preflightModel\(activeJob\)/);
+  assert.match(monitor, /模型连接检查未通过，扫描尚未继续/);
+  assert.ok(monitor.indexOf("preflightModel(activeJob)") < monitor.indexOf("resumedLock = crypto.randomUUID()"));
   assert.match(monitor, /当前论文响应较慢，正在切换快速模式重试/);
   assert.match(monitor, /deferLlm/);
   assert.match(monitor, /checkpoint = 'main_complete'/);
@@ -200,9 +204,11 @@ test("the pending model state opens a secure browser API key setup", async () =>
   assert.match(credentials, /SameSite=Strict/);
   assert.match(credentials, /Path=\/api/);
   assert.match(credentials, /Max-Age=/);
-  assert.match(settingsRoute, /https:\/\/api\.deepseek\.com\/models/);
-  assert.match(settingsRoute, /https:\/\/api\.deepseek\.com\/chat\/completions/);
-  assert.match(settingsRoute, /deepseek_insufficient_balance/);
+  assert.match(credentials, /https:\/\/api\.deepseek\.com\/models/);
+  assert.match(credentials, /https:\/\/api\.deepseek\.com\/chat\/completions/);
+  assert.match(credentials, /deepseek_insufficient_balance/);
+  assert.match(settingsRoute, /verifyDeepSeekCredential/);
+  assert.match(settingsRoute, /normalizedDeepSeekProbeError/);
   assert.match(settingsRoute, /"Set-Cookie"/);
   assert.doesNotMatch(settingsRoute, /apiKey:/);
 });

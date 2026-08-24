@@ -17,7 +17,7 @@ import {
 import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
 import { mergeDailyBriefHistory } from "../../../lib/daily-brief-history.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
-import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { normalizedDeepSeekProbeError, resolveDeepSeekCredential, verifyDeepSeekCredential } from "../../../lib/model-credentials";
 import {
   hasCompleteRecommendationDraft,
   isRetryableEmptyDraftDegradation,
@@ -5611,6 +5611,56 @@ export async function POST(request: Request) {
     if (trigger !== "manual") return Response.json(state);
     return Response.json({ ...state, error: "monitor_analysis_budget_insufficient" }, { status: 429 });
   };
+  const rejectUnavailableModel = async (error: unknown, job?: {
+    id: string;
+    checkpoint: string;
+    work_queue_json: string;
+  }) => {
+    const message = normalizedDeepSeekProbeError(error).slice(0, 300);
+    const failedAt = new Date();
+    const statements = [database.prepare(
+      `UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL,
+       error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
+    ).bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id)];
+    let resumableCheckpoint = "planning";
+    if (job) {
+      const work = parseScanWorkQueue(job.work_queue_json);
+      resumableCheckpoint = RESUMABLE_SCAN_CHECKPOINTS.has(job.checkpoint)
+        ? job.checkpoint : inferResumeCheckpoint({ checkpoint: job.checkpoint, current_source: "" }, work);
+      work.resumeCheckpoint = resumableCheckpoint;
+      statements.push(database.prepare(
+        `UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending',
+         current_source = '模型连接检查未通过，扫描尚未继续', work_queue_json = ?, error = ?, completed_at = ?,
+         updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      ).bind(JSON.stringify(work), message, failedAt.toISOString(), job.id));
+    }
+    await database.batch(statements);
+    if (trigger === "scheduled") await pauseMonitorAutomation(database, space.id, "model_unavailable");
+    await recordReliabilityEvent(database, {
+      spaceId: space.id,
+      scanJobId: job?.id || null,
+      kind: "model_preflight_failed",
+      stage: resumableCheckpoint,
+      source: trigger,
+      outcome: "failed",
+      errorCode: monitorErrorCode(message),
+      message,
+      metadata: { stoppedBeforeDiscovery: resumableCheckpoint === "planning", checkpointPreserved: Boolean(job) },
+    });
+    const state = await readState(database, space, {
+      cached: true,
+      credentialActionRequired: isNonRetryableDeepSeekError(message),
+    });
+    return Response.json({ ...state, error: message }, { status: 502 });
+  };
+  const preflightModel = async (job?: { id: string; checkpoint: string; work_queue_json: string }) => {
+    try {
+      await verifyDeepSeekCredential(apiKey);
+      return null;
+    } catch (error) {
+      return rejectUnavailableModel(error, job);
+    }
+  };
 
   try {
     if (action === "start") {
@@ -5637,19 +5687,22 @@ export async function POST(request: Request) {
         "SELECT status, last_run_at, next_run_at, updated_at, discovery_round, lock_token, lock_expires_at, last_user_activity_at, scheduled_runs_since_activity FROM monitor_runs WHERE space_id = ? LIMIT 1",
       ).bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; last_user_activity_at: string | null; scheduled_runs_since_activity: number }>();
       const activeJob = await database.prepare(
-        "SELECT id, status, checkpoint FROM monitor_scan_jobs WHERE space_id = ? AND status NOT IN ('ready', 'error') ORDER BY started_at DESC LIMIT 1",
-      ).bind(space.id).first<{ id: string; status: string; checkpoint: string }>();
+        "SELECT id, status, checkpoint, work_queue_json FROM monitor_scan_jobs WHERE space_id = ? AND status NOT IN ('ready', 'error') ORDER BY started_at DESC LIMIT 1",
+      ).bind(space.id).first<{ id: string; status: string; checkpoint: string; work_queue_json: string }>();
       const now = new Date();
       const lockExpiry = previous?.lock_expires_at ? Date.parse(previous.lock_expires_at) : 0;
       if (activeJob && previous && !["idle", "ready", "error"].includes(previous.status)) {
         const quotaResponse = await enforceAnalysisBudget(minimumAnalysisCallsForCheckpoint(activeJob.checkpoint));
         if (quotaResponse) return quotaResponse;
-        if (!previous.lock_token || lockExpiry <= now.getTime()) {
-          const resumedLock = crypto.randomUUID();
-          await database.prepare(
-            "UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
-          ).bind(resumedLock, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), space.id).run();
+        if (previous.lock_token && lockExpiry > now.getTime()) {
+          return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }), { status: 202 });
         }
+        const modelResponse = await preflightModel(activeJob);
+        if (modelResponse) return modelResponse;
+        const resumedLock = crypto.randomUUID();
+        await database.prepare(
+          "UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
+        ).bind(resumedLock, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), space.id).run();
         return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }), { status: 202 });
       }
       if (trigger !== "manual") {
@@ -5704,6 +5757,10 @@ export async function POST(request: Request) {
         ? minimumAnalysisCallsForCheckpoint(resumeCheckpoint)
         : MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS);
       if (quotaResponse) return quotaResponse;
+      const modelResponse = await preflightModel(resumable && previousJob?.status === "error"
+        ? { id: previousJob.id, checkpoint: resumeCheckpoint, work_queue_json: previousJob.work_queue_json }
+        : undefined);
+      if (modelResponse) return modelResponse;
       if (resumable) {
         previousWork.resumeCheckpoint = "";
         previousWork.screenFailureCount = 0;
