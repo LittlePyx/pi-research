@@ -17,6 +17,11 @@ import {
   selectBudgetedDeepReviewCandidates,
   summarizeDeepSelectionOutcomes,
 } from "../../../lib/discovery/candidate-selection.mjs";
+import {
+  buildFreshYieldFunnel,
+  formalYieldBranchAdjustment,
+  shouldRefreshFreshYieldPlan,
+} from "../../../lib/discovery/fresh-yield.mjs";
 import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
 import { mergeDailyBriefHistory } from "../../../lib/daily-brief-history.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
@@ -394,6 +399,9 @@ type DiscoveryBranchScore = {
   attempts: number;
   candidates: number;
   newCandidates: number;
+  deepReviewed: number;
+  formalRecommended: number;
+  evidenceRejected: number;
   score: number;
 };
 type PaperReview = {
@@ -949,12 +957,13 @@ function adaptiveBranchScore(input: Omit<DiscoveryBranchScore, "score">) {
   score += passiveBranchBoost(input);
   if (input.known) score += Math.min(6, input.known * 2);
   if (input.candidates) score += Math.min(15, discoveryYield * 15);
+  score += formalYieldBranchAdjustment(input);
   if (input.attempts >= 2 && input.newCandidates === 0) score -= Math.min(20, input.attempts * 4);
   return Math.max(5, Math.min(95, Math.round(score)));
 }
 
 async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) {
-  const [feedbackRows, engagementRows, coverageRows] = await Promise.all([
+  const [feedbackRows, engagementRows, coverageRows, reviewRows] = await Promise.all([
     database.prepare(
       `SELECT cs.source_key, cs.query_key, COUNT(DISTINCT cs.paper_id) AS papers,
        SUM(CASE WHEN f.saved = 1 OR f.feedback = 'relevant' OR r.status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS accepted,
@@ -988,13 +997,25 @@ async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) 
        SUM(new_candidate_count) AS new_candidates
        FROM monitor_discovery_coverage WHERE space_id = ? GROUP BY source_key, query_key`,
     ).bind(spaceId).all<{ source_key: string; query_key: string; attempts: number; candidates: number; new_candidates: number }>(),
+    database.prepare(
+      `SELECT cs.source_key, cs.query_key,
+       COUNT(DISTINCT CASE WHEN audit.decision <> 'verification_pending' THEN cs.paper_id END) AS deep_reviewed,
+       COUNT(DISTINCT CASE WHEN audit.recommended = 1
+         AND audit.verification_status IN ('verified', 'revised') THEN cs.paper_id END) AS formal_recommended,
+       COUNT(DISTINCT CASE WHEN audit.verification_status = 'degraded' THEN cs.paper_id END) AS evidence_rejected
+       FROM monitor_candidate_sources cs
+       JOIN recommendation_audit_events audit ON audit.space_id = cs.space_id AND audit.paper_id = cs.paper_id
+        AND datetime(cs.first_seen_at) <= datetime(audit.reviewed_at)
+       WHERE cs.space_id = ? AND audit.reviewed_at >= datetime('now', '-90 days')
+       GROUP BY cs.source_key, cs.query_key`,
+    ).bind(spaceId).all<{ source_key: string; query_key: string; deep_reviewed: number; formal_recommended: number; evidence_rejected: number }>(),
   ]);
   const rows = new Map<string, Omit<DiscoveryBranchScore, "score">>();
   const ensure = (sourceKey: string, queryKey: string) => {
     const key = `${sourceKey}|${queryKey}`;
     const existing = rows.get(key);
     if (existing) return existing;
-    const created = { sourceKey, queryKey, papers: 0, accepted: 0, dismissed: 0, known: 0, wrongType: 0, engagedPapers: 0, engagementWeight: 0, attempts: 0, candidates: 0, newCandidates: 0 };
+    const created = { sourceKey, queryKey, papers: 0, accepted: 0, dismissed: 0, known: 0, wrongType: 0, engagedPapers: 0, engagementWeight: 0, attempts: 0, candidates: 0, newCandidates: 0, deepReviewed: 0, formalRecommended: 0, evidenceRejected: 0 };
     rows.set(key, created);
     return created;
   };
@@ -1007,6 +1028,10 @@ async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) 
   });
   for (const row of coverageRows.results) Object.assign(ensure(row.source_key, row.query_key), {
     attempts: Number(row.attempts || 0), candidates: Number(row.candidates || 0), newCandidates: Number(row.new_candidates || 0),
+  });
+  for (const row of reviewRows.results) Object.assign(ensure(row.source_key, row.query_key), {
+    deepReviewed: Number(row.deep_reviewed || 0), formalRecommended: Number(row.formal_recommended || 0),
+    evidenceRejected: Number(row.evidence_rejected || 0),
   });
   const exact = new Map<string, DiscoveryBranchScore>();
   const sourceBuckets = new Map<string, Array<{ score: number; weight: number }>>();
@@ -1955,7 +1980,7 @@ async function ensureDailyQueryPlan(
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
               `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,
               `Low-yield or repeatedly covered channels: ${JSON.stringify(recentCoverage.results)}`,
-              `Retrieval branches learned from explicit outcomes and qualified passive engagement. Treat passive behavior as a revisable hypothesis, never as stronger evidence than explicit feedback: ${JSON.stringify([...branchPerformance.ranked.slice(0, 4), ...branchPerformance.ranked.slice(-4)].map((branch) => ({ source: branch.sourceKey, score: branch.score, accepted: branch.accepted, dismissed: branch.dismissed, known: branch.known, engagedPapers: branch.engagedPapers, engagementWeight: branch.engagementWeight, yield: branch.candidates ? Math.round(branch.newCandidates / branch.candidates * 100) : 0 })))}`,
+              `Retrieval branches learned from explicit outcomes, qualified passive engagement, and papers that survived the unchanged formal recommendation gate. Treat passive behavior as a revisable hypothesis, never as stronger evidence than explicit feedback: ${JSON.stringify([...branchPerformance.ranked.slice(0, 4), ...branchPerformance.ranked.slice(-4)].map((branch) => ({ source: branch.sourceKey, score: branch.score, accepted: branch.accepted, dismissed: branch.dismissed, known: branch.known, engagedPapers: branch.engagedPapers, engagementWeight: branch.engagementWeight, discoveryYield: branch.candidates ? Math.round(branch.newCandidates / branch.candidates * 100) : 0, conclusiveReviews: branch.deepReviewed, formalRecommendations: branch.formalRecommended, evidenceRejected: branch.evidenceRejected })))}`,
             ].join("\n") },
           ],
           thinking: { type: "enabled" },
@@ -6163,6 +6188,14 @@ export async function POST(request: Request) {
         counts[origin] = (counts[origin] || 0) + 1;
         return counts;
       }, {});
+      const freshFunnel = buildFreshYieldFunnel({
+        currentCandidateIds: work.currentCandidateIds,
+        screens: work.screens,
+        deepIds: work.deepIds,
+        deepCompletedIds: work.deepCompletedIds,
+        deepDeferredIds: work.deepDeferredIds,
+        reviews: finalizedReviews,
+      });
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: job.id,
@@ -6174,6 +6207,7 @@ export async function POST(request: Request) {
         metadata: {
           qualityGateUnchanged: true,
           currentDiscoveryPool: work.currentCandidateIds.length,
+          freshFunnel,
           selectionMix,
           recommendationMix,
           failureReasons: {
@@ -6183,6 +6217,21 @@ export async function POST(request: Request) {
           },
         },
       });
+      if (shouldRefreshFreshYieldPlan(freshFunnel)) {
+        const planDate = completedAt.toISOString().slice(0, 10);
+        await database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = ?")
+          .bind(space.id, planDate).run();
+        await recordReliabilityEvent(database, {
+          spaceId: space.id,
+          scanJobId: job.id,
+          kind: "fresh_yield_replan_scheduled",
+          stage: "finalizing",
+          source: "adaptive-discovery",
+          outcome: "info",
+          message: "The next due scan will regenerate its query plan from the diagnosed fresh-paper funnel without lowering the recommendation gate",
+          metadata: { qualityGateUnchanged: true, planDate, diagnosis: freshFunnel.diagnosis, freshFunnel },
+        });
+      }
       await database.batch([
         database.prepare(
           `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,

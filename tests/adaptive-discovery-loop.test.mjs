@@ -71,6 +71,10 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /currentCandidateIds/);
   assert.match(monitor, /selectBudgetedDeepReviewCandidates/);
   assert.match(monitor, /scan_yield_attribution/);
+  assert.match(monitor, /fresh_yield_replan_scheduled/);
+  assert.match(monitor, /formalYieldBranchAdjustment/);
+  assert.match(monitor, /audit\.verification_status IN \('verified', 'revised'\)/);
+  assert.match(monitor, /qualityGateUnchanged: true/);
   assert.match(monitor, /deep_review_evidence_precheck/);
   assert.match(monitor, /qualityGateUnchanged: true/);
   assert.match(monitor, /enriching_screening_abstracts/);
