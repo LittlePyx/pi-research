@@ -36,7 +36,7 @@ test("scheduled monitoring persists heartbeats and advances only a bounded check
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
   ]);
 
-  assert.match(worker, /SCHEDULED_ADVANCE_STEPS = 3/);
+  assert.match(worker, /SCHEDULED_ADVANCE_STEPS = 1/);
   assert.match(worker, /monitor_scheduler_ticks/);
   assert.match(worker, /r\.automation_paused_at IS NULL/);
   assert.match(worker, /automationDeferred/);
