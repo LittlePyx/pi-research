@@ -474,6 +474,7 @@ type ScanWorkQueue = {
   verificationCompletedIds: string[];
   verificationDeferredIds: string[];
   verificationAttempts: Record<string, number>;
+  draftRegenerationAttempts: Record<string, number>;
   evidenceIds: string[];
   evidenceCompletedIds: string[];
   rescueScreenIds: string[];
@@ -555,6 +556,7 @@ const VERIFICATION_CORRECTION_TIMEOUT_MS = 28_000;
 // A conservative evidence workflow can require audit -> correction -> fresh audit.
 // Leave room for two transient failures so a normal correction never has to wait for another scan.
 const VERIFICATION_ATTEMPT_LIMIT = 5;
+const INCOMPLETE_DRAFT_REGENERATION_LIMIT = 1;
 const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
 const BACKGROUND_VERIFICATION_RETRY_MS = 10 * 60 * 1000;
 const ADVANCE_LOCK_LEASE_MS = 45_000;
@@ -5083,7 +5085,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
-    verificationAttempts: {},
+    verificationAttempts: {}, draftRegenerationAttempts: {},
     evidenceIds: [], evidenceCompletedIds: [],
     rescueScreenIds: [], rescueScreened: false, screenFailureCount: 0, deepFailureCount: 0, verificationFailureCount: 0,
     pipelineVersion: "", horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
@@ -5120,6 +5122,10 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
         ? Object.fromEntries(Object.entries(parsed.verificationAttempts).filter(([id]) => id).slice(0, DEEP_REVIEW_MAX_LIMIT)
           .map(([id, count]) => [id, Math.max(0, Math.min(VERIFICATION_ATTEMPT_LIMIT, Number(count) || 0))]))
         : {},
+      draftRegenerationAttempts: parsed.draftRegenerationAttempts && typeof parsed.draftRegenerationAttempts === "object" && !Array.isArray(parsed.draftRegenerationAttempts)
+        ? Object.fromEntries(Object.entries(parsed.draftRegenerationAttempts).filter(([id]) => id).slice(0, DEEP_REVIEW_MAX_LIMIT)
+          .map(([id, count]) => [id, Math.max(0, Math.min(INCOMPLETE_DRAFT_REGENERATION_LIMIT, Number(count) || 0))]))
+        : {},
       evidenceIds: [],
       evidenceCompletedIds: [],
       rescueScreenIds: Array.isArray(parsed.rescueScreenIds) ? parsed.rescueScreenIds.filter((id): id is string => typeof id === "string").slice(0, RESCUE_SCREEN_LIMIT) : [],
@@ -5144,7 +5150,7 @@ function newScanWorkQueue(): ScanWorkQueue {
     candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
-    verificationAttempts: {},
+    verificationAttempts: {}, draftRegenerationAttempts: {},
     evidenceIds: [], evidenceCompletedIds: [],
     rawCandidateCount: 0, newCandidateCount: 0, screenFailureCount: 0, deepFailureCount: 0, verificationFailureCount: 0,
     pipelineVersion: MONITOR_PIPELINE_VERSION, horizonStats: emptyHorizonScanStats(), resumeCheckpoint: "",
@@ -5798,7 +5804,8 @@ export async function POST(request: Request) {
         : [];
       const incompleteDraftCarryoverIds = previousDeepReviews
         .filter((review) => isRetryableEmptyDraftDegradation(review))
-        .map((review) => review.canonicalId);
+        .map((review) => review.canonicalId)
+        .filter((canonicalId) => (previousWork.draftRegenerationAttempts[canonicalId] || 0) < INCOMPLETE_DRAFT_REGENERATION_LIMIT);
       const incompleteDraftCarryover = Boolean(incompleteDraftCarryoverIds.length);
       const qualityCarryover = verificationCarryover || incompleteDraftCarryover;
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
@@ -6186,6 +6193,7 @@ export async function POST(request: Request) {
         work.verificationCompletedIds = [];
         work.verificationDeferredIds = [];
         work.verificationAttempts = {};
+        work.draftRegenerationAttempts = {};
         work.verificationFailureCount = 0;
         work.evidenceIds = [];
         work.evidenceCompletedIds = [];
@@ -6475,21 +6483,48 @@ export async function POST(request: Request) {
           const candidates = await pendingCandidateQueue(database, space.id, [canonicalId]);
           const drafts = await loadPersistedReviews(database, space.id, [canonicalId]);
           const draft = drafts.find((review) => review.verificationRetryable);
-          if (draft && !hasCompleteRecommendationDraft(draft)) {
-            const retryIds = new Set([canonicalId]);
-            work.deepIds = Array.from(new Set([...work.deepIds, canonicalId])).slice(0, DEEP_REVIEW_MAX_LIMIT);
-            work.deepCompletedIds = work.deepCompletedIds.filter((id) => !retryIds.has(id));
-            work.deepDeferredIds = work.deepDeferredIds.filter((id) => !retryIds.has(id));
-            work.verificationIds = work.verificationIds.filter((id) => !retryIds.has(id));
-            work.verificationCompletedIds = work.verificationCompletedIds.filter((id) => !retryIds.has(id));
-            work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => !retryIds.has(id));
+          if (draft && !hasCompleteRecommendationDraft(draft) && candidates.length) {
+            const regenerationAttempts = work.draftRegenerationAttempts[canonicalId] || 0;
+            if (regenerationAttempts < INCOMPLETE_DRAFT_REGENERATION_LIMIT) {
+              const retryIds = new Set([canonicalId]);
+              work.draftRegenerationAttempts[canonicalId] = regenerationAttempts + 1;
+              work.deepIds = Array.from(new Set([...work.deepIds, canonicalId])).slice(0, DEEP_REVIEW_MAX_LIMIT);
+              work.deepCompletedIds = work.deepCompletedIds.filter((id) => !retryIds.has(id));
+              work.deepDeferredIds = work.deepDeferredIds.filter((id) => !retryIds.has(id));
+              work.verificationIds = work.verificationIds.filter((id) => !retryIds.has(id));
+              work.verificationCompletedIds = work.verificationCompletedIds.filter((id) => !retryIds.has(id));
+              work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => !retryIds.has(id));
+              delete work.verificationAttempts[canonicalId];
+              await saveScanWorkQueue(database, job.id, work);
+              await setStage("deep_reviewing", "deep_reviewing", 86,
+                `发现 1 篇解读结构不完整，正在自动重新生成；已完成论文不会重做`);
+              return Response.json(await readState(database, space, { regeneratingIncompleteDraft: true }), { status: 202 });
+            }
+            const incompleteReport = evidenceVerificationReport({
+              initial: sanitizeEvidenceVerificationDraft({
+                verdict: "insufficient",
+                reason: "Recommendation draft remained incomplete after one targeted regeneration",
+              }, { allowedFields: recommendationVerificationFields(draft) }),
+            });
+            const persisted = await persistReviewBatch(database, space.id, job.id, candidates, [
+              degradedRecommendationReview(draft, incompleteReport),
+            ]);
+            await persistRecommendationAuditBatch(database, space.id, job.id, candidates, persisted, 0, 0);
+            work.verificationCompletedIds = Array.from(new Set([...work.verificationCompletedIds, canonicalId]));
+            work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => id !== canonicalId);
             delete work.verificationAttempts[canonicalId];
-            await saveScanWorkQueue(database, job.id, work);
-            await setStage("deep_reviewing", "deep_reviewing", 86,
-              `发现 1 篇解读结构不完整，正在自动重新生成；已完成论文不会重做`);
-            return Response.json(await readState(database, space, { regeneratingIncompleteDraft: true }), { status: 202 });
-          }
-          if (!draft || !candidates.length) {
+            await recordReliabilityEvent(database, {
+              spaceId: space.id,
+              scanJobId: job.id,
+              kind: "incomplete_draft_regeneration_exhausted",
+              stage: "verifying_recommendations",
+              source: MONITOR_MODEL,
+              outcome: "degraded",
+              errorCode: "incomplete_recommendation_draft",
+              message: "A targeted draft regeneration remained incomplete; the paper was retained in the exploration ledger without blocking other verification work",
+              metadata: { canonicalId, regenerationAttempts, qualityGateUnchanged: true },
+            });
+          } else if (!draft || !candidates.length) {
             work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
             delete work.verificationAttempts[canonicalId];
           } else {

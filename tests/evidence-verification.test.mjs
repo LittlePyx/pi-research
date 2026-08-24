@@ -160,6 +160,16 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(client, /已自动改写 · 等待复核/);
 });
 
+test("an incomplete recommendation draft can regenerate once without trapping the scan", async () => {
+  const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
+  assert.match(monitor, /INCOMPLETE_DRAFT_REGENERATION_LIMIT = 1/);
+  assert.match(monitor, /draftRegenerationAttempts: Record<string, number>/);
+  assert.match(monitor, /work\.draftRegenerationAttempts\[canonicalId\] = regenerationAttempts \+ 1/);
+  assert.match(monitor, /incomplete_draft_regeneration_exhausted/);
+  assert.match(monitor, /degradedRecommendationReview\(draft, incompleteReport\)/);
+  assert.match(monitor, /previousWork\.draftRegenerationAttempts\[canonicalId\][\s\S]*INCOMPLETE_DRAFT_REGENERATION_LIMIT/);
+});
+
 test("the verification migration applies to existing recommendation and action tables", async () => {
   const migration = await readFile(new URL("../drizzle/0035_cool_lady_bullseye.sql", import.meta.url), "utf8");
   const database = new DatabaseSync(":memory:");
