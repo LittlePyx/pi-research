@@ -36,6 +36,8 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /cloudflare_cron/);
   assert.match(worker, /external_watchdog/);
   assert.match(worker, /visit_backstop/);
+  assert.match(worker, /VISIT_BACKSTOP_GAP_MS = 25 \* 60 \* 1000/);
+  assert.match(worker, /const result = await runScheduledMonitorSweep\(env, ctx, "external_watchdog"\)/);
   assert.match(worker, /INSERT OR IGNORE INTO monitor_scheduler_ticks/);
   assert.match(worker, /stale_scheduler_recovery/);
   assert.match(worker, /datetime\('now', '-20 minutes'\)/);
@@ -48,6 +50,7 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(repository, /PRAGMA table_info\(monitor_scheduler_ticks\)/);
   assert.match(worker, /gapMinutes > 25 \? "recovered_gap" : "healthy"/);
   assert.match(workflow, /cron: "\*\/10 \* \* \* \*"/);
+  assert.match(workflow, /--max-time 240/);
   assert.match(workflow, /secrets\.PI_SCHEDULER_SECRET/);
   assert.match(workflow, /api\/internal\/scheduler/);
 });

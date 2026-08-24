@@ -34,6 +34,16 @@ const SCHEDULED_SPACE_BATCH_SIZE = 1;
 const SCHEDULED_ADVANCE_STEPS = 1;
 const SCHEDULER_LEASE_MS = MONITOR_SCHEDULER_BUCKET_MS - 60_000;
 const HARD_STALE_JOB_HOURS = 6;
+const VISIT_BACKSTOP_GAP_MS = 25 * 60 * 1000;
+
+async function visitBackstopIsDue(env: Env) {
+  const last = await env.DB.prepare(
+    `SELECT completed_at FROM monitor_scheduler_ticks
+     WHERE completed_at IS NOT NULL ORDER BY datetime(completed_at) DESC LIMIT 1`,
+  ).first<{ completed_at: string | null }>();
+  const completedAt = last?.completed_at ? Date.parse(last.completed_at) : 0;
+  return !completedAt || Date.now() - completedAt >= VISIT_BACKSTOP_GAP_MS;
+}
 
 async function acquireSchedulerLease(env: Env, trigger: SchedulerTrigger) {
   const now = new Date();
@@ -231,12 +241,14 @@ const worker = {
       if (!monitorSchedulerSecretMatches(request.headers.get("Authorization"), env.MONITOR_SCHEDULER_SECRET)) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
-      ctx.waitUntil(runScheduledMonitorSweep(env, ctx, "external_watchdog"));
-      return Response.json({ accepted: true }, { status: 202 });
+      const result = await runScheduledMonitorSweep(env, ctx, "external_watchdog");
+      return Response.json(result);
     }
 
     if (env.DB && shouldWakeMonitorScheduler(request.method, url.pathname)) {
-      ctx.waitUntil(runScheduledMonitorSweep(env, ctx, "visit_backstop"));
+      ctx.waitUntil((async () => {
+        if (await visitBackstopIsDue(env)) await runScheduledMonitorSweep(env, ctx, "visit_backstop");
+      })());
     }
 
     if (url.pathname === "/_vinext/image") {

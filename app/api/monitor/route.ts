@@ -5751,8 +5751,10 @@ export async function POST(request: Request) {
         if (previous.lock_token && lockExpiry > now.getTime()) {
           return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }), { status: 202 });
         }
-        const modelResponse = await preflightModel(activeJob);
-        if (modelResponse) return modelResponse;
+        if (trigger !== "scheduled") {
+          const modelResponse = await preflightModel(activeJob);
+          if (modelResponse) return modelResponse;
+        }
         const resumedLock = crypto.randomUUID();
         await database.prepare(
           "UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
@@ -5820,10 +5822,12 @@ export async function POST(request: Request) {
         ? minimumAnalysisCallsForCheckpoint(resumeCheckpoint)
         : MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS);
       if (quotaResponse) return quotaResponse;
-      const modelResponse = await preflightModel(resumable && previousJob?.status === "error"
-        ? { id: previousJob.id, checkpoint: resumeCheckpoint, work_queue_json: previousJob.work_queue_json }
-        : undefined);
-      if (modelResponse) return modelResponse;
+      if (trigger !== "scheduled") {
+        const modelResponse = await preflightModel(resumable && previousJob?.status === "error"
+          ? { id: previousJob.id, checkpoint: resumeCheckpoint, work_queue_json: previousJob.work_queue_json }
+          : undefined);
+        if (modelResponse) return modelResponse;
+      }
       if (resumable) {
         previousWork.resumeCheckpoint = "";
         previousWork.screenFailureCount = 0;
