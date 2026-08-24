@@ -226,7 +226,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE INDEX IF NOT EXISTS idx_semantic_scholar_throttles_next ON semantic_scholar_throttles(next_allowed_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', last_run_at TEXT, next_run_at TEXT, new_count INTEGER NOT NULL DEFAULT 0, scanned_count INTEGER NOT NULL DEFAULT 0, discovery_round INTEGER NOT NULL DEFAULT 0, lock_token TEXT, lock_expires_at TEXT, last_trigger TEXT NOT NULL DEFAULT 'visit', last_user_activity_at TEXT, scheduled_runs_since_activity INTEGER NOT NULL DEFAULT 0, automation_paused_at TEXT, automation_pause_reason TEXT NOT NULL DEFAULT '', error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_runs_space ON monitor_runs(space_id)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS monitor_scheduler_ticks (id TEXT PRIMARY KEY NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, due_space_count INTEGER NOT NULL DEFAULT 0, started_count INTEGER NOT NULL DEFAULT 0, advanced_count INTEGER NOT NULL DEFAULT 0, completed_count INTEGER NOT NULL DEFAULT 0, paused_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS monitor_scheduler_ticks (id TEXT PRIMARY KEY NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, due_space_count INTEGER NOT NULL DEFAULT 0, started_count INTEGER NOT NULL DEFAULT 0, advanced_count INTEGER NOT NULL DEFAULT 0, completed_count INTEGER NOT NULL DEFAULT 0, paused_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, trigger_source TEXT NOT NULL DEFAULT 'cloudflare_cron', lease_token TEXT, lease_expires_at TEXT, recovered_job_count INTEGER NOT NULL DEFAULT 0, previous_tick_at TEXT, gap_minutes INTEGER NOT NULL DEFAULT 0, health_status TEXT NOT NULL DEFAULT 'healthy', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_scheduler_ticks_created ON monitor_scheduler_ticks(created_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_discovery_pages (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, horizon TEXT NOT NULL, query_key TEXT NOT NULL, next_offset INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_discovery_space_horizon_query ON monitor_discovery_pages(space_id, horizon, query_key)"),
@@ -399,6 +399,18 @@ export async function ensureSchema(database = getDatabase()) {
     ["automation_pause_reason", "ALTER TABLE monitor_runs ADD COLUMN automation_pause_reason TEXT NOT NULL DEFAULT ''"],
   ] as const;
   for (const [name, sql] of monitorRunAdditions) if (!monitorRunColumnNames.has(name)) await database.prepare(sql).run();
+  const schedulerTickColumns = await database.prepare("PRAGMA table_info(monitor_scheduler_ticks)").all<{ name: string }>();
+  const schedulerTickColumnNames = new Set(schedulerTickColumns.results.map((column) => column.name));
+  const schedulerTickAdditions = [
+    ["trigger_source", "ALTER TABLE monitor_scheduler_ticks ADD COLUMN trigger_source TEXT NOT NULL DEFAULT 'cloudflare_cron'"],
+    ["lease_token", "ALTER TABLE monitor_scheduler_ticks ADD COLUMN lease_token TEXT"],
+    ["lease_expires_at", "ALTER TABLE monitor_scheduler_ticks ADD COLUMN lease_expires_at TEXT"],
+    ["recovered_job_count", "ALTER TABLE monitor_scheduler_ticks ADD COLUMN recovered_job_count INTEGER NOT NULL DEFAULT 0"],
+    ["previous_tick_at", "ALTER TABLE monitor_scheduler_ticks ADD COLUMN previous_tick_at TEXT"],
+    ["gap_minutes", "ALTER TABLE monitor_scheduler_ticks ADD COLUMN gap_minutes INTEGER NOT NULL DEFAULT 0"],
+    ["health_status", "ALTER TABLE monitor_scheduler_ticks ADD COLUMN health_status TEXT NOT NULL DEFAULT 'healthy'"],
+  ] as const;
+  for (const [name, sql] of schedulerTickAdditions) if (!schedulerTickColumnNames.has(name)) await database.prepare(sql).run();
   await database.prepare("UPDATE monitor_runs SET last_user_activity_at = COALESCE(last_user_activity_at, CASE WHEN last_trigger IN ('visit','manual') THEN updated_at ELSE COALESCE(last_run_at, updated_at) END) WHERE last_user_activity_at IS NULL").run();
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_runs_automation_due ON monitor_runs(automation_paused_at, status, next_run_at)").run();
   const coverageColumns = await database.prepare("PRAGMA table_info(monitor_discovery_coverage)").all<{ name: string }>();

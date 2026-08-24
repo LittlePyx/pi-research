@@ -1,0 +1,26 @@
+name: Pi background research scheduler
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pi-background-research-scheduler
+  cancel-in-progress: false
+
+jobs:
+  wake-background-research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake the Pi background worker
+        env:
+          PI_SCHEDULER_SECRET: ${{ secrets.PI_SCHEDULER_SECRET }}
+        run: |
+          test -n "$PI_SCHEDULER_SECRET"
+          curl --silent --show-error --fail-with-body \
+            --retry 2 --retry-all-errors --max-time 30 \
+            --request POST \
+            --header "Authorization: Bearer $PI_SCHEDULER_SECRET" \
+            https://pi-research-agent.qiudao-pika.chatgpt.site/api/internal/scheduler

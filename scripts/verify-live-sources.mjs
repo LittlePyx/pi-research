@@ -6,11 +6,20 @@ const headers = { Accept: "*/*", "User-Agent": "PiResearch/1.0 (live source cont
 
 async function checkJson(name, url, validate, optional = false) {
   try {
-    const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    validate(data);
-    return { name, status: "healthy" };
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
+      if (response.ok) {
+        const data = await response.json();
+        validate(data);
+        return { name, status: "healthy" };
+      }
+
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt === 3) throw new Error(`HTTP ${response.status}`);
+      await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));
+    }
+
+    throw new Error("No response after retries");
   } catch (error) {
     if (!optional) throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
     return { name, status: "degraded", reason: error instanceof Error ? error.message : String(error) };
@@ -44,6 +53,7 @@ const results = await Promise.all([
     "OpenAlex",
     "https://api.openalex.org/works?search=information%20theory&filter=is_paratext:false&per-page=1&select=id,doi,display_name,publication_date",
     (data) => assert.ok(Array.isArray(data?.results) && data.results.length > 0),
+    true,
   ),
   checkJson(
     "Semantic Scholar",
