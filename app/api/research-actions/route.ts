@@ -255,8 +255,8 @@ function degradedResearchAction(kind: ResearchActionKind, report: ReturnType<typ
     headlineEn: "Current evidence is insufficient for a reliable deliverable",
     resultZh: "Pi 已完成独立核验，但当前材料仍不足以支持原拟交付内容，因此没有把未经支持的判断交给你。",
     resultEn: "Pi completed an independent verification pass, but the current material does not support the proposed deliverable, so unsupported conclusions were withheld.",
-    decisionZh: kind === "search" ? "先补充可核验来源，再生成定向检索。" : "先补充摘要或开放全文证据，再重新执行这项行动。",
-    decisionEn: kind === "search" ? "Add verifiable sources before generating a targeted query." : "Add abstract or open-full-text evidence, then rerun this action.",
+    decisionZh: kind === "search" ? "先补充可核验来源，再生成定向检索。" : "先补充摘要、出版信息或其他可核验来源，再重新执行这项行动。",
+    decisionEn: kind === "search" ? "Add verifiable sources before generating a targeted query." : "Add abstracts, publication metadata, or other verifiable sources, then rerun this action.",
     limitationsZh: issue || report.reason || "缺少能够逐条支持结论的证据。",
     limitationsEn: report.reason || "Claim-level supporting evidence is still missing.",
     searchQuery: "",
@@ -264,8 +264,8 @@ function degradedResearchAction(kind: ResearchActionKind, report: ReturnType<typ
     claimIds: [] as string[],
     deliverable: { steps: [{
       titleZh: "补齐证据后重试", titleEn: "Rerun after grounding the evidence",
-      detailZh: "优先获取相关论文的摘要或开放全文，并形成可定位的证据判断。",
-      detailEn: "First obtain abstracts or open full text and produce source-located evidence claims.",
+      detailZh: "优先补齐相关论文的摘要、出版信息或其他可核验来源，并形成可追溯的证据判断。",
+      detailEn: "First add abstracts, publication metadata, or other verifiable sources and produce traceable evidence claims.",
       paperIds: [] as string[], claimIds: [] as string[],
     }], comparisonRows: [] as Array<never> },
   };

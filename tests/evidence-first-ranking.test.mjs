@@ -3,44 +3,25 @@ import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { fullTextEvidenceQualifiesForMustRead } from "../lib/paper-evidence.ts";
-
-test("must-read requires ready, sufficiently grounded open full text", () => {
-  assert.equal(fullTextEvidenceQualifiesForMustRead({
-    level: "fulltext", status: "ready", groundedClaims: 3, coverageScore: 70, unsupportedClaims: 1,
-  }), true);
-  assert.equal(fullTextEvidenceQualifiesForMustRead({
-    level: "abstract", status: "ready", groundedClaims: 8, coverageScore: 100, unsupportedClaims: 0,
-  }), false);
-  assert.equal(fullTextEvidenceQualifiesForMustRead({
-    level: "fulltext", status: "ready", groundedClaims: 2, coverageScore: 90, unsupportedClaims: 0,
-  }), false);
-  assert.equal(fullTextEvidenceQualifiesForMustRead({
-    level: "fulltext", status: "partial", groundedClaims: 6, coverageScore: 95, unsupportedClaims: 0,
-  }), false);
-});
-
-test("the monitor deepens evidence before final ranking without blocking on failures", async () => {
-  const [monitor, evidenceRoute, client, schema, repository, migration] = await Promise.all([
+test("the monitor verifies recommendation content without a full-text verification stage", async () => {
+  const [monitor, client, schema, repository, migration] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/paper-evidence/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0036_bouncy_lord_hawal.sql", import.meta.url), "utf8"),
   ]);
-  assert.match(monitor, /continuous-evidence-v8-yield-verified/);
+  assert.match(monitor, /continuous-recommendation-v9-verified/);
   assert.match(monitor, /verifying_recommendations/);
-  assert.match(monitor, /PRE_PUBLICATION_EVIDENCE_LIMIT = 4/);
-  assert.match(monitor, /evidence_deepening/);
-  assert.match(monitor, /deepenPaperEvidenceRequest/);
   assert.match(monitor, /proposed_recommendation_tier/);
-  assert.match(monitor, /fullTextQualified/);
-  assert.match(evidenceRoute, /fullTextEvidenceQualifiesForMustRead/);
-  assert.match(evidenceRoute, /strongestGrounded/);
-  assert.match(evidenceRoute, /recommendation_tier = CASE WHEN proposed_recommendation_tier = 'must_read'/);
-  assert.match(client, /候选必读 · 待全文确认/);
-  assert.match(client, /摘要已核验/);
+  assert.match(monitor, /const effectiveTier = proposedTier/);
+  assert.doesNotMatch(monitor, /deepenPaperEvidenceRequest/);
+  assert.doesNotMatch(client, /\/api\/paper-evidence/);
+  assert.doesNotMatch(client, /开放全文已核验/);
+  assert.match(client, /正在逐篇独立核验推荐证据/);
+  assert.match(client, /monitor\.dailyBrief\.metrics\.recommended \|\| 0/);
+  assert.doesNotMatch(client, /recommended \|\| 0\) - \(monitor\.dailyBrief\.metrics\.verificationPending/);
+  assert.match(client, /推荐内容已核验/);
   assert.match(schema, /proposedRecommendationTier/);
   assert.match(repository, /proposed_recommendation_tier/);
   assert.match(migration, /UPDATE `paper_insights` SET `proposed_recommendation_tier`/);

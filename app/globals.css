@@ -22,8 +22,7 @@
 /* Pi Research V68 — quiet, source-grounded paper reading */
 .v2-evidence-badge { width: fit-content; min-height: 24px; padding: 0 8px; border: 1px solid #d4ddd8; border-radius: 999px; background: #f8faf8; color: #607168; display: inline-flex; align-items: center; gap: 6px; font-size: 9px; font-style: normal; font-weight: 760; letter-spacing: .01em; white-space: nowrap; }
 .v2-evidence-badge i { width: 6px; height: 6px; border-radius: 50%; background: #9aa69f; }
-.v2-evidence-badge.fulltext { border-color: #b9cec1; background: #edf5f0; color: #315f49; }
-.v2-evidence-badge.fulltext i,.v2-evidence-badge.ready i { background: #438063; }
+.v2-evidence-badge.ready i { background: #438063; }
 .v2-evidence-badge.fetching { border-color: #cbd8df; background: #eff5f7; color: #456b7d; }
 .v2-evidence-badge.fetching i { background: #4d7d92; animation: v2-evidence-pulse 1.2s ease-in-out infinite; }
 @keyframes v2-evidence-pulse { 50% { opacity: .32; transform: scale(.75); } }
@@ -3352,6 +3351,9 @@ main { min-width: 0; }
 }
 .v2-scan-upgrade-note strong { display: block; color: var(--ink); }
 .v2-scan-upgrade-note p { margin: 4px 0 0; color: var(--muted); line-height: 1.55; }
+.v2-scan-budget-note { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px; border: 1px solid rgba(151, 112, 71, .22); border-radius: 7px; background: rgba(250, 246, 239, .58); color: #725d49; font-size: 10px; }
+.v2-scan-budget-note span { flex: 0 0 auto; color: #9a744d; }
+.v2-scan-budget-note p { margin: 0; line-height: 1.45; }
 
 /* Pi Research V48 — quiet discovery control with visible horizon work */
 .v2-today .v2-monitor-compact {

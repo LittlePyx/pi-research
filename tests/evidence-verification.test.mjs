@@ -127,8 +127,8 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /verificationStatus: "pending"/);
   assert.match(monitor, /checkpoint === "verifying_recommendations"/);
   assert.match(monitor, /draftPreserved: true, retryScope: "verification_only"/);
-  assert.match(monitor, /VERIFICATION_ATTEMPT_LIMIT = 5/);
-  assert.match(monitor, /Three successful requests may be needed \(audit, correction, fresh audit\)/);
+  assert.match(monitor, /VERIFICATION_ATTEMPT_LIMIT = 2/);
+  assert.match(monitor, /pending draft is durable and can be retried in a later run/);
   assert.match(monitor, /work\.verificationAttempts\[canonicalId\]/);
   assert.match(monitor, /work\.verificationFailureCount >= VERIFICATION_CIRCUIT_FAILURE_LIMIT/);
   assert.match(monitor, /remaining drafts were deferred without more model calls/);
@@ -150,7 +150,8 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /isPublishedRecommendation\(review\) \? 1 : 0/);
   assert.match(monitor, /deepseek_verification_pending/);
   assert.doesNotMatch(monitor, /\.\.\.degradedRecommendationReview\(review, evidenceVerificationReport\(\{ initial \}\)\),\s*verificationRetryable: true/);
-  assert.match(client, /篇高潜力解读待核验/);
+  assert.match(client, /正在逐篇独立核验推荐证据/);
+  assert.match(client, /篇待处理/);
 });
 
 test("the verification migration applies to existing recommendation and action tables", async () => {

@@ -29,3 +29,12 @@ test("library overview counts the archive instead of repeating recommendation in
   assert.match(app, /"待处理推荐"/);
   assert.doesNotMatch(app, /monitor\?\.historyCounts\?\.unseen \|\| 0}<\/strong><b>{t\.unseen/);
 });
+
+test("the sidebar and archive ranking cannot make retained papers look missing or over-scored", () => {
+  assert.match(app, /compactNavCount\(historyPapers\.length\)/);
+  assert.match(app, /qualityStageRank/);
+  assert.match(app, /second\.relevanceScore - first\.relevanceScore/);
+  assert.match(app, /paper\.qualityStage === "recommended" && <span>{t\.qualityScore}/);
+  assert.match(app, /displayQualityScore\(paper\.qualityScore\)/);
+  assert.match(app, /Math\.min\(100, Math\.max\(0, Math\.round/);
+});

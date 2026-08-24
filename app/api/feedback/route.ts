@@ -40,8 +40,8 @@ function feedbackEffect(kind: FeedbackPayload["kind"], value: boolean, reasonCod
     en: "Similar retrieval branches were deprioritized without deleting history or other directions.",
   };
   if (kind === "relevant") return {
-    zh: "已加强对应主题、方法或问题的下一轮检索；通过全文证据门槛后才会记为路线变化。",
-    en: "The matching topic, method, or question will guide the next scan; route changes still require full-text evidence.",
+    zh: "已加强对应主题、方法或问题的下一轮检索；通过推荐内容独立核验后才会记为路线证据变化。",
+    en: "The matching topic, method, or question will guide the next scan; route evidence changes still require independent recommendation verification.",
   };
   if (kind === "save") return {
     zh: "已保存，并作为后续检索的正向信号；不会直接把论文当成已验证路线证据。",

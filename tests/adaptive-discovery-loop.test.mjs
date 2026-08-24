@@ -74,7 +74,7 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DEEP_REVIEW_RESCUE_LIMIT = 4/);
   assert.match(monitor, /DEEP_REVIEW_MAX_LIMIT/);
   assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 3/);
-  assert.match(monitor, /continuous-evidence-v8-yield-verified/);
+  assert.match(monitor, /continuous-recommendation-v9-verified/);
   assert.match(monitor, /recommendationEligibility = explicitlyRestricted \? "1 = 1"/);
   assert.match(monitor, /final reconciliation and job counts still need that record/);
   assert.match(monitor, /recommendationShortfall/);
@@ -90,7 +90,10 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /runIncrementalDeepReview/);
   assert.match(monitor, /Non-blocking route reconciliation failed/);
   assert.match(monitor, /row\.map_rationale_zh/);
-  assert.match(monitor, /任一篇完成都会立即显示/);
+  assert.match(monitor, /任一篇完成都会立即保存/);
+  assert.match(monitor, /MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS = 16/);
+  assert.match(monitor, /monitor_analysis_budget_insufficient/);
+  assert.match(monitor, /minimumAnalysisCallsForCheckpoint/);
   assert.match(monitor, /当前论文响应较慢，正在切换快速模式重试/);
   assert.match(monitor, /deferLlm/);
   assert.match(monitor, /checkpoint = 'main_complete'/);

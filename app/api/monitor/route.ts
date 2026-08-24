@@ -65,7 +65,6 @@ import {
 } from "../../../lib/monitor-route-planning";
 import { formalResearchMapEvidencePredicate, promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
-import { POST as deepenPaperEvidenceRequest } from "../paper-evidence/route";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
 type Horizon = "days" | "months" | "years";
@@ -299,13 +298,6 @@ type PaperRow = {
   research_decision_en: string;
   verification_status: EvidenceVerificationStatus;
   verification_coverage_score: number;
-  evidence_status: string;
-  evidence_level: string;
-  evidence_source_kind: string;
-  evidence_source_url: string;
-  evidence_claim_count: number;
-  evidence_grounded_claim_count: number;
-  evidence_coverage_score: number;
   track_id: string;
   discovery_source_key: string;
   discovery_route_id: string;
@@ -529,7 +521,6 @@ const DEEP_REVIEW_RESCUE_LIMIT = 4;
 const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
 const HIGH_POTENTIAL_DRAFT_TARGET = 3;
 const DEEP_REVIEW_CARRYOVER_LIMIT = 2;
-const PRE_PUBLICATION_EVIDENCE_LIMIT = 4;
 const RESCUE_SCREEN_LIMIT = 8;
 const CONTINUITY_DEEP_REVIEW_LIMIT = 4;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
@@ -543,7 +534,11 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-evidence-v8-yield-verified";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v9-verified";
+const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
+  MONITOR_PIPELINE_VERSION,
+  "continuous-evidence-v8-yield-verified",
+]);
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
 const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
@@ -552,13 +547,14 @@ const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000;
 const DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000;
 const VERIFICATION_TIMEOUT_MS = 20_000;
 const VERIFICATION_CORRECTION_TIMEOUT_MS = 28_000;
-// Three successful requests may be needed (audit, correction, fresh audit).
-// Keep two additional slots for transient timeouts without rerunning discovery or deep review.
-const VERIFICATION_ATTEMPT_LIMIT = 5;
+// Do not let one difficult paper hold the whole daily queue for several minutes.
+// A pending draft is durable and can be retried in a later run without repeating discovery.
+const VERIFICATION_ATTEMPT_LIMIT = 2;
 const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
 const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 48;
+const MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS = 16;
 const MONITOR_SEMANTIC_SCHOLAR_DAILY_LIMIT = 90;
 const MONITOR_MODEL = "deepseek-v4-pro";
 const RECOMMENDATION_THRESHOLD = 72;
@@ -656,6 +652,21 @@ function parseVenues(value: string) {
   } catch {
     return [];
   }
+}
+
+function sanitizeRetiredFulltextCopy(value: string) {
+  return value
+    .replace(/并为\s*\d+\s*篇高潜力论文补强原文证据，/g, "并完成推荐内容独立核验，")
+    .replace(/全文证据门槛/g, "推荐内容独立核验门槛")
+    .replace(/全文证据/g, "可核验证据")
+    .replace(/开放全文/g, "可核验来源")
+    .replace(/full[- ]text evidence/gi, "verifiable evidence")
+    .replace(/open full text/gi, "verifiable sources")
+    .replace(/full[- ]text bar/gi, "independent verification bar");
+}
+
+function parseSanitizedBriefList(value: string) {
+  return parseVenues(value).map(sanitizeRetiredFulltextCopy);
 }
 
 function normalizeVenue(value: string) {
@@ -1618,6 +1629,44 @@ async function usageCount(database: D1Database, scope: string, date: string) {
   return row?.request_count || 0;
 }
 
+function minimumAnalysisCallsForCheckpoint(checkpoint: string) {
+  if (!checkpoint || checkpoint === "planning") return MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS;
+  if (["discovering_days", "discovering_months", "discovering_years", "deduplicating", "enriching_screening_abstracts", "screening"].includes(checkpoint)) return 2;
+  if (["rescue_screening", "enriching_abstracts", "deep_reviewing"].includes(checkpoint)) return 2;
+  if (checkpoint === "verifying_recommendations") return 1;
+  return 1;
+}
+
+async function readMonitorAnalysisBudget(
+  database: D1Database,
+  userId: string,
+  spaceId: string,
+  minimumCalls: number,
+) {
+  const usageDate = shanghaiDateKey(new Date());
+  const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
+  const spaceScope = "monitor-space:" + spaceId;
+  const [globalUsed, workspaceUsed, spaceUsed] = await Promise.all([
+    usageCount(database, "monitor:global", usageDate),
+    usageCount(database, workspaceScope, usageDate),
+    usageCount(database, spaceScope, usageDate),
+  ]);
+  const remaining = Math.max(0, Math.min(
+    MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT - globalUsed,
+    MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT - workspaceUsed,
+    MONITOR_SPACE_DAILY_ANALYSIS_LIMIT - spaceUsed,
+  ));
+  const tomorrow = new Date(Date.now() + 86_400_000);
+  return {
+    used: spaceUsed,
+    limit: MONITOR_SPACE_DAILY_ANALYSIS_LIMIT,
+    remaining,
+    minimumToStart: minimumCalls,
+    available: remaining >= minimumCalls,
+    resetsAt: new Date(`${shanghaiDateKey(tomorrow)}T00:00:00+08:00`).toISOString(),
+  };
+}
+
 type AutomationPauseReason = "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable";
 
 async function readAutomationCounters(database: D1Database, spaceId: string) {
@@ -2109,7 +2158,7 @@ function degradedRecommendationReview(review: PaperReview, report: ReturnType<ty
 }
 
 type RecommendationVerificationEvidence = {
-  source: "stored_fulltext" | "stored_abstract" | "abstract";
+  source: "stored_claims" | "abstract";
   units: VerificationEvidenceUnit[];
 };
 
@@ -2127,8 +2176,7 @@ async function recommendationVerificationEvidence(
         AND claim.paper_id = paper.id AND claim.space_id = paper.space_id
        WHERE paper.space_id = ? AND paper.canonical_id = ? AND claim.grounded = 1
         AND document.status IN ('ready', 'partial') AND length(trim(claim.evidence_quote)) >= 24
-       ORDER BY CASE document.evidence_level WHEN 'fulltext' THEN 0 ELSE 1 END,
-        document.updated_at DESC, claim.position
+       ORDER BY document.updated_at DESC, claim.position
        LIMIT 10`,
     ).bind(spaceId, candidate.canonicalId).all<{ id: string; evidence_quote: string; evidence_level: string }>();
     const units = stored.results.flatMap((row) => {
@@ -2137,7 +2185,7 @@ async function recommendationVerificationEvidence(
     });
     if (units.length) {
       return {
-        source: stored.results.some((row) => row.evidence_level === "fulltext") ? "stored_fulltext" : "stored_abstract",
+        source: "stored_claims",
         units,
       };
     }
@@ -2440,7 +2488,7 @@ async function quickScreenBatch(
           horizon: candidate.horizon,
         } satisfies QuickScreen;
       });
-      const usageDate = new Date().toISOString().slice(0, 10);
+      const usageDate = shanghaiDateKey(new Date());
       const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
       await Promise.all([
         recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
@@ -2466,7 +2514,7 @@ async function quickScreenCandidates(
   mode: "fast" | "rescue" = "fast",
 ) {
   if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be screened");
-  const usageDate = new Date().toISOString().slice(0, 10);
+  const usageDate = shanghaiDateKey(new Date());
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
   const spaceScope = "monitor-space:" + space.id;
   const groups = Array.from({ length: QUICK_SCREEN_CONCURRENCY }, (_, index) => candidates.slice(index * QUICK_SCREEN_BATCH_SIZE, (index + 1) * QUICK_SCREEN_BATCH_SIZE)).filter((group) => group.length);
@@ -2530,10 +2578,7 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
     const paperId = paperIds.get(review.canonicalId);
     if (!candidate || !paperId) return [];
     const proposedTier = review.proposedRecommendationTier || review.recommendationTier;
-    const fullTextQualified = review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready"
-      && review.evidenceGroundedClaims >= 3 && review.evidenceCoverageScore >= 70
-      && review.evidenceUnsupportedClaims <= 1;
-    const effectiveTier = proposedTier === "must_read" ? fullTextQualified ? "must_read" : "browse" : proposedTier;
+    const effectiveTier = proposedTier;
     return [{ review, statement: database.prepare(
       `INSERT INTO paper_insights
        (paper_id, space_id, abstract_text, summary_zh, summary_en, why_read_zh, why_read_en, quality_score,
@@ -2612,20 +2657,6 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
   if (!insightWrites.length) return [] as PaperReview[];
   const insightResults = await database.batch(insightWrites.map((write) => write.statement));
   const persistedReviews = retainChangedMonitorWrites(insightWrites.map((write) => write.review), insightResults);
-
-  const evidenceQueueWrites = persistedReviews.flatMap((review) => {
-    const paperId = paperIds.get(review.canonicalId);
-    if (!isPublishedRecommendation(review) || !paperId) return [];
-    return [database.prepare(
-      `INSERT INTO paper_evidence_documents (id, space_id, paper_id, status)
-       VALUES (?, ?, ?, 'queued')
-       ON CONFLICT(space_id, paper_id) DO UPDATE SET
-        status = CASE WHEN paper_evidence_documents.status = 'ready' THEN 'ready' ELSE 'queued' END,
-        error = CASE WHEN paper_evidence_documents.status = 'ready' THEN paper_evidence_documents.error ELSE NULL END,
-        updated_at = CURRENT_TIMESTAMP`,
-    ).bind(crypto.randomUUID(), spaceId, paperId)];
-  });
-  if (evidenceQueueWrites.length) await database.batch(evidenceQueueWrites);
 
   const proposals = persistedReviews.flatMap((review) => {
     const candidate = candidateByCanonical.get(review.canonicalId);
@@ -2719,7 +2750,7 @@ async function persistRecommendationAuditBatch(
 async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string, lockToken: string, apiKey: string) {
   if (!candidates.length) return [] as PaperReview[];
   if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be recommended");
-  const usageDate = new Date().toISOString().slice(0, 10);
+  const usageDate = shanghaiDateKey(new Date());
   const workspaceScope = "monitor-workspace:" + userId.slice("anonymous:".length);
   const spaceScope = "monitor-space:" + space.id;
   // Drafting is persisted before independent verification. The verification
@@ -3036,7 +3067,7 @@ async function reconcileRecommendedReviewTracks(
     "SELECT id, title_zh, title_en, summary_zh, summary_en FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 12",
   ).bind(space.id).all<{ id: string; title_zh: string; title_en: string; summary_zh: string; summary_en: string }>();
   if (!tracks.results.length) return reviews;
-  const usageDate = new Date().toISOString().slice(0, 10);
+  const usageDate = shanghaiDateKey(new Date());
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
   const spaceScope = "monitor-space:" + space.id;
   const [globalCount, workspaceCount, spaceCount] = await Promise.all([
@@ -3229,31 +3260,6 @@ function selectDiverseItems<T>(
   return selected;
 }
 
-function choosePrePublicationEvidenceIds(reviews: PaperReview[]) {
-  const ranked = reviews.filter((review) => review.recommended
-    && ["verified", "revised"].includes(review.verificationStatus))
-    .sort((left, right) => {
-      const tier = { must_read: 3, browse: 2, reserve: 1 };
-      return tier[right.proposedRecommendationTier] - tier[left.proposedRecommendationTier]
-        || right.problemFitScore - left.problemFitScore
-        || right.relevanceScore - left.relevanceScore
-        || right.qualityScore - left.qualityScore;
-    });
-  const selected: PaperReview[] = [];
-  const selectedIds = new Set<string>();
-  const trackCounts = new Map<string, number>();
-  const add = (review: PaperReview) => {
-    if (selected.length >= PRE_PUBLICATION_EVIDENCE_LIMIT || selectedIds.has(review.canonicalId)) return;
-    selected.push(review);
-    selectedIds.add(review.canonicalId);
-    const key = review.trackId || review.canonicalId;
-    trackCounts.set(key, (trackCounts.get(key) || 0) + 1);
-  };
-  for (const review of ranked) if (!(trackCounts.get(review.trackId || review.canonicalId) || 0)) add(review);
-  for (const review of ranked) add(review);
-  return selected.map((review) => review.canonicalId);
-}
-
 async function generateDailyBrief(
   database: D1Database,
   space: SpaceRow,
@@ -3261,7 +3267,7 @@ async function generateDailyBrief(
   jobId: string,
   candidates: Candidate[],
   reviews: PaperReview[],
-  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepScheduled?: number; deepReviewed?: number; deepDeferred?: number; analysisUnavailable?: number; verificationPending?: number; verificationFailed?: number; evidenceDeepened?: number; fulltextVerified?: number; recommended: number; rejected: number },
+  metrics: { scanned: number; newCandidates: number; duplicates: number; reviewed: number; screened?: number; deepScheduled?: number; deepReviewed?: number; deepDeferred?: number; analysisUnavailable?: number; verificationPending?: number; verificationFailed?: number; recommended: number; rejected: number },
   now: Date,
   apiKey: string,
   deferLlm = false,
@@ -3304,7 +3310,7 @@ async function generateDailyBrief(
         : analysisUnavailable ? "Candidates saved; AI review is pending"
           : verificationFailed ? `No formal recommendation; ${verificationFailed} failed the evidence gate` : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
-      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并为 ${metrics.evidenceDeepened || 0} 篇高潜力论文补强原文证据，最终确认 ${selected.length} 篇。${verificationPending ? `${verificationPending} 篇仍在等待独立核验，不计入正式推荐。` : ""}${verificationFailed ? `${verificationFailed} 篇因证据不足未发布。` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
+      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并完成推荐内容独立核验，最终确认 ${selected.length} 篇。${verificationPending ? `${verificationPending} 篇仍在等待独立核验，不计入正式推荐。` : ""}${verificationFailed ? `${verificationFailed} 篇因证据不足未发布。` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
       : verificationPending
         ? `Pi 已保存 ${verificationPending} 篇达到推荐分数的深度解读草稿；独立核验服务响应较慢，因此它们尚未作为正式推荐发布。后续只续跑核验，不会重新检索、筛选或撰写。${verificationFailed ? `另有 ${verificationFailed} 篇未通过证据核验，原因会保留在研究账本中。` : ""}`
       : analysisUnavailable
@@ -3313,7 +3319,7 @@ async function generateDailyBrief(
           ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；其中 ${verificationFailed} 篇达到高潜力阶段，但未通过独立证据核验，因此本轮正式推荐为 0。它们不是因技术等待被淘汰，核验原因已保留。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`
           : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
     overviewEn: selected.length
-      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, strengthened source evidence for ${metrics.evidenceDeepened || 0} high-potential papers, and confirmed ${selected.length}. ${verificationPending ? `${verificationPending} still await independent verification and are not counted as formal recommendations. ` : ""}${verificationFailed ? `${verificationFailed} were withheld for insufficient evidence. ` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
+      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, independently verified the recommendation content, and confirmed ${selected.length}. ${verificationPending ? `${verificationPending} still await independent verification and are not counted as formal recommendations. ` : ""}${verificationFailed ? `${verificationFailed} were withheld for insufficient evidence. ` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
       : verificationPending
         ? `Pi preserved ${verificationPending} deeply reviewed drafts that reached the recommendation score. Independent verification was slow, so they are not published as formal recommendations yet. A later run retries verification only, without repeating discovery, screening, or drafting.${verificationFailed ? ` Another ${verificationFailed} failed evidence verification and remain recorded in the research ledger.` : ""}`
       : analysisUnavailable
@@ -3379,9 +3385,6 @@ async function generateDailyBrief(
         publishedAt: candidate?.publishedAt || null,
         horizon: candidate?.horizon || "days",
         recommendationTier: review.recommendationTier,
-        evidenceLevel: review.evidenceLevel,
-        evidenceCoverageScore: review.evidenceCoverageScore,
-        groundedClaimCount: review.evidenceGroundedClaims,
         relevanceScore: review.relevanceScore,
         summaryZh: review.summaryZh,
         summaryEn: review.summaryEn,
@@ -3408,7 +3411,7 @@ async function generateDailyBrief(
             "headlineZh should be at most 22 Chinese characters and headlineEn at most 12 words. overviewZh should be 70-140 Chinese characters and overviewEn 45-85 words; explain the common theme, important difference, or decision for this research space instead of repeating paper abstracts.",
             "Each Chinese signal must be 45-95 characters and each English signal 25-55 words. Use plain language: state what changed or became newly usable, then why it matters to this research space. Do not dump numbered contributions or chains of theorem statements.",
             "Each Chinese reading-plan item must be 35-75 characters and each English item 20-45 words. Give one practical reading action and one question to carry into the paper.",
-            "Treat fulltext evidence as stronger than abstract evidence. A must-read label is valid only when evidenceLevel is fulltext; do not imply that abstract-grounded work received full-text verification.",
+            "Use only the independently verified recommendation analysis and supplied bibliographic or abstract evidence. Do not imply that Pi downloaded, read, or verified the paper's full text.",
             "Never mention section, page, figure, or theorem numbers unless they are present in the supplied grounded reading focus. Never claim 'first', 'complete characterization', proof, experiment, convergence rate, or optimality unless the supplied verified analysis explicitly supports it.",
             "Briefly explain specialized abbreviations on first use. Avoid generic praise, repeated scores, and phrases such as 'focus on the derivation' without saying what decision or concept the reader should extract.",
             "Identify cross-paper patterns only when supported. Do not invent results or imply that rejected candidates were useful.",
@@ -4079,13 +4082,6 @@ function toPaper(paper: PaperRow, now: number) {
     researchDecisionEn: paper.research_decision_en,
     verificationStatus: paper.verification_status,
     verificationCoverageScore: paper.verification_coverage_score,
-    evidenceStatus: paper.evidence_status,
-    evidenceLevel: paper.evidence_level,
-    evidenceSourceKind: paper.evidence_source_kind,
-    evidenceSourceUrl: paper.evidence_source_url,
-    evidenceClaimCount: paper.evidence_claim_count,
-    evidenceGroundedClaimCount: paper.evidence_grounded_claim_count,
-    evidenceCoverageScore: paper.evidence_coverage_score,
     trackId: paper.track_id || null,
     qualityStage: paper.quality_stage,
     ...(originKind && paper.discovery_route_id && sourceLabels ? {
@@ -4132,7 +4128,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
            )))
        ), 0)) AS llm_relevance_score,
        COALESCE(i.proposed_recommendation_tier, i.recommendation_tier, 'browse') AS proposed_recommendation_tier,
-       COALESCE(i.recommendation_tier, 'browse') AS recommendation_tier, COALESCE(i.read_minutes, 12) AS read_minutes,
+       COALESCE(i.proposed_recommendation_tier, i.recommendation_tier, 'browse') AS recommendation_tier, COALESCE(i.read_minutes, 12) AS read_minutes,
        COALESCE(i.read_depth, 'focused') AS read_depth, COALESCE(i.problem_zh, '') AS problem_zh,
        COALESCE(i.problem_en, '') AS problem_en, COALESCE(i.method_zh, '') AS method_zh,
        COALESCE(i.method_en, '') AS method_en, COALESCE(i.contribution_zh, '') AS contribution_zh,
@@ -4150,13 +4146,6 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.research_decision_en, '') AS research_decision_en,
        COALESCE(i.verification_status, 'not_required') AS verification_status,
        COALESCE(i.verification_coverage_score, 0) AS verification_coverage_score,
-       COALESCE(ed.status, 'unavailable') AS evidence_status,
-       COALESCE(ed.evidence_level, CASE WHEN LENGTH(COALESCE(i.abstract_text, '')) > 0 THEN 'abstract' ELSE 'metadata' END) AS evidence_level,
-       COALESCE(ed.source_kind, CASE WHEN LENGTH(COALESCE(i.abstract_text, '')) > 0 THEN 'abstract' ELSE 'metadata' END) AS evidence_source_kind,
-       COALESCE(ed.source_url, '') AS evidence_source_url,
-       COALESCE(ed.claim_count, 0) AS evidence_claim_count,
-       COALESCE(ed.grounded_claim_count, 0) AS evidence_grounded_claim_count,
-       COALESCE(ed.coverage_score, 0) AS evidence_coverage_score,
        COALESCE((SELECT tp.track_id FROM research_track_papers tp
          WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
          ORDER BY tp.position LIMIT 1),
@@ -4209,7 +4198,6 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        LEFT JOIN paper_delivery_state d ON d.paper_id = p.id AND d.space_id = p.space_id
        LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
        LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
-       LEFT JOIN paper_evidence_documents ed ON ed.paper_id = p.id AND ed.space_id = p.space_id
        LEFT JOIN ${LATEST_AUDIT_ROUTE_ORIGIN_SUBQUERY} audit_route_origin
         ON audit_route_origin.space_id = p.space_id AND audit_route_origin.paper_id = p.id
        LEFT JOIN ${PRE_REVIEW_ROUTE_ORIGIN_SUBQUERY} fallback_route_origin
@@ -4591,16 +4579,16 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const dailyBrief = dailyBriefRow ? {
     date: dailyBriefRow.brief_date,
     status: dailyBriefRow.status,
-    headlineZh: dailyBriefRow.headline_zh,
-    headlineEn: dailyBriefRow.headline_en,
-    overviewZh: dailyBriefRow.overview_zh,
-    overviewEn: dailyBriefRow.overview_en,
-    signalsZh: parseVenues(dailyBriefRow.signals_zh),
-    signalsEn: parseVenues(dailyBriefRow.signals_en),
-    readingPlanZh: parseVenues(dailyBriefRow.reading_plan_zh),
-    readingPlanEn: parseVenues(dailyBriefRow.reading_plan_en),
-    watchlistZh: parseVenues(dailyBriefRow.watchlist_zh),
-    watchlistEn: parseVenues(dailyBriefRow.watchlist_en),
+    headlineZh: sanitizeRetiredFulltextCopy(dailyBriefRow.headline_zh),
+    headlineEn: sanitizeRetiredFulltextCopy(dailyBriefRow.headline_en),
+    overviewZh: sanitizeRetiredFulltextCopy(dailyBriefRow.overview_zh),
+    overviewEn: sanitizeRetiredFulltextCopy(dailyBriefRow.overview_en),
+    signalsZh: parseSanitizedBriefList(dailyBriefRow.signals_zh),
+    signalsEn: parseSanitizedBriefList(dailyBriefRow.signals_en),
+    readingPlanZh: parseSanitizedBriefList(dailyBriefRow.reading_plan_zh),
+    readingPlanEn: parseSanitizedBriefList(dailyBriefRow.reading_plan_en),
+    watchlistZh: parseSanitizedBriefList(dailyBriefRow.watchlist_zh),
+    watchlistEn: parseSanitizedBriefList(dailyBriefRow.watchlist_en),
     paperIds: parseVenues(dailyBriefRow.paper_ids),
     metrics: (() => { try { return JSON.parse(dailyBriefRow.metrics_json) as Record<string, number>; } catch { return {}; } })(),
     model: dailyBriefRow.model,
@@ -4610,16 +4598,16 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const weeklyReview = weeklyReviewRow ? {
     weekKey: weeklyReviewRow.week_key,
     status: weeklyReviewRow.status,
-    titleZh: weeklyReviewRow.title_zh,
-    titleEn: weeklyReviewRow.title_en,
-    overviewZh: weeklyReviewRow.overview_zh,
-    overviewEn: weeklyReviewRow.overview_en,
-    gainsZh: parseVenues(weeklyReviewRow.gains_zh),
-    gainsEn: parseVenues(weeklyReviewRow.gains_en),
-    gapsZh: parseVenues(weeklyReviewRow.gaps_zh),
-    gapsEn: parseVenues(weeklyReviewRow.gaps_en),
-    nextStepsZh: parseVenues(weeklyReviewRow.next_steps_zh),
-    nextStepsEn: parseVenues(weeklyReviewRow.next_steps_en),
+    titleZh: sanitizeRetiredFulltextCopy(weeklyReviewRow.title_zh),
+    titleEn: sanitizeRetiredFulltextCopy(weeklyReviewRow.title_en),
+    overviewZh: sanitizeRetiredFulltextCopy(weeklyReviewRow.overview_zh),
+    overviewEn: sanitizeRetiredFulltextCopy(weeklyReviewRow.overview_en),
+    gainsZh: parseSanitizedBriefList(weeklyReviewRow.gains_zh),
+    gainsEn: parseSanitizedBriefList(weeklyReviewRow.gains_en),
+    gapsZh: parseSanitizedBriefList(weeklyReviewRow.gaps_zh),
+    gapsEn: parseSanitizedBriefList(weeklyReviewRow.gaps_en),
+    nextStepsZh: parseSanitizedBriefList(weeklyReviewRow.next_steps_zh),
+    nextStepsEn: parseSanitizedBriefList(weeklyReviewRow.next_steps_en),
     sourceDays: weeklyReviewRow.source_days,
     model: weeklyReviewRow.model,
     error: weeklyReviewRow.error,
@@ -4685,6 +4673,22 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       screened: scanWork?.screens.filter((screen) => screen.horizon === horizon).length || 0,
     };
   });
+  const budgetCheckpoint = job?.status === "error" && scanWork
+    ? inferResumeCheckpoint(job, scanWork)
+    : job?.checkpoint || "planning";
+  const budgetMinimum = job?.status === "ready" || !job
+    ? MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS
+    : minimumAnalysisCallsForCheckpoint(budgetCheckpoint);
+  const budgetRemaining = Math.max(0, MONITOR_SPACE_DAILY_ANALYSIS_LIMIT - automationCounters.dailyRequests);
+  const budgetTomorrow = new Date(Date.now() + 86_400_000);
+  const analysisBudget = {
+    used: automationCounters.dailyRequests,
+    limit: MONITOR_SPACE_DAILY_ANALYSIS_LIMIT,
+    remaining: budgetRemaining,
+    minimumToStart: budgetMinimum,
+    available: budgetRemaining >= budgetMinimum,
+    resetsAt: new Date(`${shanghaiDateKey(budgetTomorrow)}T00:00:00+08:00`).toISOString(),
+  };
   const persistedMapChanges = mapChanges.results.map((change) => ({
     id: change.id,
     kind: change.kind,
@@ -4722,11 +4726,11 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       titleZh: initialized ? `建立研究路线：${activity.title_zh}` : `${activity.title_zh}新增 ${count} 篇代表论文`,
       titleEn: initialized ? `Research route created: ${activity.title_en}` : `${count} representative papers added to ${activity.title_en}`,
       summaryZh: initialized
-        ? `Pi 已建立这条研究路线${count ? `，并纳入 ${count} 篇奠基、里程碑或前沿论文作为结构节点` : "，代表论文仍在持续填充"}。这些节点与已通过全文门槛的科学证据分开标记。`
-        : `这条路线最近补充了 ${count} 篇代表论文；只有全文证据达到门槛后，才会另行记为科学证据变化。`,
+        ? `Pi 已建立这条研究路线${count ? `，并纳入 ${count} 篇奠基、里程碑或前沿论文作为结构节点` : "，代表论文仍在持续填充"}。这些结构节点与通过独立核验的路线证据分开标记。`
+        : `这条路线最近补充了 ${count} 篇代表论文；通过推荐内容独立核验后，才会另行记为路线证据变化。`,
       summaryEn: initialized
-        ? `Pi created this research route${count ? ` with ${count} foundation, milestone, or frontier papers as structural nodes` : "; representative papers are still being added"}. These nodes remain distinct from scientific evidence that cleared the full-text bar.`
-        : `${count} representative papers were added recently. A scientific evidence change appears separately only after the full-text bar is met.`,
+        ? `Pi created this research route${count ? ` with ${count} foundation, milestone, or frontier papers as structural nodes` : "; representative papers are still being added"}. These structural nodes remain distinct from independently verified route evidence.`
+        : `${count} representative papers were added recently. A route-evidence change appears separately only after independent recommendation verification.`,
       confidence: 100,
       createdAt: activity.latest_activity_at,
       trackTitleZh: activity.title_zh,
@@ -4768,6 +4772,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         errorRetryMinutes: Math.round(ERROR_RETRY_MS / 60_000),
         singleRunLock: true,
       },
+      analysisBudget,
       source: "Crossref · priority journals · arXiv · OpenAlex · Semantic Scholar · citation frontier",
       horizons: ["days", "months", "years"],
       scanJob: job ? {
@@ -4789,11 +4794,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         verificationTargetCount: scanWork?.verificationIds.length || 0,
         verificationCompletedCount: scanWork?.verificationCompletedIds.length || 0,
         verificationPendingCount: scanWork ? Math.max(0, scanWork.verificationIds.length - scanWork.verificationCompletedIds.length) : 0,
-        evidenceTargetCount: scanWork?.evidenceIds.length || 0,
-        evidenceCompletedCount: scanWork?.evidenceCompletedIds.length || 0,
         horizonStats: scanHorizonStats,
         pipelineVersion: scanWork?.pipelineVersion || "",
-        needsRefresh: job.status === "ready" && scanWork?.pipelineVersion !== MONITOR_PIPELINE_VERSION,
+        needsRefresh: job.status === "ready" && !COMPATIBLE_MONITOR_PIPELINE_VERSIONS.has(scanWork?.pipelineVersion || ""),
         attempt: job.attempt,
         triggerSource: job.trigger_source,
         resumeOfJobId: job.resume_of_job_id,
@@ -5070,8 +5073,8 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
         ? Object.fromEntries(Object.entries(parsed.verificationAttempts).filter(([id]) => id).slice(0, DEEP_REVIEW_MAX_LIMIT)
           .map(([id, count]) => [id, Math.max(0, Math.min(VERIFICATION_ATTEMPT_LIMIT, Number(count) || 0))]))
         : {},
-      evidenceIds: Array.isArray(parsed.evidenceIds) ? parsed.evidenceIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
-      evidenceCompletedIds: Array.isArray(parsed.evidenceCompletedIds) ? parsed.evidenceCompletedIds.filter((id): id is string => typeof id === "string").slice(0, PRE_PUBLICATION_EVIDENCE_LIMIT) : [],
+      evidenceIds: [],
+      evidenceCompletedIds: [],
       rescueScreenIds: Array.isArray(parsed.rescueScreenIds) ? parsed.rescueScreenIds.filter((id): id is string => typeof id === "string").slice(0, RESCUE_SCREEN_LIMIT) : [],
       rescueScreened: parsed.rescueScreened === true,
       rawCandidateCount: Math.max(0, Number(parsed.rawCandidateCount) || 0),
@@ -5110,8 +5113,6 @@ function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_s
   if (work.resumeCheckpoint && RESUMABLE_SCAN_CHECKPOINTS.has(work.resumeCheckpoint)) return work.resumeCheckpoint;
   if (RESUMABLE_SCAN_CHECKPOINTS.has(job.checkpoint)) return job.checkpoint;
   if (work.verificationIds.length && work.verificationCompletedIds.length + work.verificationDeferredIds.length < work.verificationIds.length) return "verifying_recommendations";
-  if (work.evidenceIds.length && work.evidenceCompletedIds.length < work.evidenceIds.length) return "evidence_deepening";
-  if (work.evidenceIds.length && work.evidenceCompletedIds.length >= work.evidenceIds.length) return "finalizing";
   if (work.deepIds.length) {
     return work.deepCompletedIds.length || work.deepDeferredIds.length ? "deep_reviewing" : "enriching_abstracts";
   }
@@ -5314,7 +5315,8 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
     `SELECT p.canonical_id, i.analysis_source, i.llm_recommended, i.llm_relevance_score, i.quality_score,
      i.summary_zh, i.summary_en, i.why_read_zh, i.why_read_en, i.screening_reason,
      COALESCE(i.proposed_recommendation_tier, i.recommendation_tier, 'browse') AS proposed_recommendation_tier,
-     i.recommendation_tier, i.read_minutes, i.read_depth, i.problem_zh, i.problem_en,
+     COALESCE(i.proposed_recommendation_tier, i.recommendation_tier, 'browse') AS recommendation_tier,
+     i.read_minutes, i.read_depth, i.problem_zh, i.problem_en,
      i.method_zh, i.method_en, i.contribution_zh, i.contribution_en, i.limitations_zh,
      i.limitations_en, i.reading_focus_zh, i.reading_focus_en, i.research_questions_zh, i.research_questions_en,
      COALESCE(i.research_problem_id, '') AS research_problem_id, COALESCE(i.problem_fit_score, 0) AS problem_fit_score,
@@ -5597,6 +5599,18 @@ export async function POST(request: Request) {
   const action = payload.action || "start";
   const trigger: ScanTrigger = payload.trigger === "scheduled" || payload.trigger === "manual" || payload.trigger === "visit"
     ? payload.trigger : payload.force ? "manual" : "visit";
+  const enforceAnalysisBudget = async (minimumCalls: number) => {
+    const budget = await readMonitorAnalysisBudget(database, user.userId, space.id, minimumCalls);
+    if (budget.available) return null;
+    if (trigger === "scheduled") await pauseMonitorAutomation(database, space.id, "daily_budget");
+    const state = await readState(database, space, {
+      cached: true,
+      throttled: true,
+      quotaActionRequired: true,
+    });
+    if (trigger !== "manual") return Response.json(state);
+    return Response.json({ ...state, error: "monitor_analysis_budget_insufficient" }, { status: 429 });
+  };
 
   try {
     if (action === "start") {
@@ -5628,6 +5642,8 @@ export async function POST(request: Request) {
       const now = new Date();
       const lockExpiry = previous?.lock_expires_at ? Date.parse(previous.lock_expires_at) : 0;
       if (activeJob && previous && !["idle", "ready", "error"].includes(previous.status)) {
+        const quotaResponse = await enforceAnalysisBudget(minimumAnalysisCallsForCheckpoint(activeJob.checkpoint));
+        if (quotaResponse) return quotaResponse;
         if (!previous.lock_token || lockExpiry <= now.getTime()) {
           const resumedLock = crypto.randomUUID();
           await database.prepare(
@@ -5660,7 +5676,7 @@ export async function POST(request: Request) {
         return Response.json(await readState(database, space, { cached: true, credentialActionRequired: true }));
       }
       const previousWork = parseScanWorkQueue(previousJob?.work_queue_json);
-      const pipelineOutdated = Boolean(previousJob && previousWork.pipelineVersion !== MONITOR_PIPELINE_VERSION);
+      const pipelineOutdated = Boolean(previousJob && !COMPATIBLE_MONITOR_PIPELINE_VERSIONS.has(previousWork.pipelineVersion));
       const verificationCarryover = Boolean(!pipelineOutdated && previousJob?.status === "ready"
         && previousWork.verificationDeferredIds.length);
       const previousDeepReviews = !pipelineOutdated && previousJob?.status === "ready" && previousWork.deepIds.length
@@ -5684,6 +5700,10 @@ export async function POST(request: Request) {
           : verificationCarryover ? "verifying_recommendations" : "planning";
       const resumable = Boolean(!pipelineOutdated && resumeCheckpoint !== "planning"
         && (previousJob?.status === "error" || qualityCarryover));
+      const quotaResponse = await enforceAnalysisBudget(resumable
+        ? minimumAnalysisCallsForCheckpoint(resumeCheckpoint)
+        : MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS);
+      if (quotaResponse) return quotaResponse;
       if (resumable) {
         previousWork.resumeCheckpoint = "";
         previousWork.screenFailureCount = 0;
@@ -5715,7 +5735,7 @@ export async function POST(request: Request) {
         ? initialCheckpoint === "screening"
           ? `从已保存进度继续 · ${previousWork.screens.length} / ${previousWork.candidateIds.length} 篇已筛选`
           : initialCheckpoint === "evidence_deepening"
-            ? `从已保存进度继续 · ${previousWork.evidenceCompletedIds.length} / ${previousWork.evidenceIds.length} 篇已补强原文证据`
+            ? "从已保存进度继续 · 正在跳过旧版原文核验阶段"
           : initialCheckpoint === "verifying_recommendations"
             ? `从已保存进度继续 · ${previousWork.verificationCompletedIds.length} / ${previousWork.verificationIds.length} 篇已完成独立核验`
           : initialCheckpoint === "deep_reviewing" || initialCheckpoint === "enriching_abstracts"
@@ -5799,8 +5819,6 @@ export async function POST(request: Request) {
         analysisUnavailable: completion.state === "analysis_unavailable" ? 1 : 0,
         verificationPending: reviews.filter((review) => review.verificationRetryable).length,
         verificationFailed: reviews.filter((review) => review.verificationStatus === "degraded").length,
-        evidenceDeepened: reviews.filter((review) => isPublishedRecommendation(review) && ["ready", "partial"].includes(review.evidenceStatus)).length,
-        fulltextVerified: reviews.filter((review) => isPublishedRecommendation(review) && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length,
         recommended: recommendedCount,
         rejected: Math.max(0, work.screens.length - recommendedCount),
       }, completedAt, apiKey);
@@ -5867,10 +5885,6 @@ export async function POST(request: Request) {
         deferred: work.deepDeferredIds.length,
         recommended,
       });
-      const evidenceDeepened = finalizedReviews.filter((review) => isPublishedRecommendation(review)
-        && ["ready", "partial"].includes(review.evidenceStatus)).length;
-      const fulltextVerified = finalizedReviews.filter((review) => isPublishedRecommendation(review)
-        && review.evidenceLevel === "fulltext" && review.evidenceStatus === "ready").length;
       const rejected = Math.max(0, work.screens.length - recommended);
       const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
       if (recommended && !firstRecommendationAt) {
@@ -5928,8 +5942,6 @@ export async function POST(request: Request) {
         analysisUnavailable: completion.state === "analysis_unavailable" ? 1 : 0,
         verificationPending,
         verificationFailed,
-        evidenceDeepened,
-        fulltextVerified,
         recommended,
         rejected,
       }, completedAt, apiKey, true);
@@ -5981,8 +5993,6 @@ export async function POST(request: Request) {
           verificationFailed,
           completionState: completion.state,
           recommended,
-          evidenceDeepened,
-          fulltextVerified,
           duplicates: duplicateCount,
         },
       });
@@ -6193,7 +6203,7 @@ export async function POST(request: Request) {
           const batchEnd = Math.min(batchStart + ids.length - 1, work.deepIds.length);
           await database.prepare(
             "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          ).bind(`DeepSeek Pro 正在解读第 ${batchStart}${batchEnd > batchStart ? `–${batchEnd}` : ""} / ${work.deepIds.length} 篇；任一篇完成都会立即显示`, job.id).run();
+          ).bind(`DeepSeek Pro 正在解读第 ${batchStart}${batchEnd > batchStart ? `–${batchEnd}` : ""} / ${work.deepIds.length} 篇；任一篇完成都会立即保存`, job.id).run();
           const result = await runIncrementalDeepReview(database, enrichedSpace, user.userId, preference.priorityVenues, candidates, job.id, lockToken, apiKey, async (savedReviews) => {
             work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...savedReviews.map((review) => review.canonicalId)]));
             work.deepFailureCount = 0;
@@ -6317,15 +6327,10 @@ export async function POST(request: Request) {
               `已保存 ${work.verificationIds.length} 篇高潜力解读，正在逐篇独立核验证据`);
             return Response.json(await readState(database, space, { verifyingRecommendations: true }), { status: 202 });
           }
-          work.evidenceIds = choosePrePublicationEvidenceIds(persistedReviews);
+          work.evidenceIds = [];
           work.evidenceCompletedIds = [];
           await saveScanWorkQueue(database, job.id, work);
-          if (work.evidenceIds.length) {
-            await setStage("evidence_deepening", "deep_reviewing", 95,
-              `正在为 ${work.evidenceIds.length} 篇高潜力论文补强原文证据；推荐已可预览`);
-            return Response.json(await readState(database, space, { evidenceDeepening: true }), { status: 202 });
-          }
-          await setStage("finalizing", "deep_reviewing", 99, "证据分级完成，正在整理今日推荐");
+          await setStage("finalizing", "deep_reviewing", 99, "推荐内容核验完成，正在整理今日推荐");
         }
       } else if (job.checkpoint === "verifying_recommendations") {
         const handled = new Set([...work.verificationCompletedIds, ...work.verificationDeferredIds]);
@@ -6352,7 +6357,7 @@ export async function POST(request: Request) {
             work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
             delete work.verificationAttempts[canonicalId];
           } else {
-            const usageDate = new Date().toISOString().slice(0, 10);
+            const usageDate = shanghaiDateKey(new Date());
             const workspaceScope = "monitor-workspace:" + user.userId.replace(/^anonymous:/, "");
             const spaceScope = "monitor-space:" + space.id;
             const verificationAttempt = Math.min(VERIFICATION_ATTEMPT_LIMIT, (work.verificationAttempts[canonicalId] || 0) + 1);
@@ -6447,73 +6452,17 @@ export async function POST(request: Request) {
           `独立核验 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已确认${retrying ? `，${retrying} 篇正在自动进行仅核验重试` : `，${pending} 篇高潜力解读等待后续核验`}`,
           verificationProgress, job.id).run();
         if (verificationProcessed >= work.verificationIds.length) {
-          work.evidenceIds = choosePrePublicationEvidenceIds(verificationReviews);
+          work.evidenceIds = [];
           work.evidenceCompletedIds = [];
           await saveScanWorkQueue(database, job.id, work);
-          if (work.evidenceIds.length) {
-            await setStage("evidence_deepening", "deep_reviewing", 96,
-              `独立核验完成，正在为 ${work.evidenceIds.length} 篇入选论文补强原文证据`);
-          } else {
-            await setStage("finalizing", "deep_reviewing", 99,
-              pending ? `${pending} 篇高潜力解读已保存待核验，正在整理本轮结果` : "独立核验完成，正在整理今日推荐");
-          }
+          await setStage("finalizing", "deep_reviewing", 99,
+            pending ? `${pending} 篇高潜力解读已保存待核验，正在整理本轮结果` : "独立核验完成，正在整理今日推荐");
         }
       } else if (job.checkpoint === "evidence_deepening") {
-        const completed = new Set(work.evidenceCompletedIds);
-        const canonicalId = work.evidenceIds.find((id) => !completed.has(id));
-        if (!canonicalId) {
-          await setStage("finalizing", "deep_reviewing", 99, "原文证据补强完成，正在重新排序今日推荐");
-        } else {
-          const paper = await database.prepare(
-            "SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id = ? LIMIT 1",
-          ).bind(space.id, canonicalId).first<{ id: string }>();
-          let busy = false;
-          let outcome = "当前可用证据已保留";
-          if (paper?.id) {
-            try {
-              const headers = new Headers(request.headers);
-              headers.delete("content-length");
-              headers.set("content-type", "application/json");
-              const evidenceResponse = await deepenPaperEvidenceRequest(new Request(new URL("/api/paper-evidence", request.url), {
-                method: "POST",
-                headers,
-                body: JSON.stringify({ spaceId: space.id, paperId: paper.id }),
-              }));
-              const data = await evidenceResponse.json() as {
-                busy?: boolean;
-                evidence?: { evidenceLevel?: string; groundedClaimCount?: number; coverageScore?: number; status?: string } | null;
-                error?: string;
-              };
-              busy = Boolean(data.busy);
-              if (data.evidence?.evidenceLevel === "fulltext" && data.evidence.status === "ready") {
-                outcome = `全文已核验 · ${data.evidence.groundedClaimCount || 0} 条可定位判断`;
-              } else if (data.evidence?.evidenceLevel === "abstract") {
-                outcome = "开放全文暂不可结构化读取，已按摘要保守定级";
-              } else if (data.error) {
-                outcome = "原文补强暂不可用，已按当前证据保守定级";
-              }
-            } catch (evidenceError) {
-              outcome = "原文补强暂不可用，已按当前证据保守定级";
-              await recordReliabilityEvent(database, {
-                spaceId: space.id, scanJobId: job.id, kind: "evidence_stage_degraded",
-                stage: "evidence_deepening", source: "open-full-text", outcome: "degraded",
-                message: normalizedMonitorError(evidenceError), metadata: { canonicalId },
-              });
-            }
-          }
-          if (!busy) work.evidenceCompletedIds = Array.from(new Set([...work.evidenceCompletedIds, canonicalId]));
-          await saveScanWorkQueue(database, job.id, work);
-          const evidenceProgress = Math.min(98, 95 + Math.round(work.evidenceCompletedIds.length
-            / Math.max(1, work.evidenceIds.length) * 3));
-          await database.prepare(
-            "UPDATE monitor_scan_jobs SET current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          ).bind(busy
-            ? `原文证据正在后台处理中 · ${work.evidenceCompletedIds.length} / ${work.evidenceIds.length} 篇已完成`
-            : `${outcome} · ${work.evidenceCompletedIds.length} / ${work.evidenceIds.length} 篇已完成`, evidenceProgress, job.id).run();
-          if (work.evidenceCompletedIds.length >= work.evidenceIds.length) {
-            await setStage("finalizing", "deep_reviewing", 99, "原文证据补强完成，正在重新排序今日推荐");
-          }
-        }
+        work.evidenceIds = [];
+        work.evidenceCompletedIds = [];
+        await saveScanWorkQueue(database, job.id, work);
+        await setStage("finalizing", "deep_reviewing", 99, "已跳过旧版原文核验阶段，正在整理今日推荐");
       } else if (job.checkpoint === "finalizing") {
         const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
         const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);

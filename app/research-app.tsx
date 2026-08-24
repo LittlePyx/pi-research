@@ -87,13 +87,6 @@ type MonitorPaper = {
   researchProblemImpactEn: string;
   researchDecisionZh: string;
   researchDecisionEn: string;
-  evidenceStatus: "unavailable" | "queued" | "fetching" | "ready" | "partial" | "error";
-  evidenceLevel: "metadata" | "abstract" | "fulltext";
-  evidenceSourceKind: string;
-  evidenceSourceUrl: string;
-  evidenceClaimCount: number;
-  evidenceGroundedClaimCount: number;
-  evidenceCoverageScore: number;
   verificationStatus: "not_required" | "pending" | "verified" | "revised" | "degraded";
   verificationCoverageScore: number;
   discoveryOrigin?: {
@@ -107,37 +100,6 @@ type MonitorPaper = {
   discoveryType?: RouteDiscoveryType | null;
   discoveryTrack?: { id: string; titleZh: string; titleEn: string } | null;
   qualityStage?: "queued" | "discovered" | "reviewed" | "reviewing" | "recommended" | null;
-};
-type PaperEvidenceClaim = {
-  id: string;
-  kind: "problem" | "method" | "result" | "contribution" | "limitation";
-  claimZh: string;
-  claimEn: string;
-  evidenceQuote: string;
-  sectionLabel: string;
-  locator: string;
-  sourceUrl: string;
-  confidence: number;
-  grounded: boolean;
-  position: number;
-};
-type PaperEvidence = {
-  status: "queued" | "fetching" | "ready" | "partial" | "error";
-  evidenceLevel: "metadata" | "abstract" | "fulltext";
-  sourceKind: string;
-  sourceUrl: string;
-  license: string;
-  extractedChars: number;
-  sectionCount: number;
-  claimCount: number;
-  groundedClaimCount: number;
-  coverageScore: number;
-  model: string;
-  error: string | null;
-  fetchedAt: string | null;
-  analyzedAt: string | null;
-  updatedAt: string;
-  claims: PaperEvidenceClaim[];
 };
 type ResearchSynthesisSource = {
   claimId: string;
@@ -387,6 +349,14 @@ type MonitorState = {
     errorRetryMinutes: number;
     singleRunLock: boolean;
   };
+  analysisBudget?: {
+    used: number;
+    limit: number;
+    remaining: number;
+    minimumToStart: number;
+    available: boolean;
+    resetsAt: string;
+  };
   source: string;
   horizons: string[];
   preferences?: MonitorPreferences;
@@ -413,8 +383,6 @@ type MonitorState = {
     verificationTargetCount?: number;
     verificationCompletedCount?: number;
     verificationPendingCount?: number;
-    evidenceTargetCount?: number;
-    evidenceCompletedCount?: number;
     horizonStats?: Array<{
       horizon: "days" | "months" | "years";
       status: "pending" | "searching" | "complete";
@@ -1160,16 +1128,12 @@ function RouteDiscoveryBadge({ paper, locale }: { paper: MonitorPaper; locale: L
   return <span className="v2-route-discovery-origin" title={locale === "zh" ? "这篇论文由研究路线定向发现，并已通过今日质量评估" : "Found through a research route and cleared today's quality review"}><b>{label}</b><span>{discovery.title}</span><i>{discovery.kind}</i></span>;
 }
 
-function PaperEvidenceBadge({ paper, locale, processing = false }: { paper: MonitorPaper; locale: Locale; processing?: boolean }) {
-  const status = processing ? "fetching" : paper.evidenceStatus;
+function RecommendationVerificationBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
   const verificationLabel = paper.verificationStatus === "verified"
     ? (locale === "zh" ? "推荐内容已核验" : "Recommendation verified")
     : paper.verificationStatus === "revised"
       ? (locale === "zh" ? "核验后已修订" : "Verified and revised") : "";
-  const awaitingMustReadEvidence = paper.proposedRecommendationTier === "must_read" && paper.recommendationTier !== "must_read";
-  return <><span className={`v2-evidence-badge ${paper.evidenceLevel} ${status}`} title={evidenceStatusLabel(status, locale)}>
-    <i />{processing ? evidenceStatusLabel("fetching", locale) : evidenceLevelLabel(paper.evidenceLevel, locale)}
-  </span>{awaitingMustReadEvidence && <span className="v2-evidence-promotion" title={locale === "zh" ? "只有开放全文证据达到门槛后才会升级为今日必读" : "Promoted to must-read only after open full-text evidence clears the gate"}>{locale === "zh" ? "候选必读 · 待全文确认" : "Must-read candidate · awaiting full text"}</span>}{verificationLabel && <span className={`v2-verification-badge ${paper.verificationStatus}`} title={locale === "zh" ? `关键表述证据覆盖 ${paper.verificationCoverageScore}%` : `${paper.verificationCoverageScore}% evidence coverage for substantive statements`}><i />{verificationLabel}</span>}</>;
+  return verificationLabel ? <span className={`v2-verification-badge ${paper.verificationStatus}`} title={locale === "zh" ? `关键表述证据覆盖 ${paper.verificationCoverageScore}%` : `${paper.verificationCoverageScore}% evidence coverage for substantive statements`}><i />{verificationLabel}</span> : null;
 }
 
 function monitorPaperHorizonLabel(paper: MonitorPaper, locale: Locale) {
@@ -1275,31 +1239,6 @@ function recommendationTierLabel(tier: MonitorPaper["recommendationTier"], local
   if (tier === "must_read") return locale === "zh" ? "今日必读" : "Must read";
   if (tier === "browse") return locale === "zh" ? "重点浏览" : "Browse";
   return locale === "zh" ? "储备线索" : "Reserve";
-}
-
-function evidenceLevelLabel(level: MonitorPaper["evidenceLevel"] | PaperEvidence["evidenceLevel"], locale: Locale) {
-  if (level === "fulltext") return locale === "zh" ? "开放全文已核验" : "Open full text verified";
-  if (level === "abstract") return locale === "zh" ? "摘要已核验" : "Abstract verified";
-  return locale === "zh" ? "仅书目信息" : "Metadata only";
-}
-
-function evidenceStatusLabel(status: MonitorPaper["evidenceStatus"] | PaperEvidence["status"], locale: Locale) {
-  if (status === "fetching") return locale === "zh" ? "正在后台核验原文" : "Grounding in the background";
-  if (status === "queued" || status === "unavailable") return locale === "zh" ? "等待原文核验" : "Awaiting evidence check";
-  if (status === "ready") return locale === "zh" ? "证据化解读已完成" : "Grounded analysis ready";
-  if (status === "partial") return locale === "zh" ? "已保留当前可核验证据" : "Best available evidence retained";
-  return locale === "zh" ? "原文核验稍后重试" : "Evidence check will retry";
-}
-
-function evidenceClaimKindLabel(kind: PaperEvidenceClaim["kind"], locale: Locale) {
-  const labels: Record<PaperEvidenceClaim["kind"], Localized> = {
-    problem: { zh: "研究问题", en: "Problem" },
-    method: { zh: "方法", en: "Method" },
-    result: { zh: "结果", en: "Result" },
-    contribution: { zh: "贡献", en: "Contribution" },
-    limitation: { zh: "限制", en: "Limitation" },
-  };
-  return labels[kind][locale];
 }
 
 function readDepthLabel(depth: MonitorPaper["readDepth"], locale: Locale) {
@@ -1424,8 +1363,10 @@ function monitorFailureMessage(error: unknown, locale: Locale) {
       ? "当前 DeepSeek API Key 已失效。更换可用 Key 后可以从已保存的断点继续。"
       : "The current DeepSeek API key is no longer valid. Replace it to resume from the saved checkpoint.";
   }
-  if (/budget reached/i.test(message)) {
-    return locale === "zh" ? "今日智能筛选额度已达到上限，当前进度已保存，稍后可从断点继续。" : "Today's AI screening budget has been reached. Progress is saved and can be resumed later.";
+  if (/monitor_analysis_budget_insufficient|budget reached/i.test(message)) {
+    return locale === "zh"
+      ? "今日剩余额度不足以完成下一批智能筛选，Pi 已停止重复检索。现有论文与进度都已保留，明日额度刷新后可直接继续。"
+      : "Today's remaining budget cannot complete the next screening batch, so Pi stopped before repeating retrieval. Existing papers and progress are preserved for tomorrow.";
   }
   if (/timeout|aborted|temporarily unavailable|status\s*5\d\d/i.test(message)) {
     return locale === "zh" ? "DeepSeek 或论文来源暂时响应超时，当前进度已保存，可以稍后从断点继续。" : "DeepSeek or a paper source timed out. Progress is saved and can be resumed later.";
@@ -1450,7 +1391,7 @@ function routeChangeKindLabel(kind: string) {
     new_evidence: { zh: "新增证据", en: "New evidence", symbol: "＋" },
     route_initialized: { zh: "新建路线", en: "Route created", symbol: "◎" },
     node_added: { zh: "节点扩展", en: "Nodes added", symbol: "↗" },
-    evidence_refined: { zh: "全文证据补强", en: "Full-text evidence", symbol: "◆" },
+    evidence_refined: { zh: "证据补强", en: "Evidence refined", symbol: "◆" },
   };
   return labels[kind] || { zh: "路线更新", en: "Route update", symbol: "＋" };
 }
@@ -1528,6 +1469,14 @@ function modelDisplayName(model: string | null | undefined) {
   if (model === "deepseek-v4-pro") return "DeepSeek V4 Pro";
   if (model === "evidence-summary") return "Evidence-first";
   return model || "DeepSeek";
+}
+
+function displayQualityScore(score: number) {
+  return Math.min(100, Math.max(0, Math.round(score || 0)));
+}
+
+function compactNavCount(count: number) {
+  return count > 99 ? "99+" : String(Math.max(0, count));
 }
 
 function feedbackEffectCopy(kind: "save" | "relevant" | "not_relevant" | "later", value: boolean, reasonCode: string | undefined, locale: Locale) {
@@ -2581,8 +2530,8 @@ function ResearchSynthesisWorkbench({
   return <section className="v2-route-workspace-panel v2-research-synthesis" role="tabpanel">
     <header><div><p className="v2-kicker">π {locale === "zh" ? "可追溯的跨论文证据综合" : "TRACEABLE CROSS-PAPER SYNTHESIS"}</p><h2>{locale === "zh" ? "哪些判断已经站稳，哪些仍然相互冲突" : "What is stable, what conflicts, and what remains unresolved"}</h2><span className="v2-sr-only">这条路线目前可以怎样判断</span></div><div><span>{ready ? synthesis!.confidence : track.intelligence?.confidence || 0}%<small>{locale === "zh" ? "综合置信度" : "confidence"}</small></span><button type="button" onClick={onRefresh} disabled={loading || !synthesis?.canGenerate}>{loading ? (locale === "zh" ? "Pi 正在综合…" : "Synthesizing…") : ready ? (locale === "zh" ? "按最新证据更新" : "Refresh from evidence") : (locale === "zh" ? "生成跨论文综合" : "Build synthesis")}</button></div></header>
     {ready ? <>
-      <div className="v2-synthesis-overview"><div><small>{locale === "zh" ? "这组论文共同回答的问题" : "QUESTION SHARED BY THESE PAPERS"}</small><h3>{locale === "zh" ? synthesis!.questionZh : synthesis!.questionEn}</h3><p>{locale === "zh" ? synthesis!.overviewZh : synthesis!.overviewEn}</p>{(locale === "zh" ? synthesis!.changeSummaryZh : synthesis!.changeSummaryEn) && <aside><b>↗</b><span><strong>{locale === "zh" ? "相较上一版，发生了什么" : "What changed since the previous revision"}</strong>{locale === "zh" ? synthesis!.changeSummaryZh : synthesis!.changeSummaryEn}</span></aside>}</div><dl><div><dt>{locale === "zh" ? "已核验论文" : "Grounded papers"}</dt><dd>{synthesis!.sourcePaperCount}</dd></div><div><dt>{locale === "zh" ? "开放全文" : "Open full text"}</dt><dd>{synthesis!.fulltextPaperCount}</dd></div><div><dt>{locale === "zh" ? "证据判断" : "Claims"}</dt><dd>{synthesis!.claimCount}</dd></div></dl></div>
-      <div className="v2-synthesis-statement-list">{synthesis!.statements.map((statement, index) => <details className={statement.kind} key={statement.id}><summary><span>{String(index + 1).padStart(2, "0")}</span><div><small>{researchSynthesisKindLabel(statement.kind, locale)}</small><h3>{locale === "zh" ? statement.titleZh : statement.titleEn}</h3><p>{locale === "zh" ? statement.textZh : statement.textEn}</p></div><b>{statement.confidence}%<i>＋</i></b></summary><div className="v2-synthesis-sources"><header><strong>{locale === "zh" ? "回到原文核对" : "Verify in the source"}</strong><span>{statement.sources.length} {locale === "zh" ? "条证据" : "claims"}</span></header>{statement.sources.map((source) => <article key={source.claimId}><div><span>{source.evidenceLevel === "fulltext" ? (locale === "zh" ? "开放全文" : "Full text") : (locale === "zh" ? "摘要" : "Abstract")}</span><strong>{source.title}</strong><small>{[source.authors, source.publishedAt?.slice(0, 4), source.venue].filter(Boolean).join(" · ")}</small></div><blockquote>“{source.evidenceQuote}”</blockquote><footer><em>{source.locator || (locale === "zh" ? "原文定位待补全" : "Locator pending")}</em>{source.sourceUrl && <a href={source.sourceUrl} target="_blank" rel="noreferrer">{locale === "zh" ? "打开证据" : "Open evidence"} ↗</a>}</footer></article>)}</div></details>)}</div>
+      <div className="v2-synthesis-overview"><div><small>{locale === "zh" ? "这组论文共同回答的问题" : "QUESTION SHARED BY THESE PAPERS"}</small><h3>{locale === "zh" ? synthesis!.questionZh : synthesis!.questionEn}</h3><p>{locale === "zh" ? synthesis!.overviewZh : synthesis!.overviewEn}</p>{(locale === "zh" ? synthesis!.changeSummaryZh : synthesis!.changeSummaryEn) && <aside><b>↗</b><span><strong>{locale === "zh" ? "相较上一版，发生了什么" : "What changed since the previous revision"}</strong>{locale === "zh" ? synthesis!.changeSummaryZh : synthesis!.changeSummaryEn}</span></aside>}</div><dl><div><dt>{locale === "zh" ? "已核验论文" : "Grounded papers"}</dt><dd>{synthesis!.sourcePaperCount}</dd></div><div><dt>{locale === "zh" ? "可核验判断" : "Verified claims"}</dt><dd>{synthesis!.claimCount}</dd></div><div><dt>{locale === "zh" ? "可用论文" : "Available papers"}</dt><dd>{synthesis!.availablePaperCount}</dd></div></dl></div>
+      <div className="v2-synthesis-statement-list">{synthesis!.statements.map((statement, index) => <details className={statement.kind} key={statement.id}><summary><span>{String(index + 1).padStart(2, "0")}</span><div><small>{researchSynthesisKindLabel(statement.kind, locale)}</small><h3>{locale === "zh" ? statement.titleZh : statement.titleEn}</h3><p>{locale === "zh" ? statement.textZh : statement.textEn}</p></div><b>{statement.confidence}%<i>＋</i></b></summary><div className="v2-synthesis-sources"><header><strong>{locale === "zh" ? "回到来源核对" : "Verify in the source"}</strong><span>{statement.sources.length} {locale === "zh" ? "条证据" : "claims"}</span></header>{statement.sources.map((source) => <article key={source.claimId}><div><span>{locale === "zh" ? "已保存证据" : "Saved evidence"}</span><strong>{source.title}</strong><small>{[source.authors, source.publishedAt?.slice(0, 4), source.venue].filter(Boolean).join(" · ")}</small></div><blockquote>“{source.evidenceQuote}”</blockquote><footer><em>{source.locator || (locale === "zh" ? "来源定位待补全" : "Locator pending")}</em>{source.sourceUrl && <a href={source.sourceUrl} target="_blank" rel="noreferrer">{locale === "zh" ? "打开证据" : "Open evidence"} ↗</a>}</footer></article>)}</div></details>)}</div>
       <footer className="v2-synthesis-next"><div><small>{locale === "zh" ? "综合识别出的下一项关键验证" : "NEXT HIGH-VALUE TEST FROM THE SYNTHESIS"}</small><strong>{synthesis!.nextSearchQuery || (locale === "zh" ? "当前综合尚未形成安全的定向检索式" : "No safe targeted query is ready yet")}</strong><p>{locale === "zh" ? "这条检索会进入共享质量评估；只有通过门槛的真实论文才会回到今日推荐和路线待确认证据。" : "This query enters the shared quality gate. Only real papers that pass return to Today and the route evidence queue."}</p></div><button type="button" onClick={onScanGap} disabled={!synthesis!.nextSearchQuery}>{locale === "zh" ? "沿此缺口继续发现" : "Discover along this gap"} →</button></footer>
     </> : loading ? <div className="v2-route-panel-empty v2-synthesis-loading"><span>π</span><div><strong>{locale === "zh" ? "Pi 正在逐条比对论文证据" : "Pi is comparing claim-level evidence"}</strong><p>{locale === "zh" ? "正在区分共同结论、条件差异、真正冲突和方法演进。" : "Separating shared conclusions, conditional differences, real conflicts, and method lineage."}</p></div></div> : <div className="v2-route-panel-empty v2-synthesis-empty"><span>◎</span><div><strong>{availablePapers < 2 ? (locale === "zh" ? "还需要至少两篇已确认且可核验的论文" : "At least two confirmed, grounded papers are needed") : (locale === "zh" ? "这条路线还没有形成跨论文综合" : "This route has no cross-paper synthesis yet")}</strong><p>{availablePapers < 2 ? (locale === "zh" ? `目前有 ${availablePapers} 篇论文具备逐条证据。Pi 不会用标题相似或单篇摘要冒充共识与分歧。` : `${availablePapers} paper(s) currently have claim-level evidence. Pi will not turn title similarity or one abstract into consensus.`) : (locale === "zh" ? "现有证据已足够，可以让 Pi 生成带原文定位的综合。" : "Enough evidence is available for a source-linked synthesis.")}</p>{track.intelligence && <small>{locale === "zh" ? `路线级初步研判：${track.intelligence.assessmentZh}` : `Preliminary route assessment: ${track.intelligence.assessmentEn}`}</small>}{error && <em>{error}</em>}</div>{availablePapers >= 2 ? <button type="button" onClick={onRefresh}>{locale === "zh" ? "开始综合" : "Build synthesis"} →</button> : <button type="button" onClick={onExplain}>{locale === "zh" ? "让 Pi 解释还缺什么" : "Ask Pi what is missing"} →</button>}</div>}
   </section>;
@@ -2695,11 +2644,6 @@ export default function ResearchApp({ user }: { user: User }) {
   const [creatingSpace, setCreatingSpace] = useState(false);
   const [newSpace, setNewSpace] = useState({ name: "", memberName: "", description: "" });
   const [selectedMonitorPaper, setSelectedMonitorPaper] = useState<MonitorPaper | null>(null);
-  const [paperEvidence, setPaperEvidence] = useState<PaperEvidence | null>(null);
-  const [paperEvidenceLoading, setPaperEvidenceLoading] = useState(false);
-  const [paperEvidenceError, setPaperEvidenceError] = useState("");
-  const [paperEvidenceRetry, setPaperEvidenceRetry] = useState(0);
-  const [evidenceProcessingPaperId, setEvidenceProcessingPaperId] = useState<string | null>(null);
   const [researchSynthesis, setResearchSynthesis] = useState<ResearchSynthesis | null>(null);
   const [researchSynthesisLoading, setResearchSynthesisLoading] = useState(false);
   const [researchSynthesisError, setResearchSynthesisError] = useState("");
@@ -2812,9 +2756,6 @@ export default function ResearchApp({ user }: { user: User }) {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const reportedImpressions = useRef(new Set<string>());
   const reportedEngagements = useRef(new Set<string>());
-  const evidenceAutoAttemptsRef = useRef(new Set<string>());
-  const evidenceAutoCountRef = useRef(new Map<string, number>());
-  const evidenceProcessingRef = useRef(false);
   const engagementSessionRef = useRef("");
 
   const t = copy[locale];
@@ -2875,6 +2816,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const libraryPapers = useMemo(() => {
     const query = librarySearch.trim().toLocaleLowerCase();
     const stateRank: Record<MonitorPaper["userState"], number> = { unseen: 0, seen: 1, snoozed: 2, accepted: 3, dismissed: 4 };
+    const qualityStageRank: Record<NonNullable<MonitorPaper["qualityStage"]>, number> = { recommended: 0, reviewing: 1, reviewed: 2, discovered: 3, queued: 4 };
     return historyPapers.filter((paper) => {
       const belongsToRecommendationInbox = paper.qualityStage === "recommended" || paper.qualityStage === "reviewing"
         || paper.saved || Boolean(paper.feedback) || paper.readingStatus !== "unread";
@@ -2890,8 +2832,10 @@ export default function ResearchApp({ user }: { user: User }) {
     }).sort((first, second) => {
       if (librarySort === "newest") return timeValue(second.discoveredAt) - timeValue(first.discoveredAt);
       if (librarySort === "quality") return second.qualityScore - first.qualityScore || second.relevanceScore - first.relevanceScore;
-      return stateRank[first.userState] - stateRank[second.userState]
-        || second.qualityScore - first.qualityScore
+      return (qualityStageRank[first.qualityStage || "discovered"] - qualityStageRank[second.qualityStage || "discovered"])
+        || stateRank[first.userState] - stateRank[second.userState]
+        || second.relevanceScore - first.relevanceScore
+        || (first.qualityStage === "recommended" && second.qualityStage === "recommended" ? second.qualityScore - first.qualityScore : 0)
         || timeValue(first.firstShownAt) - timeValue(second.firstShownAt);
     });
   }, [historyPapers, inboxFilter, libraryFilter, librarySearch, librarySort, libraryStageFilter]);
@@ -2899,15 +2843,25 @@ export default function ResearchApp({ user }: { user: User }) {
   const scanIsActive = monitoring || isMonitorScanning(monitor?.status);
   const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
   const activeScanJob = monitor?.scanJob && !["ready", "error"].includes(monitor.scanJob.status) ? monitor.scanJob : null;
+  const verificationInProgress = Boolean(scanIsActive && activeScanJob?.checkpoint === "verifying_recommendations");
+  const analysisBudgetBlocked = monitor?.analysisBudget?.available === false;
   const failedScanJob = monitor?.status === "error" ? monitor.scanJob || null : null;
   const failedScanError = failedScanJob?.error || monitor?.error || "";
   const resumeAvailable = Boolean(failedScanJob && (failedScanJob.candidateCount || failedScanJob.reviewedCount || failedScanJob.checkpoint === "retry_pending"));
   const scanProgress = scanIsActive
     ? Math.max(monitorProgressByStatus[effectiveScanStatus], activeScanJob?.progress || 0)
     : monitor?.status === "ready" ? 100 : 0;
-  const baseScanPhase = monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
+  const baseScanPhase = verificationInProgress
+    ? (locale === "zh" ? "正在逐篇独立核验推荐证据" : "Independently verifying recommendation evidence")
+    : monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
-  const healthyCoverageCount = monitor?.coverage?.filter((source) => source.healthy).length || 0;
+  const currentRunHasDiscovery = Boolean(activeScanJob && (activeScanJob.discoveredCount > 0
+    || activeScanJob.horizonStats?.some((item) => item.candidates !== null)));
+  const healthyCoverageCount = !scanIsActive || currentRunHasDiscovery
+    ? monitor?.coverage?.filter((source) => source.healthy).length || 0
+    : 0;
+  const displayScanElapsedSeconds = scanElapsedSeconds <= 3_600 ? scanElapsedSeconds : 0;
+  const restoredOldScan = scanElapsedSeconds > 3_600;
   const scanHorizonStats = (["days", "months", "years"] as const).map((horizon) => monitor?.scanJob?.horizonStats?.find((item) => item.horizon === horizon) || {
     horizon,
     status: monitor?.status === "ready" || monitor?.status === "error" ? "complete" as const : monitor?.scanJob?.currentHorizon === horizon ? "searching" as const : "pending" as const,
@@ -3348,7 +3302,7 @@ export default function ResearchApp({ user }: { user: User }) {
           }
         })
         .catch((error) => {
-          if (!cancelled) setMonitor((current) => current?.status === "error" ? current : {
+          if (!cancelled) setMonitor((current) => current || {
             status: "error", lastRunAt: null, nextRunAt: null, newCount: 0, scannedCount: 0,
             knownCount: 0, error: monitorErrorText(error) || "unavailable", cadenceHours: 24, source: "Crossref · priority journals · arXiv · OpenAlex · Semantic Scholar · citation frontier",
             horizons: ["days", "months", "years"], papers: [],
@@ -3781,89 +3735,6 @@ export default function ResearchApp({ user }: { user: User }) {
   }, [activeSpace.id, selectedMonitorPaperId, view]);
 
   useEffect(() => {
-    if (view !== "today" || !modelConfigured || evidenceProcessingRef.current
-      || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
-    const completed = evidenceAutoCountRef.current.get(activeSpace.id) || 0;
-    if (completed >= 3) return;
-    const candidate = rankedMonitorPapers.find((paper) => {
-      const key = `${activeSpace.id}:${paper.id}`;
-      return ["unavailable", "queued", "partial", "error"].includes(paper.evidenceStatus) && !evidenceAutoAttemptsRef.current.has(key);
-    });
-    if (!candidate) return;
-    const key = `${activeSpace.id}:${candidate.id}`;
-    const spaceId = activeSpace.id;
-    evidenceAutoAttemptsRef.current.add(key);
-    evidenceProcessingRef.current = true;
-    setEvidenceProcessingPaperId(candidate.id);
-    void fetch("/api/paper-evidence", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spaceId, paperId: candidate.id }),
-    }).then(() => fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}`))
-      .then((response) => response.json() as Promise<{ monitor?: MonitorState }>)
-      .then((data) => {
-        if (paperNetworkSpaceRef.current === spaceId && data.monitor) setMonitor(data.monitor);
-      }).catch(() => undefined)
-      .finally(() => {
-        evidenceAutoCountRef.current.set(spaceId, completed + 1);
-        evidenceProcessingRef.current = false;
-        if (paperNetworkSpaceRef.current === spaceId) setEvidenceProcessingPaperId(null);
-      });
-  }, [activeSpace.id, modelConfigured, rankedMonitorPapers, view]);
-
-  useEffect(() => {
-    if (view !== "paper-detail" || !selectedMonitorPaperId
-      || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
-    const paperId = selectedMonitorPaperId;
-    let cancelled = false;
-    const readCurrent = async () => {
-      const response = await fetch(`/api/paper-evidence?spaceId=${encodeURIComponent(activeSpace.id)}&paperId=${encodeURIComponent(paperId)}`, { cache: "no-store" });
-      const data = await response.json() as { evidence?: PaperEvidence | null; error?: string };
-      if (!response.ok) throw new Error(data.error || "Evidence status unavailable");
-      if (!cancelled) setPaperEvidence(data.evidence || null);
-      return data.evidence || null;
-    };
-    const refreshPaper = async () => {
-      const response = await fetch(`/api/monitor?spaceId=${encodeURIComponent(activeSpace.id)}`);
-      const data = response.ok ? await response.json() as { monitor?: MonitorState } : null;
-      if (cancelled || !data?.monitor) return;
-      setMonitor(data.monitor);
-      const updated = (data.monitor.historyPapers || data.monitor.papers).find((paper) => paper.id === paperId);
-      if (updated) setSelectedMonitorPaper((current) => current?.id === paperId ? updated : current);
-    };
-    const deepen = async () => {
-      setPaperEvidenceLoading(true);
-      setPaperEvidenceError("");
-      try {
-        const current = await readCurrent();
-        if (current?.status === "ready") return;
-        const response = await fetch("/api/paper-evidence", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spaceId: activeSpace.id, paperId }),
-        });
-        const data = await response.json() as { evidence?: PaperEvidence | null; error?: string; busy?: boolean };
-        if (!cancelled && data.evidence) setPaperEvidence(data.evidence);
-        if (!response.ok && !data.evidence) throw new Error(data.error || "Evidence deepening failed");
-        if (data.busy) {
-          for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
-            await new Promise((resolve) => window.setTimeout(resolve, 2_000));
-            const polled = await readCurrent();
-            if (polled && ["ready", "partial", "error"].includes(polled.status)) break;
-          }
-        }
-        await refreshPaper();
-      } catch (error) {
-        if (!cancelled) setPaperEvidenceError(error instanceof Error ? error.message : "Evidence deepening failed");
-      } finally {
-        if (!cancelled) setPaperEvidenceLoading(false);
-      }
-    };
-    void deepen();
-    return () => { cancelled = true; };
-  }, [activeSpace.id, paperEvidenceRetry, selectedMonitorPaperId, view]);
-
-  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -3987,8 +3858,16 @@ export default function ResearchApp({ user }: { user: User }) {
       setToast(locale === "zh" ? "研究空间尚未连接，请刷新页面后再试" : "The research space is not connected yet. Refresh the page and try again.");
       return;
     }
+    setMonitor((current) => current ? {
+      ...current,
+      status: "scanning",
+      scannedCount: 0,
+      error: null,
+      coverage: [],
+      scanJob: null,
+    } : current);
     setMonitoring(true);
-    const stopPolling = startMonitorPolling(activeSpace.id, setMonitor);
+    let stopPolling: () => void = () => undefined;
     try {
       const response = await fetch("/api/monitor", {
         method: "POST",
@@ -3999,7 +3878,10 @@ export default function ResearchApp({ user }: { user: User }) {
       if (data.monitor) setMonitor(data.monitor);
       if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan unavailable");
       if (data.monitor.throttled) setToast(t.manualCooling);
-      else if (!["ready", "error"].includes(data.monitor.status)) await advanceMonitorPipeline(activeSpace.id, data.monitor, setMonitor);
+      else if (!["ready", "error"].includes(data.monitor.status)) {
+        stopPolling = startMonitorPolling(activeSpace.id, setMonitor);
+        await advanceMonitorPipeline(activeSpace.id, data.monitor, setMonitor);
+      }
     } catch (error) {
       const message = monitorFailureMessage(error, locale);
       setToast(message);
@@ -4230,9 +4112,6 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const openMonitorPaper = (paper: MonitorPaper) => {
     const openedPaper = { ...paper, openedAt: new Date().toISOString(), userState: paper.userState === "unseen" ? "seen" as const : paper.userState };
-    setPaperEvidence(null);
-    setPaperEvidenceError("");
-    setPaperEvidenceLoading(false);
     setPaperReturnView(view === "library" ? "library" : "today");
     setSelectedMonitorPaper(openedPaper);
     setPaperNoteDraft(paper.readingNote || "");
@@ -4483,7 +4362,7 @@ export default function ResearchApp({ user }: { user: User }) {
       ? (locale === "zh" ? `请基于当前真实论文，分析“${title}”的证据缺口，解释还缺什么证据，并给出下一步可核验的检索和阅读建议。` : `Using the current real papers, analyze the evidence gap in “${title}” and propose a verifiable next search and reading plan.`)
       : focus === "agenda"
         ? (locale === "zh" ? `请把“${title}”当前的关键机会、观察信号和证据缺口拆成一个可执行的研究议程，并明确每一步应核对哪些论文证据。` : `Turn the current opportunity, watch signal, and evidence gap for “${title}” into an actionable research agenda with paper evidence to verify at every step.`)
-        : (locale === "zh" ? `请基于“${title}”路线中的真实论文解释当前判断、关键机会和主要不确定性，并明确区分用户确认纳入的论文、Pi 策展材料与全文达标证据。` : `Explain the current assessment, key opportunity, and main uncertainty for “${title}” using its real papers, separating user-confirmed route papers, Pi-curated material, and evidence that cleared the full-text bar.`);
+        : (locale === "zh" ? `请基于“${title}”路线中的真实论文解释当前判断、关键机会和主要不确定性，并明确区分用户确认纳入的论文、Pi 策展材料与已通过独立核验的推荐证据。` : `Explain the current assessment, key opportunity, and main uncertainty for “${title}” using its real papers, separating user-confirmed route papers, Pi-curated material, and independently verified recommendation evidence.`);
     setQuestion(focusPrompt);
     setAskOpen(true);
   };
@@ -4931,7 +4810,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <p>{t.knowledge}</p>
           {navItems.slice(2).map((item) => (
             <button type="button" key={item.id} className={activeNav === item.id ? "active" : ""} aria-current={activeNav === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>
-              <span>{item.mark}</span>{item.label}{item.id === "library" && Boolean(monitor?.historyCounts?.inbox) && <b>{Math.min(99, monitor?.historyCounts?.inbox || 0)}</b>}
+              <span>{item.mark}</span>{item.label}{item.id === "library" && Boolean(historyPapers.length) && <b title={locale === "zh" ? `${historyPapers.length} 篇已保存论文` : `${historyPapers.length} saved papers`}>{compactNavCount(historyPapers.length)}</b>}
             </button>
           ))}
         </nav>
@@ -4960,7 +4839,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "ready" ? (locale === "zh" ? "今日扫描已完成" : "Today's scan is ready") : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
               <section className="v2-today-briefing" aria-label={locale === "zh" ? "今日科研简报" : "Today's research briefing"}>
                 <button type="button" onClick={() => rankedMonitorPapers[0] && openMonitorPaper(rankedMonitorPapers[0])} disabled={!rankedMonitorPapers.length}><span>01</span><strong>{mustReadCount}</strong><div><b>{locale === "zh" ? "今日必读" : "Must read"}</b><small>{locale === "zh" ? "最值得优先投入时间" : "Highest priority for your time"}</small></div><i>→</i></button>
-                <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor ? monitor.mapChanges?.length || 0 : "—"}</strong><div><b>{locale === "zh" ? "近 7 天路线变化" : "7-day route changes"}</b><small>{locale === "zh" ? "结构更新与全文达标证据分开记录" : "Structural updates and full-text evidence are tracked separately"}</small></div><i>→</i></button>
+                <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor ? monitor.mapChanges?.length || 0 : "—"}</strong><div><b>{locale === "zh" ? "近 7 天路线变化" : "7-day route changes"}</b><small>{locale === "zh" ? "结构更新与独立核验通过的证据分开记录" : "Structural updates and independently verified evidence are tracked separately"}</small></div><i>→</i></button>
                 <button type="button" onClick={() => { setLibraryFilter("accepted"); setLibraryStageFilter("all"); navigate("library"); }}><span>03</span><strong>{activeReadingCount}</strong><div><b>{locale === "zh" ? "待读与在读" : "Reading queue"}</b><small>{locale === "zh" ? "继续未完成的阅读" : "Continue unfinished reading"}</small></div><i>→</i></button>
               </section>
             </section>
@@ -4970,7 +4849,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <header><p className="v2-kicker">π {locale === "zh" ? "今日研究判断" : "TODAY'S RESEARCH JUDGMENT"}</p><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.model === "evidence-summary" ? (locale === "zh" ? "可核验证据简报" : "Evidence-first brief") : monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
                 <h2>{locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn}</h2>
                 <p className="v2-daily-brief-overview">{locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn}</p>
-                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "快速筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深度解读" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div>{Boolean(monitor.dailyBrief.metrics.verificationPending) && <div><dt>{locale === "zh" ? "待核验" : "Pending verification"}</dt><dd>{monitor.dailyBrief.metrics.verificationPending}</dd></div>}<div><dt>{locale === "zh" ? "原文补强" : "Evidence"}</dt><dd>{monitor.dailyBrief.metrics.evidenceDeepened || 0}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div></dl>
+                <dl className="v2-daily-brief-metrics"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor.dailyBrief.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "快速筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深度解读" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div>{Boolean(monitor.dailyBrief.metrics.verificationPending) && <div><dt>{locale === "zh" ? "待核验" : "Pending verification"}</dt><dd>{monitor.dailyBrief.metrics.verificationPending}</dd></div>}<div><dt>{locale === "zh" ? "内容核验" : "Verified"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor.dailyBrief.metrics.recommended || 0}</dd></div></dl>
                 {Boolean(dailyBriefPapers.length) && <footer><button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button><button className="secondary" type="button" onClick={() => shareSnapshot("daily", dailyBriefPapers)} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily}</button></footer>}
               </div>
               <div className="v2-daily-paper-queue">
@@ -4981,7 +4860,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     const signal = dailySignals[index];
                     const readingAction = dailyReadingPlan[index];
                     return <details key={paper?.id || `${index}:${signal || readingAction}`}>
-                      <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i>{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}<PaperEvidenceBadge paper={paper} locale={locale} processing={evidenceProcessingPaperId === paper.id} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
+                      <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i>{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}<RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
                       <div className="v2-daily-paper-analysis">{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看解读" : "Open analysis"} →</button><button className="positive" type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {locale === "zh" ? "适合" : "Useful"}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {locale === "zh" ? "不相关" : "Not relevant"}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant", "duplicate_known")}>◎ {locale === "zh" ? "已掌握" : "Mastered"}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {locale === "zh" ? "稍后" : "Later"}</button></footer>}</div>
                     </details>;
                   })}
@@ -5008,9 +4887,10 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
-                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
+                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive || analysisBudgetBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
                 </div>
               </div>
+              {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><span>◷</span><p>{locale === "zh" ? `今天还剩 ${monitor?.analysisBudget?.remaining || 0} 次智能调用，不足以完成下一批；Pi 不会重复检索，现有论文与断点均已保留。` : `${monitor?.analysisBudget?.remaining || 0} AI calls remain today, not enough for the next batch. Pi will not repeat retrieval, and all papers and checkpoints are preserved.`}</p></div>}
               {monitor?.scanJob?.needsRefresh && !scanIsActive && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先补全摘要、按研究方向分配名额，并在首批零入选时复审临界论文。重新扫描不受本小时冷却限制。" : "The new method enriches abstracts, allocates slots by research direction, and rechecks near-miss papers when the first batch yields nothing. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}
               {monitor?.status === "error" && (
                 <details className={`v2-scan-failure ${isModelCredentialFailure(failedScanError) ? "credential" : ""}`} role="alert">
@@ -5033,17 +4913,19 @@ export default function ResearchApp({ user }: { user: User }) {
                   <div><span>{scanPhase}</span><strong>{scanProgress}%</strong></div>
                   <i><b style={{ width: `${scanProgress}%` }} /></i>
                   <small>
-                    {activeScanJob?.discoveredCount || monitor?.scannedCount || 0} {locale === "zh" ? "条候选" : "candidates"}
+                    {activeScanJob?.discoveredCount || 0} {locale === "zh" ? "条候选" : "candidates"}
                     {["screening", "deep_reviewing", "reviewing"].includes(effectiveScanStatus) && <> · {activeScanJob?.reviewedCount || 0}{activeScanJob?.candidateCount ? ` / ${activeScanJob.candidateCount}` : ""} {locale === "zh" ? "篇已筛选保存" : "screened and saved"}</>}
-                    {effectiveScanStatus === "deep_reviewing" && <> · {activeScanJob?.recommendedCount || 0} {locale === "zh" ? "篇已可阅读" : "ready to read"}</>}
-                    {effectiveScanStatus === "deep_reviewing" && Boolean(activeScanJob?.verificationPendingCount) && <> · {activeScanJob?.verificationPendingCount} {locale === "zh" ? "篇高潜力解读待核验" : "high-potential drafts awaiting verification"}</>}
+                    {effectiveScanStatus === "deep_reviewing" && !verificationInProgress && <> · {activeScanJob?.deepCompletedCount || 0} {locale === "zh" ? "篇深度解读已保存" : "deep interpretations saved"}</>}
+                    {verificationInProgress && <> · {activeScanJob?.verificationCompletedCount || 0} / {activeScanJob?.verificationTargetCount || 0} {locale === "zh" ? "篇已核验" : "verified"}</>}
+                    {verificationInProgress && Boolean(activeScanJob?.verificationPendingCount) && <> · {activeScanJob?.verificationPendingCount} {locale === "zh" ? "篇待处理" : "remaining"}</>}
                     {effectiveScanStatus === "deep_reviewing" && Boolean(activeScanJob?.deepDeferredCount) && <> · {activeScanJob?.deepDeferredCount} {locale === "zh" ? "篇已延后，不阻塞本轮" : "deferred without blocking this scan"}</>}
                     {healthyCoverageCount > 0 && <> · {healthyCoverageCount} {locale === "zh" ? "类来源正常" : "source groups healthy"}</>}
-                    {scanElapsedSeconds > 0 && <> · {scanElapsedSeconds < 60 ? `${scanElapsedSeconds}s` : `${Math.floor(scanElapsedSeconds / 60)}m ${scanElapsedSeconds % 60}s`}</>}
+                    {displayScanElapsedSeconds > 0 && <> · {displayScanElapsedSeconds < 60 ? `${displayScanElapsedSeconds}s` : `${Math.floor(displayScanElapsedSeconds / 60)}m ${displayScanElapsedSeconds % 60}s`}</>}
                     {locale === "zh" ? " · 上次推荐仍可继续阅读" : " · Previous recommendations remain readable"}
                   </small>
                   {["screening", "deep_reviewing"].includes(effectiveScanStatus) && <em className="v2-resume-note">✓ {locale === "zh" ? "每完成一批就会立即保存；推荐出现后可先阅读，无需等待整轮结束" : "Each completed batch is saved immediately. You can start reading before the full scan finishes."}</em>}
                   {activeScanJob?.resumeOfJobId && <em className="v2-resume-note">↻ {locale === "zh" ? `正在从已保存检查点续跑 · 第 ${activeScanJob.attempt || 2} 次尝试` : `Resuming from a saved checkpoint · attempt ${activeScanJob.attempt || 2}`}</em>}
+                  {restoredOldScan && !activeScanJob?.resumeOfJobId && <em className="v2-resume-note">↻ {locale === "zh" ? "已从旧任务的保存断点恢复，不沿用中断期间的耗时" : "Restored from an older checkpoint; inactive time is not counted."}</em>}
                 </div>
               )}
               <div className="v2-horizon-strip" aria-label={locale === "zh" ? "本轮三个时间窗的实际检索状态" : "Actual retrieval status for the three horizons"}>
@@ -5104,7 +4986,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
             {Boolean(additionalTodayPapers.length) && <section className="v2-today-more">
               <header><div><p className="v2-kicker warm">{locale === "zh" ? "更多推荐" : "MORE RECOMMENDATIONS"}</p><h2>{locale === "zh" ? "不在今日主队列，但仍值得保留" : "Worth keeping beyond the main queue"}</h2></div><span>{additionalTodayPapers.length} {locale === "zh" ? "篇" : "papers"}</span></header>
-              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperEvidenceBadge paper={paper} locale={locale} processing={evidenceProcessingPaperId === paper.id} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
+              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
             </section>}
 
           </main>
@@ -5131,7 +5013,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   </section>
 
                   <section className="v2-route-groups">
-                    <header><div><p className="v2-kicker">{locale === "zh" ? "我的研究布局" : "MY RESEARCH PORTFOLIO"}</p><h2>{locale === "zh" ? "主攻、辅助与探索方向" : "Core, supporting, and exploratory directions"}</h2></div><p>{locale === "zh" ? "路线深挖候选统一进入共享质量队列；通过评审并由你确认后可纳入路线，但只有全文证据达到门槛才会记为科学证据变化。" : "Route discoveries enter the shared quality queue. A reviewed paper can enter the route after your confirmation, while scientific evidence changes still require the full-text bar."}</p></header>
+                    <header><div><p className="v2-kicker">{locale === "zh" ? "我的研究布局" : "MY RESEARCH PORTFOLIO"}</p><h2>{locale === "zh" ? "主攻、辅助与探索方向" : "Core, supporting, and exploratory directions"}</h2></div><p>{locale === "zh" ? "路线深挖候选统一进入共享质量队列；通过评审和独立推荐核验、再由你确认后，才会记入路线证据变化。" : "Route discoveries enter the shared quality queue and become route-evidence changes only after review, independent recommendation verification, and your confirmation."}</p></header>
                     <div className="v2-route-review-policy"><span><b>01</b>{locale === "zh" ? "路线深挖" : "Route mining"}</span><i>→</i><span><b>02</b>{locale === "zh" ? "今日质量评估" : "Today's quality review"}</span><i>→</i><span><b>03</b>{locale === "zh" ? "通过后推荐" : "Recommend after passing"}</span><small>{locale === "zh" ? "未通过的候选不会占用阅读队列，也不会自动成为路线证据。" : "Candidates that fail review never enter the reading queue or become route evidence automatically."}</small></div>
                     {(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => researchTracksByRole[role].length ? <section className={`v2-route-group ${role}`} key={role}>
                       <header><span>{directionRoleLabel(role, locale)}</span><small>{role === "core" ? (locale === "zh" ? "你投入最深、需要持续维护的主线" : "Your deepest, continuously maintained work") : role === "support" ? (locale === "zh" ? "为主线提供方法、理论或证据" : "Methods, theory, or evidence that supports the core") : (locale === "zh" ? "保留少量预算验证的新方向" : "New directions receiving a bounded exploration budget")}</small><b>{researchTracksByRole[role].length}</b></header>
@@ -5241,7 +5123,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
               {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-evidence-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "路线论文与证据状态" : "ROUTE PAPERS & EVIDENCE STATUS"}</p><h2>{locale === "zh" ? "从奠基、转折走到当前前沿" : "From foundations and turning points to the frontier"}</h2></div><div className="v2-route-stage-counts">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span className={role} key={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</div></header><div className="v2-route-evidence-chain">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role, roleIndex) => <section className={role} key={role}><header><span>{String(roleIndex + 1).padStart(2, "0")}</span><div><strong>{researchRoleLabel(role, locale)}</strong><small>{role === "foundation" ? (locale === "zh" ? "定义问题与基本工具" : "Defines the question and core tools") : role === "milestone" ? (locale === "zh" ? "改变路线走向的关键节点" : "Turning points that changed the route") : (locale === "zh" ? "当前活跃问题与方法" : "Current active questions and methods")}</small></div></header><div>{selectedThread.papers.filter((paper) => paper.role === role).map((paper) => <article key={paper.id}><header><span>{researchPaperYear(paper)}</span><small>{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</small></header><em className={`v2-route-provenance ${paper.provenance || "system_curated"}`}>{paper.provenance === "user_confirmed" ? (locale === "zh" ? "用户确认纳入" : "User confirmed in route") : (locale === "zh" ? "Pi 策展代表作" : "Pi-curated representative")}</em><h3>{paper.title}</h3><p>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p><footer><button type="button" onClick={() => askAboutRoutePaper(selectedThread, paper)}>{locale === "zh" ? "让 Pi 解释位置" : "Ask Pi about its place"}</button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)}>{t.openOriginal} ↗</a></footer></article>)}{!selectedThread.papers.some((paper) => paper.role === role) && <div className="v2-route-chain-empty"><span>＋</span><p>{locale === "zh" ? "这个阶段仍缺少有代表性的真实论文。" : "This stage still lacks a representative real paper."}</p><button type="button" onClick={() => { setResearchRouteTab("gaps"); }}>{locale === "zh" ? "去补证据" : "Fill the gap"} →</button></div>}</div></section>)}</div></section>}
 
-              {researchRouteTab === "gaps" && <section className="v2-route-workspace-panel v2-route-gap-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "证据缺口驱动发现" : "EVIDENCE-GAP DISCOVERY"}</p><h2>{locale === "zh" ? "只沿当前路线真正缺少的证据继续找" : "Search only for evidence this route genuinely lacks"}</h2></div><div className="v2-route-evidence-status"><span><strong>{confirmedRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "已纳入路线" : "in route"}</span><span className={pendingRouteEvidenceCount(selectedThread) ? "pending" : ""}><strong>{pendingRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "待确认" : "pending"}</span></div></header><RouteQualityFlow track={selectedThread} locale={locale} />{selectedThread.intelligence ? <div className="v2-route-gap-layout"><article className="v2-route-gap-primary"><small>{locale === "zh" ? "Pi 识别的主要缺口" : "PRIMARY GAP IDENTIFIED BY PI"}</small><h3>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</h3>{selectedThread.intelligence.nextSearchQuery && <div><span>{locale === "zh" ? "下一轮定向检索" : "NEXT TARGETED SEARCH"}</span><code>{selectedThread.intelligence.nextSearchQuery}</code></div>}<p>{locale === "zh" ? "候选会先进入共享质量队列，在下一轮扫描中深度评审；通过后才进入今日推荐与待确认纳入，全文证据达标后才会显示为科学证据变化。" : "Candidates enter the shared quality queue for the next scan. Review passes enter Today and pending route curation; only the full-text bar creates a scientific evidence change."}</p><footer><button type="button" onClick={() => void scanResearchRouteGap(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || !selectedThread.intelligence.nextSearchQuery)}>{mapAction === `gap:${selectedThread.id}` ? (locale === "zh" ? "正在扫描缺口…" : "Scanning gap…") : (locale === "zh" ? "立即扫描此缺口" : "Scan this gap now")} →</button><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "gap")}>{locale === "zh" ? "先让 Pi 解释缺什么" : "Ask Pi what is missing"}</button></footer></article><aside><header><strong>{locale === "zh" ? "当前前沿代表作" : "Current frontier representatives"}</strong><span>{selectedThread.papers.filter((paper) => paper.role === "frontier").length}</span></header>{selectedThread.papers.filter((paper) => paper.role === "frontier").slice(0, 5).map((paper) => <button type="button" key={paper.id} onClick={() => askAboutRoutePaper(selectedThread, paper)}><span>{researchPaperYear(paper)}</span><strong>{paper.title}</strong><small>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</small></button>)}{!selectedThread.papers.some((paper) => paper.role === "frontier") && <p>{locale === "zh" ? "当前还没有前沿代表作。" : "No frontier representative yet."}</p>}</aside></div> : <div className="v2-route-panel-empty"><span>◎</span><div><strong>{locale === "zh" ? "还没有可执行的证据缺口" : "No actionable evidence gap yet"}</strong><p>{locale === "zh" ? "先刷新方向研判，Pi 会从真实论文中识别缺口并生成定向检索。" : "Refresh the direction assessment to identify a gap and targeted query from real papers."}</p></div><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={!selectedThread.papers.length}>{locale === "zh" ? "形成研判" : "Build assessment"} →</button></div>}</section>}
+              {researchRouteTab === "gaps" && <section className="v2-route-workspace-panel v2-route-gap-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "证据缺口驱动发现" : "EVIDENCE-GAP DISCOVERY"}</p><h2>{locale === "zh" ? "只沿当前路线真正缺少的证据继续找" : "Search only for evidence this route genuinely lacks"}</h2></div><div className="v2-route-evidence-status"><span><strong>{confirmedRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "已纳入路线" : "in route"}</span><span className={pendingRouteEvidenceCount(selectedThread) ? "pending" : ""}><strong>{pendingRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "待确认" : "pending"}</span></div></header><RouteQualityFlow track={selectedThread} locale={locale} />{selectedThread.intelligence ? <div className="v2-route-gap-layout"><article className="v2-route-gap-primary"><small>{locale === "zh" ? "Pi 识别的主要缺口" : "PRIMARY GAP IDENTIFIED BY PI"}</small><h3>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</h3>{selectedThread.intelligence.nextSearchQuery && <div><span>{locale === "zh" ? "下一轮定向检索" : "NEXT TARGETED SEARCH"}</span><code>{selectedThread.intelligence.nextSearchQuery}</code></div>}<p>{locale === "zh" ? "候选会先进入共享质量队列，在下一轮扫描中深度评审；通过独立推荐核验后进入今日推荐，再由你决定是否纳入路线。" : "Candidates enter the shared quality queue for deep review. Independently verified recommendations enter Today, then you decide whether they belong in the route."}</p><footer><button type="button" onClick={() => void scanResearchRouteGap(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || !selectedThread.intelligence.nextSearchQuery)}>{mapAction === `gap:${selectedThread.id}` ? (locale === "zh" ? "正在扫描缺口…" : "Scanning gap…") : (locale === "zh" ? "立即扫描此缺口" : "Scan this gap now")} →</button><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "gap")}>{locale === "zh" ? "先让 Pi 解释缺什么" : "Ask Pi what is missing"}</button></footer></article><aside><header><strong>{locale === "zh" ? "当前前沿代表作" : "Current frontier representatives"}</strong><span>{selectedThread.papers.filter((paper) => paper.role === "frontier").length}</span></header>{selectedThread.papers.filter((paper) => paper.role === "frontier").slice(0, 5).map((paper) => <button type="button" key={paper.id} onClick={() => askAboutRoutePaper(selectedThread, paper)}><span>{researchPaperYear(paper)}</span><strong>{paper.title}</strong><small>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</small></button>)}{!selectedThread.papers.some((paper) => paper.role === "frontier") && <p>{locale === "zh" ? "当前还没有前沿代表作。" : "No frontier representative yet."}</p>}</aside></div> : <div className="v2-route-panel-empty"><span>◎</span><div><strong>{locale === "zh" ? "还没有可执行的证据缺口" : "No actionable evidence gap yet"}</strong><p>{locale === "zh" ? "先刷新方向研判，Pi 会从真实论文中识别缺口并生成定向检索。" : "Refresh the direction assessment to identify a gap and targeted query from real papers."}</p></div><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={!selectedThread.papers.length}>{locale === "zh" ? "形成研判" : "Build assessment"} →</button></div>}</section>}
 
               {researchRouteTab === "agenda" && <section className="v2-route-workspace-panel v2-route-agenda-panel" role="tabpanel"><header><div><p className="v2-kicker">{locale === "zh" ? "由当前证据生成" : "GENERATED FROM CURRENT EVIDENCE"}</p><h2>{locale === "zh" ? "接下来可以阅读、追踪和验证什么" : "What to read, track, and verify next"}</h2></div><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "agenda")}>{locale === "zh" ? "让 Pi 拆解成行动" : "Ask Pi to break it into actions"} →</button></header>{selectedThread.intelligence ? <div className="v2-route-agenda-grid"><article><span>01</span><small>{locale === "zh" ? "深入机会" : "DEEPEN"}</small><h3>{locale === "zh" ? selectedThread.intelligence.opportunityZh : selectedThread.intelligence.opportunityEn}</h3><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId)}>{locale === "zh" ? "继续深挖这条路线" : "Mine this route deeper"} →</button></article><article><span>02</span><small>{locale === "zh" ? "持续观察" : "WATCH"}</small><h3>{locale === "zh" ? selectedThread.intelligence.watchSignalZh : selectedThread.intelligence.watchSignalEn}</h3><button type="button" onClick={() => navigate("today")}>{locale === "zh" ? "去今日发现" : "Open today's discovery"} →</button></article><article><span>03</span><small>{locale === "zh" ? "补齐基础" : "BUILD KNOWLEDGE"}</small><h3>{locale === "zh" ? "把当前路线整理成循序渐进的真实论文学习路径" : "Turn this route into a progressive learning path of real papers"}</h3><button type="button" onClick={() => openRouteLearningPath(selectedThread)}>{locale === "zh" ? "生成学习路径" : "Build learning path"} →</button></article></div> : <div className="v2-route-panel-empty"><span>π</span><div><strong>{locale === "zh" ? "研判完成后才会生成研究议程" : "A research agenda appears after assessment"}</strong><p>{locale === "zh" ? "Pi 不会在没有路线证据时填充通用任务。" : "Pi will not fill this space with generic tasks without route evidence."}</p></div><button type="button" onClick={() => setResearchRouteTab("assessment")}>{locale === "zh" ? "回到当前研判" : "Open assessment"} →</button></div>}{selectedThreadChanges.length > 0 && <section className="v2-route-change-log"><header><strong>{locale === "zh" ? "这条路线最近的已确认变化" : "Recent confirmed changes in this route"}</strong><span>{selectedThreadChanges.length}</span></header>{selectedThreadChanges.map((change) => <article key={change.id}><span>{routeChangeKindLabel(change.kind).symbol}</span><div><small>{formatNotificationTime(change.createdAt, locale)}</small><strong>{change.kind === "new_evidence" ? change.paperTitle : (locale === "zh" ? change.titleZh : change.titleEn)}</strong><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>)}</section>}</section>}
             </> : <section className="v2-map-loading"><span>π</span><div><strong>{locale === "zh" ? "正在载入研究路线" : "Loading the research route"}</strong></div></section>}
@@ -5295,7 +5177,7 @@ export default function ResearchApp({ user }: { user: User }) {
               {visibleLibraryPapers.map((paper) => (
                 <article className={"v2-library-paper " + paper.userState} key={paper.id}>
                   <button className="v2-library-paper-main" type="button" onClick={() => openMonitorPaper(paper)}>
-                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? (locale === "zh" ? "高潜力待核验" : "High potential") : paper.qualityStage === "reviewed" ? (locale === "zh" ? "已评审归档" : "Reviewed archive") : (locale === "zh" ? "发现归档" : "Discovery archive")}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span><span>{t.qualityScore} {paper.qualityScore}</span><PaperEvidenceBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>
+                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? (locale === "zh" ? "高潜力待核验" : "High potential") : paper.qualityStage === "reviewed" ? (locale === "zh" ? "已评审归档" : "Reviewed archive") : (locale === "zh" ? "发现归档" : "Discovery archive")}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span>{paper.qualityStage === "recommended" && <span>{t.qualityScore} {displayQualityScore(paper.qualityScore)}</span>}<RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>
                     <h2>{paper.title}</h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p>
                     <p className="v2-library-paper-why"><b>{paper.qualityStage === "recommended" || paper.qualityStage === "reviewing" ? t.whySuitable : locale === "zh" ? "归档说明" : "Archive note"}</b>{(locale === "zh" ? paper.whyReadZh : paper.whyReadEn) || (paper.qualityStage === "reviewed" ? (locale === "zh" ? "Pi 已完成质量评审，但它没有进入正式推荐队列；保留在论文库供后续检索。" : "Pi reviewed this paper, but it did not enter the formal recommendation queue. It remains searchable in the library.") : (locale === "zh" ? "扫描过程中发现的真实论文，尚未完成深度解读；保留在论文库，不等同于推荐。" : "A real paper found during discovery. Deep analysis is not complete; archiving it does not mean it is recommended."))}</p>
                     <footer><span>◎ {reminderLabel(paper, locale)}</span><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><b>{t.viewAnalysis} →</b></footer>
@@ -5339,20 +5221,12 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
             <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "library" ? t.library : t.paperBack}</button>
-            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.recommendationTier || "browse"}`}>{recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale)}</span><span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span><PaperEvidenceBadge paper={selectedMonitorPaper} locale={locale} processing={paperEvidenceLoading} /><RouteDiscoveryBadge paper={selectedMonitorPaper} locale={locale} /></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a></div></section>
+            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.recommendationTier || "browse"}`}>{recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale)}</span><span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span><RecommendationVerificationBadge paper={selectedMonitorPaper} locale={locale} /><RouteDiscoveryBadge paper={selectedMonitorPaper} locale={locale} /></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a></div></section>
             <div className="v2-paper-detail-grid">
               <div>
-                <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><span>{t.qualityScore}</span><strong>{selectedMonitorPaper.qualityScore}</strong></div></section>
+                <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong>{selectedMonitorPaper.qualityStage === "recommended" && <><span>{t.qualityScore}</span><strong>{displayQualityScore(selectedMonitorPaper.qualityScore)}</strong></>}</div></section>
                 {selectedMonitorPaper.researchProblemId && <section className="v2-content-section v2-paper-problem-impact"><header><p className="v2-kicker">π {locale === "zh" ? "与当前研究问题的关系" : "ACTIVE RESEARCH PROBLEM"}</p><div><span>{locale === "zh" ? "问题贴合" : "Problem fit"}<b>{selectedMonitorPaper.problemFitScore}</b></span><span>{locale === "zh" ? "降低不确定性" : "Uncertainty reduction"}<b>{selectedMonitorPaper.uncertaintyReductionScore}</b></span><span>{locale === "zh" ? "可行动性" : "Actionability"}<b>{selectedMonitorPaper.actionabilityScore}</b></span></div></header><h2>{locale === "zh" ? selectedMonitorPaper.researchProblemImpactZh : selectedMonitorPaper.researchProblemImpactEn}</h2><aside><small>{locale === "zh" ? "读完后应该决定" : "DECISION AFTER READING"}</small><strong>{locale === "zh" ? selectedMonitorPaper.researchDecisionZh : selectedMonitorPaper.researchDecisionEn}</strong></aside></section>}
                 <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><h2>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</h2></section>
-                <section className={`v2-evidence-grounding ${paperEvidence?.evidenceLevel || selectedMonitorPaper.evidenceLevel} ${paperEvidence?.status || selectedMonitorPaper.evidenceStatus}`}>
-                  <header><div><p className="v2-kicker">π {locale === "zh" ? "原文证据" : "SOURCE EVIDENCE"}</p><h2>{paperEvidenceLoading ? evidenceStatusLabel("fetching", locale) : evidenceLevelLabel(paperEvidence?.evidenceLevel || selectedMonitorPaper.evidenceLevel, locale)}</h2></div><span><i />{paperEvidenceLoading ? (locale === "zh" ? "不阻塞当前阅读" : "Current reading stays available") : evidenceStatusLabel(paperEvidence?.status || selectedMonitorPaper.evidenceStatus, locale)}</span></header>
-                  <p className="v2-evidence-explainer">{locale === "zh" ? "Pi 只把能够回到开放原文或摘要中核对的判断列为证据；其余内容会明确保留为待核验推断。" : "Pi treats a claim as evidence only when it can be checked against the open full text or abstract; everything else remains an explicit inference."}</p>
-                  {paperEvidence && <dl className="v2-evidence-summary"><div><dt>{locale === "zh" ? "当前依据" : "Evidence level"}</dt><dd>{evidenceLevelLabel(paperEvidence.evidenceLevel, locale)}</dd></div><div><dt>{locale === "zh" ? "已定位判断" : "Located claims"}</dt><dd>{paperEvidence.groundedClaimCount} / {paperEvidence.claimCount}</dd></div><div><dt>{locale === "zh" ? "结构覆盖" : "Sections read"}</dt><dd>{paperEvidence.sectionCount || (paperEvidence.evidenceLevel === "abstract" ? 1 : 0)}</dd></div>{paperEvidence.sourceUrl && <div><dt>{locale === "zh" ? "开放来源" : "Open source"}</dt><dd><a href={paperEvidence.sourceUrl} target="_blank" rel="noreferrer">{paperEvidence.sourceKind.replace(/_/g, " ")} ↗</a></dd></div>}</dl>}
-                  {Boolean(paperEvidence?.claims.length) && <div className="v2-evidence-claims">{paperEvidence?.claims.map((claim) => <article className={claim.grounded ? "grounded" : "inference"} key={claim.id}><header><span>{evidenceClaimKindLabel(claim.kind, locale)}</span><b>{claim.grounded ? (locale === "zh" ? "原文可核对" : "Source-grounded") : (locale === "zh" ? "待核验推断" : "Inference")}</b></header><p>{locale === "zh" ? claim.claimZh : claim.claimEn}</p>{claim.grounded && <blockquote>“{claim.evidenceQuote}”</blockquote>}<footer><span>{claim.locator || (locale === "zh" ? "定位待补全" : "Locator pending")}</span><em>{claim.confidence}%</em></footer></article>)}</div>}
-                  {!paperEvidenceLoading && paperEvidence && !paperEvidence.claims.length && <div className="v2-evidence-empty"><span>◎</span><p>{paperEvidence.evidenceLevel === "metadata" ? (locale === "zh" ? "目前只有书目信息，Pi 不会据此生成深度事实判断。" : "Only bibliographic metadata is available, so Pi will not turn it into deep factual claims.") : (locale === "zh" ? "当前来源已经保留，但尚未形成可逐条定位的证据判断。" : "The current source is retained, but claim-level grounding is not ready yet.")}</p></div>}
-                  {(paperEvidenceError || paperEvidence?.error) && <footer className="v2-evidence-note"><span>{locale === "zh" ? "当前说明" : "Current note"}</span><p>{paperEvidenceError || paperEvidence?.error}</p>{!paperEvidenceLoading && paperEvidence?.status !== "ready" && <button type="button" onClick={() => setPaperEvidenceRetry((value) => value + 1)}>{locale === "zh" ? "重新核验" : "Retry grounding"}</button>}</footer>}
-                </section>
                 <section className="v2-paper-analysis"><header><p className="v2-kicker">π {locale === "zh" ? "深度阅读导航" : "DEEP READING GUIDE"}</p><h2>{locale === "zh" ? "先理解它解决了什么，再决定读到多深" : "Understand what it resolves before choosing how deeply to read"}</h2></header><div>
                   <article><small>{locale === "zh" ? "研究问题" : "Research problem"}</small><p>{(locale === "zh" ? selectedMonitorPaper.problemZh : selectedMonitorPaper.problemEn) || (locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn)}</p></article>
                   <article><small>{locale === "zh" ? "方法与证据" : "Method & evidence"}</small><p>{(locale === "zh" ? selectedMonitorPaper.methodZh : selectedMonitorPaper.methodEn) || (locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn)}</p></article>
@@ -5360,7 +5234,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   <article className="caution"><small>{locale === "zh" ? "限制与不确定性" : "Limits & uncertainty"}</small><p>{(locale === "zh" ? selectedMonitorPaper.limitationsZh : selectedMonitorPaper.limitationsEn) || (locale === "zh" ? "当前元数据不足以支持更具体的限制判断，建议核对原文。" : "Available metadata is insufficient for a more specific limitation assessment; verify against the paper.")}</p></article>
                   <article className="focus"><small>{locale === "zh" ? "阅读时重点看" : "What to focus on"}</small><p>{(locale === "zh" ? selectedMonitorPaper.readingFocusZh : selectedMonitorPaper.readingFocusEn) || (locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn)}</p></article>
                 </div>{Boolean((locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn)?.length) && <footer><small>{locale === "zh" ? "可以继续追问" : "Questions to pursue"}</small><ol>{(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn).map((question) => <li key={question}>{question}</li>)}</ol></footer>}</section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div><div><dt>{t.qualityScore}</dt><dd>{selectedMonitorPaper.qualityScore}</dd></div><div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
+                <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div>{selectedMonitorPaper.qualityStage === "recommended" && <div><dt>{t.qualityScore}</dt><dd>{displayQualityScore(selectedMonitorPaper.qualityScore)}</dd></div>}<div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
               </div>
               <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{locale === "zh" ? "保存时 Pi 会提取可复用结论、方法、问题与研究连接；相同笔记不会重复消耗 Token。" : "When saved, Pi extracts reusable conclusions, methods, questions, and research links. Identical notes are not analyzed twice."}</small><button className="v2-save-note" type="button" disabled={readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "Pi 正在沉淀…" : "Pi is synthesizing…") : (locale === "zh" ? "保存并沉淀到研究记忆" : "Save to research memory")}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</dd></div><div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
             </div>

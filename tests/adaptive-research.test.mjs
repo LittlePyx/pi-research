@@ -48,7 +48,7 @@ test("new recommendations stay provisional until confirmed evidence updates rout
   assert.match(client, /v2-feedback-options/);
   assert.match(client, /feedbackEffectCopy/);
   assert.match(client, /saveFeedback\(paper, "not_relevant", "duplicate_known"\)/);
-  assert.match(evidence, /grounded_claim_count >= 3/);
-  assert.match(evidence, /coverage_score >= 70/);
-  assert.match(evidence, /unsupported_claim_count <= 1/);
+  assert.match(evidence, /ever_recommended = 1/);
+  assert.match(evidence, /verification_status IN \('verified', 'revised'\)/);
+  assert.match(evidence, /verification_coverage_score >= 70/);
 });

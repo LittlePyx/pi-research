@@ -17,18 +17,18 @@ import {
   upsertRouteGapResearchMapEvidence,
 } from "../lib/research-map-evidence.ts";
 
-test("formal route changes require ready, grounded full-text evidence", () => {
+test("formal route changes require independently verified recommendation evidence", () => {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(`
     CREATE TABLE research_map_changes (id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT);
-    CREATE TABLE paper_evidence_documents (
-      id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT, status TEXT, evidence_level TEXT,
-      grounded_claim_count INTEGER, coverage_score INTEGER, unsupported_claim_count INTEGER
+    CREATE TABLE paper_insights (
+      paper_id TEXT PRIMARY KEY, space_id TEXT, ever_recommended INTEGER,
+      verification_status TEXT, verification_coverage_score INTEGER
     );
     INSERT INTO research_map_changes VALUES ('qualified', 'space-a', 'paper-a'), ('legacy', 'space-a', 'paper-b');
-    INSERT INTO paper_evidence_documents VALUES
-      ('evidence-a', 'space-a', 'paper-a', 'ready', 'fulltext', 3, 70, 1),
-      ('evidence-b', 'space-a', 'paper-b', 'ready', 'abstract', 5, 100, 0);
+    INSERT INTO paper_insights VALUES
+      ('paper-a', 'space-a', 1, 'verified', 100),
+      ('paper-b', 'space-a', 1, 'pending', 100);
   `);
   const rows = sqlite.prepare(`SELECT c.id FROM research_map_changes c
     WHERE ${formalResearchMapEvidencePredicate("c")} ORDER BY c.id`).all();
@@ -132,6 +132,9 @@ function createFixture() {
       reading_focus_en TEXT NOT NULL DEFAULT '',
       research_questions_zh TEXT NOT NULL DEFAULT '[]',
       research_questions_en TEXT NOT NULL DEFAULT '[]',
+      ever_recommended INTEGER NOT NULL DEFAULT 1,
+      verification_status TEXT NOT NULL DEFAULT 'verified',
+      verification_coverage_score INTEGER NOT NULL DEFAULT 100,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE monitor_candidate_sources (
