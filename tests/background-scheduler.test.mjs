@@ -40,17 +40,25 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /const result = await runScheduledMonitorSweep\(env, ctx, "external_watchdog"\)/);
   assert.match(worker, /INSERT OR IGNORE INTO monitor_scheduler_ticks/);
   assert.match(worker, /stale_scheduler_recovery/);
+  assert.match(worker, /health_status = 'recovered_timeout'/);
+  assert.match(worker, /scheduler_lease_expired/);
   assert.match(worker, /datetime\('now', '-20 minutes'\)/);
   assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 1/);
   assert.match(worker, /datetime\(r\.last_user_activity_at\) DESC/);
+  assert.match(
+    worker,
+    /ORDER BY CASE WHEN r\.last_user_activity_at IS NULL THEN 1 ELSE 0 END,\s*datetime\(r\.last_user_activity_at\) DESC,\s*CASE WHEN r\.status NOT IN/,
+  );
+  assert.match(worker, /WHERE id != \? AND completed_at IS NOT NULL ORDER BY datetime\(completed_at\) DESC/);
   assert.match(worker, /MONITOR_SCHEDULER_SECRET/);
   assert.match(schema, /leaseToken: text\("lease_token"\)/);
   assert.match(schema, /recoveredJobCount: integer\("recovered_job_count"\)/);
   assert.match(schema, /healthStatus: text\("health_status"\)/);
   assert.match(repository, /PRAGMA table_info\(monitor_scheduler_ticks\)/);
   assert.match(worker, /gapMinutes > 25 \? "recovered_gap" : "healthy"/);
-  assert.match(workflow, /cron: "\*\/10 \* \* \* \*"/);
+  assert.match(workflow, /cron: "17,47 \* \* \* \*"/);
   assert.match(workflow, /--max-time 240/);
+  assert.match(workflow, /jq -e '\(\.acquired == true\) or \(\.acquired == false\)'/);
   assert.match(workflow, /secrets\.PI_SCHEDULER_SECRET/);
   assert.match(workflow, /api\/internal\/scheduler/);
 });

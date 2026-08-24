@@ -2,7 +2,9 @@ name: Pi background research scheduler
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Twice hourly, away from the high-contention start of the hour. A visit
+    # still provides a 25-minute backstop for an actively used workspace.
+    - cron: "17,47 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -19,8 +21,9 @@ jobs:
           PI_SCHEDULER_SECRET: ${{ secrets.PI_SCHEDULER_SECRET }}
         run: |
           test -n "$PI_SCHEDULER_SECRET"
-          curl --silent --show-error --fail-with-body \
+          response="$(curl --silent --show-error --fail-with-body \
             --retry 2 --retry-all-errors --connect-timeout 15 --max-time 240 \
             --request POST \
             --header "Authorization: Bearer $PI_SCHEDULER_SECRET" \
-            https://pi-research-agent.qiudao-pika.chatgpt.site/api/internal/scheduler
+            https://pi-research-agent.qiudao-pika.chatgpt.site/api/internal/scheduler)"
+          jq -e '(.acquired == true) or (.acquired == false)' <<<"$response" >/dev/null

@@ -36,6 +36,21 @@ const SCHEDULER_LEASE_MS = MONITOR_SCHEDULER_BUCKET_MS - 60_000;
 const HARD_STALE_JOB_HOURS = 6;
 const VISIT_BACKSTOP_GAP_MS = 25 * 60 * 1000;
 
+async function reconcileExpiredSchedulerTicks(env: Env) {
+  await env.DB.prepare(
+    `UPDATE monitor_scheduler_ticks SET
+      completed_at = COALESCE(lease_expires_at, started_at),
+      lease_token = NULL,
+      lease_expires_at = NULL,
+      failed_count = CASE WHEN failed_count > 0 THEN failed_count ELSE 1 END,
+      error = CASE WHEN error = '' THEN 'scheduler_lease_expired' ELSE error END,
+      health_status = 'recovered_timeout'
+     WHERE completed_at IS NULL
+      AND lease_expires_at IS NOT NULL
+      AND datetime(lease_expires_at) <= CURRENT_TIMESTAMP`,
+  ).run();
+}
+
 async function visitBackstopIsDue(env: Env) {
   const last = await env.DB.prepare(
     `SELECT completed_at FROM monitor_scheduler_ticks
@@ -51,8 +66,8 @@ async function acquireSchedulerLease(env: Env, trigger: SchedulerTrigger) {
   const leaseToken = crypto.randomUUID();
   const leaseExpiresAt = new Date(now.getTime() + SCHEDULER_LEASE_MS).toISOString();
   const previousTick = await env.DB.prepare(
-    `SELECT COALESCE(completed_at, started_at) AS heartbeat_at FROM monitor_scheduler_ticks
-     WHERE id != ? ORDER BY datetime(COALESCE(completed_at, started_at)) DESC LIMIT 1`,
+    `SELECT completed_at AS heartbeat_at FROM monitor_scheduler_ticks
+     WHERE id != ? AND completed_at IS NOT NULL ORDER BY datetime(completed_at) DESC LIMIT 1`,
   ).bind(tickId).first<{ heartbeat_at: string | null }>();
   const previousHeartbeatAt = previousTick?.heartbeat_at || null;
   const previousHeartbeatMs = previousHeartbeatAt ? Date.parse(previousHeartbeatAt) : 0;
@@ -130,6 +145,7 @@ async function recoverStaleMonitorJobs(env: Env) {
 }
 
 async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger: SchedulerTrigger) {
+  await reconcileExpiredSchedulerTicks(env);
   const lease = await acquireSchedulerLease(env, trigger);
   if (!lease.acquired) return { acquired: false, trigger };
   const { tickId, leaseToken } = lease;
@@ -153,9 +169,9 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
           AND (r.next_run_at IS NULL OR datetime(r.next_run_at) <= CURRENT_TIMESTAMP)
           AND (r.lock_expires_at IS NULL OR datetime(r.lock_expires_at) <= CURRENT_TIMESTAMP))
        )
-       ORDER BY CASE WHEN r.status NOT IN ('ready', 'error', 'idle') THEN 0 ELSE 1 END,
-        CASE WHEN r.last_user_activity_at IS NULL THEN 1 ELSE 0 END,
+       ORDER BY CASE WHEN r.last_user_activity_at IS NULL THEN 1 ELSE 0 END,
         datetime(r.last_user_activity_at) DESC,
+        CASE WHEN r.status NOT IN ('ready', 'error', 'idle') THEN 0 ELSE 1 END,
         COALESCE(r.next_run_at, r.last_run_at, r.updated_at) ASC LIMIT ?`,
     ).bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
     dueSpaceCount = due.results.length;
