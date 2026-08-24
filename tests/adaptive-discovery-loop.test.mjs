@@ -71,10 +71,12 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /enriching_screening_abstracts/);
   assert.match(monitor, /reasoning_effort: "medium"/);
   assert.match(monitor, /DEEP_REVIEW_LIMIT = 8/);
-  assert.match(monitor, /DEEP_REVIEW_RESCUE_LIMIT = 4/);
+  assert.match(monitor, /DEEP_REVIEW_RESCUE_LIMIT = 6/);
   assert.match(monitor, /DEEP_REVIEW_MAX_LIMIT/);
-  assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 3/);
-  assert.match(monitor, /continuous-recommendation-v9-verified/);
+  assert.match(monitor, /DAILY_RECOMMENDATION_MIN_TARGET = 3/);
+  assert.match(monitor, /DAILY_RECOMMENDATION_MAX_TARGET = 6/);
+  assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 5/);
+  assert.match(monitor, /continuous-recommendation-v10-final-yield/);
   assert.match(monitor, /recommendationEligibility = explicitlyRestricted \? "1 = 1"/);
   assert.match(monitor, /final reconciliation and job counts still need that record/);
   assert.match(monitor, /recommendationShortfall/);
@@ -82,6 +84,9 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /Math\.ceil\(limit \/ 2\)/);
   assert.match(monitor, /rescueReview: true/);
   assert.match(monitor, /正在追加 \$\{rescueIds\.length\} 篇第二批评审/);
+  assert.match(monitor, /formalRecommendationRescueSize/);
+  assert.match(monitor, /formal_yield_rescue_started/);
+  assert.match(monitor, /质量门槛不变/);
   assert.match(monitor, /DEEP_REVIEW_BATCH_SIZE = 1/);
   assert.match(monitor, /DEEP_REVIEW_CONCURRENCY = 2/);
   assert.match(monitor, /MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120/);
@@ -155,6 +160,9 @@ test("today and its daily brief are capped at six and reranked across directions
   assert.match(client, /v2-daily-brief-list/);
   assert.match(client, /v2-daily-paper-authors/);
   assert.match(client, /v2-daily-paper-publication/);
+  assert.match(client, /PaperDiscoverySourceBadge/);
+  assert.match(monitor, /重点期刊前向扫描/);
+  assert.match(monitor, /核心论文引用追踪/);
   assert.match(client, /作者信息未提供/);
   assert.match(client, /"被引"/);
   assert.match(client, /<details key=\{paper\?\.id/);
@@ -174,6 +182,13 @@ test("discovery and evidence expansion run independent upstream calls concurrent
   assert.match(monitor, /Semantic Scholar · OpenAlex · arXiv 并行检索/);
   assert.match(monitor, /const \[semantic, openAlex, arxiv\] = await Promise\.all/);
   assert.match(monitor, /const relationResults = await Promise\.all/);
+});
+
+test("the release gate exercises live sources, both research profiles, and the complete regression suite", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.match(packageJson.scripts["test:release"], /test:live/);
+  assert.match(packageJson.scripts["test:release"], /test:discovery:live/);
+  assert.match(packageJson.scripts["test:release"], /npm test/);
 });
 
 test("accepted-paper token efficiency uses private audit allocations", async () => {

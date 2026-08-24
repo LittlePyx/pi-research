@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   deepCandidateScore,
+  formalRecommendationRescueSize,
   isContinuityDeepCandidate,
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
@@ -43,4 +44,11 @@ test("long-term monitoring preserves credible lower-scoring papers for one evide
   assert.equal(isContinuityDeepCandidate(subtle), true);
   assert.equal(isRescueDeepCandidate(subtle), false);
   assert.equal(isContinuityDeepCandidate({ ...subtle, isPaper: false }), false);
+});
+
+test("formal recommendation shortfalls trigger more review without lowering quality gates", () => {
+  assert.equal(formalRecommendationRescueSize({ published: 1, reviewed: 8, maxReviews: 14, availableCandidates: 12 }), 4);
+  assert.equal(formalRecommendationRescueSize({ published: 2, reviewed: 12, maxReviews: 14, availableCandidates: 12 }), 2);
+  assert.equal(formalRecommendationRescueSize({ published: 3, reviewed: 8, maxReviews: 14, availableCandidates: 12 }), 0);
+  assert.equal(formalRecommendationRescueSize({ published: 0, reviewed: 14, maxReviews: 14, availableCandidates: 12 }), 0);
 });

@@ -9,6 +9,7 @@ import { hasStrongFitScoreContradiction, inferModelScoreScale, normalizeModelSco
 import { passesRecommendationGate } from "../../../lib/discovery/review-gate";
 import {
   deepCandidateScore,
+  formalRecommendationRescueSize,
   isContinuityDeepCandidate,
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
@@ -299,6 +300,8 @@ type PaperRow = {
   verification_status: EvidenceVerificationStatus;
   verification_coverage_score: number;
   track_id: string;
+  discovery_provider: string;
+  discovery_channels: string;
   discovery_source_key: string;
   discovery_route_id: string;
   discovery_route_interaction: number;
@@ -517,9 +520,11 @@ const QUICK_SCREEN_CONCURRENCY = 2;
 const DEEP_REVIEW_BATCH_SIZE = 1;
 const DEEP_REVIEW_CONCURRENCY = 2;
 const DEEP_REVIEW_LIMIT = 8;
-const DEEP_REVIEW_RESCUE_LIMIT = 4;
+const DEEP_REVIEW_RESCUE_LIMIT = 6;
 const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
-const HIGH_POTENTIAL_DRAFT_TARGET = 3;
+const DAILY_RECOMMENDATION_MIN_TARGET = 3;
+const DAILY_RECOMMENDATION_MAX_TARGET = 6;
+const HIGH_POTENTIAL_DRAFT_TARGET = 5;
 const DEEP_REVIEW_CARRYOVER_LIMIT = 2;
 const RESCUE_SCREEN_LIMIT = 8;
 const CONTINUITY_DEEP_REVIEW_LIMIT = 4;
@@ -534,9 +539,10 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v9-verified";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v10-final-yield";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
+  "continuous-recommendation-v9-verified",
   "continuous-evidence-v8-yield-verified",
 ]);
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
@@ -4015,6 +4021,21 @@ function isPaperDue(paper: PaperRow, now: number) {
   return now - databaseTime(paper.last_shown_at) >= reminderDays * 24 * 60 * 60 * 1000;
 }
 
+function monitorDiscoverySources(provider: string, channels: string) {
+  const sourceKinds = new Set(channels.split(",").map((item) => cleanText(item).toLocaleLowerCase()).filter(Boolean));
+  const sources: Array<{ key: string; labelZh: string; labelEn: string }> = [];
+  const add = (key: string, labelZh: string, labelEn: string) => {
+    if (!sources.some((source) => source.key === key)) sources.push({ key, labelZh, labelEn });
+  };
+  if (sourceKinds.has("citation")) add("citation", "核心论文引用追踪", "Citation tracking");
+  if (sourceKinds.has("journal")) add("journal", "重点期刊前向扫描", "Priority-journal scan");
+  if (sourceKinds.has("author")) add("author", "作者与团队追踪", "Author and team tracking");
+  if (sourceKinds.has("preprint") || provider === "arxiv") add("preprint", "arXiv 预印本扫描", "arXiv preprint scan");
+  if (sourceKinds.has("semantic") || provider === "openalex" || provider === "semantic_scholar") add("database", "学术数据库检索", "Scholarly database search");
+  if (sourceKinds.has("topic") || provider === "crossref") add("topic", "主题与关键词检索", "Topic and keyword search");
+  return sources.slice(0, 3);
+}
+
 function toPaper(paper: PaperRow, now: number) {
   const originKind = monitorRouteOriginKind(paper.discovery_source_key, paper.discovery_route_id);
   const discoveryType = originKind === "route_gap" ? "gap" as const
@@ -4046,6 +4067,7 @@ function toPaper(paper: PaperRow, now: number) {
     qualityScore: paper.quality_score,
     priorityVenue: Boolean(paper.priority_venue),
     analysisSource: paper.analysis_source,
+    discoverySources: monitorDiscoverySources(paper.discovery_provider, paper.discovery_channels),
     userState: paperUserState(paper, now),
     showCount: paper.show_count,
     saved: Boolean(paper.saved),
@@ -4110,6 +4132,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       .bind(space.id).first<RunRow>(),
     database.prepare(
       `SELECT p.id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.horizon,
+       p.source AS discovery_provider,
+       COALESCE((SELECT group_concat(DISTINCT candidate_source.channel) FROM monitor_candidate_sources candidate_source
+        WHERE candidate_source.space_id = p.space_id AND candidate_source.paper_id = p.id), '') AS discovery_channels,
        p.citation_count, p.relevance_score, p.discovered_at, COALESCE(i.abstract_text, '') AS abstract_text,
        COALESCE(i.summary_zh, '') AS summary_zh, COALESCE(i.summary_en, '') AS summary_en,
        COALESCE(i.why_read_zh, '') AS why_read_zh, COALESCE(i.why_read_en, '') AS why_read_en,
@@ -6509,6 +6534,45 @@ export async function POST(request: Request) {
           `证据核对 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已确认${retrying ? `，${retrying} 篇正在自动重试证据核对` : `，${pending} 篇高潜力解读等待后续核对`}`,
           verificationProgress, job.id).run();
         if (verificationProcessed >= work.verificationIds.length) {
+          const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
+          const availableCandidates = allCandidates.filter((candidate) => !work.deepIds.includes(candidate.canonicalId));
+          const formalRescueSize = formalRecommendationRescueSize({
+            published,
+            reviewed: work.deepIds.length,
+            maxReviews: DEEP_REVIEW_MAX_LIMIT,
+            availableCandidates: availableCandidates.length,
+            minTarget: DAILY_RECOMMENDATION_MIN_TARGET,
+            maxPerWave: DEEP_REVIEW_RESCUE_LIMIT,
+          });
+          if (formalRescueSize > 0) {
+            const formalRescueIds = Array.from(new Set([
+              ...chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, formalRescueSize),
+              ...chooseContinuityCandidateIds(allCandidates, work.screens, work.deepIds, formalRescueSize),
+            ])).slice(0, formalRescueSize);
+            if (formalRescueIds.length) {
+              work.deepIds = [...work.deepIds, ...formalRescueIds].slice(0, DEEP_REVIEW_MAX_LIMIT);
+              await saveScanWorkQueue(database, job.id, work);
+              await recordReliabilityEvent(database, {
+                spaceId: space.id,
+                scanJobId: job.id,
+                kind: "formal_yield_rescue_started",
+                stage: "verifying_recommendations",
+                source: MONITOR_MODEL,
+                outcome: "info",
+                message: "Evidence checks left the formal daily queue below target; an additional quality-preserving review wave was scheduled",
+                metadata: {
+                  published,
+                  minimumTarget: DAILY_RECOMMENDATION_MIN_TARGET,
+                  maximumDisplayTarget: DAILY_RECOMMENDATION_MAX_TARGET,
+                  additionalReviews: formalRescueIds.length,
+                  qualityGateUnchanged: true,
+                },
+              });
+              await setStage("enriching_abstracts", "deep_reviewing", 84,
+                `已有 ${published} 篇正式入选；正在追加 ${formalRescueIds.length} 篇候选评审，争取达到 ${DAILY_RECOMMENDATION_MIN_TARGET} 篇，质量门槛不变`);
+              return Response.json(await readState(database, space, { formalYieldRescue: true }), { status: 202 });
+            }
+          }
           work.evidenceIds = [];
           work.evidenceCompletedIds = [];
           await saveScanWorkQueue(database, job.id, work);

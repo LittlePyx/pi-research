@@ -54,6 +54,7 @@ type MonitorPaper = {
   qualityScore: number;
   priorityVenue: boolean;
   analysisSource: string;
+  discoverySources?: Array<{ key: string; labelZh: string; labelEn: string }>;
   userState: "unseen" | "seen" | "snoozed" | "accepted" | "dismissed";
   showCount: number;
   saved: boolean;
@@ -1135,6 +1136,13 @@ function RecommendationVerificationBadge({ paper, locale }: { paper: MonitorPape
     : paper.verificationStatus === "revised"
       ? (locale === "zh" ? "核验后已修订" : "Verified and revised") : "";
   return verificationLabel ? <span className={`v2-verification-badge ${paper.verificationStatus}`} title={locale === "zh" ? `关键表述证据覆盖 ${paper.verificationCoverageScore}%` : `${paper.verificationCoverageScore}% evidence coverage for substantive statements`}><i />{verificationLabel}</span> : null;
+}
+
+function PaperDiscoverySourceBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
+  const sources = paper.discoverySources || [];
+  if (!sources.length) return null;
+  const labels = sources.map((source) => locale === "zh" ? source.labelZh : source.labelEn);
+  return <span className="v2-paper-discovery-source" title={labels.join(" · ")}><i />{labels[0]}{labels.length > 1 ? ` +${labels.length - 1}` : ""}</span>;
 }
 
 function monitorPaperHorizonLabel(paper: MonitorPaper, locale: Locale) {
@@ -2705,7 +2713,6 @@ export default function ResearchApp({ user }: { user: User }) {
   const [learningReloadNonce, setLearningReloadNonce] = useState(0);
   const learningRequestRef = useRef(0);
   const learningIntentRef = useRef<{ spaceId: string; trackId: string; target: string } | null>(null);
-  const [modelConfigured, setModelConfigured] = useState(false);
   const [modelConnectionState, setModelConnectionState] = useState<ModelConnectionState>("checking");
   const [connectedModel, setConnectedModel] = useState<string | null>(null);
   const [modelCredentialSource, setModelCredentialSource] = useState<"browser" | "server" | null>(null);
@@ -3254,7 +3261,6 @@ export default function ResearchApp({ user }: { user: User }) {
           }
         }
         const credentialPresent = Boolean(data.modelConfigured);
-        setModelConfigured(false);
         setModelConnectionState(credentialPresent ? "checking" : "unconfigured");
         setConnectedModel(data.model || null);
         setModelCredentialSource(data.modelCredentialSource || null);
@@ -3264,13 +3270,11 @@ export default function ResearchApp({ user }: { user: User }) {
             .then(async (response) => {
               const status = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
               if (!response.ok || !status.configured) throw new Error(status.error || "model status unavailable");
-              setModelConfigured(true);
               setModelConnectionState("connected");
               setConnectedModel(status.model || null);
               setModelCredentialSource(status.source || null);
             })
             .catch((error) => {
-              setModelConfigured(false);
               setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
             })
             .finally(() => setCheckingModel(false));
@@ -3863,7 +3867,6 @@ export default function ResearchApp({ user }: { user: User }) {
       setAnswerMode(data.mode || "preview");
       setAnswerModel(data.model || null);
       if (data.mode === "deepseek") {
-        setModelConfigured(true);
         setModelConnectionState("connected");
         setConnectedModel(data.model || connectedModel);
       }
@@ -3901,7 +3904,6 @@ export default function ResearchApp({ user }: { user: User }) {
       const message = monitorFailureMessage(error, locale);
       setToast(message);
       if (isModelCredentialFailure(error)) {
-        setModelConfigured(false);
         setModelConnectionState("invalid");
         setModelSettingsError(message);
         setModelSettingsOpen(true);
@@ -4766,7 +4768,6 @@ export default function ResearchApp({ user }: { user: User }) {
       const response = await fetch("/api/model-settings?verify=1", { cache: "no-store" });
       const data = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
       if (!response.ok) throw new Error(data.error || "model status unavailable");
-      setModelConfigured(Boolean(data.configured));
       setModelConnectionState(data.configured ? "connected" : "unconfigured");
       setConnectedModel(data.model || null);
       setModelCredentialSource(data.source || null);
@@ -4775,7 +4776,6 @@ export default function ResearchApp({ user }: { user: User }) {
         : (locale === "zh" ? "当前浏览器还没有可用的 API Key" : "This browser does not have a usable API key yet"));
     } catch (error) {
       const message = monitorFailureMessage(error, locale);
-      setModelConfigured(false);
       setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
       setModelSettingsError(message);
     } finally {
@@ -4797,7 +4797,6 @@ export default function ResearchApp({ user }: { user: User }) {
       });
       const data = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
       if (!response.ok) throw new Error(data.error || "DeepSeek connection failed");
-      setModelConfigured(true);
       setModelConnectionState("connected");
       setConnectedModel(data.model || "deepseek-v4-pro");
       setModelCredentialSource("browser");
@@ -4805,7 +4804,6 @@ export default function ResearchApp({ user }: { user: User }) {
       setShowModelApiKey(false);
       setToast(locale === "zh" ? "API Key 已验证并保存到当前浏览器" : "The API key was verified and saved in this browser");
     } catch (error) {
-      setModelConfigured(false);
       setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
       setModelSettingsError(monitorFailureMessage(error, locale));
     } finally {
@@ -4826,13 +4824,11 @@ export default function ResearchApp({ user }: { user: User }) {
       setShowModelApiKey(false);
       const statusResponse = await fetch("/api/model-settings?verify=1", { cache: "no-store" });
       const status = await statusResponse.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null };
-      setModelConfigured(Boolean(status.configured));
       setModelConnectionState(status.configured ? "connected" : "unconfigured");
       setConnectedModel(status.model || null);
       setModelCredentialSource(status.source || null);
       setToast(locale === "zh" ? "当前浏览器保存的 API Key 已删除" : "The browser-stored API key was removed");
     } catch (error) {
-      setModelConfigured(false);
       setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
       setModelSettingsError(error instanceof Error ? error.message : (locale === "zh" ? "暂时无法删除 API Key" : "Could not remove the API key"));
     } finally {
@@ -4930,19 +4926,19 @@ export default function ResearchApp({ user }: { user: User }) {
                     const signal = dailySignals[index];
                     const readingAction = dailyReadingPlan[index];
                     return <details key={paper?.id || `${index}:${signal || readingAction}`}>
-                      <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i>{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}<RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
+                      <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i>{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}<PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
                       <div className="v2-daily-paper-analysis">{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看解读" : "Open analysis"} →</button><button className="positive" type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {locale === "zh" ? "适合" : "Useful"}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {locale === "zh" ? "不相关" : "Not relevant"}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant", "duplicate_known")}>◎ {locale === "zh" ? "已掌握" : "Mastered"}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {locale === "zh" ? "稍后" : "Later"}</button></footer>}</div>
                     </details>;
                   })}
                 </div>
-                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "为什么今天没有推荐？" : "Why are there no recommendations today?"}</strong><p>{locale === "zh" ? `${latestQuickScreenedCount} 篇论文完成快速筛选，${latestDeepReviewedCount} 篇完成逐篇深度解读${latestDeepDeferredCount ? `，另有 ${latestDeepDeferredCount} 篇响应较慢已延后` : ""}；已完成论文没有同时通过研究相关性、论文质量、证据完整度与模型明确推荐四项门槛。` : `${latestQuickScreenedCount} papers passed fast screening and ${latestDeepReviewedCount} completed paper-by-paper deep review${latestDeepDeferredCount ? `; ${latestDeepDeferredCount} slow papers were deferred` : ""}. The completed papers did not clear all four gates for research fit, quality, evidence completeness, and an explicit model recommendation.`}</p><small>{locale === "zh" ? "Pi 不会为了填满页面降低标准；单篇响应过慢不会再阻塞整轮，首批零入选时仍会追加临界论文复审。" : "Pi will not lower the bar to fill the page. One slow paper no longer blocks the full run, and a zero-yield first batch still triggers a near-miss review batch."}</small></div>}
+                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "为什么今天没有推荐？" : "Why are there no recommendations today?"}</strong><p>{locale === "zh" ? `${latestQuickScreenedCount} 篇论文完成快速筛选，${latestDeepReviewedCount} 篇完成逐篇深度解读${latestDeepDeferredCount ? `，另有 ${latestDeepDeferredCount} 篇响应较慢已延后` : ""}；已完成论文没有同时通过研究相关性、论文质量、证据完整度与模型明确推荐四项门槛。` : `${latestQuickScreenedCount} papers passed fast screening and ${latestDeepReviewedCount} completed paper-by-paper deep review${latestDeepDeferredCount ? `; ${latestDeepDeferredCount} slow papers were deferred` : ""}. The completed papers did not clear all four gates for research fit, quality, evidence completeness, and an explicit model recommendation.`}</p><small>{locale === "zh" ? "Pi 不会为了填满页面降低标准；正式入选不足 3 篇时会继续评审期刊、作者、引用网络与路线缺口候选，直到候选耗尽或达到本轮成本上限。" : "Pi will not lower the bar to fill the page. When fewer than three papers clear the final gate, it continues reviewing journal, author, citation-network, and route-gap candidates until the pool or run budget is exhausted."}</small></div>}
                 {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <aside><strong>{locale === "zh" ? "继续观察" : "Keep watching"}</strong><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></aside>}
               </div>
             </section>}
 
             {Boolean(monitor?.savedCandidatePapers?.length) && <section className="v2-today-more v2-saved-candidates">
               <header><div><p className="v2-kicker warm">π {locale === "zh" ? "已保留的高潜力论文" : "SAVED HIGH-POTENTIAL PAPERS"}</p><h2>{locale === "zh" ? "达到深度评审门槛，证据核对尚未完成" : "Passed deep review; evidence checks are not complete"}</h2><p>{locale === "zh" ? "这里只核对书目、摘要和可追溯来源，不读取全文。论文不会再因重扫、超时或本轮零入选而消失。" : "Pi checks bibliographic data, abstracts, and traceable sources here without reading full text. Rescans, timeouts, and zero-yield runs will not erase these papers."}</p></div><span>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇" : "papers"}</span></header>
-              <div className="v2-compact-list">{(monitor?.savedCandidatePapers || []).map((paper) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span className="v2-tier-badge reserve">{locale === "zh" ? "待恢复证据核对" : "Evidence check saved"}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</small></span><span className="v2-thread-chip">{locale === "zh" ? `相关性 ${paper.relevanceScore}` : `Fit ${paper.relevanceScore}`}</span><b>→</b></button>)}</div>
+              <div className="v2-compact-list">{(monitor?.savedCandidatePapers || []).map((paper) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span className="v2-tier-badge reserve">{locale === "zh" ? "待恢复证据核对" : "Evidence check saved"}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</small><PaperDiscoverySourceBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{locale === "zh" ? `相关性 ${paper.relevanceScore}` : `Fit ${paper.relevanceScore}`}</span><b>→</b></button>)}</div>
             </section>}
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
@@ -5059,7 +5055,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
             {Boolean(additionalTodayPapers.length) && <section className="v2-today-more">
               <header><div><p className="v2-kicker warm">{locale === "zh" ? "更多推荐" : "MORE RECOMMENDATIONS"}</p><h2>{locale === "zh" ? "不在今日主队列，但仍值得保留" : "Worth keeping beyond the main queue"}</h2></div><span>{additionalTodayPapers.length} {locale === "zh" ? "篇" : "papers"}</span></header>
-              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
+              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
             </section>}
 
           </main>
@@ -5250,7 +5246,7 @@ export default function ResearchApp({ user }: { user: User }) {
               {visibleLibraryPapers.map((paper) => (
                 <article className={"v2-library-paper " + paper.userState} key={paper.id}>
                   <button className="v2-library-paper-main" type="button" onClick={() => openMonitorPaper(paper)}>
-                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? (locale === "zh" ? "高潜力待核验" : "High potential") : paper.qualityStage === "reviewed" ? (locale === "zh" ? "已评审归档" : "Reviewed archive") : (locale === "zh" ? "发现归档" : "Discovery archive")}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span>{paper.qualityStage === "recommended" && <span>{t.qualityScore} {displayQualityScore(paper.qualityScore)}</span>}<RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>
+                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? (locale === "zh" ? "高潜力待核验" : "High potential") : paper.qualityStage === "reviewed" ? (locale === "zh" ? "已评审归档" : "Reviewed archive") : (locale === "zh" ? "发现归档" : "Discovery archive")}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span>{paper.qualityStage === "recommended" && <span>{t.qualityScore} {displayQualityScore(paper.qualityScore)}</span>}<PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>
                     <h2>{paper.title}</h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p>
                     <p className="v2-library-paper-why"><b>{paper.qualityStage === "recommended" || paper.qualityStage === "reviewing" ? t.whySuitable : locale === "zh" ? "归档说明" : "Archive note"}</b>{(locale === "zh" ? paper.whyReadZh : paper.whyReadEn) || (paper.qualityStage === "reviewed" ? (locale === "zh" ? "Pi 已完成质量评审，但它没有进入正式推荐队列；保留在论文库供后续检索。" : "Pi reviewed this paper, but it did not enter the formal recommendation queue. It remains searchable in the library.") : (locale === "zh" ? "扫描过程中发现的真实论文，尚未完成深度解读；保留在论文库，不等同于推荐。" : "A real paper found during discovery. Deep analysis is not complete; archiving it does not mean it is recommended."))}</p>
                     <footer><span>◎ {reminderLabel(paper, locale)}</span><span>{t.relevanceScoreLabel} {paper.relevanceScore}</span><b>{t.viewAnalysis} →</b></footer>
@@ -5294,7 +5290,7 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
             <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "library" ? t.library : t.paperBack}</button>
-            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.recommendationTier || "browse"}`}>{recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale)}</span><span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span><RecommendationVerificationBadge paper={selectedMonitorPaper} locale={locale} /><RouteDiscoveryBadge paper={selectedMonitorPaper} locale={locale} /></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a></div></section>
+            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.recommendationTier || "browse"}`}>{recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale)}</span><span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>{selectedMonitorPaper.priorityVenue && <span className="v2-real-badge">◆ {t.priorityVenueLabel}</span>}<span>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</span><span>{selectedMonitorPaper.analysisSource === "deepseek" ? "π " + t.aiBrief : t.metadataBrief}</span><PaperDiscoverySourceBadge paper={selectedMonitorPaper} locale={locale} /><RecommendationVerificationBadge paper={selectedMonitorPaper} locale={locale} /><RouteDiscoveryBadge paper={selectedMonitorPaper} locale={locale} /></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>π {t.askAboutPaper}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a></div></section>
             <div className="v2-paper-detail-grid">
               <div>
                 <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong>{selectedMonitorPaper.qualityStage === "recommended" && <><span>{t.qualityScore}</span><strong>{displayQualityScore(selectedMonitorPaper.qualityScore)}</strong></>}</div></section>
@@ -5307,7 +5303,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   <article className="caution"><small>{locale === "zh" ? "限制与不确定性" : "Limits & uncertainty"}</small><p>{(locale === "zh" ? selectedMonitorPaper.limitationsZh : selectedMonitorPaper.limitationsEn) || (locale === "zh" ? "当前元数据不足以支持更具体的限制判断，建议核对原文。" : "Available metadata is insufficient for a more specific limitation assessment; verify against the paper.")}</p></article>
                   <article className="focus"><small>{locale === "zh" ? "阅读时重点看" : "What to focus on"}</small><p>{(locale === "zh" ? selectedMonitorPaper.readingFocusZh : selectedMonitorPaper.readingFocusEn) || (locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn)}</p></article>
                 </div>{Boolean((locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn)?.length) && <footer><small>{locale === "zh" ? "可以继续追问" : "Questions to pursue"}</small><ol>{(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn).map((question) => <li key={question}>{question}</li>)}</ol></footer>}</section>
-                <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div>{selectedMonitorPaper.qualityStage === "recommended" && <div><dt>{t.qualityScore}</dt><dd>{displayQualityScore(selectedMonitorPaper.qualityScore)}</dd></div>}<div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
+                <section className="v2-content-section"><p className="v2-kicker">{t.recommendationSignals}</p><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div>{selectedMonitorPaper.qualityStage === "recommended" && <div><dt>{t.qualityScore}</dt><dd>{displayQualityScore(selectedMonitorPaper.qualityScore)}</dd></div>}<div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.discoverySources?.length ? selectedMonitorPaper.discoverySources.map((source) => locale === "zh" ? source.labelZh : source.labelEn).join(" · ") : selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></section>
               </div>
               <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{locale === "zh" ? "保存时 Pi 会提取可复用结论、方法、问题与研究连接；相同笔记不会重复消耗 Token。" : "When saved, Pi extracts reusable conclusions, methods, questions, and research links. Identical notes are not analyzed twice."}</small><button className="v2-save-note" type="button" disabled={readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "Pi 正在沉淀…" : "Pi is synthesizing…") : (locale === "zh" ? "保存并沉淀到研究记忆" : "Save to research memory")}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</dd></div><div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div><div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><a className="v2-original-link wide" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
             </div>
