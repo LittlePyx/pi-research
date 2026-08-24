@@ -539,11 +539,9 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v10-final-yield";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v11-release-yield";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
-  "continuous-recommendation-v9-verified",
-  "continuous-evidence-v8-yield-verified",
 ]);
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
@@ -5494,7 +5492,11 @@ async function runLegacyMonitor(request: Request) {
     }
     const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
     if (previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
-      return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
+      return Response.json(await readState(database, space, {
+        cached: true,
+        throttled: Boolean(payload.force),
+        retryAfterMinutes: Math.max(1, Math.ceil((minimumAge - (now.getTime() - previousTime)) / 60_000)),
+      }));
     }
 
     const previousJob = await database.prepare(
@@ -5768,7 +5770,11 @@ export async function POST(request: Request) {
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
       const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
       if (!qualityCarryover && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
-        return Response.json(await readState(database, space, { cached: true, throttled: Boolean(payload.force) }));
+        return Response.json(await readState(database, space, {
+          cached: true,
+          throttled: Boolean(payload.force),
+          retryAfterMinutes: Math.max(1, Math.ceil((minimumAge - (now.getTime() - previousTime)) / 60_000)),
+        }));
       }
       const lockToken = crypto.randomUUID();
       const jobId = crypto.randomUUID();

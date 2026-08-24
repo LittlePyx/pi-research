@@ -76,7 +76,8 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DAILY_RECOMMENDATION_MIN_TARGET = 3/);
   assert.match(monitor, /DAILY_RECOMMENDATION_MAX_TARGET = 6/);
   assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 5/);
-  assert.match(monitor, /continuous-recommendation-v10-final-yield/);
+  assert.match(monitor, /continuous-recommendation-v11-release-yield/);
+  assert.doesNotMatch(monitor, /"continuous-recommendation-v9-verified"/);
   assert.match(monitor, /recommendationEligibility = explicitlyRestricted \? "1 = 1"/);
   assert.match(monitor, /final reconciliation and job counts still need that record/);
   assert.match(monitor, /recommendationShortfall/);
@@ -87,6 +88,9 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /formalRecommendationRescueSize/);
   assert.match(monitor, /formal_yield_rescue_started/);
   assert.match(monitor, /质量门槛不变/);
+  assert.match(monitor, /retryAfterMinutes: Math\.max/);
+  assert.match(client, /刚才没有启动重复扫描/);
+  assert.match(client, /manualCooldownBlocked/);
   assert.match(monitor, /DEEP_REVIEW_BATCH_SIZE = 1/);
   assert.match(monitor, /DEEP_REVIEW_CONCURRENCY = 2/);
   assert.match(monitor, /MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120/);
