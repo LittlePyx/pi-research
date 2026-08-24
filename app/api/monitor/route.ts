@@ -253,6 +253,7 @@ type PaperRow = {
   citation_count: number;
   relevance_score: number;
   discovered_at: string;
+  last_recommended_at: string | null;
   abstract_text: string;
   summary_zh: string;
   summary_en: string;
@@ -4082,6 +4083,10 @@ function toPaper(paper: PaperRow, now: number) {
     citationCount: paper.citation_count,
     relevanceScore: paper.llm_relevance_score,
     discoveredAt: paper.discovered_at,
+    recommendedAt: paper.last_recommended_at,
+    recommendationOrigin: paper.last_recommended_at
+      && databaseTime(paper.last_recommended_at) - databaseTime(paper.discovered_at) >= 24 * 60 * 60 * 1000
+      ? "backlog_review" : "current_discovery",
     summaryZh: paper.summary_zh,
     summaryEn: paper.summary_en,
     whyReadZh: paper.why_read_zh,
@@ -4158,7 +4163,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        p.source AS discovery_provider,
        COALESCE((SELECT group_concat(DISTINCT candidate_source.channel) FROM monitor_candidate_sources candidate_source
         WHERE candidate_source.space_id = p.space_id AND candidate_source.paper_id = p.id), '') AS discovery_channels,
-       p.citation_count, p.relevance_score, p.discovered_at, COALESCE(i.abstract_text, '') AS abstract_text,
+       p.citation_count, p.relevance_score, p.discovered_at, i.last_recommended_at, COALESCE(i.abstract_text, '') AS abstract_text,
        COALESCE(i.summary_zh, '') AS summary_zh, COALESCE(i.summary_en, '') AS summary_en,
        COALESCE(i.why_read_zh, '') AS why_read_zh, COALESCE(i.why_read_en, '') AS why_read_en,
        COALESCE(i.quality_score, 0) AS quality_score, COALESCE(i.priority_venue, 0) AS priority_venue,
@@ -4500,7 +4505,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const now = Date.now();
   const duePapers = papers.results
     .filter((paper) => paper.quality_stage === "recommended" && paper.analysis_model === MONITOR_MODEL && isPaperDue(paper, now))
-    .sort((left, right) => left.show_count - right.show_count || right.discovery_route_interaction - left.discovery_route_interaction
+    .sort((left, right) => databaseTime(right.last_recommended_at) - databaseTime(left.last_recommended_at)
+      || left.show_count - right.show_count || right.discovery_route_interaction - left.discovery_route_interaction
       || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at));
   const selected = selectDiverseItems(
     duePapers,
