@@ -409,7 +409,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-route-quality-flow/);
   assert.match(worker, /runScheduledMonitorSweep/);
   assert.match(worker, /async scheduled/);
-  assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 4/);
+  assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 1/);
   assert.match(worker, /LIMIT \?/);
   assert.match(worker, /Promise\.allSettled/);
   assert.match(viteConfig, /crons: \["\*\/10 \* \* \* \*"\]/);

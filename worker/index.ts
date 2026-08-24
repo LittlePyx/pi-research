@@ -30,7 +30,7 @@ interface ExecutionContext {
 
 type SchedulerTrigger = "cloudflare_cron" | "external_watchdog" | "visit_backstop";
 
-const SCHEDULED_SPACE_BATCH_SIZE = 4;
+const SCHEDULED_SPACE_BATCH_SIZE = 1;
 const SCHEDULED_ADVANCE_STEPS = 1;
 const SCHEDULER_LEASE_MS = MONITOR_SCHEDULER_BUCKET_MS - 60_000;
 const HARD_STALE_JOB_HOURS = 6;
