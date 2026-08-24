@@ -14,6 +14,8 @@ import {
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
   selectBalancedByGroup,
+  selectBudgetedDeepReviewCandidates,
+  summarizeDeepSelectionOutcomes,
 } from "../../../lib/discovery/candidate-selection.mjs";
 import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
 import { mergeDailyBriefHistory } from "../../../lib/daily-brief-history.mjs";
@@ -466,8 +468,11 @@ type HorizonScanStats = {
 };
 type ScanWorkQueue = {
   candidateIds: string[];
+  currentCandidateIds: string[];
   screens: QuickScreen[];
   deepIds: string[];
+  deepSelectionOrigins: Record<string, "fresh" | "route" | "backlog">;
+  selectionFailureReasons: Record<string, number>;
   deepCompletedIds: string[];
   deepDeferredIds: string[];
   retryDeepIds: string[];
@@ -530,7 +535,6 @@ const DAILY_RECOMMENDATION_MAX_TARGET = 6;
 const HIGH_POTENTIAL_DRAFT_TARGET = 5;
 const DEEP_REVIEW_CARRYOVER_LIMIT = 2;
 const RESCUE_SCREEN_LIMIT = 8;
-const CONTINUITY_DEEP_REVIEW_LIMIT = 4;
 const HORIZON_REVIEW_LIMITS: Record<Horizon, number> = { days: 12, months: 16, years: 28 };
 const HORIZON_POOL_LIMITS: Record<Horizon, number> = { days: 80, months: 100, years: 140 };
 const CANDIDATE_WORK_QUEUE_LIMIT = Object.values(HORIZON_POOL_LIMITS).reduce((sum, value) => sum + value, 0);
@@ -542,7 +546,7 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v11-release-yield";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v12-fresh-yield";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
 ]);
@@ -1162,17 +1166,21 @@ async function advanceDiscoveryOffset(database: D1Database, spaceId: string, hor
 }
 
 async function countNewCandidates(database: D1Database, spaceId: string, candidates: Array<{ canonicalId: string }>) {
-  if (!candidates.length) return 0;
+  return (await findNewCandidateIds(database, spaceId, candidates)).length;
+}
+
+async function findNewCandidateIds(database: D1Database, spaceId: string, candidates: Array<{ canonicalId: string }>) {
+  if (!candidates.length) return [] as string[];
   const ids = Array.from(new Set(candidates.map((candidate) => candidate.canonicalId)));
-  let known = 0;
+  const known = new Set<string>();
   for (let start = 0; start < ids.length; start += 70) {
     const chunk = ids.slice(start, start + 70);
     const placeholders = chunk.map(() => "?").join(", ");
-    const row = await database.prepare(`SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`)
-      .bind(spaceId, ...chunk).first<{ count: number }>();
-    known += row?.count || 0;
+    const rows = await database.prepare(`SELECT canonical_id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${placeholders})`)
+      .bind(spaceId, ...chunk).all<{ canonical_id: string }>();
+    for (const row of rows.results) known.add(row.canonical_id);
   }
-  return Math.max(0, ids.length - known);
+  return ids.filter((id) => !known.has(id));
 }
 
 async function shouldRunDiscoveryQuery(database: D1Database, spaceId: string, horizon: Horizon, plan: DiscoveryQuery) {
@@ -5090,7 +5098,8 @@ function parseFrozenQueryPlan(value: unknown): QueryPlan | undefined {
 
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
-    candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
+    candidateIds: [], currentCandidateIds: [], screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
+    deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
     verificationAttempts: {}, draftRegenerationAttempts: {},
@@ -5115,11 +5124,20 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
     }
     return {
       candidateIds: Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
+      currentCandidateIds: Array.isArray(parsed.currentCandidateIds) ? parsed.currentCandidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
       screens: Array.isArray(parsed.screens) ? parsed.screens.filter((screen): screen is QuickScreen => Boolean(screen && typeof screen.canonicalId === "string")).slice(0, CANDIDATE_WORK_QUEUE_LIMIT).map((screen) => ({
         ...screen,
         horizon: ["days", "months", "years"].includes(screen.horizon || "") ? screen.horizon : undefined,
       })) : [],
       deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      deepSelectionOrigins: parsed.deepSelectionOrigins && typeof parsed.deepSelectionOrigins === "object" && !Array.isArray(parsed.deepSelectionOrigins)
+        ? Object.fromEntries(Object.entries(parsed.deepSelectionOrigins).filter((entry): entry is [string, "fresh" | "route" | "backlog"] =>
+          Boolean(entry[0]) && ["fresh", "route", "backlog"].includes(String(entry[1]))).slice(0, DEEP_REVIEW_MAX_LIMIT))
+        : {},
+      selectionFailureReasons: parsed.selectionFailureReasons && typeof parsed.selectionFailureReasons === "object" && !Array.isArray(parsed.selectionFailureReasons)
+        ? Object.fromEntries(Object.entries(parsed.selectionFailureReasons).filter(([reason]) => Boolean(reason)).slice(0, 20)
+          .map(([reason, count]) => [reason, Math.max(0, Number(count) || 0)]))
+        : {},
       deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       deepDeferredIds: Array.isArray(parsed.deepDeferredIds) ? parsed.deepDeferredIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       retryDeepIds: Array.isArray(parsed.retryDeepIds) ? parsed.retryDeepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_CARRYOVER_LIMIT) : [],
@@ -5155,7 +5173,8 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
 
 function newScanWorkQueue(): ScanWorkQueue {
   return {
-    candidateIds: [], screens: [], deepIds: [], deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
+    candidateIds: [], currentCandidateIds: [], screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
+    deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
     verificationAttempts: {}, draftRegenerationAttempts: {},
@@ -5240,6 +5259,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
 
   const before = JSON.stringify({
     candidateIds: work.candidateIds,
+    currentCandidateIds: work.currentCandidateIds,
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
     deepCompletedIds: work.deepCompletedIds,
@@ -5254,6 +5274,9 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
   });
   const retained = retainReviewableScanWork(work, reviewableIds);
   Object.assign(work, retained);
+  work.currentCandidateIds = work.currentCandidateIds.filter((id) => reviewableIds.has(id));
+  work.deepSelectionOrigins = Object.fromEntries(Object.entries(work.deepSelectionOrigins)
+    .filter(([id]) => reviewableIds.has(id)));
   work.deepDeferredIds = work.deepDeferredIds.filter((id) => reviewableIds.has(id));
   work.retryDeepIds = work.retryDeepIds.filter((id) => reviewableIds.has(id));
   work.verificationIds = work.verificationIds.filter((id) => reviewableIds.has(id));
@@ -5263,6 +5286,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
   work.evidenceCompletedIds = work.evidenceCompletedIds.filter((id) => reviewableIds.has(id));
   return before !== JSON.stringify({
     candidateIds: work.candidateIds,
+    currentCandidateIds: work.currentCandidateIds,
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
     deepCompletedIds: work.deepCompletedIds,
@@ -5291,48 +5315,73 @@ function chooseDeepCandidateIds(candidates: Candidate[], screens: QuickScreen[],
   ).map((screen) => screen.canonicalId);
 }
 
+function candidateHasReviewableEvidence(candidate: Candidate) {
+  return candidate.title.trim().length >= 8
+    && candidate.authors.trim().length >= 2
+    && candidate.abstractText.trim().length >= 120
+    && Boolean(candidate.publishedAt || candidate.venue.trim());
+}
+
+function chooseBudgetedDeepCandidateIds(
+  candidates: Candidate[],
+  screens: QuickScreen[],
+  currentCandidateIds: Iterable<string>,
+  limit = DEEP_REVIEW_LIMIT,
+  pinnedIds: Iterable<string> = [],
+  includeContinuity = false,
+) {
+  const currentIds = new Set(currentCandidateIds);
+  const pinned = new Set(pinnedIds);
+  const screenById = new Map(screens.map((screen) => [screen.canonicalId, screen]));
+  const items = candidates.flatMap((candidate) => {
+    const screen = screenById.get(candidate.canonicalId);
+    const eligible = pinned.has(candidate.canonicalId) || Boolean(screen && (
+      isPrimaryDeepCandidate(screen) || isRescueDeepCandidate(screen)
+      || (includeContinuity && isContinuityDeepCandidate(screen))));
+    if (!eligible) return [];
+    const route = candidate.provenance.find(isMonitorRouteProvenance);
+    const eligibilityBoost = screen && isPrimaryDeepCandidate(screen) ? 24 : screen && isRescueDeepCandidate(screen) ? 8 : 0;
+    return [{
+      canonicalId: candidate.canonicalId,
+      score: (screen ? deepCandidateScore(screen) : 100) + candidateScreeningPriority(candidate) * 0.18 + eligibilityBoost,
+      isCurrentDiscovery: currentIds.has(candidate.canonicalId),
+      isRouteOrigin: Boolean(route),
+      routeKey: route?.routeId || route?.sourceKey || "",
+      directionKey: candidateDirectionKey(candidate),
+      evidenceReady: candidateHasReviewableEvidence(candidate),
+    }];
+  });
+  return selectBudgetedDeepReviewCandidates(items, { limit, pinnedIds: pinned }).map((item) => item.canonicalId);
+}
+
+function deepSelectionOrigin(candidate: Candidate, currentCandidateIds: Set<string>): "fresh" | "route" | "backlog" {
+  if (currentCandidateIds.has(candidate.canonicalId)) return "fresh";
+  return candidate.provenance.some(isMonitorRouteProvenance) ? "route" : "backlog";
+}
+
+function updateDeepSelectionDiagnostics(work: ScanWorkQueue, candidates: Candidate[]) {
+  const currentIds = new Set(work.currentCandidateIds);
+  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  work.deepSelectionOrigins = Object.fromEntries(work.deepIds.flatMap((id) => {
+    const candidate = candidateById.get(id);
+    return candidate ? [[id, deepSelectionOrigin(candidate, currentIds)] as const] : [];
+  }));
+  work.selectionFailureReasons = summarizeDeepSelectionOutcomes({
+    candidates: candidates.map((candidate) => ({
+      canonicalId: candidate.canonicalId,
+      evidenceReady: candidateHasReviewableEvidence(candidate),
+    })),
+    screens: work.screens,
+    selectedIds: work.deepIds,
+    duplicateCount: Math.max(0, work.rawCandidateCount - work.newCandidateCount),
+  });
+}
+
 function chooseRescueScreenIds(candidates: Candidate[], screens: QuickScreen[], limit = RESCUE_SCREEN_LIMIT) {
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
   const ranked = screens
     .filter((screen) => isRescueDeepCandidate(screen) && candidateById.has(screen.canonicalId))
     .sort((left, right) => deepCandidateScore(right) - deepCandidateScore(left));
-  return selectDiverseItems(
-    ranked,
-    (screen) => candidateDirectionKey(candidateById.get(screen.canonicalId)!),
-    (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
-    limit,
-  ).map((screen) => screen.canonicalId);
-}
-
-function chooseRescueCandidateIds(candidates: Candidate[], screens: QuickScreen[], scheduledIds: Iterable<string>, limit = DEEP_REVIEW_RESCUE_LIMIT) {
-  const scheduled = new Set(scheduledIds);
-  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
-  const ranked = screens
-    .filter((screen) => !scheduled.has(screen.canonicalId)
-      && candidateById.has(screen.canonicalId)
-      && (isPrimaryDeepCandidate(screen) || isRescueDeepCandidate(screen)))
-    .sort((left, right) => deepCandidateScore(right) - deepCandidateScore(left));
-  return selectDiverseItems(
-    ranked,
-    (screen) => candidateDirectionKey(candidateById.get(screen.canonicalId)!),
-    (screen) => candidateById.get(screen.canonicalId)?.horizon || "days",
-    limit,
-  ).map((screen) => screen.canonicalId);
-}
-
-function chooseContinuityCandidateIds(candidates: Candidate[], screens: QuickScreen[], scheduledIds: Iterable<string>, limit = CONTINUITY_DEEP_REVIEW_LIMIT) {
-  const scheduled = new Set(scheduledIds);
-  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
-  const ranked = screens
-    .filter((screen) => !scheduled.has(screen.canonicalId)
-      && candidateById.has(screen.canonicalId)
-      && isContinuityDeepCandidate(screen))
-    .sort((left, right) => {
-      const leftCandidate = candidateById.get(left.canonicalId)!;
-      const rightCandidate = candidateById.get(right.canonicalId)!;
-      return (deepCandidateScore(right) + candidateScreeningPriority(rightCandidate) * 0.18)
-        - (deepCandidateScore(left) + candidateScreeningPriority(leftCandidate) * 0.18);
-    });
   return selectDiverseItems(
     ranked,
     (screen) => candidateDirectionKey(candidateById.get(screen.canonicalId)!),
@@ -6105,6 +6154,35 @@ export async function POST(request: Request) {
       } catch (notificationError) {
         console.error("Failed to create staged scan notifications", notificationError);
       }
+      const selectionMix = Object.values(work.deepSelectionOrigins).reduce<Record<string, number>>((counts, origin) => {
+        counts[origin] = (counts[origin] || 0) + 1;
+        return counts;
+      }, {});
+      const recommendationMix = finalizedReviews.filter(isPublishedRecommendation).reduce<Record<string, number>>((counts, review) => {
+        const origin = work.deepSelectionOrigins[review.canonicalId] || "backlog";
+        counts[origin] = (counts[origin] || 0) + 1;
+        return counts;
+      }, {});
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: job.id,
+        kind: "scan_yield_attribution",
+        stage: "finalizing",
+        source: MONITOR_MODEL,
+        outcome: recommended ? "success" : verificationPending || work.deepDeferredIds.length ? "degraded" : "info",
+        message: "Internal fresh-paper yield and failure attribution was recorded for adaptive discovery calibration",
+        metadata: {
+          qualityGateUnchanged: true,
+          currentDiscoveryPool: work.currentCandidateIds.length,
+          selectionMix,
+          recommendationMix,
+          failureReasons: {
+            ...work.selectionFailureReasons,
+            evidence_audit_failed: verificationFailed,
+            analysis_deferred: work.deepDeferredIds.length,
+          },
+        },
+      });
       await database.batch([
         database.prepare(
           `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,
@@ -6165,9 +6243,11 @@ export async function POST(request: Request) {
           await saveScanWorkQueue(database, job.id, work);
         }
         const batch = await fetchHorizon(database, enrichedSpace, horizon, new Date(), preference.priorityVenues, preference.trackedAuthors, preference.profileKey, Math.max(0, run?.discovery_round || 0), job.id, job.discovered_count, queryPlan);
-        const newCandidates = await countNewCandidates(database, space.id, batch.candidates);
+        const newlyDiscoveredIds = await findNewCandidateIds(database, space.id, batch.candidates);
+        const newCandidates = newlyDiscoveredIds.length;
         await persistCandidatePool(database, space.id, batch.candidates);
         work.candidateIds = Array.from(new Set([...work.candidateIds, ...batch.candidates.map((candidate) => candidate.canonicalId)]));
+        work.currentCandidateIds = Array.from(new Set([...work.currentCandidateIds, ...newlyDiscoveredIds])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
         work.rawCandidateCount += batch.rawCount;
         work.newCandidateCount += newCandidates;
         work.horizonStats[horizonKey] = {
@@ -6195,6 +6275,8 @@ export async function POST(request: Request) {
         ])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
         work.screens = await loadCachedQuickScreens(database, space.id, work.candidateIds);
         work.deepIds = [];
+        work.deepSelectionOrigins = {};
+        work.selectionFailureReasons = {};
         work.deepCompletedIds = [];
         work.deepDeferredIds = [];
         work.verificationIds = [];
@@ -6278,13 +6360,11 @@ export async function POST(request: Request) {
               return Response.json(await readState(database, space, { rescueScreening: true }), { status: 202 });
             }
           }
-          work.deepIds = chooseDeepCandidateIds(candidates, work.screens);
-          if (!work.deepIds.length) work.deepIds = chooseRescueCandidateIds(candidates, work.screens, [], DEEP_REVIEW_RESCUE_LIMIT);
+          work.deepIds = chooseBudgetedDeepCandidateIds(candidates, work.screens, work.currentCandidateIds, DEEP_REVIEW_LIMIT);
           if (work.deepIds.length < Math.min(3, DEEP_REVIEW_LIMIT)) {
-            work.deepIds = Array.from(new Set([
-              ...work.deepIds,
-              ...chooseContinuityCandidateIds(candidates, work.screens, work.deepIds, Math.min(CONTINUITY_DEEP_REVIEW_LIMIT, DEEP_REVIEW_LIMIT - work.deepIds.length)),
-            ])).slice(0, DEEP_REVIEW_LIMIT);
+            work.deepIds = chooseBudgetedDeepCandidateIds(
+              candidates, work.screens, work.currentCandidateIds, DEEP_REVIEW_LIMIT, work.deepIds, true,
+            );
           }
           if (work.retryDeepIds.length) {
             work.deepIds = Array.from(new Set([
@@ -6298,6 +6378,7 @@ export async function POST(request: Request) {
             .filter((review) => review.verificationRetryable)
             .map((review) => review.canonicalId);
           work.deepIds = Array.from(new Set([...queuedPendingIds, ...work.deepIds])).slice(0, DEEP_REVIEW_MAX_LIMIT);
+          updateDeepSelectionDiagnostics(work, candidates);
           const existingReviews = queuedExistingReviews.filter((review) => work.deepIds.includes(review.canonicalId));
           const pendingVerificationIds = existingReviews
             .filter((review) => review.verificationRetryable)
@@ -6339,8 +6420,39 @@ export async function POST(request: Request) {
       } else if (job.checkpoint === "enriching_abstracts") {
         const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
         const enrichment = await enrichDeepReviewAbstracts(database, space.id, candidates);
+        const refreshedCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
+        const pinnedIds = new Set([...work.deepCompletedIds, ...work.verificationIds]);
+        const evidenceReadyCandidates = refreshedCandidates.filter((candidate) =>
+          candidateHasReviewableEvidence(candidate) || pinnedIds.has(candidate.canonicalId));
+        const previousDeepIds = new Set(work.deepIds);
+        work.deepIds = chooseBudgetedDeepCandidateIds(
+          evidenceReadyCandidates,
+          work.screens,
+          work.currentCandidateIds,
+          previousDeepIds.size,
+          pinnedIds,
+          true,
+        ).slice(0, DEEP_REVIEW_MAX_LIMIT);
+        const removedForEvidence = [...previousDeepIds].filter((id) => !work.deepIds.includes(id) && !pinnedIds.has(id));
+        updateDeepSelectionDiagnostics(work, refreshedCandidates);
+        await saveScanWorkQueue(database, job.id, work);
+        if (removedForEvidence.length) await recordReliabilityEvent(database, {
+          spaceId: space.id,
+          scanJobId: job.id,
+          kind: "deep_review_evidence_precheck",
+          stage: "enriching_abstracts",
+          source: "bibliographic_and_abstract_evidence",
+          outcome: "info",
+          message: "Candidates still lacking usable abstract evidence were replaced before expensive deep review",
+          metadata: {
+            removed: removedForEvidence.length,
+            replacements: work.deepIds.filter((id) => !previousDeepIds.has(id)).length,
+            qualityGateUnchanged: true,
+          },
+        });
+        if (!work.deepIds.length) return finalizeMain([], []);
         const source = enrichment.requested
-          ? `已补全 ${enrichment.enriched} / ${enrichment.requested} 篇缺失摘要，准备深度解读`
+          ? `已补全 ${enrichment.enriched} / ${enrichment.requested} 篇缺失摘要，${work.deepIds.length} 篇证据充分候选准备深度解读`
           : "候选摘要证据完整，准备深度解读";
         await setStage("deep_reviewing", "deep_reviewing", 80, source);
       } else if (job.checkpoint === "deep_reviewing") {
@@ -6453,12 +6565,18 @@ export async function POST(request: Request) {
               DEEP_REVIEW_MAX_LIMIT - work.deepIds.length,
               Math.max(2, recommendationShortfall * 2),
             );
-            const rescueIds = Array.from(new Set([
-              ...chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, secondWaveLimit),
-              ...chooseContinuityCandidateIds(allCandidates, work.screens, work.deepIds, Math.min(CONTINUITY_DEEP_REVIEW_LIMIT, secondWaveLimit)),
-            ])).slice(0, secondWaveLimit);
+            const scheduled = new Set(work.deepIds);
+            const rescueIds = chooseBudgetedDeepCandidateIds(
+              allCandidates,
+              work.screens,
+              work.currentCandidateIds,
+              Math.min(DEEP_REVIEW_MAX_LIMIT, work.deepIds.length + secondWaveLimit),
+              work.deepIds,
+              true,
+            ).filter((id) => !scheduled.has(id)).slice(0, secondWaveLimit);
             if (rescueIds.length) {
               work.deepIds = [...work.deepIds, ...rescueIds];
+              updateDeepSelectionDiagnostics(work, allCandidates);
               await saveScanWorkQueue(database, job.id, work);
               await setStage("enriching_abstracts", "deep_reviewing", 76,
                 `目前形成 ${potentialRecommendations} 篇高潜力稿，正在追加 ${rescueIds.length} 篇第二批评审，目标补足到 ${HIGH_POTENTIAL_DRAFT_TARGET} 篇`);
@@ -6518,6 +6636,7 @@ export async function POST(request: Request) {
               degradedRecommendationReview(draft, incompleteReport),
             ]);
             await persistRecommendationAuditBatch(database, space.id, job.id, candidates, persisted, 0, 0);
+            work.selectionFailureReasons.incomplete_analysis = (work.selectionFailureReasons.incomplete_analysis || 0) + 1;
             work.verificationCompletedIds = Array.from(new Set([...work.verificationCompletedIds, canonicalId]));
             work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => id !== canonicalId);
             delete work.verificationAttempts[canonicalId];
@@ -6642,12 +6761,18 @@ export async function POST(request: Request) {
             maxPerWave: DEEP_REVIEW_RESCUE_LIMIT,
           });
           if (formalRescueSize > 0) {
-            const formalRescueIds = Array.from(new Set([
-              ...chooseRescueCandidateIds(allCandidates, work.screens, work.deepIds, formalRescueSize),
-              ...chooseContinuityCandidateIds(allCandidates, work.screens, work.deepIds, formalRescueSize),
-            ])).slice(0, formalRescueSize);
+            const scheduled = new Set(work.deepIds);
+            const formalRescueIds = chooseBudgetedDeepCandidateIds(
+              allCandidates,
+              work.screens,
+              work.currentCandidateIds,
+              Math.min(DEEP_REVIEW_MAX_LIMIT, work.deepIds.length + formalRescueSize),
+              work.deepIds,
+              true,
+            ).filter((id) => !scheduled.has(id)).slice(0, formalRescueSize);
             if (formalRescueIds.length) {
               work.deepIds = [...work.deepIds, ...formalRescueIds].slice(0, DEEP_REVIEW_MAX_LIMIT);
+              updateDeepSelectionDiagnostics(work, allCandidates);
               await saveScanWorkQueue(database, job.id, work);
               await recordReliabilityEvent(database, {
                 spaceId: space.id,

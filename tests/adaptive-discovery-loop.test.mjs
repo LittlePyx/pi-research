@@ -67,7 +67,12 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /QUICK_SCREEN_RETRY_TIMEOUT_MS = 12_000/);
   assert.match(monitor, /mode: "fast" \| "rescue"/);
   assert.match(monitor, /rescue_screening/);
-  assert.match(monitor, /chooseRescueCandidateIds/);
+  assert.match(monitor, /chooseBudgetedDeepCandidateIds/);
+  assert.match(monitor, /currentCandidateIds/);
+  assert.match(monitor, /selectBudgetedDeepReviewCandidates/);
+  assert.match(monitor, /scan_yield_attribution/);
+  assert.match(monitor, /deep_review_evidence_precheck/);
+  assert.match(monitor, /qualityGateUnchanged: true/);
   assert.match(monitor, /enriching_screening_abstracts/);
   assert.match(monitor, /reasoning_effort: "medium"/);
   assert.match(monitor, /DEEP_REVIEW_LIMIT = 8/);
@@ -76,7 +81,7 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DAILY_RECOMMENDATION_MIN_TARGET = 3/);
   assert.match(monitor, /DAILY_RECOMMENDATION_MAX_TARGET = 6/);
   assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 5/);
-  assert.match(monitor, /continuous-recommendation-v11-release-yield/);
+  assert.match(monitor, /continuous-recommendation-v12-fresh-yield/);
   assert.doesNotMatch(monitor, /"continuous-recommendation-v9-verified"/);
   assert.match(monitor, /recommendationEligibility = explicitlyRestricted \? "1 = 1"/);
   assert.match(monitor, /final reconciliation and job counts still need that record/);

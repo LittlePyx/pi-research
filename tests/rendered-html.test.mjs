@@ -130,7 +130,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(monitor, /persistCandidatePool/);
   assert.match(monitor, /pendingCandidateQueue/);
   assert.match(monitor, /loadCachedQuickScreens/);
-  assert.match(monitor, /chooseContinuityCandidateIds/);
+  assert.match(monitor, /chooseBudgetedDeepCandidateIds/);
   assert.match(monitor, /i\.analysis_source = 'deepseek_screened'/);
   assert.match(monitor, /selectUnseenReviewBatch/);
   assert.match(monitor, /positiveExamples/);
