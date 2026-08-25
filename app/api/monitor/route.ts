@@ -1286,7 +1286,7 @@ async function recordDiscoveryCoverage(
 
 async function setScanSource(database: D1Database, jobId: string, horizon: Horizon, source: string, progress: number, discoveredCount: number) {
   await database.prepare(
-    "UPDATE monitor_scan_jobs SET current_horizon = ?, current_source = ?, checkpoint = ?, progress = ?, discovered_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    "UPDATE monitor_scan_jobs SET current_horizon = ?, current_source = ?, checkpoint = ?, progress = MAX(progress, ?), discovered_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
   ).bind(horizon, source, `${horizon}:${source}`, progress, discoveredCount, jobId).run();
 }
 

@@ -94,6 +94,7 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /近 14 天优先判断已产生/);
   assert.match(monitor, /manageJobProgress = true/);
   assert.match(monitor, /lockToken, apiKey, false\)/);
+  assert.match(monitor, /progress = MAX\(progress, \?\), discovered_count/);
   assert.doesNotMatch(monitor, /"continuous-recommendation-v9-verified"/);
   assert.match(monitor, /recommendationEligibility = explicitlyRestricted \? "1 = 1"/);
   assert.match(monitor, /final reconciliation and job counts still need that record/);
