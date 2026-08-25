@@ -4598,6 +4598,46 @@ main { min-width: 0; }
 .v2-daily-paper-analysis > section.research-problem-impact { grid-column: 1 / -1; padding: 11px 12px; border: 1px solid #cbdcd2; border-radius: 8px; background: #f8fbf9; }
 .v2-daily-paper-analysis section.research-problem-impact small { margin-top: 9px; color: #6f7f76; display: block; font-size: 8px; font-weight: 780; }
 .v2-daily-paper-analysis section.research-problem-impact b { margin-top: 3px; color: #355b47; display: block; font: 12px/1.5 Georgia,serif; }
+
+/* Pi Research V116 — route discovery becomes a visible, outcome-driven loop */
+.v2-daily-paper-analysis > .v2-route-impact-note { grid-column: 1 / -1; padding: 11px 12px; border: 1px solid #d4dfd7; border-radius: 8px; background: #f8faf7; }
+.v2-route-impact-note > strong { color: #315d48; display: block; font-size: 10px; }
+.v2-route-impact-note > p { margin: 6px 0 0; color: #53635a; font: 12px/1.62 Georgia,serif; }
+.v2-route-impact-note > small { margin-top: 6px; color: #7c8880; display: block; font-size: 8px; line-height: 1.5; }
+.v2-route-impact-note.detail { margin-top: 13px; padding: 17px 19px; border-left: 3px solid #668874; background: #f3f7f3; }
+.v2-route-impact-note.detail > strong { font-size: 11px; letter-spacing: .03em; }
+.v2-route-impact-note.detail > p { max-width: 820px; font-size: 16px; line-height: 1.6; }
+.v2-route-impact-note.detail > small { font-size: 9px; }
+
+.v2-route-discovery-loop { margin-top: 12px; padding: 13px 15px 11px; border: 1px solid #d3dcd5; border-radius: 11px; background: rgba(248,250,247,.78); }
+.v2-route-discovery-loop > header { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
+.v2-route-discovery-loop > header small,.v2-route-discovery-loop > header strong { display: block; }
+.v2-route-discovery-loop > header small { color: #6a8172; font-size: 8px; font-weight: 850; letter-spacing: .1em; }
+.v2-route-discovery-loop > header strong { margin-top: 3px; color: #3e5147; font-size: 12px; }
+.v2-route-discovery-loop > header time { color: #89938d; font-size: 8px; }
+.v2-route-discovery-tasks { margin-top: 10px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
+.v2-route-discovery-tasks > span { min-width: 0; min-height: 33px; padding: 7px 8px; border: 1px solid #dce2dd; border-radius: 7px; background: rgba(255,255,255,.55); display: grid; grid-template-columns: 8px minmax(0,1fr) auto; align-items: center; gap: 6px; }
+.v2-route-discovery-tasks i { width: 6px; height: 6px; border: 1px solid #aab7ae; border-radius: 50%; }
+.v2-route-discovery-tasks .active i { border-color: #4d7861; background: #4d7861; box-shadow: 0 0 0 3px #e3ede7; }
+.v2-route-discovery-tasks strong { overflow: hidden; color: #53645a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.v2-route-discovery-tasks small { color: #8b958f; font-size: 7px; white-space: nowrap; }
+.v2-route-discovery-loop > dl { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #e0e5e1; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
+.v2-route-discovery-loop > dl > div { padding: 0 11px; border-left: 1px solid #e0e5e1; display: flex; align-items: baseline; gap: 7px; }
+.v2-route-discovery-loop > dl > div:first-child { padding-left: 0; border-left: 0; }
+.v2-route-discovery-loop dt { color: #7c8881; font-size: 8px; }
+.v2-route-discovery-loop dd { margin: 0; color: #315d48; font: 17px Georgia,serif; }
+.v2-route-discovery-loop dd small { margin-left: 4px; color: #8a958e; font: 7px var(--font-sans); }
+.v2-route-discovery-loop > footer { margin-top: 8px; color: #7d8981; display: flex; justify-content: space-between; gap: 16px; font-size: 8px; line-height: 1.45; }
+.v2-route-discovery-loop > footer b { color: #966047; font-weight: 760; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .v2-daily-paper-analysis > .v2-route-impact-note { grid-column: 1; }
+  .v2-route-discovery-loop > header,.v2-route-discovery-loop > footer { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .v2-route-discovery-tasks { grid-template-columns: 1fr 1fr; }
+  .v2-route-discovery-loop > dl { grid-template-columns: 1fr 1fr; gap: 7px 0; }
+  .v2-route-discovery-loop > dl > div:nth-child(3) { padding-left: 0; border-left: 0; }
+  .v2-route-discovery-loop > footer b { white-space: normal; }
+}
 .v2-paper-problem-impact > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .v2-paper-problem-impact > header > div { display: flex; gap: 7px; }
 .v2-paper-problem-impact > header span { padding: 7px 9px; border-radius: 7px; background: #edf3ef; color: #617369; display: grid; gap: 2px; font-size: 8px; text-align: center; }

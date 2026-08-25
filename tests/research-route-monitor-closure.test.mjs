@@ -22,9 +22,15 @@ test("route, gap, and citation-network discoveries share the daily quality queue
   assert.match(queue, /WHERE paper_insights\.analysis_source IN \('metadata', 'route-gap'\)/);
   assert.doesNotMatch(queue, /llm_recommended[^\n]+VALUES[^\n]+1/);
   assert.match(mapRoute, /RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL/);
+  assert.match(mapRoute, /RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL/);
   assert.match(queue, /dismissed\.feedback = 'not_relevant'/);
   assert.match(app, /const inReview = pipeline\.queued \+ pipeline\.reviewing/);
   assert.match(app, /累计 \$\{pipeline\.recommended\} 篇已通过/);
+  assert.match(app, /RouteDiscoveryLoop/);
+  assert.match(app, /前沿追踪/);
+  assert.match(app, /奠基补齐/);
+  assert.match(app, /证据缺口/);
+  assert.match(app, /引用网络/);
 });
 
 test("route candidates cannot starve and Today exposes explicit route provenance only after recommendation", async () => {
@@ -40,9 +46,13 @@ test("route candidates cannot starve and Today exposes explicit route provenance
   assert.match(monitor, /candidate\.provenance\.some\(isMonitorRouteProvenance\)/);
   assert.match(monitor, /i\.llm_recommended = 1 AND i\.analysis_source = 'deepseek'/);
   assert.match(monitor, /discoveryOrigin/);
+  assert.match(monitor, /discovery_route_impact_zh/);
+  assert.match(monitor, /proposal\.rationale_zh/);
   assert.match(monitor, /discoveryType/);
   assert.match(monitor, /discoveryTrack/);
   assert.match(monitor, /qualityStage: paper\.quality_stage/);
+  assert.match(monitor, /impactZh: paper\.discovery_route_impact_zh/);
+  assert.match(monitor, /thinking: \{ type: "disabled" \}[\s\S]*reasoning_effort: "low"[\s\S]*AbortSignal\.timeout\(25_000\)/);
   assert.match(monitor, /WHEN i\.llm_recommended = 1 AND i\.analysis_source = 'deepseek' THEN 'recommended'/);
   assert.match(monitor, /THEN 'reviewing'[\s\S]*THEN 'reviewed'[\s\S]*ELSE 'discovered'/);
   assert.match(monitor, /routeId: entry\.routeId \|\| null/);

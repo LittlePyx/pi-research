@@ -114,6 +114,86 @@ export const RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL = `WITH queue_counts AS (
  LEFT JOIN queue_counts ON queue_counts.track_id = track_ids.track_id
  LEFT JOIN recommended_counts ON recommended_counts.track_id = track_ids.track_id`;
 
+/**
+ * User-facing route health is derived from the durable discovery ledger and
+ * formal recommendation history. It intentionally excludes token, failure,
+ * and model-audit details: researchers need to know whether a route is
+ * producing useful reading, not how the internal machinery is graded.
+ */
+export const RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL = `WITH route_coverage AS (
+  SELECT * FROM monitor_discovery_coverage
+  WHERE space_id = ? AND COALESCE(route_id, '') <> ''
+ ), coverage_effects AS (
+  SELECT route_id AS track_id,
+   SUM(attempt_count) AS attempt_count,
+   SUM(CASE WHEN source_key = 'research-route:frontier'
+     OR (source_key LIKE 'crossref:route:%' AND source_key NOT LIKE 'crossref:route-gap:%' AND horizon IN ('days', 'months'))
+     THEN attempt_count ELSE 0 END) AS frontier_attempts,
+   SUM(CASE WHEN source_key = 'research-route:foundation'
+     OR (source_key LIKE 'crossref:route:%' AND source_key NOT LIKE 'crossref:route-gap:%' AND horizon = 'years')
+     THEN attempt_count ELSE 0 END) AS foundation_attempts,
+   SUM(CASE WHEN source_key = 'research-route:gap' OR source_key LIKE 'crossref:route-gap:%'
+     THEN attempt_count ELSE 0 END) AS gap_attempts,
+   SUM(CASE WHEN source_key = 'research-route:network'
+     OR (channel = 'citation' AND source_key LIKE 'semantic_scholar:%')
+     THEN attempt_count ELSE 0 END) AS network_attempts,
+   MAX(last_scanned_at) AS last_scanned_at
+  FROM route_coverage GROUP BY route_id
+ ), route_candidates AS (
+  SELECT DISTINCT coverage.space_id, coverage.route_id AS track_id, candidate.paper_id
+  FROM route_coverage coverage
+  JOIN monitor_candidate_sources candidate ON candidate.space_id = coverage.space_id
+   AND candidate.source_key = coverage.source_key AND candidate.query_key = coverage.query_key
+  JOIN monitored_papers paper ON paper.id = candidate.paper_id AND paper.space_id = candidate.space_id
+   AND paper.horizon = coverage.horizon
+ ), latest_audits AS (
+  SELECT * FROM (
+   SELECT audit.*,
+    ROW_NUMBER() OVER (PARTITION BY audit.space_id, audit.paper_id ORDER BY audit.reviewed_at DESC, audit.rowid DESC) AS audit_rank
+   FROM recommendation_audit_events audit WHERE audit.space_id = ?
+  ) WHERE audit_rank = 1
+ ), route_reviews AS (
+  SELECT candidate.track_id,
+   COUNT(DISTINCT candidate.paper_id) AS discovered_count,
+   COUNT(DISTINCT CASE WHEN EXISTS (
+    SELECT 1 FROM recommendation_audit_events review
+    WHERE review.space_id = candidate.space_id
+     AND review.paper_id = candidate.paper_id AND review.is_paper = 1
+   ) THEN candidate.paper_id END) AS deep_reviewed_count
+  FROM route_candidates candidate GROUP BY candidate.track_id
+ ), recommended_routes AS (
+  SELECT DISTINCT audit.space_id, audit.paper_id, json_extract(origin.value, '$.routeId') AS track_id
+  FROM latest_audits audit JOIN json_each(audit.provenance_json) origin
+  WHERE audit.recommended = 1 AND COALESCE(json_extract(origin.value, '$.routeId'), '') <> ''
+   AND json_extract(origin.value, '$.originKind') IN
+    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_network', 'route_search')
+ ), route_outcomes AS (
+  SELECT recommendation.track_id,
+   COUNT(DISTINCT recommendation.paper_id) AS recommended_count,
+   COUNT(DISTINCT CASE WHEN feedback.feedback = 'relevant' OR feedback.saved = 1 THEN recommendation.paper_id END) AS accepted_count
+  FROM recommended_routes recommendation
+  LEFT JOIN paper_feedback feedback ON feedback.paper_id = recommendation.paper_id
+   AND feedback.space_id = recommendation.space_id
+  GROUP BY recommendation.track_id
+ ), track_ids AS (
+  SELECT track_id FROM coverage_effects UNION SELECT track_id FROM route_reviews UNION SELECT track_id FROM route_outcomes
+ )
+ SELECT track_ids.track_id,
+  COALESCE(coverage.attempt_count, 0) AS attempt_count,
+  COALESCE(coverage.frontier_attempts, 0) AS frontier_attempts,
+  COALESCE(coverage.foundation_attempts, 0) AS foundation_attempts,
+  COALESCE(coverage.gap_attempts, 0) AS gap_attempts,
+  COALESCE(coverage.network_attempts, 0) AS network_attempts,
+  COALESCE(reviews.discovered_count, 0) AS discovered_count,
+  COALESCE(reviews.deep_reviewed_count, 0) AS deep_reviewed_count,
+  COALESCE(outcomes.recommended_count, 0) AS recommended_count,
+  COALESCE(outcomes.accepted_count, 0) AS accepted_count,
+  coverage.last_scanned_at
+ FROM track_ids
+ LEFT JOIN coverage_effects coverage ON coverage.track_id = track_ids.track_id
+ LEFT JOIN route_reviews reviews ON reviews.track_id = track_ids.track_id
+ LEFT JOIN route_outcomes outcomes ON outcomes.track_id = track_ids.track_id`;
+
 function boundedScore(value: number) {
   return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
 }

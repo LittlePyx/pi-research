@@ -176,6 +176,30 @@ export type ResearchTrackLatestChange = {
   createdAt: string;
 };
 
+export type ResearchRouteDiscoveryTask = {
+  attempts: number;
+  status: "planned" | "active";
+};
+
+export type ResearchRouteDiscoveryEffect = {
+  attemptCount: number;
+  discoveredCount: number;
+  deepReviewedCount: number;
+  recommendedCount: number;
+  acceptedCount: number;
+  deepReviewRate: number;
+  recommendationRate: number;
+  acceptanceRate: number;
+  lastScannedAt: string | null;
+  staleDays: number | null;
+  tasks: {
+    frontier: ResearchRouteDiscoveryTask;
+    foundation: ResearchRouteDiscoveryTask;
+    gap: ResearchRouteDiscoveryTask;
+    network: ResearchRouteDiscoveryTask;
+  };
+};
+
 export type ResearchTrack = {
   id: string;
   titleZh: string;
@@ -196,6 +220,7 @@ export type ResearchTrack = {
   reviewingForReviewCount: number;
   recommendedCandidateCount: number;
   lastQueuedAt: string | null;
+  discoveryEffect: ResearchRouteDiscoveryEffect;
   latestChange: ResearchTrackLatestChange | null;
   buildStatus: ResearchTrackBuildStatus;
   intelligence: ResearchDirectionIntelligence | null;

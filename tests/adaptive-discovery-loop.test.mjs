@@ -29,7 +29,10 @@ test("research routes receive independent, starvation-aware exploration slots", 
 
   assert.match(monitor, /routeDiscoveryQueries/);
   assert.match(monitor, /MAX\(c\.last_scanned_at\)/);
-  assert.match(monitor, /crossref:route:/);
+  assert.match(monitor, /monitorRouteTaskForHorizon/);
+  assert.match(monitor, /sourceKey: `research-route:\$\{horizonTask\}`/);
+  assert.match(monitor, /sourceKey: "research-route:gap"/);
+  assert.match(monitor, /sourceKey: "research-route:network"/);
   assert.match(schema, /explorationRole/);
   assert.match(schema, /adaptiveScore/);
   assert.match(migration, /idx_monitor_coverage_space_route/);

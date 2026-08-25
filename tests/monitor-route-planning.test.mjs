@@ -11,10 +11,12 @@ import {
   isMonitorRouteProvenance,
   monitorPaperNotDismissedSql,
   monitorRouteOriginKind,
+  monitorRouteTaskForHorizon,
   retainChangedMonitorWrites,
   retainReviewableScanWork,
   reviewableScanCandidateIdsSql,
   researchGuidanceIdentity,
+  selectCitationRouteSeed,
   selectPrioritizedDiscoveryPlans,
 } from "../lib/monitor-route-planning.ts";
 
@@ -65,12 +67,34 @@ test("focused mode protects core route and gap plans without admitting adjacent 
 });
 
 test("route provenance keeps provider-specific route and gap semantics", () => {
+  assert.equal(monitorRouteOriginKind("research-route:foundation", "track-a"), "route_foundation");
+  assert.equal(monitorRouteOriginKind("research-route:frontier", "track-a"), "route_frontier");
+  assert.equal(monitorRouteOriginKind("research-route:network", "track-a"), "route_network");
   assert.equal(monitorRouteOriginKind("crossref:route:track-a"), "route_search");
   assert.equal(monitorRouteOriginKind("crossref:route-gap:track-a"), "route_gap");
   assert.equal(monitorRouteOriginKind("semantic_scholar:citations", "track-a"), "route_search");
   assert.equal(monitorRouteOriginKind("semantic_scholar:citations"), null);
   assert.equal(isMonitorRouteProvenance({ sourceKey: "semantic_scholar:citations", routeId: "track-a" }), true);
   assert.equal(isMonitorRouteProvenance({ sourceKey: "crossref:topic" }), false);
+});
+
+test("route tasks give recent windows to the frontier and the wide window to foundations", () => {
+  assert.equal(monitorRouteTaskForHorizon("days"), "frontier");
+  assert.equal(monitorRouteTaskForHorizon("months"), "frontier");
+  assert.equal(monitorRouteTaskForHorizon("years"), "foundation");
+});
+
+test("citation seeds rotate routes before rotating papers inside a route", () => {
+  const seeds = [
+    { track_id: "route-a", paper: "a1" },
+    { track_id: "route-a", paper: "a2" },
+    { track_id: "route-b", paper: "b1" },
+    { track_id: "route-c", paper: "c1" },
+  ];
+  assert.equal(selectCitationRouteSeed(seeds, "days", 0)?.paper, "a1");
+  assert.equal(selectCitationRouteSeed(seeds, "months", 0)?.paper, "b1");
+  assert.equal(selectCitationRouteSeed(seeds, "years", 0)?.paper, "c1");
+  assert.equal(selectCitationRouteSeed(seeds, "days", 1)?.paper, "a2");
 });
 
 test("an explicit not-relevant withdrawal is pruned from every active scan phase and the frozen queue converges", () => {

@@ -33,7 +33,7 @@ type Space = {
 };
 type User = { userId: string; displayName: string; email: string; fullName: string | null };
 type Localized = { zh: string; en: string };
-type RouteDiscoveryKind = "route_foundation" | "route_milestone" | "route_frontier" | "route_gap" | "route_network";
+type RouteDiscoveryKind = "route_foundation" | "route_milestone" | "route_frontier" | "route_gap" | "route_network" | "route_search";
 type RouteDiscoveryType = "route_search" | "gap" | "citation_network";
 type MonitorPaper = {
   id: string;
@@ -101,6 +101,8 @@ type MonitorPaper = {
     trackTitleEn: string;
     sourceLabelZh: string;
     sourceLabelEn: string;
+    impactZh: string;
+    impactEn: string;
   } | null;
   discoveryType?: RouteDiscoveryType | null;
   discoveryTrack?: { id: string; titleZh: string; titleEn: string } | null;
@@ -1136,14 +1138,25 @@ function monitorPaperRouteDiscovery(paper: MonitorPaper, locale: Locale) {
     : (origin?.trackTitleEn || track?.titleEn);
   if (!title) return null;
   const source = locale === "zh" ? origin?.sourceLabelZh : origin?.sourceLabelEn;
-  return { title, kind: routeDiscoveryKindLabel(paper, locale), source: source || (locale === "zh" ? "研究路线供稿" : "Research-route lead") };
+  const impact = locale === "zh" ? origin?.impactZh : origin?.impactEn;
+  return { title, kind: routeDiscoveryKindLabel(paper, locale), source: source || (locale === "zh" ? "研究路线供稿" : "Research-route lead"), impact: impact?.trim() || "" };
 }
 
 function RouteDiscoveryBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
   const discovery = monitorPaperRouteDiscovery(paper, locale);
   if (!discovery) return null;
   const label = locale === "zh" ? "推荐来源" : "Recommendation source";
-  return <span className="v2-route-discovery-origin" title={locale === "zh" ? `${discovery.source}发现，并已通过今日质量评估` : `Found via ${discovery.source} and cleared today's quality review`}><b>{label}</b><span>{discovery.kind}</span><i>{discovery.title}</i></span>;
+  return <span className="v2-route-discovery-origin" title={discovery.impact || (locale === "zh" ? `${discovery.source}发现，并已通过今日质量评估` : `Found via ${discovery.source} and cleared today's quality review`)}><b>{label}</b><span>{discovery.kind}</span><i>{discovery.title}</i></span>;
+}
+
+function RouteImpactNote({ paper, locale, detail = false }: { paper: MonitorPaper; locale: Locale; detail?: boolean }) {
+  const discovery = monitorPaperRouteDiscovery(paper, locale);
+  if (!discovery?.impact) return null;
+  return <section className={detail ? "v2-content-section v2-route-impact-note detail" : "v2-route-impact-note"}>
+    <strong>{locale === "zh" ? `它对“${discovery.title}”的作用` : `How it advances “${discovery.title}”`}</strong>
+    <p>{discovery.impact}</p>
+    <small>{locale === "zh" ? `由${discovery.kind}发现，反馈会继续调整这条路线的挖掘重点。` : `Found through ${discovery.kind}; your feedback will tune this route's next searches.`}</small>
+  </section>;
 }
 
 function RecommendationVerificationBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
@@ -1205,6 +1218,23 @@ function RouteQualityFlow({ track, locale }: { track: ResearchTrack; locale: Loc
     <i>→</i>
     <span className={pipeline.recommended > 0 ? "complete" : ""}><b>03</b><strong>{locale === "zh" ? "通过后才推荐" : "Recommend only after passing"}</strong><small>{pipeline.hasCounts ? (locale === "zh" ? `累计 ${pipeline.recommended} 篇已通过` : `${pipeline.recommended} passed in total`) : (locale === "zh" ? "未通过不会占用今日阅读队列" : "Failures never enter today's reading queue")}</small></span>
   </div>;
+}
+
+function RouteDiscoveryLoop({ track, locale }: { track: ResearchTrack; locale: Locale }) {
+  const effect = track.discoveryEffect;
+  const taskLabels = {
+    frontier: locale === "zh" ? "前沿追踪" : "Frontier",
+    foundation: locale === "zh" ? "奠基补齐" : "Foundations",
+    gap: locale === "zh" ? "证据缺口" : "Evidence gaps",
+    network: locale === "zh" ? "引用网络" : "Citation network",
+  };
+  const tasks = (Object.keys(taskLabels) as Array<keyof typeof taskLabels>).map((key) => ({ key, label: taskLabels[key], ...effect.tasks[key] }));
+  return <section className="v2-route-discovery-loop">
+    <header><div><small>{locale === "zh" ? "路线自动供稿" : "AUTOMATIC ROUTE DISCOVERY"}</small><strong>{locale === "zh" ? "四条发现通道共同服务今日推荐" : "Four discovery channels feed Today's recommendations"}</strong></div>{effect.lastScannedAt && <time>{locale === "zh" ? "最近扫描 " : "Last scan "}{formatNotificationTime(effect.lastScannedAt, locale)}</time>}</header>
+    <div className="v2-route-discovery-tasks">{tasks.map((task) => <span className={task.status} key={task.key}><i /> <strong>{task.label}</strong><small>{task.attempts > 0 ? (locale === "zh" ? `${task.attempts} 轮` : `${task.attempts} runs`) : (locale === "zh" ? "下轮启用" : "Starts next scan")}</small></span>)}</div>
+    <dl><div><dt>{locale === "zh" ? "路线发现" : "Discovered"}</dt><dd>{effect.discoveredCount}</dd></div><div><dt>{locale === "zh" ? "进入深评" : "Deep reviewed"}</dt><dd>{effect.deepReviewedCount}<small>{effect.discoveredCount ? `${effect.deepReviewRate}%` : "—"}</small></dd></div><div><dt>{locale === "zh" ? "推到今日" : "Recommended"}</dt><dd>{effect.recommendedCount}<small>{effect.deepReviewedCount ? `${effect.recommendationRate}%` : "—"}</small></dd></div><div><dt>{locale === "zh" ? "你已接受" : "Accepted"}</dt><dd>{effect.acceptedCount}<small>{effect.recommendedCount ? `${effect.acceptanceRate}%` : "—"}</small></dd></div></dl>
+    <footer><span>{locale === "zh" ? "你的“适合 / 不相关 / 已掌握 / 稍后”会分别调整这条路线和四类发现通道的下一轮预算。" : "Useful, not relevant, mastered, and later feedback separately tune this route and its four channel budgets."}</span>{effect.staleDays !== null && effect.staleDays >= 7 && <b>{locale === "zh" ? `${effect.staleDays} 天未获得新扫描，下一轮优先补充` : `No new scan for ${effect.staleDays} days; prioritized next`}</b>}</footer>
+  </section>;
 }
 
 function directionRelationshipLabel(kind: ResearchMapState["edges"][number]["kind"], locale: Locale) {
@@ -4981,7 +5011,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     const readingAction = dailyReadingPlan[index];
                     return <details key={paper?.id || `${index}:${signal || readingAction}`}>
                       <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i><PaperFreshnessBadge paper={paper} locale={locale} />{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}{paper.recommendationOrigin === "backlog_review" && <i>{locale === "zh" ? "积压候选复评" : "Backlog re-reviewed"}</i>}<PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
-                      <div className="v2-daily-paper-analysis">{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看解读" : "Open analysis"} →</button><button className="positive" type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {locale === "zh" ? "适合" : "Useful"}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {locale === "zh" ? "不相关" : "Not relevant"}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant", "duplicate_known")}>◎ {locale === "zh" ? "已掌握" : "Mastered"}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {locale === "zh" ? "稍后" : "Later"}</button></footer>}</div>
+                      <div className="v2-daily-paper-analysis">{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{paper && <RouteImpactNote paper={paper} locale={locale} />}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看解读" : "Open analysis"} →</button><button className="positive" type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {locale === "zh" ? "适合" : "Useful"}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {locale === "zh" ? "不相关" : "Not relevant"}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant", "duplicate_known")}>◎ {locale === "zh" ? "已掌握" : "Mastered"}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {locale === "zh" ? "稍后" : "Later"}</button></footer>}</div>
                     </details>;
                   })}
                 </div>
@@ -5241,6 +5271,8 @@ export default function ResearchApp({ user }: { user: User }) {
 
               <section className={`v2-route-role-strip ${selectedThread.userRole}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级。" : "This role changes future discovery budget and route priority."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}</div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
 
+              <RouteDiscoveryLoop track={selectedThread} locale={locale} />
+
               <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["problem", "assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab, tabIndex) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{String(tabIndex + 1).padStart(2, "0")}</span><strong>{tab === "problem" ? (locale === "zh" ? "研究问题" : "Research problem") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
 
               {researchRouteTab === "problem" && <ResearchProblemWorkbench key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} loading={researchProblemLoading} action={researchProblemAction} error={researchProblemError} locale={locale} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} onExecuteAction={(item) => void executeResearchProblemAction(item)} />}
@@ -5350,6 +5382,7 @@ export default function ResearchApp({ user }: { user: User }) {
             <div className="v2-paper-detail-grid">
               <div>
                 <section className="v2-content-section v2-recommendation"><p className="v2-kicker warm">{t.whySuitable}</p><h2>{locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn}</h2><div><span>{t.currentSpace}</span><strong>{defaultSpaceName(activeSpace.name, locale)}</strong>{selectedMonitorPaper.qualityStage === "recommended" && <><span>{t.qualityScore}</span><strong>{displayQualityScore(selectedMonitorPaper.qualityScore)}</strong></>}</div></section>
+                <RouteImpactNote paper={selectedMonitorPaper} locale={locale} detail />
                 {selectedMonitorPaper.researchProblemId && <section className="v2-content-section v2-paper-problem-impact"><header><p className="v2-kicker">π {locale === "zh" ? "与当前研究问题的关系" : "ACTIVE RESEARCH PROBLEM"}</p><div><span>{locale === "zh" ? "问题贴合" : "Problem fit"}<b>{selectedMonitorPaper.problemFitScore}</b></span><span>{locale === "zh" ? "降低不确定性" : "Uncertainty reduction"}<b>{selectedMonitorPaper.uncertaintyReductionScore}</b></span><span>{locale === "zh" ? "可行动性" : "Actionability"}<b>{selectedMonitorPaper.actionabilityScore}</b></span></div></header><h2>{locale === "zh" ? selectedMonitorPaper.researchProblemImpactZh : selectedMonitorPaper.researchProblemImpactEn}</h2><aside><small>{locale === "zh" ? "读完后应该决定" : "DECISION AFTER READING"}</small><strong>{locale === "zh" ? selectedMonitorPaper.researchDecisionZh : selectedMonitorPaper.researchDecisionEn}</strong></aside></section>}
                 <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><h2>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</h2></section>
                 <section className="v2-paper-analysis"><header><p className="v2-kicker">π {locale === "zh" ? "深度阅读导航" : "DEEP READING GUIDE"}</p><h2>{locale === "zh" ? "先理解它解决了什么，再决定读到多深" : "Understand what it resolves before choosing how deeply to read"}</h2></header><div>

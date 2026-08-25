@@ -71,10 +71,12 @@ import {
   isMonitorRouteProvenance,
   monitorPaperNotDismissedSql,
   monitorRouteOriginKind,
+  monitorRouteTaskForHorizon,
   retainReviewableScanWork,
   retainChangedMonitorWrites,
   reviewableScanCandidateIdsSql,
   researchGuidanceIdentity,
+  selectCitationRouteSeed,
   selectPrioritizedDiscoveryPlans,
   type ConfirmedRouteEvidenceSnapshot,
   type ResearchGuidanceTrackSnapshot,
@@ -325,6 +327,8 @@ type PaperRow = {
   discovery_route_interaction: number;
   discovery_track_title_zh: string;
   discovery_track_title_en: string;
+  discovery_route_impact_zh: string;
+  discovery_route_impact_en: string;
   quality_stage: "discovered" | "reviewed" | "reviewing" | "recommended";
 };
 type Candidate = {
@@ -1135,12 +1139,13 @@ async function routeDiscoveryQueries(
   const coreRows = chooseRoutes(rows.results.filter((row) => row.user_role !== "explore"), coreBudget);
   const adjacentRows = chooseRoutes(rows.results.filter((row) => row.user_role === "explore"), adjacentBudget);
   const selectedRows = [...coreRows.map((row) => ({ row, role: "core" as const })), ...adjacentRows.map((row) => ({ row, role: "adjacent" as const }))];
+  const horizonTask = monitorRouteTaskForHorizon(horizon.key);
   const basePlans = selectedRows.map(({ row, role }) => {
       const queries = parseVenues(row.search_queries).filter(asciiOnly);
       const routeQuery = queries.length ? queries[round % queries.length] : `${row.title_en} ${row.summary_en}`;
       return {
-        key: `research-route-${row.id}`,
-        sourceKey: `crossref:route:${row.id}`,
+        key: `research-route-${horizonTask}-${row.id}`,
+        sourceKey: `research-route:${horizonTask}`,
         query: cleanText(routeQuery).slice(0, 480),
         sort: horizon.key === "days" ? "published" as const : horizon.sort,
         rotating: true,
@@ -1167,7 +1172,7 @@ async function routeDiscoveryQueries(
   const gap = gapRows.length ? gapRows[round % gapRows.length] : null;
   const gapPlan: DiscoveryQuery[] = gap ? [{
     key: `research-route-gap-${gap.row.id}`,
-    sourceKey: `crossref:route-gap:${gap.row.id}`,
+    sourceKey: "research-route:gap",
     query: cleanText(gap.intelligence.nextSearchQuery).slice(0, 480),
     sort: horizon.key === "days" ? "published" : horizon.sort,
     rotating: true,
@@ -1580,15 +1585,16 @@ async function fetchCitationFrontier(
      ORDER BY CASE role WHEN 'milestone' THEN 0 ELSE 1 END, citation_count DESC, created_at ASC LIMIT 24`,
   ).bind(space.id).all<{ track_id: string; doi: string | null; url: string; title: string }>();
   if (!seeds.results.length) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
-  const seed = seeds.results[round % seeds.results.length];
+  const seed = selectCitationRouteSeed(seeds.results, horizon.key, round);
+  if (!seed) return [];
   const arxivId = arxivIdFromUrl(seed.url);
   const paperId = seed.doi ? `DOI:${seed.doi}` : arxivId ? `ARXIV:${arxivId}` : "";
   if (!paperId) return [];
   await setScanSource(database, jobId, horizon.key, `Citation frontier · ${cleanText(seed.title).slice(0, 70)}`, 53, discoveredBefore);
   const relationResults = await Promise.all(relations.map(async (relation) => {
     const plan: DiscoveryQuery = {
-      key: `citation-${relation}`,
-      sourceKey: `semantic_scholar:${relation}`,
+      key: `research-route-network-${relation}`,
+      sourceKey: "research-route:network",
       query: paperId,
       sort: "relevance",
       rotating: true,
@@ -2036,13 +2042,13 @@ async function ensureDailyQueryPlan(
               `Retrieval branches learned from explicit outcomes, qualified passive engagement, and papers that survived the unchanged formal recommendation gate. Treat passive behavior as a revisable hypothesis, never as stronger evidence than explicit feedback: ${JSON.stringify([...branchPerformance.ranked.slice(0, 4), ...branchPerformance.ranked.slice(-4)].map((branch) => ({ source: branch.sourceKey, score: branch.score, accepted: branch.accepted, dismissed: branch.dismissed, known: branch.known, engagedPapers: branch.engagedPapers, engagementWeight: branch.engagementWeight, discoveryYield: branch.candidates ? Math.round(branch.newCandidates / branch.candidates * 100) : 0, conclusiveReviews: branch.deepReviewed, formalRecommendations: branch.formalRecommended, evidenceRejected: branch.evidenceRejected })))}`,
             ].join("\n") },
           ],
-          thinking: { type: "enabled" },
-          reasoning_effort: "medium",
+          thinking: { type: "disabled" },
+          reasoning_effort: "low",
           response_format: { type: "json_object" },
-          max_tokens: 2800,
+          max_tokens: 1800,
           stream: false,
         }),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.timeout(25_000),
       });
       const data = await response.json() as DeepSeekResponse;
       if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro query planning failed");
@@ -4244,6 +4250,12 @@ function toPaper(paper: PaperRow, now: number) {
     ? { zh: "研究路线缺口深挖", en: "Research-route gap discovery" }
     : originKind === "route_network"
       ? { zh: "论文引用网络扩展", en: "Citation-network expansion" }
+      : originKind === "route_foundation"
+        ? { zh: "研究路线奠基补读", en: "Research-route foundation catch-up" }
+        : originKind === "route_frontier"
+          ? { zh: "研究路线前沿追踪", en: "Research-route frontier tracking" }
+          : originKind === "route_milestone"
+            ? { zh: "研究路线转折追踪", en: "Research-route milestone tracking" }
       : originKind
         ? { zh: "研究路线定向检索", en: "Research-route discovery" }
         : null;
@@ -4318,6 +4330,8 @@ function toPaper(paper: PaperRow, now: number) {
         trackTitleEn: paper.discovery_track_title_en,
         sourceLabelZh: sourceLabels.zh,
         sourceLabelEn: sourceLabels.en,
+        impactZh: paper.discovery_route_impact_zh,
+        impactEn: paper.discovery_route_impact_en,
       },
       discoveryType,
       discoveryTrack: {
@@ -4401,6 +4415,26 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        ), 0) AS discovery_route_interaction,
        COALESCE(route_track.title_zh, '') AS discovery_track_title_zh,
        COALESCE(route_track.title_en, '') AS discovery_track_title_en,
+       COALESCE(
+        (SELECT proposal.rationale_zh FROM research_map_evidence_proposals proposal
+         WHERE proposal.space_id = p.space_id AND proposal.paper_id = p.id
+          AND proposal.track_id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
+          AND proposal.status IN ('pending', 'confirmed')
+         ORDER BY CASE proposal.status WHEN 'confirmed' THEN 0 ELSE 1 END, proposal.updated_at DESC LIMIT 1),
+        (SELECT route_paper.rationale_zh FROM research_track_papers route_paper
+         WHERE route_paper.space_id = p.space_id AND route_paper.canonical_id = p.canonical_id
+          AND route_paper.track_id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
+         ORDER BY route_paper.position LIMIT 1), '') AS discovery_route_impact_zh,
+       COALESCE(
+        (SELECT proposal.rationale_en FROM research_map_evidence_proposals proposal
+         WHERE proposal.space_id = p.space_id AND proposal.paper_id = p.id
+          AND proposal.track_id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
+          AND proposal.status IN ('pending', 'confirmed')
+         ORDER BY CASE proposal.status WHEN 'confirmed' THEN 0 ELSE 1 END, proposal.updated_at DESC LIMIT 1),
+        (SELECT route_paper.rationale_en FROM research_track_papers route_paper
+         WHERE route_paper.space_id = p.space_id AND route_paper.canonical_id = p.canonical_id
+          AND route_paper.track_id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
+         ORDER BY route_paper.position LIMIT 1), '') AS discovery_route_impact_en,
        CASE
         WHEN i.llm_recommended = 1 AND i.analysis_source = 'deepseek' THEN 'recommended'
         WHEN EXISTS (

@@ -35,6 +35,8 @@ export type MonitorRouteOriginKind =
   | "route_network"
   | "route_search";
 
+export type MonitorRouteTaskKind = "foundation" | "frontier" | "gap" | "network";
+
 export type MonitorRouteProvenance = {
   sourceKey: string;
   routeId?: string | null;
@@ -123,6 +125,34 @@ export function monitorRouteOriginKind(sourceKey: string, routeId?: string | nul
   return null;
 }
 
+/**
+ * The wide five-year window repairs durable foundations. The two recent
+ * windows watch the live frontier. Gaps and citation-network tasks are
+ * independent branches and therefore do not share this horizon mapping.
+ */
+export function monitorRouteTaskForHorizon(horizon: string): Extract<MonitorRouteTaskKind, "foundation" | "frontier"> {
+  return horizon === "years" ? "foundation" : "frontier";
+}
+
+/**
+ * Citation exploration gets one deliberately bounded seed per horizon. It
+ * rotates routes first, then papers inside a route, so one paper-rich route
+ * cannot monopolize the three citation calls in a scan.
+ */
+export function selectCitationRouteSeed<T extends { track_id: string }>(
+  seeds: T[],
+  horizon: string,
+  round: number,
+): T | null {
+  if (!seeds.length) return null;
+  const horizonOffset = horizon === "days" ? 0 : horizon === "months" ? 1 : 2;
+  const routeIds = Array.from(new Set(seeds.map((seed) => seed.track_id)));
+  const cursor = Math.max(0, Math.floor(round)) * 3 + horizonOffset;
+  const routeId = routeIds[cursor % routeIds.length];
+  const routeSeeds = seeds.filter((seed) => seed.track_id === routeId);
+  return routeSeeds[Math.floor(cursor / routeIds.length) % routeSeeds.length] || null;
+}
+
 export function isMonitorRouteProvenance(entry: MonitorRouteProvenance) {
   return monitorRouteOriginKind(entry.sourceKey, entry.routeId) !== null;
 }
@@ -191,7 +221,9 @@ function isRoutePlan(plan: PrioritizableDiscoveryPlan) {
 }
 
 function isRouteGapPlan(plan: PrioritizableDiscoveryPlan) {
-  return plan.key.startsWith("research-route-gap-") || plan.sourceKey.startsWith("crossref:route-gap:");
+  return plan.key.startsWith("research-route-gap-")
+    || plan.sourceKey === "research-route:gap"
+    || plan.sourceKey.startsWith("crossref:route-gap:");
 }
 
 function stableRank<T extends PrioritizableDiscoveryPlan>(plans: T[]) {

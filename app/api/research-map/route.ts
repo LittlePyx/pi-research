@@ -1,6 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
-import { enqueueMonitorCandidates, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
+import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
@@ -155,6 +155,19 @@ type TrackReviewQueueCountRow = {
   reviewing_count: number;
   recommended_count: number;
   last_queued_at: string | null;
+};
+type TrackDiscoveryEffectRow = {
+  track_id: string;
+  attempt_count: number;
+  frontier_attempts: number;
+  foundation_attempts: number;
+  gap_attempts: number;
+  network_attempts: number;
+  discovered_count: number;
+  deep_reviewed_count: number;
+  recommended_count: number;
+  accepted_count: number;
+  last_scanned_at: string | null;
 };
 type TrackLatestChangeRow = {
   track_id: string;
@@ -1194,7 +1207,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 }
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult] = await Promise.all([
+  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
@@ -1233,9 +1246,12 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     ).bind(spaceId).all<TrackLatestChangeRow>(),
     database.prepare(RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL)
       .bind(spaceId, spaceId).all<TrackReviewQueueCountRow>(),
+    database.prepare(RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL)
+      .bind(spaceId, spaceId).all<TrackDiscoveryEffectRow>(),
   ]);
   const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
   const reviewQueueCountsByTrack = new Map(reviewQueueCountsResult.results.map((row) => [row.track_id, row]));
+  const discoveryEffectsByTrack = new Map(discoveryEffectsResult.results.map((row) => [row.track_id, row]));
   const latestChangeByTrack = new Map(latestChangesResult.results.map((row) => [row.track_id, row]));
   const papersByTrack = new Map<string, ResearchTrackPaper[]>();
   for (const row of papersResult.results) papersByTrack.set(row.track_id, [...(papersByTrack.get(row.track_id) || []), toPaper(row)]);
@@ -1268,6 +1284,33 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     reviewingForReviewCount: Number(reviewQueueCountsByTrack.get(row.id)?.reviewing_count || 0),
     recommendedCandidateCount: Number(reviewQueueCountsByTrack.get(row.id)?.recommended_count || 0),
     lastQueuedAt: reviewQueueCountsByTrack.get(row.id)?.last_queued_at || null,
+    discoveryEffect: (() => {
+      const effect = discoveryEffectsByTrack.get(row.id);
+      const discovered = Number(effect?.discovered_count || 0);
+      const deepReviewed = Number(effect?.deep_reviewed_count || 0);
+      const recommended = Number(effect?.recommended_count || 0);
+      const accepted = Number(effect?.accepted_count || 0);
+      const lastScannedAt = effect?.last_scanned_at || null;
+      const task = (attempts: number) => ({ attempts, status: attempts > 0 ? "active" as const : "planned" as const });
+      return {
+        attemptCount: Number(effect?.attempt_count || 0),
+        discoveredCount: discovered,
+        deepReviewedCount: deepReviewed,
+        recommendedCount: recommended,
+        acceptedCount: accepted,
+        deepReviewRate: discovered ? Math.round(deepReviewed / discovered * 100) : 0,
+        recommendationRate: deepReviewed ? Math.round(recommended / deepReviewed * 100) : 0,
+        acceptanceRate: recommended ? Math.round(accepted / recommended * 100) : 0,
+        lastScannedAt,
+        staleDays: lastScannedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(lastScannedAt)) / 86_400_000)) : null,
+        tasks: {
+          frontier: task(Number(effect?.frontier_attempts || 0)),
+          foundation: task(Number(effect?.foundation_attempts || 0)),
+          gap: task(Number(effect?.gap_attempts || 0)),
+          network: task(Number(effect?.network_attempts || 0)),
+        },
+      };
+    })(),
     latestChange: (() => {
       const change = latestChangeByTrack.get(row.id);
       return change ? {
