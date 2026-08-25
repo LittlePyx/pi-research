@@ -11,6 +11,7 @@ import {
   deepCandidateScore,
   formalRecommendationRescueSize,
   isContinuityDeepCandidate,
+  isGuardedFallbackDeepCandidate,
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
   selectBalancedByGroup,
@@ -494,6 +495,7 @@ type ScanWorkQueue = {
   freshLaneDeferredIds: string[];
   screens: QuickScreen[];
   deepIds: string[];
+  guardedFallbackIds: string[];
   deepSelectionOrigins: Record<string, "fresh" | "route" | "backlog">;
   selectionFailureReasons: Record<string, number>;
   deepCompletedIds: string[];
@@ -1928,7 +1930,7 @@ async function ensureDailyQueryPlan(
   }
 
   const queryLimit = preference.explorationMode === "focused" ? 1 : preference.explorationMode === "open" ? 3 : 2;
-  const [signals, tracks, recentCoverage, branchPerformance, activeProblems] = await Promise.all([
+  const [signals, tracks, recentCoverage, branchPerformance, activeProblems, latestYieldAttribution] = await Promise.all([
     readPreferenceSignals(database, space.id, 28),
     database.prepare(
       `SELECT track.id, track.title_en, track.summary_en, track.search_queries, track.user_role, track.depth_score,
@@ -1963,6 +1965,11 @@ async function ensureDailyQueryPlan(
        FROM research_problems problem WHERE problem.space_id = ? AND problem.status = 'active'
        ORDER BY problem.updated_at DESC LIMIT 8`,
     ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; next_search_query: string; latest_action_result_en: string; latest_action_decision_en: string; latest_action_search_query: string }>(),
+    database.prepare(
+      `SELECT metadata_json, created_at FROM monitor_reliability_events
+       WHERE space_id = ? AND kind = 'scan_yield_attribution'
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    ).bind(space.id).first<{ metadata_json: string; created_at: string }>(),
   ]);
   const directionSignals = tracks.results.flatMap((track) => {
     const intelligence = directionDiscoverySignal(track.intelligence_json, track.intelligence_updated_at);
@@ -1979,6 +1986,18 @@ async function ensureDailyQueryPlan(
       confidence: Math.max(track.synthesis_confidence || 0, intelligence?.confidence || 0),
     }] : [];
   });
+  let yieldCalibration: Record<string, unknown> = {};
+  try {
+    const parsed = latestYieldAttribution?.metadata_json ? JSON.parse(latestYieldAttribution.metadata_json) as Record<string, unknown> : {};
+    yieldCalibration = {
+      profileKey: parsed.profileKey || preference.profileKey,
+      diagnosis: (parsed.freshFunnel as Record<string, unknown> | undefined)?.diagnosis || "",
+      failureReasons: parsed.failureReasons || {},
+      recordedAt: latestYieldAttribution?.created_at || "",
+    };
+  } catch {
+    yieldCalibration = { profileKey: preference.profileKey };
+  }
   let queries: Record<Horizon, string[]> = { days: [], months: [], years: [] };
   let rationaleZh = "";
   let rationaleEn = "";
@@ -2013,6 +2032,7 @@ async function ensureDailyQueryPlan(
               `Priority venues: ${preference.priorityVenues.join("; ")}`,
               `Tracked authors and teams: ${preference.trackedAuthors.join("; ") || "none yet"}`,
               `Low-yield or repeatedly covered channels: ${JSON.stringify(recentCoverage.results)}`,
+              `Previous same-domain screening funnel and mutually exclusive rejection reasons: ${JSON.stringify(yieldCalibration)}. Use this only to adjust query specificity, route/source mix, and evidence availability. If papers were screened but none reached deep review, narrow at least one query toward a confirmed route method or evidence gap instead of broadening generic keywords. Never lower screening, evidence, or recommendation standards.`,
               `Retrieval branches learned from explicit outcomes, qualified passive engagement, and papers that survived the unchanged formal recommendation gate. Treat passive behavior as a revisable hypothesis, never as stronger evidence than explicit feedback: ${JSON.stringify([...branchPerformance.ranked.slice(0, 4), ...branchPerformance.ranked.slice(-4)].map((branch) => ({ source: branch.sourceKey, score: branch.score, accepted: branch.accepted, dismissed: branch.dismissed, known: branch.known, engagedPapers: branch.engagedPapers, engagementWeight: branch.engagementWeight, discoveryYield: branch.candidates ? Math.round(branch.newCandidates / branch.candidates * 100) : 0, conclusiveReviews: branch.deepReviewed, formalRecommendations: branch.formalRecommended, evidenceRejected: branch.evidenceRejected })))}`,
             ].join("\n") },
           ],
@@ -3998,13 +4018,27 @@ function selectHorizonScreeningCandidates(candidates: Candidate[], limit: number
   return [...seeded, ...selectBalancedByGroup(remaining, candidateDirectionKey, Math.max(0, limit - seeded.length))];
 }
 
+function researchLeadLane(candidate: Candidate) {
+  const kinds = new Set(candidate.provenance.map((entry) => monitorRouteOriginKind(entry.sourceKey, entry.routeId)).filter(Boolean));
+  if (kinds.has("route_gap") || kinds.has("route_network")) return "open-question-or-network";
+  if (kinds.has("route_foundation") || kinds.has("route_milestone") || kinds.has("route_frontier")) return "route-structure";
+  return "route-directed-search";
+}
+
+function selectResearchLeadScreeningCandidates(candidates: Candidate[], limit: number) {
+  if (!limit) return [];
+  const ranked = selectHorizonScreeningCandidates(candidates, candidates.length);
+  return selectBalancedByGroup(ranked, researchLeadLane, limit);
+}
+
 function selectFreshLaneScreeningCandidates(candidates: Candidate[], limit: number) {
-  // The newest-paper lane is small, so reserve up to two screening positions
-  // for route-origin discoveries before generic queries can fill the batch.
+  // The newest-paper lane is small, so reserve independent screening positions
+  // for route gaps/networks, route structure, and directed route searches before
+  // generic queries can fill the batch.
   // Every reserved paper still passes the same LLM and evidence gates later.
-  const routeCandidates = selectHorizonScreeningCandidates(
+  const routeCandidates = selectResearchLeadScreeningCandidates(
     candidates.filter((candidate) => candidate.provenance.some(isMonitorRouteProvenance)),
-    Math.min(2, limit),
+    Math.min(3, limit),
   );
   const reservedIds = new Set(routeCandidates.map((candidate) => candidate.canonicalId));
   const fill = selectHorizonScreeningCandidates(
@@ -4033,16 +4067,17 @@ function selectCurrentAndBacklogReviewBatch(candidates: Candidate[], currentCand
     const currentBudget = Math.max(1, Math.round(limit * 0.72));
     const horizonCandidates = candidates.filter((candidate) => candidate.horizon === horizon);
     // Route-origin discoveries share the exact same screening and recommendation
-    // gates. One screening slot per non-empty horizon merely prevents a large
-    // generic backlog from starving them before the model can judge their fit.
-    const routeCandidate = selectHorizonScreeningCandidates(
+    // gates. Two source-balanced screening slots per non-empty horizon prevent
+    // route gaps, network expansion, or foundational leads from being crowded
+    // out by a large generic backlog before the model can judge their fit.
+    const routeCandidates = selectResearchLeadScreeningCandidates(
       horizonCandidates.filter((candidate) => candidate.provenance.some(isMonitorRouteProvenance)),
-      1,
-    )[0];
-    const reservedIds = new Set(routeCandidate ? [routeCandidate.canonicalId] : []);
+      Math.min(2, limit),
+    );
+    const reservedIds = new Set(routeCandidates.map((candidate) => candidate.canonicalId));
     const current = selectHorizonScreeningCandidates(
       horizonCandidates.filter((candidate) => currentIds.has(candidate.canonicalId) && !reservedIds.has(candidate.canonicalId)),
-      Math.max(0, currentBudget - (routeCandidate && currentIds.has(routeCandidate.canonicalId) ? 1 : 0)),
+      Math.max(0, currentBudget - routeCandidates.filter((candidate) => currentIds.has(candidate.canonicalId)).length),
     );
     const currentSelected = new Set(current.map((candidate) => candidate.canonicalId));
     const backlog = selectHorizonScreeningCandidates(
@@ -4050,7 +4085,7 @@ function selectCurrentAndBacklogReviewBatch(candidates: Candidate[], currentCand
         && !currentSelected.has(candidate.canonicalId) && !reservedIds.has(candidate.canonicalId)),
       limit - current.length - reservedIds.size,
     );
-    const seeded = [...(routeCandidate ? [routeCandidate] : []), ...current, ...backlog];
+    const seeded = [...routeCandidates, ...current, ...backlog];
     const seededIds = new Set(seeded.map((candidate) => candidate.canonicalId));
     const fill = selectHorizonScreeningCandidates(horizonCandidates.filter((candidate) => !seededIds.has(candidate.canonicalId)), limit - seeded.length);
     selected.push(...seeded, ...fill);
@@ -5233,7 +5268,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
     scanMode: "full",
     discoveredCandidateIds: [], candidateIds: [], currentCandidateIds: [],
     freshLaneActive: false, freshLaneCompleted: false, freshLaneCandidateIds: [], freshLaneReviewedIds: [], freshLaneDeferredIds: [],
-    screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
+    screens: [], deepIds: [], guardedFallbackIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
     deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
@@ -5274,6 +5309,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
         horizon: ["days", "months", "years"].includes(screen.horizon || "") ? screen.horizon : undefined,
       })) : [],
       deepIds: Array.isArray(parsed.deepIds) ? parsed.deepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      guardedFallbackIds: Array.isArray(parsed.guardedFallbackIds) ? parsed.guardedFallbackIds.filter((id): id is string => typeof id === "string").slice(0, 2) : [],
       deepSelectionOrigins: parsed.deepSelectionOrigins && typeof parsed.deepSelectionOrigins === "object" && !Array.isArray(parsed.deepSelectionOrigins)
         ? Object.fromEntries(Object.entries(parsed.deepSelectionOrigins).filter((entry): entry is [string, "fresh" | "route" | "backlog"] =>
           Boolean(entry[0]) && ["fresh", "route", "backlog"].includes(String(entry[1]))).slice(0, DEEP_REVIEW_MAX_LIMIT))
@@ -5320,7 +5356,7 @@ function newScanWorkQueue(): ScanWorkQueue {
     scanMode: "full",
     discoveredCandidateIds: [], candidateIds: [], currentCandidateIds: [],
     freshLaneActive: false, freshLaneCompleted: false, freshLaneCandidateIds: [], freshLaneReviewedIds: [], freshLaneDeferredIds: [],
-    screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
+    screens: [], deepIds: [], guardedFallbackIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
     deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
@@ -5418,6 +5454,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     freshLaneDeferredIds: work.freshLaneDeferredIds,
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
+    guardedFallbackIds: work.guardedFallbackIds,
     deepCompletedIds: work.deepCompletedIds,
     deepDeferredIds: work.deepDeferredIds,
     retryDeepIds: work.retryDeepIds,
@@ -5437,6 +5474,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
   work.freshLaneDeferredIds = work.freshLaneDeferredIds.filter((id) => reviewableIds.has(id));
   work.deepSelectionOrigins = Object.fromEntries(Object.entries(work.deepSelectionOrigins)
     .filter(([id]) => reviewableIds.has(id)));
+  work.guardedFallbackIds = work.guardedFallbackIds.filter((id) => reviewableIds.has(id) && work.deepIds.includes(id));
   work.deepDeferredIds = work.deepDeferredIds.filter((id) => reviewableIds.has(id));
   work.retryDeepIds = work.retryDeepIds.filter((id) => reviewableIds.has(id));
   work.verificationIds = work.verificationIds.filter((id) => reviewableIds.has(id));
@@ -5453,6 +5491,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     freshLaneDeferredIds: work.freshLaneDeferredIds,
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
+    guardedFallbackIds: work.guardedFallbackIds,
     deepCompletedIds: work.deepCompletedIds,
     deepDeferredIds: work.deepDeferredIds,
     retryDeepIds: work.retryDeepIds,
@@ -5519,9 +5558,39 @@ function chooseBudgetedDeepCandidateIds(
   return selectBudgetedDeepReviewCandidates(items, { limit, pinnedIds: pinned }).map((item) => item.canonicalId);
 }
 
+function chooseGuardedFallbackDeepCandidateIds(
+  candidates: Candidate[],
+  screens: QuickScreen[],
+  profileKey: string,
+  limit: number,
+) {
+  const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+  const eligible = screens
+    .filter((screen) => {
+      const candidate = candidateById.get(screen.canonicalId);
+      return Boolean(candidate && candidateHasReviewableEvidence(candidate)
+        && isGuardedFallbackDeepCandidate(screen, profileKey));
+    })
+    .sort((left, right) => {
+      const leftCandidate = candidateById.get(left.canonicalId)!;
+      const rightCandidate = candidateById.get(right.canonicalId)!;
+      return Number(rightCandidate.provenance.some(isMonitorRouteProvenance)) - Number(leftCandidate.provenance.some(isMonitorRouteProvenance))
+        || deepCandidateScore(right) - deepCandidateScore(left)
+        || candidateScreeningPriority(rightCandidate) - candidateScreeningPriority(leftCandidate);
+    });
+  return selectBalancedByGroup(
+    eligible,
+    (screen) => {
+      const candidate = candidateById.get(screen.canonicalId)!;
+      return `${candidateDirectionKey(candidate)}:${researchLeadLane(candidate)}`;
+    },
+    limit,
+  ).map((screen) => screen.canonicalId);
+}
+
 function deepSelectionOrigin(candidate: Candidate, currentCandidateIds: Set<string>): "fresh" | "route" | "backlog" {
-  if (currentCandidateIds.has(candidate.canonicalId)) return "fresh";
-  return candidate.provenance.some(isMonitorRouteProvenance) ? "route" : "backlog";
+  if (candidate.provenance.some(isMonitorRouteProvenance)) return "route";
+  return currentCandidateIds.has(candidate.canonicalId) ? "fresh" : "backlog";
 }
 
 function updateDeepSelectionDiagnostics(work: ScanWorkQueue, candidates: Candidate[]) {
@@ -6328,6 +6397,7 @@ export async function POST(request: Request) {
       work.candidateIds = [...work.discoveredCandidateIds];
       work.screens = [];
       work.deepIds = [];
+      work.guardedFallbackIds = [];
       work.deepSelectionOrigins = {};
       work.selectionFailureReasons = {};
       work.deepCompletedIds = [];
@@ -6527,8 +6597,10 @@ export async function POST(request: Request) {
         outcome: recommended ? "success" : verificationPending || work.deepDeferredIds.length ? "degraded" : "info",
         message: "Internal fresh-paper yield and failure attribution was recorded for adaptive discovery calibration",
         metadata: {
+          profileKey: preference.profileKey,
           qualityGateUnchanged: true,
           currentDiscoveryPool: work.currentCandidateIds.length,
+          guardedFallbackReviews: work.guardedFallbackIds.length,
           freshFunnel,
           selectionMix,
           recommendationMix,
@@ -6666,6 +6738,7 @@ export async function POST(request: Request) {
         work.candidateIds = [...work.freshLaneCandidateIds];
         work.screens = await loadCachedQuickScreens(database, space.id, work.candidateIds);
         work.deepIds = [];
+        work.guardedFallbackIds = [];
         work.deepCompletedIds = [];
         work.deepDeferredIds = [];
         work.verificationIds = [];
@@ -6713,6 +6786,7 @@ export async function POST(request: Request) {
         for (const screen of quickScreensFromPersistedReviews(earlyReviews, earlyCandidates)) screensById.set(screen.canonicalId, screen);
         work.screens = Array.from(screensById.values());
         work.deepIds = [];
+        work.guardedFallbackIds = [];
         work.deepSelectionOrigins = {};
         work.selectionFailureReasons = {};
         work.deepCompletedIds = earlyReviews.map((review) => review.canonicalId);
@@ -6813,6 +6887,30 @@ export async function POST(request: Request) {
               new Set([...work.deepCompletedIds, ...work.deepIds]), true,
             );
           }
+          if (!work.deepIds.length) {
+            work.guardedFallbackIds = chooseGuardedFallbackDeepCandidateIds(
+              candidates,
+              work.screens,
+              preference.profileKey,
+              work.freshLaneActive ? 1 : 2,
+            );
+            work.deepIds = [...work.guardedFallbackIds];
+            if (work.guardedFallbackIds.length) await recordReliabilityEvent(database, {
+              spaceId: space.id,
+              scanJobId: job.id,
+              kind: "guarded_deep_review_handoff",
+              stage: "screening",
+              source: preference.profileKey,
+              outcome: "info",
+              message: "A zero-yield fast-screen batch handed a bounded evidence-ready near miss to deep review without changing the recommendation gate",
+              metadata: {
+                profileKey: preference.profileKey,
+                selectedIds: work.guardedFallbackIds,
+                maximumFallbackReviews: work.freshLaneActive ? 1 : 2,
+                qualityGateUnchanged: true,
+              },
+            });
+          }
           if (!work.freshLaneActive && work.retryDeepIds.length) {
             work.deepIds = Array.from(new Set([
               ...work.deepIds,
@@ -6871,7 +6969,12 @@ export async function POST(request: Request) {
         const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
         const enrichment = await enrichDeepReviewAbstracts(database, space.id, candidates);
         const refreshedCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
-        const pinnedIds = new Set([...work.deepCompletedIds, ...work.verificationIds]);
+        const refreshedById = new Map(refreshedCandidates.map((candidate) => [candidate.canonicalId, candidate]));
+        work.guardedFallbackIds = work.guardedFallbackIds.filter((id) => {
+          const candidate = refreshedById.get(id);
+          return Boolean(candidate && candidateHasReviewableEvidence(candidate));
+        });
+        const pinnedIds = new Set([...work.deepCompletedIds, ...work.verificationIds, ...work.guardedFallbackIds]);
         const evidenceReadyCandidates = refreshedCandidates.filter((candidate) =>
           candidateHasReviewableEvidence(candidate) || pinnedIds.has(candidate.canonicalId));
         const previousDeepIds = new Set(work.deepIds);

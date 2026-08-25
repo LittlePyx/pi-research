@@ -33,7 +33,10 @@ test("route candidates cannot starve and Today exposes explicit route provenance
     readFile(new URL("../lib/monitor-route-planning.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/monitor-candidate-queue.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(monitor, /One screening slot per non-empty horizon/);
+  assert.match(monitor, /Two source-balanced screening slots per non-empty horizon/);
+  assert.match(monitor, /selectResearchLeadScreeningCandidates/);
+  assert.match(monitor, /open-question-or-network/);
+  assert.match(monitor, /route-structure/);
   assert.match(monitor, /candidate\.provenance\.some\(isMonitorRouteProvenance\)/);
   assert.match(monitor, /i\.llm_recommended = 1 AND i\.analysis_source = 'deepseek'/);
   assert.match(monitor, /discoveryOrigin/);
@@ -57,6 +60,9 @@ test("route candidates cannot starve and Today exposes explicit route provenance
   assert.match(monitor, /\[\.\.\.routeProvenance, \.\.\.genericProvenance\]\.slice\(0, 16\)/);
   assert.match(monitor, /row\.source === "research-route" \? "research-route"/);
   assert.match(monitor, /row\.source === "research-network" \? "research-network"/);
+  assert.match(monitor, /guardedFallbackIds/);
+  assert.match(monitor, /guarded_deep_review_handoff/);
+  assert.match(monitor, /qualityGateUnchanged: true/);
   assert.match(queue, /FROM recommendation_audit_events audit/);
   assert.match(queue, /ROW_NUMBER\(\) OVER \(PARTITION BY audit\.space_id, audit\.paper_id ORDER BY audit\.reviewed_at DESC, audit\.rowid DESC\)/);
   assert.match(queue, /WHERE audit_rank = 1 AND recommended = 1/);

@@ -1135,14 +1135,15 @@ function monitorPaperRouteDiscovery(paper: MonitorPaper, locale: Locale) {
     ? (origin?.trackTitleZh || track?.titleZh)
     : (origin?.trackTitleEn || track?.titleEn);
   if (!title) return null;
-  return { title, kind: routeDiscoveryKindLabel(paper, locale) };
+  const source = locale === "zh" ? origin?.sourceLabelZh : origin?.sourceLabelEn;
+  return { title, kind: routeDiscoveryKindLabel(paper, locale), source: source || (locale === "zh" ? "研究路线供稿" : "Research-route lead") };
 }
 
 function RouteDiscoveryBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
   const discovery = monitorPaperRouteDiscovery(paper, locale);
   if (!discovery) return null;
-  const label = locale === "zh" ? "研究路线深挖" : "Route deep dive";
-  return <span className="v2-route-discovery-origin" title={locale === "zh" ? "这篇论文由研究路线定向发现，并已通过今日质量评估" : "Found through a research route and cleared today's quality review"}><b>{label}</b><span>{discovery.title}</span><i>{discovery.kind}</i></span>;
+  const label = locale === "zh" ? "推荐来源" : "Recommendation source";
+  return <span className="v2-route-discovery-origin" title={locale === "zh" ? `${discovery.source}发现，并已通过今日质量评估` : `Found via ${discovery.source} and cleared today's quality review`}><b>{label}</b><span>{discovery.kind}</span><i>{discovery.title}</i></span>;
 }
 
 function RecommendationVerificationBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {

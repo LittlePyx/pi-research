@@ -4,6 +4,7 @@ import {
   deepCandidateScore,
   formalRecommendationRescueSize,
   isContinuityDeepCandidate,
+  isGuardedFallbackDeepCandidate,
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
   selectBalancedByGroup,
@@ -46,6 +47,21 @@ test("long-term monitoring preserves credible lower-scoring papers for one evide
   assert.equal(isContinuityDeepCandidate(subtle), true);
   assert.equal(isRescueDeepCandidate(subtle), false);
   assert.equal(isContinuityDeepCandidate({ ...subtle, isPaper: false }), false);
+});
+
+test("applied mathematics can conservatively deep-review an indirect fast-pass near miss", () => {
+  const indirectMethod = { isPaper: true, relevanceScore: 40, qualityScore: 72 };
+  assert.equal(isPrimaryDeepCandidate(indirectMethod), false);
+  assert.equal(isRescueDeepCandidate(indirectMethod), false);
+  assert.equal(isContinuityDeepCandidate(indirectMethod), false);
+  assert.equal(isGuardedFallbackDeepCandidate(indirectMethod, "applied_mathematics"), true);
+  assert.equal(isGuardedFallbackDeepCandidate({ ...indirectMethod, isPaper: false }, "applied_mathematics"), false);
+});
+
+test("guarded fallback does not admit weak records or replace an existing review gate", () => {
+  assert.equal(isGuardedFallbackDeepCandidate({ isPaper: true, relevanceScore: 34, qualityScore: 80 }, "applied_mathematics"), false);
+  assert.equal(isGuardedFallbackDeepCandidate({ isPaper: true, relevanceScore: 55, qualityScore: 42 }, "applied_mathematics"), false);
+  assert.equal(isGuardedFallbackDeepCandidate({ isPaper: true, relevanceScore: 72, qualityScore: 65 }, "applied_mathematics"), false);
 });
 
 test("formal recommendation shortfalls trigger more review without lowering quality gates", () => {

@@ -71,6 +71,9 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /currentCandidateIds/);
   assert.match(monitor, /selectBudgetedDeepReviewCandidates/);
   assert.match(monitor, /scan_yield_attribution/);
+  assert.match(monitor, /yieldCalibration/);
+  assert.match(monitor, /Previous same-domain screening funnel/);
+  assert.match(monitor, /failureReasons: \{[\s\S]*\.\.\.work\.selectionFailureReasons/);
   assert.match(monitor, /fresh_yield_replan_scheduled/);
   assert.match(monitor, /formalYieldBranchAdjustment/);
   assert.match(monitor, /audit\.verification_status IN \('verified', 'revised'\)/);
@@ -191,6 +194,8 @@ test("today and its daily brief are capped at six and reranked across directions
   assert.match(client, /v2-daily-paper-authors/);
   assert.match(client, /v2-daily-paper-publication/);
   assert.match(client, /PaperDiscoverySourceBadge/);
+  assert.match(client, /推荐来源/);
+  assert.match(monitor, /论文引用网络扩展/);
   assert.match(client, /PaperFreshnessBadge/);
   assert.match(client, /近 14 天新论文/);
   assert.match(client, /近期优质/);
