@@ -3157,6 +3157,11 @@ main { min-width: 0; }
 .v2-daily-paper-queue > header strong { color: #304650; font-size: 14px; }
 .v2-daily-paper-queue > header small { margin-top: 5px; color: #7a8582; font-size: 10px; }
 .v2-daily-paper-queue > header > span { padding: 5px 9px; border-radius: 999px; background: #e8eff1; color: #476b7b; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.v2-daily-freshness-summary { padding: 11px 2px 4px; display: flex; flex-wrap: wrap; gap: 7px; }
+.v2-daily-freshness-summary span, .v2-freshness-badge { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid #d6e1dc; border-radius: 999px; background: #f4f8f5; color: #456a57; font-size: 9px; font-weight: 760; line-height: 1; white-space: nowrap; }
+.v2-daily-freshness-summary span.months, .v2-freshness-badge.months { border-color: #d7dfe5; background: #f4f7f9; color: #4c6877; }
+.v2-daily-freshness-summary span.years, .v2-freshness-badge.years { border-color: #e0d9c9; background: #faf7ef; color: #76633c; }
+.v2-daily-freshness-summary b { color: inherit; font-size: 10px; }
 .v2-today .v2-daily-brief-list { gap: 0; }
 .v2-today .v2-daily-brief-list > details { border-bottom: 1px solid #e0e5e3; background: transparent; }
 .v2-today .v2-daily-brief-list > details:last-child { border-bottom: 0; }
@@ -4680,6 +4685,7 @@ main { min-width: 0; }
 .v2-paper-discovery-source { display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid #d5ddd8;border-radius:999px;background:#f7f9f7;color:#5d6f65;font-size:11px;font-weight:720;line-height:1;white-space:nowrap; }
 .v2-paper-discovery-source i { width:6px;height:6px;border-radius:50%;background:#6d8e7c;box-shadow:0 0 0 3px rgba(109,142,124,.1); }
 .v2-compact-list .v2-paper-discovery-source { margin-top:7px;width:max-content; }
+.v2-compact-list .v2-freshness-badge { margin-top:7px;width:max-content; }
 .v2-action-run-ready.verification-degraded { border-color:#dec7bf;background:#fffaf8; }
 .v2-action-run-ready.verification-degraded > header > span { background:#f3e4df;color:#8c4d3d; }
 .v2-action-run-ready.verification-degraded > header small { color:#8c4d3d; }

@@ -83,6 +83,22 @@ test("fresh discoveries and research routes cannot be starved by a stronger back
   assert.ok(selected.some((item) => !item.isCurrentDiscovery));
 });
 
+test("newest-horizon papers keep two deep-review opportunities without bypassing quality", () => {
+  const older = Array.from({ length: 8 }, (_, index) => allocationCandidate(`older-${index}`, {
+    score: 100 - index,
+    isCurrentDiscovery: true,
+    horizon: "years",
+  }));
+  const newest = Array.from({ length: 3 }, (_, index) => allocationCandidate(`newest-${index}`, {
+    score: 60 - index,
+    isCurrentDiscovery: true,
+    horizon: "days",
+  }));
+  const selected = selectBudgetedDeepReviewCandidates([...older, ...newest], { limit: 8, newestTarget: 2 });
+  assert.ok(selected.filter((item) => item.horizon === "days").length >= 2);
+  assert.equal(new Set(selected.map((item) => item.canonicalId)).size, selected.length);
+});
+
 test("unused category budgets backfill and duplicate candidates consume one slot", () => {
   const selected = selectBudgetedDeepReviewCandidates([
     allocationCandidate("a", { score: 90 }),

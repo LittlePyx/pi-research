@@ -85,7 +85,13 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DAILY_RECOMMENDATION_MIN_TARGET = 3/);
   assert.match(monitor, /DAILY_RECOMMENDATION_MAX_TARGET = 6/);
   assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 5/);
-  assert.match(monitor, /continuous-recommendation-v12-fresh-yield/);
+  assert.match(monitor, /continuous-recommendation-v15-fresh-first/);
+  assert.match(monitor, /FRESH_LANE_SCREEN_LIMIT = 8/);
+  assert.match(monitor, /FRESH_LANE_DEEP_REVIEW_LIMIT = 2/);
+  assert.match(monitor, /checkpoint === "fresh_deduplicating"/);
+  assert.match(monitor, /continueAfterFreshLane/);
+  assert.match(monitor, /fresh_lane_completed/);
+  assert.match(monitor, /近 14 天优先判断已产生/);
   assert.doesNotMatch(monitor, /"continuous-recommendation-v9-verified"/);
   assert.match(monitor, /recommendationEligibility = explicitlyRestricted \? "1 = 1"/);
   assert.match(monitor, /final reconciliation and job counts still need that record/);
@@ -174,6 +180,10 @@ test("today and its daily brief are capped at six and reranked across directions
   assert.match(client, /v2-daily-paper-authors/);
   assert.match(client, /v2-daily-paper-publication/);
   assert.match(client, /PaperDiscoverySourceBadge/);
+  assert.match(client, /PaperFreshnessBadge/);
+  assert.match(client, /近 14 天新论文/);
+  assert.match(client, /近期优质/);
+  assert.match(client, /核心补读/);
   assert.match(monitor, /重点期刊前向扫描/);
   assert.match(monitor, /核心论文引用追踪/);
   assert.match(client, /作者信息未提供/);

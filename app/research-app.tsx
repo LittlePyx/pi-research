@@ -1156,6 +1156,17 @@ function PaperDiscoverySourceBadge({ paper, locale }: { paper: MonitorPaper; loc
   return <span className="v2-paper-discovery-source" title={labels.join(" · ")}><i />{labels[0]}{labels.length > 1 ? ` +${labels.length - 1}` : ""}</span>;
 }
 
+function PaperFreshnessBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
+  const label = paper.discoveryOrigin?.kind === "route_foundation"
+    ? (locale === "zh" ? "奠基补读" : "Foundation")
+    : paper.horizon === "days"
+      ? (locale === "zh" ? "近 14 天新论文" : "New · 14 days")
+      : paper.horizon === "months"
+        ? (locale === "zh" ? "近期优质" : "Recent quality")
+        : (locale === "zh" ? "核心补读" : "Core catch-up");
+  return <span className={`v2-freshness-badge ${paper.horizon || "years"}`}>{label}</span>;
+}
+
 function monitorPaperHorizonLabel(paper: MonitorPaper, locale: Locale) {
   if (paper.discoveryOrigin?.kind === "route_foundation") {
     return locale === "zh" ? "历史奠基文献" : "Historical foundation";
@@ -2904,6 +2915,11 @@ export default function ResearchApp({ user }: { user: User }) {
       return paper ? [paper] : [];
     });
   }, [historyPapers, monitor?.dailyBrief?.paperIds]);
+  const dailyFreshnessCounts = useMemo(() => ({
+    days: dailyBriefPapers.filter((paper) => paper.horizon === "days").length,
+    months: dailyBriefPapers.filter((paper) => paper.horizon === "months").length,
+    years: dailyBriefPapers.filter((paper) => !["days", "months"].includes(paper.horizon || "")).length,
+  }), [dailyBriefPapers]);
   const dailySignals = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.signalsZh : monitor.dailyBrief.signalsEn) : [];
   const dailyReadingPlan = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.readingPlanZh : monitor.dailyBrief.readingPlanEn) : [];
   const dailyBriefEntryCount = Math.min(6, Math.max(dailyBriefPapers.length, dailySignals.length, dailyReadingPlan.length));
@@ -4944,13 +4960,14 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
               <div className="v2-daily-paper-queue">
                 <header><div><strong>{locale === "zh" ? "今日阅读队列" : "Today's reading queue"}</strong><small>{locale === "zh" ? "先看书目信息，点击后再展开解读" : "Review the record first, then expand the interpretation"}</small></div><span>{dailyBriefEntryCount} {locale === "zh" ? "篇" : "papers"}</span></header>
+                {Boolean(dailyBriefPapers.length) && <div className="v2-daily-freshness-summary"><span className="days">{locale === "zh" ? "近 14 天新论文" : "New · 14 days"} <b>{dailyFreshnessCounts.days}</b></span><span className="months">{locale === "zh" ? "近期优质" : "Recent quality"} <b>{dailyFreshnessCounts.months}</b></span><span className="years">{locale === "zh" ? "核心补读" : "Core catch-up"} <b>{dailyFreshnessCounts.years}</b></span></div>}
                 <div className="v2-daily-brief-list">
                   {Array.from({ length: dailyBriefEntryCount }, (_, index) => {
                     const paper = dailyBriefPapers[index];
                     const signal = dailySignals[index];
                     const readingAction = dailyReadingPlan[index];
                     return <details key={paper?.id || `${index}:${signal || readingAction}`}>
-                      <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i>{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}{paper.recommendationOrigin === "backlog_review" && <i>{locale === "zh" ? "积压候选复评" : "Backlog re-reviewed"}</i>}<PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
+                      <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i><PaperFreshnessBadge paper={paper} locale={locale} />{paper.priorityVenue && <i>{locale === "zh" ? "重点来源" : "Priority source"}</i>}{paper.recommendationOrigin === "backlog_review" && <i>{locale === "zh" ? "积压候选复评" : "Backlog re-reviewed"}</i>}<PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><b>{locale === "zh" ? "作者" : "Authors"}</b><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span><b>{locale === "zh" ? "发表" : "Published"}</b>{formatPaperDate(paper.publishedAt, locale)}</span><span><b>{locale === "zh" ? "期刊 / 会议" : "Venue"}</b>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span><b>{locale === "zh" ? "被引" : "Citations"}</b>{paper.citationCount || 0}</span><span><b>{locale === "zh" ? "预计阅读" : "Reading"}</b>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
                       <div className="v2-daily-paper-analysis">{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看解读" : "Open analysis"} →</button><button className="positive" type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {locale === "zh" ? "适合" : "Useful"}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {locale === "zh" ? "不相关" : "Not relevant"}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant", "duplicate_known")}>◎ {locale === "zh" ? "已掌握" : "Mastered"}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {locale === "zh" ? "稍后" : "Later"}</button></footer>}</div>
                     </details>;
                   })}
@@ -4982,7 +4999,7 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
               {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><span>◷</span><p>{locale === "zh" ? `今天还剩 ${monitor?.analysisBudget?.remaining || 0} 次智能调用，不足以完成下一批；Pi 不会重复检索，现有论文与断点均已保留。` : `${monitor?.analysisBudget?.remaining || 0} AI calls remain today, not enough for the next batch. Pi will not repeat retrieval, and all papers and checkpoints are preserved.`}</p></div>}
               {manualCooldownBlocked && !scanIsActive && <div className="v2-scan-cooldown-note" role="status"><span>◷</span><div><strong>{locale === "zh" ? "刚才没有启动重复扫描" : "A duplicate scan was not started"}</strong><p>{locale === "zh" ? `上次扫描仍在费用保护期，约 ${monitor?.retryAfterMinutes || 1} 分钟后可再次运行；现有推荐、论文库和进度都没有变化。` : `The previous scan is still inside its cost-protection window. Try again in about ${monitor?.retryAfterMinutes || 1} minutes; recommendations, library papers, and progress remain unchanged.`}</p></div></div>}
-              {monitor?.scanJob?.needsRefresh && !scanIsActive && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先补全摘要、按研究方向分配名额，并在正式入选不足 3 篇时继续追加评审，质量门槛不变。此次升级重扫不受本小时冷却限制。" : "The new method enriches abstracts, allocates slots by research direction, and adds review waves when fewer than three papers formally qualify without lowering the quality gate. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}
+              {monitor?.scanJob?.needsRefresh && !scanIsActive && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先完成近 14 天新论文的优先判断，再继续半年与五年补读；按研究方向保留名额，质量门槛不变。此次升级重扫不受本小时冷却限制。" : "The new method decides on papers from the latest 14 days first, then continues with six-month and five-year catch-up. Research directions keep protected slots and the quality gate is unchanged. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}
               {monitor?.status === "error" && credentialFailureRecovered && (
                 <div className="v2-scan-credential-restored" role="status"><span>✓</span><div><strong>{locale === "zh" ? "模型连接已恢复，扫描断点仍在" : "Model connection restored; checkpoint preserved"}</strong><p>{locale === "zh" ? "无需重新检索候选；使用上方“从断点继续”即可恢复。" : "Candidates will not be retrieved again; use Resume above to continue."}</p></div></div>
               )}
@@ -5080,7 +5097,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
             {Boolean(additionalTodayPapers.length) && <section className="v2-today-more">
               <header><div><p className="v2-kicker warm">{locale === "zh" ? "更多推荐" : "MORE RECOMMENDATIONS"}</p><h2>{locale === "zh" ? "不在今日主队列，但仍值得保留" : "Worth keeping beyond the main queue"}</h2></div><span>{additionalTodayPapers.length} {locale === "zh" ? "篇" : "papers"}</span></header>
-              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
+              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
             </section>}
 
           </main>

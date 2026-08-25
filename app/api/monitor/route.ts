@@ -476,8 +476,14 @@ type HorizonScanStats = {
   completed: boolean;
 };
 type ScanWorkQueue = {
+  discoveredCandidateIds: string[];
   candidateIds: string[];
   currentCandidateIds: string[];
+  freshLaneActive: boolean;
+  freshLaneCompleted: boolean;
+  freshLaneCandidateIds: string[];
+  freshLaneReviewedIds: string[];
+  freshLaneDeferredIds: string[];
   screens: QuickScreen[];
   deepIds: string[];
   deepSelectionOrigins: Record<string, "fresh" | "route" | "backlog">;
@@ -536,6 +542,8 @@ const QUICK_SCREEN_BATCH_SIZE = 14;
 const QUICK_SCREEN_CONCURRENCY = 2;
 const DEEP_REVIEW_BATCH_SIZE = 1;
 const DEEP_REVIEW_CONCURRENCY = 2;
+const FRESH_LANE_SCREEN_LIMIT = 8;
+const FRESH_LANE_DEEP_REVIEW_LIMIT = 2;
 const DEEP_REVIEW_LIMIT = 8;
 const DEEP_REVIEW_RESCUE_LIMIT = 6;
 const DEEP_REVIEW_MAX_LIMIT = DEEP_REVIEW_LIMIT + DEEP_REVIEW_RESCUE_LIMIT;
@@ -555,11 +563,9 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v14-resilient-verification";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v15-fresh-first";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
-  "continuous-recommendation-v13-bounded-verification",
-  "continuous-recommendation-v12-fresh-yield",
 ]);
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
@@ -1679,7 +1685,7 @@ async function usageCount(database: D1Database, scope: string, date: string) {
 
 function minimumAnalysisCallsForCheckpoint(checkpoint: string) {
   if (!checkpoint || checkpoint === "planning") return MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS;
-  if (["discovering_days", "discovering_months", "discovering_years", "deduplicating", "enriching_screening_abstracts", "screening"].includes(checkpoint)) return 2;
+  if (["discovering_days", "fresh_deduplicating", "discovering_months", "discovering_years", "deduplicating", "enriching_screening_abstracts", "screening"].includes(checkpoint)) return 2;
   if (["rescue_screening", "enriching_abstracts", "deep_reviewing"].includes(checkpoint)) return 2;
   if (checkpoint === "verifying_recommendations") return 1;
   return 1;
@@ -1975,6 +1981,7 @@ async function ensureDailyQueryPlan(
               `Exploration mode: ${preference.explorationMode}. Return exactly ${queryLimit} concise English bibliographic query strings per horizon.`,
               benchmarkCalibrationPrompt(preference.profileKey),
               "The three horizons are simultaneous: days = newest 14 days; months = new and high-quality 6 months; years = durable, foundational, methodologically useful 5 years.",
+              "For the days horizon, prioritize a direct update to a core route and an under-covered route or active research problem. Pi evaluates this newest horizon first; do not spend both slots on synonyms for one fashionable subtopic. Journal issue, tracked-author, citation-frontier, arXiv, OpenAlex, and Semantic Scholar branches run alongside these planned queries.",
               "Move beyond yesterday's obvious wording. Cover core depth, one adjacent bridge when mode allows, unresolved questions, under-covered subdirections, methods, and representative venues. When a grounded cross-paper synthesis or direction assessment contains an evidence gap or nextSearchQuery, use at least one horizon slot to test that gap instead of merely repeating broad topic keywords. Do not include dates, API syntax, Boolean operators, journal names alone, or generic words such as research/study/paper.",
               "Return {\"days\":[...],\"months\":[...],\"years\":[...],\"rationaleZh\":\"...\",\"rationaleEn\":\"...\"}.",
               `Explicit and inferred preference evidence: ${JSON.stringify(signals.map((item) => ({ layer: item.layer, kind: item.kind, label: item.labelEn, evidence: item.evidence, confidence: item.effectiveConfidence })))}`,
@@ -4795,8 +4802,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     job.status === "ready"
     || (scanWork?.screens.length || 0) > 0
     || (scanWork?.deepIds.length || 0) > 0
-    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "verifying_recommendations", "evidence_deepening", "finalizing", "main_complete", "complete"].includes(job.checkpoint)
-    || ["deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "verifying_recommendations"].includes(scanWork?.resumeCheckpoint || "")
+    || ["fresh_deduplicating", "deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "verifying_recommendations", "evidence_deepening", "finalizing", "main_complete", "complete"].includes(job.checkpoint)
+    || ["fresh_deduplicating", "deduplicating", "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "verifying_recommendations"].includes(scanWork?.resumeCheckpoint || "")
   ));
   const scanHorizonStats = discoveryOrder.map((horizon, index) => {
     const stored = scanWork?.horizonStats[horizon];
@@ -5174,7 +5181,9 @@ function parseFrozenQueryPlan(value: unknown): QueryPlan | undefined {
 
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
-    candidateIds: [], currentCandidateIds: [], screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
+    discoveredCandidateIds: [], candidateIds: [], currentCandidateIds: [],
+    freshLaneActive: false, freshLaneCompleted: false, freshLaneCandidateIds: [], freshLaneReviewedIds: [], freshLaneDeferredIds: [],
+    screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
     deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
@@ -5199,8 +5208,16 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       };
     }
     return {
+      discoveredCandidateIds: Array.isArray(parsed.discoveredCandidateIds)
+        ? parsed.discoveredCandidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT)
+        : Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
       candidateIds: Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
       currentCandidateIds: Array.isArray(parsed.currentCandidateIds) ? parsed.currentCandidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
+      freshLaneActive: parsed.freshLaneActive === true,
+      freshLaneCompleted: parsed.freshLaneCompleted === true,
+      freshLaneCandidateIds: Array.isArray(parsed.freshLaneCandidateIds) ? parsed.freshLaneCandidateIds.filter((id): id is string => typeof id === "string").slice(0, FRESH_LANE_SCREEN_LIMIT) : [],
+      freshLaneReviewedIds: Array.isArray(parsed.freshLaneReviewedIds) ? parsed.freshLaneReviewedIds.filter((id): id is string => typeof id === "string").slice(0, FRESH_LANE_DEEP_REVIEW_LIMIT) : [],
+      freshLaneDeferredIds: Array.isArray(parsed.freshLaneDeferredIds) ? parsed.freshLaneDeferredIds.filter((id): id is string => typeof id === "string").slice(0, FRESH_LANE_DEEP_REVIEW_LIMIT) : [],
       screens: Array.isArray(parsed.screens) ? parsed.screens.filter((screen): screen is QuickScreen => Boolean(screen && typeof screen.canonicalId === "string")).slice(0, CANDIDATE_WORK_QUEUE_LIMIT).map((screen) => ({
         ...screen,
         horizon: ["days", "months", "years"].includes(screen.horizon || "") ? screen.horizon : undefined,
@@ -5249,7 +5266,9 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
 
 function newScanWorkQueue(): ScanWorkQueue {
   return {
-    candidateIds: [], currentCandidateIds: [], screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
+    discoveredCandidateIds: [], candidateIds: [], currentCandidateIds: [],
+    freshLaneActive: false, freshLaneCompleted: false, freshLaneCandidateIds: [], freshLaneReviewedIds: [], freshLaneDeferredIds: [],
+    screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
     deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
     deepDeferredIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
@@ -5261,7 +5280,7 @@ function newScanWorkQueue(): ScanWorkQueue {
 }
 
 const RESUMABLE_SCAN_CHECKPOINTS = new Set([
-  "planning", "discovering_days", "discovering_months", "discovering_years", "deduplicating",
+  "planning", "discovering_days", "fresh_deduplicating", "discovering_months", "discovering_years", "deduplicating",
   "enriching_screening_abstracts", "screening", "rescue_screening", "enriching_abstracts", "deep_reviewing", "verifying_recommendations", "evidence_deepening", "finalizing",
 ]);
 
@@ -5282,7 +5301,7 @@ function inferResumeCheckpoint(job: Pick<StagedJobRow, "checkpoint" | "current_s
 function statusForCheckpoint(checkpoint: string) {
   if (["enriching_screening_abstracts", "screening", "rescue_screening"].includes(checkpoint)) return "screening";
   if (["enriching_abstracts", "deep_reviewing", "verifying_recommendations", "evidence_deepening", "finalizing"].includes(checkpoint)) return "deep_reviewing";
-  if (checkpoint === "deduplicating") return "deduplicating";
+  if (checkpoint === "deduplicating" || checkpoint === "fresh_deduplicating") return "deduplicating";
   if (checkpoint.startsWith("discovering_")) return checkpoint;
   return "scanning";
 }
@@ -5297,6 +5316,7 @@ function monitorProgressByCheckpoint(checkpoint: string) {
   if (checkpoint === "evidence_deepening") return 95;
   if (checkpoint === "finalizing") return 99;
   if (checkpoint === "deduplicating") return 50;
+  if (checkpoint === "fresh_deduplicating") return 23;
   if (checkpoint === "discovering_years") return 36;
   if (checkpoint === "discovering_months") return 22;
   if (checkpoint === "discovering_days") return 10;
@@ -5310,7 +5330,11 @@ async function saveScanWorkQueue(database: D1Database, jobId: string, work: Scan
 
 async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: string, work: ScanWorkQueue) {
   const queuedIds = Array.from(new Set([
+    ...work.discoveredCandidateIds,
     ...work.candidateIds,
+    ...work.freshLaneCandidateIds,
+    ...work.freshLaneReviewedIds,
+    ...work.freshLaneDeferredIds,
     ...work.screens.map((screen) => screen.canonicalId),
     ...work.deepIds,
     ...work.deepCompletedIds,
@@ -5334,8 +5358,12 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
   }
 
   const before = JSON.stringify({
+    discoveredCandidateIds: work.discoveredCandidateIds,
     candidateIds: work.candidateIds,
     currentCandidateIds: work.currentCandidateIds,
+    freshLaneCandidateIds: work.freshLaneCandidateIds,
+    freshLaneReviewedIds: work.freshLaneReviewedIds,
+    freshLaneDeferredIds: work.freshLaneDeferredIds,
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
     deepCompletedIds: work.deepCompletedIds,
@@ -5350,7 +5378,11 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
   });
   const retained = retainReviewableScanWork(work, reviewableIds);
   Object.assign(work, retained);
+  work.discoveredCandidateIds = work.discoveredCandidateIds.filter((id) => reviewableIds.has(id));
   work.currentCandidateIds = work.currentCandidateIds.filter((id) => reviewableIds.has(id));
+  work.freshLaneCandidateIds = work.freshLaneCandidateIds.filter((id) => reviewableIds.has(id));
+  work.freshLaneReviewedIds = work.freshLaneReviewedIds.filter((id) => reviewableIds.has(id));
+  work.freshLaneDeferredIds = work.freshLaneDeferredIds.filter((id) => reviewableIds.has(id));
   work.deepSelectionOrigins = Object.fromEntries(Object.entries(work.deepSelectionOrigins)
     .filter(([id]) => reviewableIds.has(id)));
   work.deepDeferredIds = work.deepDeferredIds.filter((id) => reviewableIds.has(id));
@@ -5361,8 +5393,12 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
   work.evidenceIds = work.evidenceIds.filter((id) => reviewableIds.has(id));
   work.evidenceCompletedIds = work.evidenceCompletedIds.filter((id) => reviewableIds.has(id));
   return before !== JSON.stringify({
+    discoveredCandidateIds: work.discoveredCandidateIds,
     candidateIds: work.candidateIds,
     currentCandidateIds: work.currentCandidateIds,
+    freshLaneCandidateIds: work.freshLaneCandidateIds,
+    freshLaneReviewedIds: work.freshLaneReviewedIds,
+    freshLaneDeferredIds: work.freshLaneDeferredIds,
     screenIds: work.screens.map((screen) => screen.canonicalId),
     deepIds: work.deepIds,
     deepCompletedIds: work.deepCompletedIds,
@@ -5425,6 +5461,7 @@ function chooseBudgetedDeepCandidateIds(
       routeKey: route?.routeId || route?.sourceKey || "",
       directionKey: candidateDirectionKey(candidate),
       evidenceReady: candidateHasReviewableEvidence(candidate),
+      horizon: candidate.horizon,
     }];
   });
   return selectBudgetedDeepReviewCandidates(items, { limit, pinnedIds: pinned }).map((item) => item.canonicalId);
@@ -5491,6 +5528,18 @@ async function loadCachedQuickScreens(database: D1Database, spaceId: string, can
     qualityScore: row.quality_score,
     screeningReason: row.screening_reason,
     horizon: row.horizon,
+  }));
+}
+
+function quickScreensFromPersistedReviews(reviews: PaperReview[], candidates: Candidate[]) {
+  const horizonById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate.horizon]));
+  return reviews.map((review): QuickScreen => ({
+    canonicalId: review.canonicalId,
+    isPaper: review.isPaper,
+    relevanceScore: review.relevanceScore,
+    qualityScore: review.qualityScore,
+    screeningReason: review.screeningReason,
+    horizon: horizonById.get(review.canonicalId),
   }));
 }
 
@@ -6143,6 +6192,56 @@ export async function POST(request: Request) {
       });
     };
 
+    const continueAfterFreshLane = async () => {
+      const freshReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
+      const published = freshReviews.filter(isPublishedRecommendation).length;
+      work.freshLaneReviewedIds = Array.from(new Set([...work.freshLaneReviewedIds, ...work.deepCompletedIds])).slice(0, FRESH_LANE_DEEP_REVIEW_LIMIT);
+      work.freshLaneDeferredIds = Array.from(new Set([
+        ...work.freshLaneDeferredIds,
+        ...work.deepDeferredIds,
+        ...work.verificationDeferredIds,
+      ])).slice(0, FRESH_LANE_DEEP_REVIEW_LIMIT);
+      work.freshLaneActive = false;
+      work.freshLaneCompleted = true;
+      work.candidateIds = [...work.discoveredCandidateIds];
+      work.screens = [];
+      work.deepIds = [];
+      work.deepSelectionOrigins = {};
+      work.selectionFailureReasons = {};
+      work.deepCompletedIds = [];
+      work.deepDeferredIds = [];
+      work.verificationIds = [];
+      work.verificationCompletedIds = [];
+      work.verificationDeferredIds = [];
+      work.verificationAttempts = {};
+      work.draftRegenerationAttempts = {};
+      work.rescueScreenIds = [];
+      work.rescueScreened = false;
+      await saveScanWorkQueue(database, job.id, work);
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: job.id,
+        kind: "fresh_lane_completed",
+        stage: "fresh-first",
+        source: MONITOR_MODEL,
+        outcome: published ? "success" : work.freshLaneDeferredIds.length ? "degraded" : "info",
+        durationMs: Math.max(0, Date.now() - databaseTime(job.started_at)),
+        message: "The newest-paper lane produced an early quality decision before durable-horizon discovery continued",
+        metadata: {
+          screened: work.freshLaneCandidateIds.length,
+          reviewed: work.freshLaneReviewedIds.length,
+          deferred: work.freshLaneDeferredIds.length,
+          published,
+          qualityGateUnchanged: true,
+        },
+      });
+      await setStage("discovering_months", "discovering_months", 24,
+        published
+          ? `近 14 天优先判断已产生 ${published} 篇可读结果；继续检索近 6 个月与核心补读`
+          : "近 14 天优先判断已完成；继续检索近期优质论文与核心补读", "months");
+      return Response.json(await readState(database, space, { freshLaneComplete: true }), { status: 202 });
+    };
+
     const finalizeMain = async (candidates: Candidate[], reviews: PaperReview[]) => {
       const completedAt = new Date();
       const reviewableIds = new Set(candidates.map((candidate) => candidate.canonicalId));
@@ -6346,6 +6445,10 @@ export async function POST(request: Request) {
         const newlyDiscoveredIds = await findNewCandidateIds(database, space.id, batch.candidates);
         const newCandidates = newlyDiscoveredIds.length;
         await persistCandidatePool(database, space.id, batch.candidates);
+        work.discoveredCandidateIds = Array.from(new Set([
+          ...work.discoveredCandidateIds,
+          ...batch.candidates.map((candidate) => candidate.canonicalId),
+        ])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
         work.candidateIds = Array.from(new Set([...work.candidateIds, ...batch.candidates.map((candidate) => candidate.canonicalId)]));
         work.currentCandidateIds = Array.from(new Set([...work.currentCandidateIds, ...newlyDiscoveredIds])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
         work.rawCandidateCount += batch.rawCount;
@@ -6358,29 +6461,82 @@ export async function POST(request: Request) {
           completed: true,
         };
         await saveScanWorkQueue(database, job.id, work);
-        const nextCheckpoint = horizonKey === "days" ? "discovering_months" : horizonKey === "months" ? "discovering_years" : "deduplicating";
-        const nextStatus = nextCheckpoint === "deduplicating" ? "deduplicating" : nextCheckpoint;
-        const progress = horizonKey === "days" ? 22 : horizonKey === "months" ? 36 : 50;
-        const source = nextCheckpoint === "deduplicating" ? "正在去重并准备候选队列" : nextCheckpoint === "discovering_months" ? "正在检索近 6 个月" : "正在回溯近 5 年";
+        const runFreshLane = horizonKey === "days" && !work.freshLaneCompleted && newlyDiscoveredIds.length > 0;
+        const nextCheckpoint = horizonKey === "days"
+          ? runFreshLane ? "fresh_deduplicating" : "discovering_months"
+          : horizonKey === "months" ? "discovering_years" : "deduplicating";
+        const nextStatus = ["deduplicating", "fresh_deduplicating"].includes(nextCheckpoint) ? "deduplicating" : nextCheckpoint;
+        const progress = horizonKey === "days" ? runFreshLane ? 23 : 24 : horizonKey === "months" ? 36 : 50;
+        const source = nextCheckpoint === "fresh_deduplicating" ? "正在优先准备近 14 天的新论文"
+          : nextCheckpoint === "deduplicating" ? "正在去重并准备候选队列"
+            : nextCheckpoint === "discovering_months" ? "正在检索近 6 个月" : "正在回溯近 5 年";
         await database.prepare(
           "UPDATE monitor_scan_jobs SET discovered_count = ?, new_candidate_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        ).bind(work.candidateIds.length, work.newCandidateCount, job.id).run();
+        ).bind(work.discoveredCandidateIds.length, work.newCandidateCount, job.id).run();
         await setStage(nextCheckpoint, nextStatus, progress, source, nextCheckpoint.startsWith("discovering_") ? nextCheckpoint.replace("discovering_", "") : "");
-      } else if (job.checkpoint === "deduplicating") {
-        const pendingQueue = await pendingCandidateQueue(database, space.id);
-        const selected = selectCurrentAndBacklogReviewBatch(pendingQueue, work.candidateIds);
-        work.candidateIds = Array.from(new Set([
-          ...selected.map((candidate) => candidate.canonicalId),
-          ...work.retryDeepIds,
-        ])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
+      } else if (job.checkpoint === "fresh_deduplicating") {
+        const currentIds = new Set(work.currentCandidateIds);
+        const discovered = await pendingCandidateQueue(database, space.id, work.discoveredCandidateIds);
+        const newestCandidates = selectHorizonScreeningCandidates(
+          discovered.filter((candidate) => candidate.horizon === "days" && currentIds.has(candidate.canonicalId)),
+          FRESH_LANE_SCREEN_LIMIT,
+        );
+        work.freshLaneCandidateIds = newestCandidates.map((candidate) => candidate.canonicalId);
+        work.freshLaneActive = work.freshLaneCandidateIds.length > 0;
+        work.candidateIds = [...work.freshLaneCandidateIds];
         work.screens = await loadCachedQuickScreens(database, space.id, work.candidateIds);
         work.deepIds = [];
-        work.deepSelectionOrigins = {};
-        work.selectionFailureReasons = {};
         work.deepCompletedIds = [];
         work.deepDeferredIds = [];
         work.verificationIds = [];
         work.verificationCompletedIds = [];
+        work.verificationDeferredIds = [];
+        work.verificationAttempts = {};
+        work.rescueScreenIds = [];
+        work.rescueScreened = false;
+        work.horizonStats.days.queued = newestCandidates.length;
+        await saveScanWorkQueue(database, job.id, work);
+        if (!newestCandidates.length) {
+          work.freshLaneCompleted = true;
+          work.candidateIds = [...work.discoveredCandidateIds];
+          await saveScanWorkQueue(database, job.id, work);
+          await setStage("discovering_months", "discovering_months", 24, "近 14 天暂无未评审新候选；继续检索近 6 个月", "months");
+        } else {
+          await setStage("enriching_screening_abstracts", "screening", 26,
+            `优先为 ${newestCandidates.length} 篇近 14 天新论文补全摘要证据`);
+        }
+      } else if (job.checkpoint === "deduplicating") {
+        const pendingQueue = await pendingCandidateQueue(database, space.id);
+        const selected = selectCurrentAndBacklogReviewBatch(pendingQueue, work.currentCandidateIds);
+        const earlyCandidates = work.freshLaneReviewedIds.length
+          ? await pendingCandidateQueue(database, space.id, work.freshLaneReviewedIds) : [];
+        const earlyReviews = work.freshLaneReviewedIds.length
+          ? await loadPersistedReviews(database, space.id, work.freshLaneReviewedIds) : [];
+        const earlyReviewIds = new Set(earlyReviews.map((review) => review.canonicalId));
+        const earlyVerificationDeferredIds = earlyReviews
+          .filter((review) => review.verificationRetryable && work.freshLaneDeferredIds.includes(review.canonicalId))
+          .map((review) => review.canonicalId);
+        const earlyDeepDeferredIds = work.freshLaneDeferredIds.filter((id) => !earlyReviewIds.has(id));
+        work.retryDeepIds = Array.from(new Set([...work.retryDeepIds, ...earlyDeepDeferredIds])).slice(0, DEEP_REVIEW_CARRYOVER_LIMIT);
+        work.candidateIds = Array.from(new Set([
+          ...selected.map((candidate) => candidate.canonicalId),
+          ...work.freshLaneReviewedIds,
+          ...work.freshLaneDeferredIds,
+          ...work.retryDeepIds,
+        ])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
+        const cachedScreens = await loadCachedQuickScreens(database, space.id, work.candidateIds);
+        const screensById = new Map(cachedScreens.map((screen) => [screen.canonicalId, screen]));
+        for (const screen of quickScreensFromPersistedReviews(earlyReviews, earlyCandidates)) screensById.set(screen.canonicalId, screen);
+        work.screens = Array.from(screensById.values());
+        work.deepIds = [];
+        work.deepSelectionOrigins = {};
+        work.selectionFailureReasons = {};
+        work.deepCompletedIds = earlyReviews.map((review) => review.canonicalId);
+        work.deepDeferredIds = [];
+        work.verificationIds = [...earlyVerificationDeferredIds];
+        work.verificationCompletedIds = [];
+        // The durable-horizon pass happens later in the same scan, so it is a
+        // useful bounded retry opportunity for transient fresh-lane deferrals.
         work.verificationDeferredIds = [];
         work.verificationAttempts = {};
         work.draftRegenerationAttempts = {};
@@ -6408,7 +6564,7 @@ export async function POST(request: Request) {
         const source = enrichment.requested
           ? `已批量补全 ${enrichment.enriched} / ${enrichment.requested} 篇缺失摘要，开始快速筛选`
           : "候选摘要证据完整，开始快速筛选";
-        await setStage("screening", "screening", 56, source);
+        await setStage("screening", "screening", work.freshLaneActive ? 28 : 56, source);
       } else if (job.checkpoint === "screening") {
         const screenedIds = new Set(work.screens.map((screen) => screen.canonicalId));
         const remainingIds = work.candidateIds.filter((id) => !screenedIds.has(id));
@@ -6443,16 +6599,19 @@ export async function POST(request: Request) {
           if (work.screenFailureCount >= 2) throw result.errors[0] instanceof Error ? result.errors[0] : new Error("Quick screening failed twice");
         }
         const screenRemaining = work.candidateIds.filter((id) => !new Set(work.screens.map((screen) => screen.canonicalId)).has(id));
-        const screeningProgress = Math.min(74, 56 + Math.round(work.screens.length / Math.max(1, work.candidateIds.length) * 18));
+        const screeningProgress = work.freshLaneActive
+          ? Math.min(33, 28 + Math.round(work.screens.length / Math.max(1, work.candidateIds.length) * 5))
+          : Math.min(74, 56 + Math.round(work.screens.length / Math.max(1, work.candidateIds.length) * 18));
         await database.prepare(
           "UPDATE monitor_scan_jobs SET reviewed_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(work.screens.length, work.screens.filter((screen) => !screen.isPaper || screen.relevanceScore < 68 || screen.qualityScore < 55).length,
           `DeepSeek Pro 已快速筛选 ${work.screens.length} / ${work.candidateIds.length}`, screeningProgress, job.id).run();
         if (!screenRemaining.length) {
           const candidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
-          const primaryIds = chooseDeepCandidateIds(candidates, work.screens);
-          if (!work.rescueScreened && primaryIds.length < DEEP_REVIEW_LIMIT) {
-            work.rescueScreenIds = chooseRescueScreenIds(candidates, work.screens, Math.min(RESCUE_SCREEN_LIMIT, DEEP_REVIEW_LIMIT - primaryIds.length + 2));
+          const activeDeepLimit = work.freshLaneActive ? FRESH_LANE_DEEP_REVIEW_LIMIT : DEEP_REVIEW_LIMIT;
+          const primaryIds = chooseDeepCandidateIds(candidates, work.screens, activeDeepLimit);
+          if (!work.freshLaneActive && !work.rescueScreened && primaryIds.length < activeDeepLimit) {
+            work.rescueScreenIds = chooseRescueScreenIds(candidates, work.screens, Math.min(RESCUE_SCREEN_LIMIT, activeDeepLimit - primaryIds.length + 2));
             work.rescueScreened = true;
             await saveScanWorkQueue(database, job.id, work);
             if (work.rescueScreenIds.length) {
@@ -6460,13 +6619,16 @@ export async function POST(request: Request) {
               return Response.json(await readState(database, space, { rescueScreening: true }), { status: 202 });
             }
           }
-          work.deepIds = chooseBudgetedDeepCandidateIds(candidates, work.screens, work.currentCandidateIds, DEEP_REVIEW_LIMIT);
-          if (work.deepIds.length < Math.min(3, DEEP_REVIEW_LIMIT)) {
+          work.deepIds = chooseBudgetedDeepCandidateIds(
+            candidates, work.screens, work.currentCandidateIds, activeDeepLimit, work.deepCompletedIds,
+          );
+          if (work.deepIds.length < Math.min(3, activeDeepLimit)) {
             work.deepIds = chooseBudgetedDeepCandidateIds(
-              candidates, work.screens, work.currentCandidateIds, DEEP_REVIEW_LIMIT, work.deepIds, true,
+              candidates, work.screens, work.currentCandidateIds, activeDeepLimit,
+              new Set([...work.deepCompletedIds, ...work.deepIds]), true,
             );
           }
-          if (work.retryDeepIds.length) {
+          if (!work.freshLaneActive && work.retryDeepIds.length) {
             work.deepIds = Array.from(new Set([
               ...work.deepIds,
               ...work.retryDeepIds,
@@ -6486,8 +6648,11 @@ export async function POST(request: Request) {
           work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...pendingVerificationIds]));
           work.verificationIds = Array.from(new Set([...work.verificationIds, ...pendingVerificationIds]));
           await saveScanWorkQueue(database, job.id, work);
-          if (!work.deepIds.length) return finalizeMain([], []);
-          await setStage("enriching_abstracts", "deep_reviewing", 76, `正在为 ${work.deepIds.length} 篇高潜力论文补全摘要证据`);
+          if (!work.deepIds.length) return work.freshLaneActive ? continueAfterFreshLane() : finalizeMain([], []);
+          await setStage("enriching_abstracts", "deep_reviewing", work.freshLaneActive ? 34 : 76,
+            work.freshLaneActive
+              ? `近 14 天已有 ${work.deepIds.length} 篇高潜力论文，正在补全摘要证据`
+              : `正在为 ${work.deepIds.length} 篇高潜力论文补全摘要证据`);
         }
       } else if (job.checkpoint === "rescue_screening") {
         const candidates = await pendingCandidateQueue(database, space.id, work.rescueScreenIds);
@@ -6550,11 +6715,11 @@ export async function POST(request: Request) {
             qualityGateUnchanged: true,
           },
         });
-        if (!work.deepIds.length) return finalizeMain([], []);
+        if (!work.deepIds.length) return work.freshLaneActive ? continueAfterFreshLane() : finalizeMain([], []);
         const source = enrichment.requested
           ? `已补全 ${enrichment.enriched} / ${enrichment.requested} 篇缺失摘要，${work.deepIds.length} 篇证据充分候选准备深度解读`
           : "候选摘要证据完整，准备深度解读";
-        await setStage("deep_reviewing", "deep_reviewing", 80, source);
+        await setStage("deep_reviewing", "deep_reviewing", work.freshLaneActive ? 36 : 80, source);
       } else if (job.checkpoint === "deep_reviewing") {
         const completedIds = new Set(work.deepCompletedIds);
         const deferredIds = new Set(work.deepDeferredIds);
@@ -6575,7 +6740,9 @@ export async function POST(request: Request) {
             const saved = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
             const ready = saved.filter(isPublishedRecommendation).length;
             const pendingVerification = saved.filter((review) => review.verificationRetryable).length;
-            const progress = Math.min(94, 76 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 18));
+            const progress = work.freshLaneActive
+              ? Math.min(43, 36 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 7))
+              : Math.min(94, 76 + Math.round(work.deepCompletedIds.length / Math.max(1, work.deepIds.length) * 18));
             await database.prepare(
               `UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', recommended_count = ?,
                first_recommendation_at = CASE WHEN ? > 0 THEN COALESCE(first_recommendation_at, CURRENT_TIMESTAMP) ELSE first_recommendation_at END,
@@ -6651,7 +6818,9 @@ export async function POST(request: Request) {
         const verificationPending = persistedReviews.filter((review) => review.verificationRetryable).length;
         const potentialRecommendations = persistedReviews.filter((review) => review.recommended).length;
         const processedDeepCount = new Set([...work.deepCompletedIds, ...work.deepDeferredIds]).size;
-        const deepProgress = Math.min(94, 76 + Math.round(processedDeepCount / Math.max(1, work.deepIds.length) * 18));
+        const deepProgress = work.freshLaneActive
+          ? Math.min(43, 36 + Math.round(processedDeepCount / Math.max(1, work.deepIds.length) * 7))
+          : Math.min(94, 76 + Math.round(processedDeepCount / Math.max(1, work.deepIds.length) * 18));
         await database.prepare(
           "UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', reviewed_count = ?, recommended_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
@@ -6663,11 +6832,12 @@ export async function POST(request: Request) {
         if (newlyVerifiableIds.length && (newlyVerifiableIds.length >= earlyVerificationThreshold || processedDeepCount >= work.deepIds.length)) {
           work.verificationIds = Array.from(new Set([...work.verificationIds, ...newlyVerifiableIds]));
           await saveScanWorkQueue(database, job.id, work);
-          await setStage("verifying_recommendations", "deep_reviewing", 94,
+          await setStage("verifying_recommendations", "deep_reviewing", work.freshLaneActive ? 44 : 94,
             `已有 ${newlyVerifiableIds.length} 篇高潜力解读，先完成推荐判断；其余论文稍后继续解读`);
           return Response.json(await readState(database, space, { earlyVerification: true }), { status: 202 });
         }
         if (processedDeepCount >= work.deepIds.length) {
+          if (work.freshLaneActive) return continueAfterFreshLane();
           const recommendationShortfall = Math.max(0, HIGH_POTENTIAL_DRAFT_TARGET - potentialRecommendations);
           if (recommendationShortfall && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
@@ -6704,7 +6874,7 @@ export async function POST(request: Request) {
             .filter(([id]) => work.verificationIds.includes(id)));
           await saveScanWorkQueue(database, job.id, work);
           if (work.verificationIds.length) {
-            await setStage("verifying_recommendations", "deep_reviewing", 94,
+            await setStage("verifying_recommendations", "deep_reviewing", work.freshLaneActive ? 44 : 94,
               `已形成 ${work.verificationIds.length} 篇高潜力解读，正在逐篇核对书目与摘要证据`);
             return Response.json(await readState(database, space, { verifyingRecommendations: true }), { status: 202 });
           }
@@ -6733,7 +6903,7 @@ export async function POST(request: Request) {
               work.verificationDeferredIds = work.verificationDeferredIds.filter((id) => !retryIds.has(id));
               delete work.verificationAttempts[canonicalId];
               await saveScanWorkQueue(database, job.id, work);
-              await setStage("deep_reviewing", "deep_reviewing", 86,
+              await setStage("deep_reviewing", "deep_reviewing", work.freshLaneActive ? 40 : 86,
                 `发现 1 篇解读结构不完整，正在自动重新生成；已完成论文不会重做`);
               return Response.json(await readState(database, space, { regeneratingIncompleteDraft: true }), { status: 202 });
             }
@@ -6883,21 +7053,26 @@ export async function POST(request: Request) {
         const pending = verificationReviews.filter((review) => work.verificationIds.includes(review.canonicalId) && review.verificationRetryable).length;
         const retrying = work.verificationIds.filter((id) => !work.verificationCompletedIds.includes(id)
           && !work.verificationDeferredIds.includes(id) && (work.verificationAttempts[id] || 0) > 0).length;
-        const verificationProgress = Math.min(96, 94 + Math.round(verificationProcessed
-          / Math.max(1, work.verificationIds.length) * 2));
+        const verificationProgress = work.freshLaneActive
+          ? Math.min(46, 44 + Math.round(verificationProcessed / Math.max(1, work.verificationIds.length) * 2))
+          : Math.min(96, 94 + Math.round(verificationProcessed / Math.max(1, work.verificationIds.length) * 2));
         await database.prepare(
-          "UPDATE monitor_scan_jobs SET recommended_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        ).bind(published,
+          `UPDATE monitor_scan_jobs SET recommended_count = ?,
+           first_recommendation_at = CASE WHEN ? > 0 THEN COALESCE(first_recommendation_at, CURRENT_TIMESTAMP) ELSE first_recommendation_at END,
+           current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        ).bind(published, published,
           `推荐判断已完成 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已可阅读${retrying ? `，${retrying} 篇正在核对` : pending ? `，${pending} 篇将在短暂故障恢复后继续` : ""}`,
           verificationProgress, job.id).run();
+        if (published && !firstRecommendationAt) firstRecommendationAt = new Date().toISOString();
         if (verificationProcessed >= work.verificationIds.length) {
           const remainingDeepIds = work.deepIds.filter((id) => !work.deepCompletedIds.includes(id) && !work.deepDeferredIds.includes(id));
           if (published < DAILY_RECOMMENDATION_MIN_TARGET && remainingDeepIds.length) {
             await saveScanWorkQueue(database, job.id, work);
-            await setStage("deep_reviewing", "deep_reviewing", 86,
+            await setStage("deep_reviewing", "deep_reviewing", work.freshLaneActive ? 40 : 86,
               `已有 ${published} 篇正式入选；继续解读 ${remainingDeepIds.length} 篇已排队论文，争取达到 ${DAILY_RECOMMENDATION_MIN_TARGET} 篇`);
             return Response.json(await readState(database, space, { resumedDeepReviewAfterVerification: true }), { status: 202 });
           }
+          if (work.freshLaneActive) return continueAfterFreshLane();
           const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
           const availableCandidates = allCandidates.filter((candidate) => !work.deepIds.includes(candidate.canonicalId));
           const formalRescueSize = formalRecommendationRescueSize({
