@@ -177,6 +177,8 @@ test("screening refreshes stale fallback plans and enriches evidence before deep
   assert.match(monitor, /evidenceExcludedIds: string\[\]/);
   assert.match(monitor, /work\.evidenceExcludedIds = Array\.from\(new Set/);
   assert.match(monitor, /rescueCandidates = allCandidates\.filter\(\(candidate\) => !work\.evidenceExcludedIds\.includes\(candidate\.canonicalId\)\)/);
+  assert.match(monitor, /rawCorrectionVerification\.verdict === "insufficient" \? "insufficient" : "verified"/);
+  assert.match(monitor, /minimumCoverageScore: 80/);
   assert.match(monitor, /MONITOR_REVIEW_PIPELINE_RELEASED_AT/);
   assert.match(profiles, /stochastic localization/);
   assert.match(profiles, /log-Sobolev inequality/);

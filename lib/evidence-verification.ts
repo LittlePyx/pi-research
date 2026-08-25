@@ -97,6 +97,7 @@ export function sanitizeEvidenceVerificationDraft(
     evidenceTexts?: string[];
     requireAllFields?: boolean;
     requiredFields?: readonly string[];
+    minimumCoverageScore?: number;
   } = {},
 ) {
   const draft = value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -138,6 +139,7 @@ export function sanitizeEvidenceVerificationDraft(
   });
   const reason = cleanText(draft.reason, 900);
   const coverageScore = boundedScore(draft.coverageScore);
+  const minimumCoverageScore = Math.max(0, Math.min(100, Math.round(options.minimumCoverageScore ?? 90)));
   const groundedFields = new Set(claimChecks.filter((item) => item.grounded).map((item) => item.field));
   const requiredFields = options.requiredFields?.length
     ? options.requiredFields.filter((field) => allowedFields.has(field))
@@ -145,7 +147,7 @@ export function sanitizeEvidenceVerificationDraft(
   const allFieldsCovered = !options.requireAllFields || requiredFields.every((field) => supportedFields.includes(field) && groundedFields.has(field));
   const clean = unsupportedFields.length === 0 && overstatements.length === 0 && contradictionRisks.length === 0
     && claimChecks.some((item) => item.grounded) && allFieldsCovered;
-  const verdict: EvidenceVerificationVerdict = requestedVerdict === "verified" && (!clean || coverageScore < 90)
+  const verdict: EvidenceVerificationVerdict = requestedVerdict === "verified" && (!clean || coverageScore < minimumCoverageScore)
     ? "revise" : requestedVerdict;
   return {
     verdict,
@@ -157,7 +159,7 @@ export function sanitizeEvidenceVerificationDraft(
     supportedEvidenceIds,
     claimChecks,
     reason,
-    clean: verdict === "verified" && clean && coverageScore >= 90,
+    clean: verdict === "verified" && clean && coverageScore >= minimumCoverageScore,
   };
 }
 

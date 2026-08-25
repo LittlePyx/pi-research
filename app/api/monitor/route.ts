@@ -2454,6 +2454,20 @@ async function verifyRecommendationBatch(input: {
       if (!correctedReview) throw new Error(`Recommendation correction incomplete: ${review.canonicalId}`);
       const evidence = evidenceByReview.get(review.canonicalId);
       const evidenceById = new Map((evidence?.units || []).map((unit) => [unit.id, unit.text]));
+      const rawCorrectionVerification = correction?.verification && typeof correction.verification === "object"
+        ? correction.verification as Record<string, unknown> : null;
+      // The correction contract permits only verified or insufficient. Some
+      // model responses nevertheless repeat the initial "revise" label while
+      // simultaneously reporting full grounded core coverage and no remaining
+      // issue. Treat that out-of-contract label as a request for deterministic
+      // adjudication; the sanitizer still fails closed on missing evidence,
+      // uncovered core fields, risks, or an insufficient verdict.
+      const correctionVerification = rawCorrectionVerification
+        ? {
+            ...rawCorrectionVerification,
+            verdict: rawCorrectionVerification.verdict === "insufficient" ? "insufficient" : "verified",
+          }
+        : { verdict: "insufficient", reason: "Correction response omitted its final evidence decision" };
       const options = {
         allowedFields: recommendationVerificationFields(correctedReview),
         requiredFields: recommendationVerificationRequiredFields(correctedReview),
@@ -2461,13 +2475,12 @@ async function verifyRecommendationBatch(input: {
         evidenceById,
         evidenceTexts: (evidence?.units || []).map((unit) => unit.text),
         requireAllFields: true,
+        minimumCoverageScore: 80,
       };
       const initial = sanitizeEvidenceVerificationDraft(review.verificationReport?.audit || {
         verdict: "revise", reason: "A conservative evidence-grounded correction was requested",
       }, options);
-      const revised = sanitizeEvidenceVerificationDraft(correction?.verification || {
-        verdict: "insufficient", reason: "Correction response omitted its final evidence decision",
-      }, options);
+      const revised = sanitizeEvidenceVerificationDraft(correctionVerification, options);
       const report = evidenceVerificationReport({ initial, revised });
       const index = auditable.indexOf(review);
       const usage = {

@@ -162,6 +162,52 @@ test("one clean post-revision pass is recorded as revised; a second failure degr
   assert.equal(evidenceVerificationReport({ initial, revised: cleanRevision }).coverageScore, 94);
 });
 
+test("a corrected draft is decided by grounded core evidence instead of an arbitrary model score", () => {
+  const evidenceById = new Map([["abstract:1", "The abstract directly supports the corrected core scientific claims."]]);
+  const corrected = {
+    verdict: "verified",
+    coverageScore: 82,
+    supportedFields: fields,
+    supportedEvidenceIds: ["abstract:1"],
+    claimChecks: fields.map((field) => ({
+      field,
+      claimExcerpt: `${field} corrected claim`,
+      evidenceId: "abstract:1",
+      verdict: "supported",
+    })),
+  };
+  const strictInitialPass = sanitizeEvidenceVerificationDraft(corrected, {
+    allowedFields: fields,
+    requiredFields: fields,
+    allowedEvidenceIds: new Set(evidenceById.keys()),
+    evidenceById,
+    requireAllFields: true,
+  });
+  const boundedCorrectionPass = sanitizeEvidenceVerificationDraft(corrected, {
+    allowedFields: fields,
+    requiredFields: fields,
+    allowedEvidenceIds: new Set(evidenceById.keys()),
+    evidenceById,
+    requireAllFields: true,
+    minimumCoverageScore: 80,
+  });
+  assert.equal(strictInitialPass.clean, false);
+  assert.equal(boundedCorrectionPass.clean, true);
+
+  const stillUnsupported = sanitizeEvidenceVerificationDraft({
+    ...corrected,
+    unsupportedFields: ["method"],
+  }, {
+    allowedFields: fields,
+    requiredFields: fields,
+    allowedEvidenceIds: new Set(evidenceById.keys()),
+    evidenceById,
+    requireAllFields: true,
+    minimumCoverageScore: 80,
+  });
+  assert.equal(stillUnsupported.clean, false);
+});
+
 test("recommendations and research actions use independent verification and fail closed", async () => {
   const [monitor, actions, map, problem, client, schema, repository, migration] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
