@@ -164,6 +164,7 @@ test("verification is bounded to one audit and one correction while transient fa
   assert.doesNotMatch(monitor, /fresh evidence-check pass is queued/);
   assert.match(monitor, /coverageScore must be an integer from 0 to 100/);
   assert.match(monitor, /recommendationVerificationEvidence/);
+  assert.match(monitor, /requiredFields: populatedFields/);
   assert.match(monitor, /document\.status IN \('ready', 'partial'\)/);
   assert.match(monitor, /abstractEvidenceUnits/);
   assert.doesNotMatch(monitor, /for \(let attempt = 0; attempt < 2 && !data;/);
@@ -179,6 +180,9 @@ test("verification is bounded to one audit and one correction while transient fa
   assert.match(client, /recommendationAuditPhaseLabel/);
   assert.match(client, /正在核对并修正/);
   assert.match(client, /正在核对/);
+  assert.match(monitor, /earlyVerificationThreshold/);
+  assert.match(monitor, /resumedDeepReviewAfterVerification/);
+  assert.doesNotMatch(client, /证据审计|自动审计/);
 });
 
 test("an incomplete recommendation draft can regenerate once without trapping the scan", async () => {

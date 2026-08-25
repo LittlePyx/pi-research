@@ -6577,7 +6577,7 @@ export async function POST(request: Request) {
               `UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', recommended_count = ?,
                first_recommendation_at = CASE WHEN ? > 0 THEN COALESCE(first_recommendation_at, CURRENT_TIMESTAMP) ELSE first_recommendation_at END,
                current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            ).bind(ready, ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${pendingVerification} 篇高潜力解读已保存并进入自动证据审计`, progress, job.id).run();
+            ).bind(ready, ready, `已完成 ${work.deepCompletedIds.length} / ${work.deepIds.length} 篇深度解读，${pendingVerification} 篇高潜力解读正在等待推荐判断`, progress, job.id).run();
             if (ready && !firstRecommendationAt) {
               firstRecommendationAt = new Date().toISOString();
               await recordReliabilityEvent(database, {
@@ -6652,7 +6652,18 @@ export async function POST(request: Request) {
         await database.prepare(
           "UPDATE monitor_scan_jobs SET status = 'deep_reviewing', checkpoint = 'deep_reviewing', reviewed_count = ?, recommended_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(work.screens.length, recommended, Math.max(0, work.screens.length - recommended),
-          `已处理 ${processedDeepCount} / ${work.deepIds.length} 篇深度解读，${verificationPending} 篇高潜力解读进入自动审计${recommended ? `，${recommended} 篇已可阅读` : ""}${work.deepDeferredIds.length ? `，${work.deepDeferredIds.length} 篇响应较慢已延后` : ""}`, deepProgress, job.id).run();
+          `已处理 ${processedDeepCount} / ${work.deepIds.length} 篇深度解读，${verificationPending} 篇高潜力解读等待推荐判断${recommended ? `，${recommended} 篇已可阅读` : ""}${work.deepDeferredIds.length ? `，${work.deepDeferredIds.length} 篇响应较慢已延后` : ""}`, deepProgress, job.id).run();
+        const newlyVerifiableIds = persistedReviews
+          .filter((review) => review.verificationRetryable && !work.verificationIds.includes(review.canonicalId))
+          .map((review) => review.canonicalId);
+        const earlyVerificationThreshold = recommended === 0 ? 1 : Math.min(2, Math.max(1, DAILY_RECOMMENDATION_MIN_TARGET - recommended));
+        if (newlyVerifiableIds.length && (newlyVerifiableIds.length >= earlyVerificationThreshold || processedDeepCount >= work.deepIds.length)) {
+          work.verificationIds = Array.from(new Set([...work.verificationIds, ...newlyVerifiableIds]));
+          await saveScanWorkQueue(database, job.id, work);
+          await setStage("verifying_recommendations", "deep_reviewing", 94,
+            `已有 ${newlyVerifiableIds.length} 篇高潜力解读，先完成推荐判断；其余论文稍后继续解读`);
+          return Response.json(await readState(database, space, { earlyVerification: true }), { status: 202 });
+        }
         if (processedDeepCount >= work.deepIds.length) {
           const recommendationShortfall = Math.max(0, HIGH_POTENTIAL_DRAFT_TARGET - potentialRecommendations);
           if (recommendationShortfall && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
@@ -6865,7 +6876,7 @@ export async function POST(request: Request) {
         const verificationProcessed = new Set([...work.verificationCompletedIds, ...work.verificationDeferredIds]).size;
         const verificationReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
         const published = verificationReviews.filter(isPublishedRecommendation).length;
-        const pending = verificationReviews.filter((review) => review.verificationRetryable).length;
+        const pending = verificationReviews.filter((review) => work.verificationIds.includes(review.canonicalId) && review.verificationRetryable).length;
         const retrying = work.verificationIds.filter((id) => !work.verificationCompletedIds.includes(id)
           && !work.verificationDeferredIds.includes(id) && (work.verificationAttempts[id] || 0) > 0).length;
         const verificationProgress = Math.min(96, 94 + Math.round(verificationProcessed
@@ -6876,6 +6887,13 @@ export async function POST(request: Request) {
           `推荐判断已完成 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已可阅读${retrying ? `，${retrying} 篇正在核对` : pending ? `，${pending} 篇将在短暂故障恢复后继续` : ""}`,
           verificationProgress, job.id).run();
         if (verificationProcessed >= work.verificationIds.length) {
+          const remainingDeepIds = work.deepIds.filter((id) => !work.deepCompletedIds.includes(id) && !work.deepDeferredIds.includes(id));
+          if (published < DAILY_RECOMMENDATION_MIN_TARGET && remainingDeepIds.length) {
+            await saveScanWorkQueue(database, job.id, work);
+            await setStage("deep_reviewing", "deep_reviewing", 86,
+              `已有 ${published} 篇正式入选；继续解读 ${remainingDeepIds.length} 篇已排队论文，争取达到 ${DAILY_RECOMMENDATION_MIN_TARGET} 篇`);
+            return Response.json(await readState(database, space, { resumedDeepReviewAfterVerification: true }), { status: 202 });
+          }
           const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
           const availableCandidates = allCandidates.filter((candidate) => !work.deepIds.includes(candidate.canonicalId));
           const formalRescueSize = formalRecommendationRescueSize({
