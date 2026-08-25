@@ -2167,10 +2167,10 @@ function correctedRecommendationReview(review: PaperReview, value: unknown): Pap
     readingFocusZh: text("readingFocusZh", review.readingFocusZh, 750), readingFocusEn: text("readingFocusEn", review.readingFocusEn, 1000),
     researchQuestionsZh: list("researchQuestionsZh", review.researchQuestionsZh, 4),
     researchQuestionsEn: list("researchQuestionsEn", review.researchQuestionsEn, 4),
-    researchProblemImpactZh: text("researchProblemImpactZh", review.researchProblemImpactZh, 760),
-    researchProblemImpactEn: text("researchProblemImpactEn", review.researchProblemImpactEn, 1000),
-    researchDecisionZh: text("researchDecisionZh", review.researchDecisionZh, 650),
-    researchDecisionEn: text("researchDecisionEn", review.researchDecisionEn, 850),
+    researchProblemImpactZh: review.researchProblemImpactZh ? text("researchProblemImpactZh", review.researchProblemImpactZh, 760) : "",
+    researchProblemImpactEn: review.researchProblemImpactEn ? text("researchProblemImpactEn", review.researchProblemImpactEn, 1000) : "",
+    researchDecisionZh: review.researchDecisionZh ? text("researchDecisionZh", review.researchDecisionZh, 650) : "",
+    researchDecisionEn: review.researchDecisionEn ? text("researchDecisionEn", review.researchDecisionEn, 850) : "",
   };
   return next.summaryZh && next.summaryEn && next.whyReadZh && next.whyReadEn ? next : null;
 }
@@ -2332,7 +2332,7 @@ async function verifyRecommendationBatch(input: {
             : "claimChecks must cover every populated substantive field. Every supported or qualified check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
           "Treat title, authors, venue, date, and citation count only as metadata. Evidence units support only what they state or directly entail. Route context and user fit do not prove paper findings.",
           "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it.",
-          correctionMode ? "Keep the correction concise while preserving every required bilingual field. If the corrected draft cannot pass, return insufficient; there will be no further rewrite loop." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
+          correctionMode ? "Keep the correction concise while preserving every required bilingual field. Preserve empty researchProblemImpact and researchDecision fields as empty; never invent user-specific context. If the corrected draft cannot pass, return insufficient; there will be no further rewrite loop." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
           "Drafts and evidence: " + JSON.stringify(auditable.map((review) => {
             const candidate = candidateById.get(review.canonicalId);
             const evidence = evidenceByReview.get(review.canonicalId);
@@ -3399,28 +3399,28 @@ async function generateDailyBrief(
     await saveDailyBrief(database, {
     spaceId: space.id, briefDate, jobId, status: analysisUnavailable ? "degraded" : "ready",
     headlineZh: selected.length
-      ? `今天 ${selected.length} 篇已确认${verificationPending ? `，${verificationPending} 篇后台审计中` : ""}`
-      : verificationPending ? `${verificationPending} 篇高潜力论文正在后台完成审计`
+      ? `今天 ${selected.length} 篇已确认${verificationPending ? `，${verificationPending} 篇正在后台核对` : ""}`
+      : verificationPending ? `${verificationPending} 篇高潜力论文正在后台核对`
         : analysisUnavailable ? "候选已保存，AI 解读暂未完成"
           : verificationFailed ? `本轮暂无正式推荐，${verificationFailed} 篇证据未通过` : "今天没有论文达到严格推荐门槛",
     headlineEn: selected.length
-      ? `${selected.length} confirmed today${verificationPending ? `; ${verificationPending} completing background audits` : ""}`
-      : verificationPending ? `${verificationPending} high-potential papers are completing background audits`
+      ? `${selected.length} confirmed today${verificationPending ? `; ${verificationPending} completing background checks` : ""}`
+      : verificationPending ? `${verificationPending} high-potential papers are completing background checks`
         : analysisUnavailable ? "Candidates saved; AI review is pending"
           : verificationFailed ? `No formal recommendation; ${verificationFailed} failed the evidence gate` : "No paper cleared today's strict recommendation bar",
     overviewZh: selected.length
-      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并完成书目与摘要证据核对，最终确认 ${selected.length} 篇。${verificationPending ? `${verificationPending} 篇已保存审计进度，Pi 将在后台自动完成改写或复核，完成前不计入正式推荐。` : ""}${verificationFailed ? `${verificationFailed} 篇因证据不足未发布。` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
+      ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇、逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇，并完成书目与摘要证据核对，最终确认 ${selected.length} 篇。${verificationPending ? `${verificationPending} 篇已保存核对进度，Pi 会在后台自动继续，完成前不计入正式推荐。` : ""}${verificationFailed ? `${verificationFailed} 篇因证据不足未发布。` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} 篇响应较慢的论文已延后重试，不影响本轮结果。` : ""}其余结果仍在探索账本中。`
       : verificationPending
-        ? `Pi 已保存 ${verificationPending} 篇达到推荐分数的深度解读及审计进度；Pi 会在后台自动完成必要的保守改写和复核，无需你确认，也不会重新检索、筛选或撰写。${verificationFailed ? `另有 ${verificationFailed} 篇未通过证据核对，原因会保留在研究账本中。` : ""}`
+        ? `Pi 已保存 ${verificationPending} 篇达到推荐分数的深度解读和核对进度；Pi 会在后台自动继续，无需你确认，也不会重新检索、筛选或撰写。${verificationFailed ? `另有 ${verificationFailed} 篇未通过证据核对，原因会保留在研究账本中。` : ""}`
       : analysisUnavailable
         ? `Pi 已保存 ${metrics.scanned} 篇候选和 ${metrics.screened || 0} 篇快速筛选结果；本轮 ${metrics.deepScheduled || metrics.deepDeferred || 0} 篇高潜力论文因模型响应异常尚未完成解读。它们仍在待评审队列中，因此这不是“没有论文达标”的质量结论。`
         : verificationFailed
           ? `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；其中 ${verificationFailed} 篇达到高潜力阶段，但未通过独立证据核验，因此本轮正式推荐为 0。它们不是因技术等待被淘汰，核验原因已保留。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`
           : `Pi 从 ${metrics.scanned} 篇候选中快速筛选 ${metrics.screened || metrics.reviewed} 篇，并逐篇深度解读 ${metrics.deepReviewed || metrics.reviewed} 篇；没有论文同时通过相关性、质量、证据完整度与明确推荐四项门槛，因此没有为了填满页面而降低标准。${metrics.deepDeferred ? `另有 ${metrics.deepDeferred} 篇响应较慢的论文已延后重试。` : ""}`,
     overviewEn: selected.length
-      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, checked bibliographic and abstract evidence, and confirmed ${selected.length}. ${verificationPending ? `${verificationPending} have saved audit progress; Pi will finish corrections or rechecks automatically in the background before publishing them. ` : ""}${verificationFailed ? `${verificationFailed} were withheld for insufficient evidence. ` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
+      ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates, deeply reviewed ${metrics.deepReviewed || metrics.reviewed}, checked bibliographic and abstract evidence, and confirmed ${selected.length}. ${verificationPending ? `${verificationPending} have saved checking progress and will continue automatically in the background before publication. ` : ""}${verificationFailed ? `${verificationFailed} were withheld for insufficient evidence. ` : ""}${metrics.deepDeferred ? `${metrics.deepDeferred} slow papers were deferred without blocking this run. ` : ""}Other discoveries remain in the exploration ledger.`
       : verificationPending
-        ? `Pi preserved ${verificationPending} deeply reviewed drafts together with their audit progress. Pi will automatically finish any conservative correction and fresh evidence check in the background, without asking the user or repeating discovery, screening, or drafting.${verificationFailed ? ` Another ${verificationFailed} failed evidence verification and remain recorded in the research ledger.` : ""}`
+        ? `Pi preserved ${verificationPending} deeply reviewed drafts together with their checking progress. Pi will continue automatically in the background without asking the user or repeating discovery, screening, or drafting.${verificationFailed ? ` Another ${verificationFailed} failed evidence verification and remain recorded in the research ledger.` : ""}`
       : analysisUnavailable
         ? `Pi saved ${metrics.scanned} candidates and ${metrics.screened || 0} fast-screen results. Model failures prevented this run from completing AI review of ${metrics.deepScheduled || metrics.deepDeferred || 0} high-potential papers. They remain queued, so this is not a finding that no paper met the quality bar.`
         : verificationFailed
@@ -3432,14 +3432,14 @@ async function generateDailyBrief(
     readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn).filter(Boolean),
     watchlistZh: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} 篇响应较慢的论文会在后续扫描中重试，不会重复处理已完成论文。`] : []),
-      ...(verificationPending ? [`${verificationPending} 篇高潜力论文已保存审计进度；Pi 会在后台自动完成改写或复核，无需用户操作。`] : []),
+      ...(verificationPending ? [`${verificationPending} 篇高潜力论文已保存核对进度；Pi 会在后台自动继续，无需用户操作。`] : []),
       ...(verificationFailed ? [`${verificationFailed} 篇论文未通过独立证据核验；它们与待核验论文分开统计。`] : []),
       ...(!selected.length && !analysisUnavailable && !verificationPending && !verificationFailed ? ["本轮没有强推荐；若首批高潜力论文为零入选，Pi 会自动追加第二批评审，并继续扩展期刊、作者与引用路径。"] : []),
       ...(analysisUnavailable ? ["模型恢复后将从保存点继续评审；已完成的检索与筛选不会重新消耗额度。"] : []),
     ],
     watchlistEn: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} slow papers will be retried in a later scan without repeating completed reviews.`] : []),
-      ...(verificationPending ? [`${verificationPending} high-potential papers have saved audit progress; Pi will finish corrections or rechecks automatically without user action.`] : []),
+      ...(verificationPending ? [`${verificationPending} high-potential papers have saved checking progress; Pi will continue automatically without user action.`] : []),
       ...(verificationFailed ? [`${verificationFailed} papers failed bibliographic and abstract evidence checks and are counted separately from pending drafts.`] : []),
       ...(!selected.length && !analysisUnavailable && !verificationPending && !verificationFailed ? ["No strong recommendation this round. When the first high-potential batch yields nothing, Pi expands to a second review batch and continues across journal, author, and citation paths."] : []),
       ...(analysisUnavailable ? ["When the model recovers, review resumes from the saved checkpoint without repeating completed discovery or screening."] : []),
@@ -6294,7 +6294,7 @@ export async function POST(request: Request) {
         ).bind(completion.state === "analysis_unavailable"
           ? `候选与筛选结果已保存；${work.deepDeferredIds.length} 篇高潜力论文等待模型恢复后续评`
           : verificationPending
-            ? `本轮发现与解读已完成；${verificationPending} 篇已保存审计进度，Pi 将在后台自动完成改写与复核，无需你确认${verificationFailed ? `；另有 ${verificationFailed} 篇证据未通过` : ""}`
+            ? `本轮发现与解读已完成；${verificationPending} 篇已保存核对进度，Pi 会在后台自动继续${verificationFailed ? `；另有 ${verificationFailed} 篇证据未通过` : ""}`
           : verificationFailed
             ? `本轮严格评审已完成；${verificationFailed} 篇高潜力论文因证据不足未发布`
           : work.deepDeferredIds.length
@@ -6771,7 +6771,7 @@ export async function POST(request: Request) {
             const batchCandidates = [...candidates];
             const batchDrafts = [draft];
             const secondId = work.verificationIds.find((id) => !handled.has(id) && id !== canonicalId);
-            if (secondId && batchIds.length < VERIFICATION_BATCH_SIZE) {
+            if (secondId && !firstCorrectionMode && batchIds.length < VERIFICATION_BATCH_SIZE) {
               const [secondCandidates, secondDrafts] = await Promise.all([
                 pendingCandidateQueue(database, space.id, [secondId]),
                 loadPersistedReviews(database, space.id, [secondId]),

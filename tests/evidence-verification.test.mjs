@@ -182,7 +182,8 @@ test("verification is bounded to one audit and one correction while transient fa
   assert.match(client, /正在核对/);
   assert.match(monitor, /earlyVerificationThreshold/);
   assert.match(monitor, /resumedDeepReviewAfterVerification/);
-  assert.doesNotMatch(client, /证据审计|自动审计/);
+  assert.doesNotMatch(client, /证据审计|自动审计|后台审计|审计通过/);
+  assert.match(monitor, /secondId && !firstCorrectionMode/);
 });
 
 test("an incomplete recommendation draft can regenerate once without trapping the scan", async () => {
