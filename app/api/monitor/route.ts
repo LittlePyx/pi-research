@@ -2856,7 +2856,7 @@ async function persistRecommendationAuditBatch(
   if (statements.length) await database.batch(statements);
 }
 
-async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string, lockToken: string, apiKey: string) {
+async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string, lockToken: string, apiKey: string, manageJobProgress = true) {
   if (!candidates.length) return [] as PaperReview[];
   if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be recommended");
   const usageDate = shanghaiDateKey(new Date());
@@ -3150,14 +3150,15 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       // Internal evaluation must not force another paid LLM review when recommendation persistence succeeded.
       console.error("Failed to persist internal recommendation audit", auditError);
     }
-    await database.batch([
-      database.prepare(
-        "UPDATE monitor_scan_jobs SET checkpoint = 'reviewing', reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-      ).bind(completed.length, completed.filter(isPublishedRecommendation).length, completed.length, candidates.length, jobId),
+    const progressUpdates = [
       database.prepare(
         "UPDATE monitor_runs SET lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
       ).bind(new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken),
-    ]);
+    ];
+    if (manageJobProgress) progressUpdates.unshift(database.prepare(
+      "UPDATE monitor_scan_jobs SET checkpoint = 'reviewing', reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ).bind(completed.length, completed.filter(isPublishedRecommendation).length, completed.length, candidates.length, jobId));
+    await database.batch(progressUpdates);
   }
   return completed;
 }
@@ -5658,7 +5659,7 @@ async function runIncrementalDeepReview(
   let saveQueue = Promise.resolve();
   const settled = await settleFaultTolerantBatch(
     queue,
-    (candidate) => reviewCandidates(database, space, userId, priorityVenues, [candidate], jobId, lockToken, apiKey),
+    (candidate) => reviewCandidates(database, space, userId, priorityVenues, [candidate], jobId, lockToken, apiKey, false),
     async (_candidate, reviews) => {
       if (!reviews.length) return;
       saveQueue = saveQueue.then(() => onReviewsSaved(reviews));
