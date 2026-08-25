@@ -24,6 +24,7 @@ import {
 } from "../../../lib/discovery/fresh-yield.mjs";
 import {
   buildRecommendationQualitySnapshot,
+  evaluateRecommendationAcceptanceGate,
   selectVerificationPhaseBatch,
 } from "../../../lib/discovery/quality-learning.mjs";
 import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
@@ -135,6 +136,7 @@ type SpaceRow = {
   id: string;
   name: string;
   description: string;
+  ownerUserId: string;
   memoryContext?: string;
   positiveExamples?: string;
   negativeExamples?: string;
@@ -1626,7 +1628,7 @@ async function ownedSpace(request: Request, spaceId: string) {
   if (!user) return { error: Response.json({ error: "Anonymous workspace is not initialized" }, { status: 401 }) };
   const database = getDatabase();
   await ensureSchema(database);
-  const space = await database.prepare("SELECT id, name, description FROM research_spaces WHERE id = ? AND owner_user_id = ?")
+  const space = await database.prepare("SELECT id, name, description, owner_user_id AS ownerUserId FROM research_spaces WHERE id = ? AND owner_user_id = ?")
     .bind(spaceId, user.userId).first<SpaceRow>();
   if (!space) return { error: Response.json({ error: "Research space not found" }, { status: 404 }) };
   return { database, space, user };
@@ -4859,16 +4861,15 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const budgetMinimum = job?.status === "ready" || !job
     ? MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS
     : minimumAnalysisCallsForCheckpoint(budgetCheckpoint);
-  const budgetRemaining = Math.max(0, MONITOR_SPACE_DAILY_ANALYSIS_LIMIT - automationCounters.dailyRequests);
-  const budgetTomorrow = new Date(Date.now() + 86_400_000);
-  const analysisBudget = {
-    used: automationCounters.dailyRequests,
-    limit: MONITOR_SPACE_DAILY_ANALYSIS_LIMIT,
-    remaining: budgetRemaining,
-    minimumToStart: budgetMinimum,
-    available: budgetRemaining >= budgetMinimum,
-    resetsAt: new Date(`${shanghaiDateKey(budgetTomorrow)}T00:00:00+08:00`).toISOString(),
-  };
+  // The start gate uses the minimum remaining across global, workspace, and
+  // space scopes. Report that same effective budget so the UI cannot claim a
+  // scan is available and then receive a quota rejection.
+  const analysisBudget = await readMonitorAnalysisBudget(
+    database,
+    space.ownerUserId,
+    space.id,
+    budgetMinimum,
+  );
   const persistedMapChanges = mapChanges.results.map((change) => ({
     id: change.id,
     kind: change.kind,
@@ -6417,6 +6418,10 @@ export async function POST(request: Request) {
           };
         }),
       });
+      const acceptanceGate = evaluateRecommendationAcceptanceGate({
+        ...qualitySnapshot,
+        target: DAILY_RECOMMENDATION_MIN_TARGET,
+      });
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: job.id,
@@ -6426,6 +6431,16 @@ export async function POST(request: Request) {
         outcome: recommended >= DAILY_RECOMMENDATION_MIN_TARGET ? "success" : recommended ? "info" : "degraded",
         message: "Internal recommendation yield, route coverage, latency, and token efficiency were recorded for the next discovery plan",
         metadata: qualitySnapshot,
+      });
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: job.id,
+        kind: "recommendation_acceptance_sentinel",
+        stage: "finalizing",
+        source: "internal-quality-learning",
+        outcome: acceptanceGate.status === "pass" ? "success" : acceptanceGate.status === "watch" ? "info" : "degraded",
+        message: "The private production recommendation gate checked target yield, stage completion, and counter invariants without changing recommendation quality thresholds",
+        metadata: { ...acceptanceGate, snapshot: qualitySnapshot },
       });
       await recordReliabilityEvent(database, {
         spaceId: space.id,
@@ -6533,7 +6548,7 @@ export async function POST(request: Request) {
         work.candidateIds = Array.from(new Set([...work.candidateIds, ...batch.candidates.map((candidate) => candidate.canonicalId)]));
         work.currentCandidateIds = Array.from(new Set([...work.currentCandidateIds, ...newlyDiscoveredIds])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
         work.rawCandidateCount += batch.rawCount;
-        work.newCandidateCount += newCandidates;
+        work.newCandidateCount = work.currentCandidateIds.length;
         work.horizonStats[horizonKey] = {
           rawCandidates: batch.rawCount,
           candidates: batch.candidates.length,
@@ -6631,9 +6646,10 @@ export async function POST(request: Request) {
           work.horizonStats[horizon].queued = selected.filter((candidate) => candidate.horizon === horizon).length;
         }
         await saveScanWorkQueue(database, job.id, work);
+        const earlyPublished = earlyReviews.filter(isPublishedRecommendation).length;
         await database.prepare(
-          "UPDATE monitor_scan_jobs SET duplicate_count = ?, reviewed_count = 0, recommended_count = 0, rejected_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        ).bind(Math.max(0, work.rawCandidateCount - work.newCandidateCount), job.id).run();
+          "UPDATE monitor_scan_jobs SET duplicate_count = ?, reviewed_count = 0, recommended_count = ?, rejected_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ).bind(Math.max(0, work.rawCandidateCount - work.newCandidateCount), earlyPublished, job.id).run();
         if (!work.candidateIds.length) return finalizeMain([], []);
         await setStage("enriching_screening_abstracts", "screening", 54,
           work.screens.length

@@ -124,6 +124,11 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS = 16/);
   assert.match(monitor, /monitor_analysis_budget_insufficient/);
   assert.match(monitor, /minimumAnalysisCallsForCheckpoint/);
+  assert.match(monitor, /space\.ownerUserId/);
+  assert.doesNotMatch(monitor, /const budgetRemaining = Math\.max\(0, MONITOR_SPACE_DAILY_ANALYSIS_LIMIT - automationCounters\.dailyRequests\)/);
+  assert.match(monitor, /work\.newCandidateCount = work\.currentCandidateIds\.length/);
+  assert.match(monitor, /const earlyPublished = earlyReviews\.filter\(isPublishedRecommendation\)\.length/);
+  assert.match(monitor, /recommendation_acceptance_sentinel/);
   assert.match(monitor, /model_preflight_failed/);
   assert.match(monitor, /const modelResponse = await preflightModel\(activeJob\)/);
   assert.match(monitor, /模型连接检查未通过，扫描尚未继续/);

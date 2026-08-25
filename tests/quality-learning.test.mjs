@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildRecommendationQualitySnapshot,
+  evaluateRecommendationAcceptanceGate,
   selectVerificationPhaseBatch,
 } from "../lib/discovery/quality-learning.mjs";
 
@@ -59,4 +60,49 @@ test("quality snapshot measures yield, mix, latency, and token cost without reco
     modelTokens: 22_500,
     tokensPerPublished: 7_500,
   });
+});
+
+test("the private production sentinel distinguishes a clean shortfall from a broken funnel", () => {
+  assert.deepEqual(evaluateRecommendationAcceptanceGate({
+    discovered: 312,
+    newCandidates: 312,
+    screened: 59,
+    deepScheduled: 3,
+    deepCompleted: 3,
+    published: 3,
+  }), {
+    status: "pass",
+    target: 3,
+    targetReached: true,
+    qualityGateUnchanged: true,
+    reasons: [],
+    invariantViolations: [],
+    shouldReplan: false,
+  });
+
+  const shortfall = evaluateRecommendationAcceptanceGate({
+    discovered: 200,
+    newCandidates: 120,
+    screened: 48,
+    deepScheduled: 8,
+    deepCompleted: 8,
+    published: 1,
+  });
+  assert.equal(shortfall.status, "watch");
+  assert.equal(shortfall.shouldReplan, true);
+  assert.deepEqual(shortfall.invariantViolations, []);
+  assert.ok(shortfall.reasons.includes("formal_target_shortfall"));
+
+  const broken = evaluateRecommendationAcceptanceGate({
+    discovered: 100,
+    newCandidates: 130,
+    screened: 40,
+    deepScheduled: 2,
+    deepCompleted: 3,
+    published: 3,
+  });
+  assert.equal(broken.status, "fail");
+  assert.equal(broken.shouldReplan, false);
+  assert.ok(broken.invariantViolations.includes("new_candidates_exceed_discovered"));
+  assert.ok(broken.invariantViolations.includes("deep_completed_exceeds_scheduled"));
 });
