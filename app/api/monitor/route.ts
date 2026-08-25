@@ -36,6 +36,7 @@ import {
   RECOMMENDATION_VERIFICATION_FIELDS,
   abstractEvidenceUnits,
   evidenceVerificationReport,
+  recommendationEvidencePreflight,
   sanitizeEvidenceVerificationDraft,
   type EvidenceVerificationStatus,
   type VerificationEvidenceUnit,
@@ -554,9 +555,10 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v12-fresh-yield";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v13-bounded-verification";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
+  "continuous-recommendation-v12-fresh-yield",
 ]);
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
 const QUICK_SCREEN_FAST_TIMEOUT_MS = 24_000;
@@ -564,11 +566,11 @@ const QUICK_SCREEN_RESCUE_TIMEOUT_MS = 28_000;
 const QUICK_SCREEN_RETRY_TIMEOUT_MS = 12_000;
 const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000;
 const DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000;
-const VERIFICATION_TIMEOUT_MS = 20_000;
-const VERIFICATION_CORRECTION_TIMEOUT_MS = 28_000;
-// A conservative evidence workflow can require audit -> correction -> fresh audit.
-// Leave room for two transient failures so a normal correction never has to wait for another scan.
-const VERIFICATION_ATTEMPT_LIMIT = 5;
+const VERIFICATION_TIMEOUT_MS = 24_000;
+const VERIFICATION_CORRECTION_TIMEOUT_MS = 32_000;
+// One independent audit plus one evidence-grounded correction/final decision. Content failures never loop.
+const VERIFICATION_ATTEMPT_LIMIT = 2;
+const VERIFICATION_BATCH_SIZE = 2;
 const INCOMPLETE_DRAFT_REGENERATION_LIMIT = 1;
 const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
 const BACKGROUND_VERIFICATION_RETRY_MS = 10 * 60 * 1000;
@@ -2277,7 +2279,38 @@ async function verifyRecommendationBatch(input: {
       : { source: "abstract" as const, units: [] }] as const;
   }));
   const evidenceByReview = new Map(evidenceEntries);
-  const correctionMode = recommended.every((review) => review.verificationReport?.correctionRequested === true);
+  const preflightFailures = new Map<string, PaperReview>();
+  for (const review of recommended) {
+    const candidate = candidateById.get(review.canonicalId);
+    const evidence = evidenceByReview.get(review.canonicalId) || { source: "abstract" as const, units: [] };
+    const populatedFields = recommendationVerificationFields(review);
+    const preflight = recommendationEvidencePreflight({
+      title: candidate?.title,
+      availableFields: populatedFields,
+      requiredFields: populatedFields,
+      evidenceUnits: evidence.units,
+    });
+    if (preflight.ready) continue;
+    const initial = sanitizeEvidenceVerificationDraft({
+      verdict: "insufficient",
+      coverageScore: 0,
+      unsupportedFields: preflight.missingFields,
+      reason: `Deterministic evidence preflight failed: ${preflight.reasons.join(", ")}`,
+    }, { allowedFields: recommendationVerificationFields(review) });
+    preflightFailures.set(review.canonicalId, degradedRecommendationReview(review, {
+      ...evidenceVerificationReport({ initial }),
+      preflight,
+      evidenceSource: evidence.source,
+    }));
+  }
+  const auditable = recommended.filter((review) => !preflightFailures.has(review.canonicalId));
+  if (!auditable.length) {
+    return input.reviews.map((review) => preflightFailures.get(review.canonicalId) || review);
+  }
+  const correctionMode = auditable.every((review) => review.verificationReport?.correctionRequested === true);
+  if (auditable.some((review) => (review.verificationReport?.correctionRequested === true) !== correctionMode)) {
+    throw new Error("Recommendation verification batch mixed audit and correction phases");
+  }
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
@@ -2289,18 +2322,18 @@ async function verifyRecommendationBatch(input: {
           : "You are Pi Research's fast independent recommendation evidence verifier. Audit only against the supplied metadata and numbered evidence units. Return strict JSON without hidden chain-of-thought." },
         { role: "user", content: [
           correctionMode
-            ? "Return {corrections:[{canonicalId,corrected:{summaryZh,summaryEn,whyReadZh,whyReadEn,problemZh,problemEn,methodZh,methodEn,contributionZh,contributionEn,limitationsZh,limitationsEn,readingFocusZh,readingFocusEn,researchQuestionsZh,researchQuestionsEn,researchProblemImpactZh,researchProblemImpactEn,researchDecisionZh,researchDecisionEn}}]}."
+            ? "Return {corrections:[{canonicalId,corrected:{summaryZh,summaryEn,whyReadZh,whyReadEn,problemZh,problemEn,methodZh,methodEn,contributionZh,contributionEn,limitationsZh,limitationsEn,readingFocusZh,readingFocusEn,researchQuestionsZh,researchQuestionsEn,researchProblemImpactZh,researchProblemImpactEn,researchDecisionZh,researchDecisionEn},verification:{verdict:\"verified|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,verdict:\"supported|qualified|unsupported\",reason}],reason}}]}."
             : "Return {verifications:[{canonicalId,verdict:\"verified|revise|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,verdict:\"supported|qualified|unsupported\",reason}],reason]}.",
           correctionMode
             ? "Correct every supplied draft into a complete conservative bilingual replacement. Apply the supplied audit exactly, retain supported substance, remove or qualify unsupported claims, and do not add new claims."
             : "Audit every supplied paper. coverageScore must be an integer from 0 to 100. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
           correctionMode
-            ? "Every corrected field must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation."
+            ? "Every corrected field must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation. The verification object is the final evidence decision: check the corrected draft, cover every populated substantive field, and cite a supplied evidenceId for every supported or qualified claim."
             : "claimChecks must cover every populated substantive field. Every supported or qualified check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
           "Treat title, authors, venue, date, and citation count only as metadata. Evidence units support only what they state or directly entail. Route context and user fit do not prove paper findings.",
           "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it.",
-          correctionMode ? "Keep the correction concise while preserving every required bilingual field." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
-          "Drafts and evidence: " + JSON.stringify(recommended.map((review) => {
+          correctionMode ? "Keep the correction concise while preserving every required bilingual field. If the corrected draft cannot pass, return insufficient; there will be no further rewrite loop." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
+          "Drafts and evidence: " + JSON.stringify(auditable.map((review) => {
             const candidate = candidateById.get(review.canonicalId);
             const evidence = evidenceByReview.get(review.canonicalId);
             return {
@@ -2320,7 +2353,7 @@ async function verifyRecommendationBatch(input: {
       thinking: { type: "disabled" },
       reasoning_effort: "low",
       response_format: { type: "json_object" },
-      max_tokens: correctionMode ? Math.min(3000, 1400 + recommended.length * 1500) : Math.min(1800, 850 + recommended.length * 850),
+      max_tokens: correctionMode ? Math.min(4200, 1400 + auditable.length * 1500) : Math.min(2600, 850 + auditable.length * 850),
       stream: false,
     }),
     signal: AbortSignal.timeout(correctionMode ? VERIFICATION_CORRECTION_TIMEOUT_MS : VERIFICATION_TIMEOUT_MS),
@@ -2337,31 +2370,55 @@ async function verifyRecommendationBatch(input: {
   ]);
   const content = data.choices?.[0]?.message?.content || "";
   const parsed = parseJsonObject(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { verifications?: unknown[]; corrections?: unknown[] };
-  const denominator = Math.max(1, recommended.length);
+  const denominator = Math.max(1, auditable.length);
   if (correctionMode) {
     const correctionById = new Map((Array.isArray(parsed.corrections) ? parsed.corrections : []).flatMap((raw) => {
       if (!raw || typeof raw !== "object") return [];
       const item = raw as Record<string, unknown>;
       const canonicalId = cleanText(String(item.canonicalId || ""));
-      return canonicalId ? [[canonicalId, item.corrected] as const] : [];
+      return canonicalId ? [[canonicalId, { corrected: item.corrected, verification: item.verification }] as const] : [];
     }));
     return input.reviews.map((review) => {
       if (!review.recommended) return review;
-      const correctedReview = correctedRecommendationReview(review, correctionById.get(review.canonicalId));
+      const failedPreflight = preflightFailures.get(review.canonicalId);
+      if (failedPreflight) return failedPreflight;
+      const correction = correctionById.get(review.canonicalId);
+      const correctedReview = correctedRecommendationReview(review, correction?.corrected);
       if (!correctedReview) throw new Error(`Recommendation correction incomplete: ${review.canonicalId}`);
       const evidence = evidenceByReview.get(review.canonicalId);
+      const evidenceById = new Map((evidence?.units || []).map((unit) => [unit.id, unit.text]));
+      const options = {
+        allowedFields: recommendationVerificationFields(correctedReview),
+        allowedEvidenceIds: new Set(evidenceById.keys()),
+        evidenceById,
+        evidenceTexts: (evidence?.units || []).map((unit) => unit.text),
+        requireAllFields: true,
+      };
+      const initial = sanitizeEvidenceVerificationDraft(review.verificationReport?.audit || {
+        verdict: "revise", reason: "A conservative evidence-grounded correction was requested",
+      }, options);
+      const revised = sanitizeEvidenceVerificationDraft(correction?.verification || {
+        verdict: "insufficient", reason: "Correction response omitted its final evidence decision",
+      }, options);
+      const report = evidenceVerificationReport({ initial, revised });
+      const index = auditable.indexOf(review);
+      const usage = {
+        verificationInputTokens: review.verificationInputTokens + allocatedTokenShare(totalInputTokens, denominator, index),
+        verificationOutputTokens: review.verificationOutputTokens + allocatedTokenShare(totalOutputTokens, denominator, index),
+      };
+      if (!revised.clean) {
+        return { ...degradedRecommendationReview(correctedReview, {
+          ...report,
+          reason: cleanText(`Evidence-grounded correction did not pass the final deterministic gate. ${revised.reason}`).slice(0, 900),
+        }), ...usage };
+      }
       return {
-        ...pendingRecommendationReview(correctedReview, "Corrected draft saved; a fresh evidence-check pass is queued"),
-        verificationReport: {
-          status: "pending",
-          reason: "Corrected draft saved; a fresh evidence-check pass is queued",
-          evidenceSource: evidence?.source || "abstract",
-          correctionQueued: true,
-          correctionRequested: false,
-          priorAudit: review.verificationReport?.audit || null,
-        },
-        verificationInputTokens: allocatedTokenShare(totalInputTokens, denominator, recommended.indexOf(review)),
-        verificationOutputTokens: allocatedTokenShare(totalOutputTokens, denominator, recommended.indexOf(review)),
+        ...correctedReview,
+        verificationStatus: "revised" as const,
+        verificationCoverageScore: revised.coverageScore,
+        verificationReport: { ...report, evidenceSource: evidence?.source || "abstract", correctionCompleted: true },
+        verificationRetryable: false,
+        ...usage,
       };
     });
   }
@@ -2373,7 +2430,7 @@ async function verifyRecommendationBatch(input: {
     return canonicalId ? [[canonicalId, item] as const] : [];
   }));
   const initialReports = new Map<string, ReturnType<typeof sanitizeEvidenceVerificationDraft>>();
-  for (const review of recommended) {
+  for (const review of auditable) {
     const raw = initialById.get(review.canonicalId) || { verdict: "insufficient", reason: "Verifier omitted this paper" };
     if (verifierContradictsCompleteDraft(raw.reason, review)) {
       throw new Error(`Recommendation verifier contradicted a complete draft for ${review.canonicalId}`);
@@ -2391,31 +2448,22 @@ async function verifyRecommendationBatch(input: {
   }
   return input.reviews.map((review) => {
     if (!review.recommended) return review;
+    const failedPreflight = preflightFailures.get(review.canonicalId);
+    if (failedPreflight) return failedPreflight;
     const initial = initialReports.get(review.canonicalId)
       || sanitizeEvidenceVerificationDraft({ verdict: "insufficient", reason: "Verification result missing" }, { allowedFields: recommendationVerificationFields(review) });
     const report = evidenceVerificationReport({ initial });
     const usage = {
-      verificationInputTokens: allocatedTokenShare(totalInputTokens, denominator, recommended.indexOf(review)),
-      verificationOutputTokens: allocatedTokenShare(totalOutputTokens, denominator, recommended.indexOf(review)),
+      verificationInputTokens: review.verificationInputTokens + allocatedTokenShare(totalInputTokens, denominator, auditable.indexOf(review)),
+      verificationOutputTokens: review.verificationOutputTokens + allocatedTokenShare(totalOutputTokens, denominator, auditable.indexOf(review)),
     };
     if (initial.clean) {
-      const wasCorrected = review.verificationReport?.correctionQueued === true;
-      const finalReport = wasCorrected ? { ...report, status: "revised", revised: initial } : report;
       return {
         ...review,
-        verificationStatus: wasCorrected ? "revised" as const : "verified" as const,
+        verificationStatus: "verified" as const,
         verificationCoverageScore: report.coverageScore,
-        verificationReport: finalReport,
+        verificationReport: report,
         verificationRetryable: false,
-        ...usage,
-      };
-    }
-    if (review.verificationReport?.correctionQueued === true) {
-      return {
-        ...degradedRecommendationReview(review, {
-          ...report,
-          reason: cleanText(`Post-correction verification still found unsupported claims. ${initial.reason}`).slice(0, 900),
-        }),
         ...usage,
       };
     }
@@ -6643,7 +6691,7 @@ export async function POST(request: Request) {
           await saveScanWorkQueue(database, job.id, work);
           if (work.verificationIds.length) {
             await setStage("verifying_recommendations", "deep_reviewing", 94,
-              `已保存 ${work.verificationIds.length} 篇高潜力解读，正在逐篇核对书目与摘要证据`);
+              `已形成 ${work.verificationIds.length} 篇高潜力解读，正在两篇一组核对书目与摘要证据`);
             return Response.json(await readState(database, space, { verifyingRecommendations: true }), { status: 202 });
           }
           work.evidenceIds = [];
@@ -6707,27 +6755,53 @@ export async function POST(request: Request) {
             const usageDate = shanghaiDateKey(new Date());
             const workspaceScope = "monitor-workspace:" + user.userId.replace(/^anonymous:/, "");
             const spaceScope = "monitor-space:" + space.id;
-            const verificationAttempt = Math.min(VERIFICATION_ATTEMPT_LIMIT, (work.verificationAttempts[canonicalId] || 0) + 1);
-            work.verificationAttempts[canonicalId] = verificationAttempt;
+            const firstCorrectionMode = draft.verificationReport?.correctionRequested === true;
+            const batchIds = [canonicalId];
+            const batchCandidates = [...candidates];
+            const batchDrafts = [draft];
+            const secondId = work.verificationIds.find((id) => !handled.has(id) && id !== canonicalId);
+            if (secondId && batchIds.length < VERIFICATION_BATCH_SIZE) {
+              const [secondCandidates, secondDrafts] = await Promise.all([
+                pendingCandidateQueue(database, space.id, [secondId]),
+                loadPersistedReviews(database, space.id, [secondId]),
+              ]);
+              const secondDraft = secondDrafts.find((review) => review.verificationRetryable);
+              if (secondCandidates.length && secondDraft && hasCompleteRecommendationDraft(secondDraft)
+                && (secondDraft.verificationReport?.correctionRequested === true) === firstCorrectionMode) {
+                batchIds.push(secondId);
+                batchCandidates.push(...secondCandidates);
+                batchDrafts.push(secondDraft);
+              }
+            }
+            const verificationAttempts = new Map(batchIds.map((id) => {
+              const attempt = Math.min(VERIFICATION_ATTEMPT_LIMIT, (work.verificationAttempts[id] || 0) + 1);
+              work.verificationAttempts[id] = attempt;
+              return [id, attempt] as const;
+            }));
             await saveScanWorkQueue(database, job.id, work);
             try {
               const verified = await verifyRecommendationBatch({
                 database, spaceId: space.id, usageDate, workspaceScope, spaceScope,
-                apiKey, candidates, reviews: [draft],
+                apiKey, candidates: batchCandidates, reviews: batchDrafts,
               });
-              const persisted = await persistReviewBatch(database, space.id, job.id, candidates, verified);
-              await persistRecommendationAuditBatch(database, space.id, job.id, candidates, persisted, 0, 0);
+              const boundedVerified = verified.map((review) => {
+                const attempt = verificationAttempts.get(review.canonicalId) || 1;
+                if (!review.verificationRetryable || attempt < VERIFICATION_ATTEMPT_LIMIT) return review;
+                const initial = sanitizeEvidenceVerificationDraft(review.verificationReport?.audit || {
+                  verdict: "insufficient", reason: "Verification call budget ended before a conservative correction could be completed",
+                }, { allowedFields: recommendationVerificationFields(review) });
+                return degradedRecommendationReview(review, {
+                  ...evidenceVerificationReport({ initial }),
+                  reason: "Verification call budget ended without a clean evidence decision; the paper was withheld instead of entering another content loop",
+                });
+              });
+              const persisted = await persistReviewBatch(database, space.id, job.id, batchCandidates, boundedVerified);
+              await persistRecommendationAuditBatch(database, space.id, job.id, batchCandidates, persisted, 0, 0);
               work.verificationFailureCount = 0;
-              const persistedReview = persisted.find((review) => review.canonicalId === canonicalId);
-              if (persistedReview?.verificationRetryable) {
-                if (verificationAttempt >= VERIFICATION_ATTEMPT_LIMIT) {
-                  work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
-                } else {
-                  const verificationPhase = persistedReview.verificationReport?.correctionRequested === true
-                    ? "Independent audit completed; a conservative correction is queued"
-                    : persistedReview.verificationReport?.correctionQueued === true
-                      ? "A corrected draft was saved and queued for one fresh bibliographic and abstract evidence check"
-                      : "Independent verification remains pending and will retry without rerunning discovery";
+              for (const batchId of batchIds) {
+                const persistedReview = persisted.find((review) => review.canonicalId === batchId);
+                const verificationAttempt = verificationAttempts.get(batchId) || 1;
+                if (persistedReview?.verificationRetryable) {
                   await recordReliabilityEvent(database, {
                     spaceId: space.id,
                     scanJobId: job.id,
@@ -6735,36 +6809,39 @@ export async function POST(request: Request) {
                     stage: "verifying_recommendations",
                     source: MONITOR_MODEL,
                     outcome: "info",
-                    message: verificationPhase,
+                    message: "Evidence audit completed; one bounded conservative correction is queued",
                     metadata: {
-                      canonicalId, verificationAttempt, draftPreserved: true, retryScope: "verification_only",
+                      canonicalId: batchId, verificationAttempt, draftPreserved: true, retryScope: "verification_only",
                       correctionRequested: persistedReview.verificationReport?.correctionRequested === true,
-                      correctionQueued: persistedReview.verificationReport?.correctionQueued === true,
+                      maximumModelCalls: VERIFICATION_ATTEMPT_LIMIT,
                     },
                   });
+                } else {
+                  work.verificationCompletedIds = Array.from(new Set([...work.verificationCompletedIds, batchId]));
+                  delete work.verificationAttempts[batchId];
                 }
-              } else {
-                work.verificationCompletedIds = Array.from(new Set([...work.verificationCompletedIds, canonicalId]));
-                delete work.verificationAttempts[canonicalId];
               }
             } catch (verificationError) {
               if (isNonRetryableDeepSeekError(verificationError)) throw verificationError;
               work.verificationFailureCount += 1;
-              const retryScheduled = verificationAttempt < VERIFICATION_ATTEMPT_LIMIT;
-              if (!retryScheduled) {
-                work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, canonicalId]));
+              for (const batchId of batchIds) {
+                const verificationAttempt = verificationAttempts.get(batchId) || 1;
+                const retryScheduled = verificationAttempt < VERIFICATION_ATTEMPT_LIMIT;
+                if (!retryScheduled) {
+                  work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, batchId]));
+                }
+                await recordReliabilityEvent(database, {
+                  spaceId: space.id,
+                  scanJobId: job.id,
+                  kind: retryScheduled ? "verification_retry_scheduled" : "verification_deferred",
+                  stage: "verifying_recommendations",
+                  source: MONITOR_MODEL,
+                  outcome: "degraded",
+                  errorCode: monitorErrorCode(verificationError),
+                  message: normalizedMonitorError(verificationError),
+                  metadata: { canonicalId: batchId, verificationAttempt, retryScheduled, draftPreserved: true, retryScope: "verification_only" },
+                });
               }
-              await recordReliabilityEvent(database, {
-                spaceId: space.id,
-                scanJobId: job.id,
-                kind: retryScheduled ? "verification_retry_scheduled" : "verification_deferred",
-                stage: "verifying_recommendations",
-                source: MONITOR_MODEL,
-                outcome: "degraded",
-                errorCode: monitorErrorCode(verificationError),
-                message: normalizedMonitorError(verificationError),
-                metadata: { canonicalId, verificationAttempt, retryScheduled, draftPreserved: true, retryScope: "verification_only" },
-              });
               if (work.verificationFailureCount >= VERIFICATION_CIRCUIT_FAILURE_LIMIT) {
                 const alreadyHandled = new Set([...work.verificationCompletedIds, ...work.verificationDeferredIds]);
                 const circuitDeferred = work.verificationIds.filter((id) => !alreadyHandled.has(id));
@@ -6796,7 +6873,7 @@ export async function POST(request: Request) {
         await database.prepare(
           "UPDATE monitor_scan_jobs SET recommended_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(published,
-          `证据审计 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已确认${retrying ? `，${retrying} 篇正在自动改写或复核` : `，${pending} 篇已保存进度并等待后台自动续跑`}`,
+          `推荐判断已完成 ${verificationProcessed} / ${work.verificationIds.length} 篇；${published} 篇已可阅读${retrying ? `，${retrying} 篇正在核对` : pending ? `，${pending} 篇将在短暂故障恢复后继续` : ""}`,
           verificationProgress, job.id).run();
         if (verificationProcessed >= work.verificationIds.length) {
           const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
@@ -6848,7 +6925,7 @@ export async function POST(request: Request) {
           work.evidenceCompletedIds = [];
           await saveScanWorkQueue(database, job.id, work);
           await setStage("finalizing", "deep_reviewing", 99,
-            pending ? `${pending} 篇高潜力解读已保存审计进度，Pi 将在后台自动完成改写与复核` : "证据核对完成，正在整理今日推荐");
+            pending ? `${pending} 篇高潜力解读已保存核对进度，Pi 会在后台自动继续` : "推荐判断完成，正在整理今日推荐");
         }
       } else if (job.checkpoint === "evidence_deepening") {
         work.evidenceIds = [];

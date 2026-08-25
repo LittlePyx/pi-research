@@ -1145,9 +1145,8 @@ function RecommendationVerificationBadge({ paper, locale }: { paper: MonitorPape
 }
 
 function recommendationAuditPhaseLabel(paper: MonitorPaper, locale: Locale) {
-  if (paper.verificationPhase === "awaiting_correction") return locale === "zh" ? "初审完成 · 正在自动改写" : "Audited · correcting automatically";
-  if (paper.verificationPhase === "awaiting_recheck") return locale === "zh" ? "已自动改写 · 等待复核" : "Corrected · awaiting recheck";
-  return locale === "zh" ? "正在进行首次证据审计" : "Initial evidence audit in progress";
+  if (paper.verificationPhase === "awaiting_correction") return locale === "zh" ? "正在核对并修正" : "Checking and correcting";
+  return locale === "zh" ? "正在核对" : "Checking evidence";
 }
 
 function PaperDiscoverySourceBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
@@ -2876,7 +2875,7 @@ export default function ResearchApp({ user }: { user: User }) {
     ? Math.max(monitorProgressByStatus[effectiveScanStatus], activeScanJob?.progress || 0)
     : monitor?.status === "ready" ? 100 : 0;
   const baseScanPhase = verificationInProgress
-    ? (locale === "zh" ? "正在逐篇核对推荐证据" : "Checking recommendation evidence paper by paper")
+    ? (locale === "zh" ? "正在核对推荐依据" : "Checking recommendation evidence")
     : monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
   const currentRunHasDiscovery = Boolean(activeScanJob && (activeScanJob.discoveredCount > 0
@@ -4962,7 +4961,7 @@ export default function ResearchApp({ user }: { user: User }) {
             </section>}
 
             {Boolean(monitor?.savedCandidatePapers?.length) && <section className="v2-today-more v2-saved-candidates">
-              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "Pi 正在后台完成" : "PI IS FINISHING IN THE BACKGROUND"}</p><h2>{locale === "zh" ? "这些论文已完成深度评审，后续审计无需你确认" : "Deep review is complete; no user confirmation is needed"}</h2><p>{locale === "zh" ? "Pi 会依据书目信息、摘要和可追溯来源自动完成保守改写与复核，不读取全文，也不会重新检索或撰写。暂时无响应时会从保存点自动续跑。" : "Pi automatically completes conservative corrections and rechecks against bibliographic data, abstracts, and traceable sources. It does not read full text or repeat discovery and drafting, and resumes from saved progress after transient failures."}</p></div><span>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇处理中" : "in progress"}</span></header>
+              <header><div><p className="v2-kicker warm">π {locale === "zh" ? "Pi 正在后台完成" : "PI IS FINISHING IN THE BACKGROUND"}</p><h2>{locale === "zh" ? "正在完成最后的推荐判断" : "Finishing the recommendation decision"}</h2><p>{locale === "zh" ? "Pi 正在用书目信息、摘要和可追溯来源核对关键表述；通过后会直接进入今日推荐，不需要你确认，也不会读取全文。" : "Pi is checking key statements against bibliographic data, abstracts, and traceable sources. Papers that pass move directly into Today's recommendations without user confirmation or full-text processing."}</p></div><span>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇处理中" : "in progress"}</span></header>
               <div className="v2-compact-list">{(monitor?.savedCandidatePapers || []).map((paper) => <button type="button" key={paper.id} onClick={() => openMonitorPaper(paper)}><span className="v2-tier-badge reserve">{recommendationAuditPhaseLabel(paper, locale)}</span><span><strong>{paper.title}</strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</small><PaperDiscoverySourceBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{locale === "zh" ? `相关性 ${paper.relevanceScore}` : `Fit ${paper.relevanceScore}`}</span><b>→</b></button>)}</div>
             </section>}
 

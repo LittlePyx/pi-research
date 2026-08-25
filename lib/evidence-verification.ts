@@ -32,6 +32,30 @@ export type VerificationEvidenceUnit = {
   text: string;
 };
 
+export function recommendationEvidencePreflight(input: {
+  title?: unknown;
+  availableFields?: readonly string[];
+  requiredFields?: readonly string[];
+  evidenceUnits?: readonly VerificationEvidenceUnit[];
+}) {
+  const availableFields = new Set((input.availableFields || []).map((field) => cleanText(field, 80)).filter(Boolean));
+  const missingFields = Array.from(new Set((input.requiredFields || []).map((field) => cleanText(field, 80)).filter(Boolean)))
+    .filter((field) => !availableFields.has(field));
+  const evidenceUnits = (input.evidenceUnits || []).filter((unit) => cleanText(unit?.id, 120) && cleanText(unit?.text, 12_000));
+  const evidenceCharacters = evidenceUnits.reduce((sum, unit) => sum + cleanText(unit.text, 12_000).length, 0);
+  const reasons: string[] = [];
+  if (!cleanText(input.title, 500)) reasons.push("missing_title_metadata");
+  if (missingFields.length) reasons.push("incomplete_recommendation_draft");
+  if (!evidenceUnits.length || evidenceCharacters < 80) reasons.push("insufficient_abstract_evidence");
+  return {
+    ready: reasons.length === 0,
+    reasons,
+    missingFields,
+    evidenceUnitCount: evidenceUnits.length,
+    evidenceCharacters,
+  };
+}
+
 export function abstractEvidenceUnits(
   value: unknown,
   options: { prefix?: string; maxUnits?: number; maxChars?: number } = {},

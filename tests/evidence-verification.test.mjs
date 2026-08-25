@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   abstractEvidenceUnits,
   evidenceVerificationReport,
+  recommendationEvidencePreflight,
   resolvedEvidenceVerificationStatus,
   sanitizeEvidenceVerificationDraft,
 } from "../lib/evidence-verification.ts";
@@ -72,6 +73,24 @@ test("abstract evidence is split into bounded stable units for compact verificat
   assert.ok(units.every((unit) => unit.text.length <= 160));
 });
 
+test("deterministic preflight blocks missing evidence before any model audit", () => {
+  const blocked = recommendationEvidencePreflight({
+    title: "A complete paper title",
+    availableFields: fields,
+    requiredFields: fields,
+    evidenceUnits: [],
+  });
+  assert.equal(blocked.ready, false);
+  assert.deepEqual(blocked.reasons, ["insufficient_abstract_evidence"]);
+  const ready = recommendationEvidencePreflight({
+    title: "A complete paper title",
+    availableFields: fields,
+    requiredFields: fields,
+    evidenceUnits: [{ id: "abstract:1", text: "This abstract states a sufficiently detailed bounded result and its method for deterministic preflight checks." }],
+  });
+  assert.equal(ready.ready, true);
+});
+
 test("one clean post-revision pass is recorded as revised; a second failure degrades", () => {
   const initial = sanitizeEvidenceVerificationDraft({ verdict: "revise", coverageScore: 72, unsupportedFields: ["method"] }, { allowedFields: fields });
   const cleanRevision = sanitizeEvidenceVerificationDraft({
@@ -116,7 +135,7 @@ test("recommendations and research actions use independent verification and fail
   assert.match(migration, /PRAGMA optimize/);
 });
 
-test("a transient verifier timeout preserves the draft and resumes verification only", async () => {
+test("verification is bounded to one audit and one correction while transient failures preserve the draft", async () => {
   const [monitor, verification, client] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/evidence-verification.ts", import.meta.url), "utf8"),
@@ -127,8 +146,9 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /verificationStatus: "pending"/);
   assert.match(monitor, /checkpoint === "verifying_recommendations"/);
   assert.match(monitor, /draftPreserved: true, retryScope: "verification_only"/);
-  assert.match(monitor, /VERIFICATION_ATTEMPT_LIMIT = 5/);
-  assert.match(monitor, /audit -> correction -> fresh audit/);
+  assert.match(monitor, /VERIFICATION_ATTEMPT_LIMIT = 2/);
+  assert.match(monitor, /VERIFICATION_BATCH_SIZE = 2/);
+  assert.match(monitor, /One independent audit plus one evidence-grounded correction\/final decision/);
   assert.match(monitor, /work\.verificationAttempts\[canonicalId\]/);
   assert.match(monitor, /work\.verificationFailureCount >= VERIFICATION_CIRCUIT_FAILURE_LIMIT/);
   assert.match(monitor, /remaining drafts were deferred without more model calls/);
@@ -138,9 +158,10 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /AbortSignal\.timeout\(correctionMode \? VERIFICATION_CORRECTION_TIMEOUT_MS : VERIFICATION_TIMEOUT_MS\)/);
   assert.match(monitor, /Do not rewrite the draft in this audit pass/);
   assert.match(monitor, /correctionRequested: true/);
-  assert.match(monitor, /Corrected draft saved; a fresh evidence-check pass is queued/);
-  assert.match(monitor, /Post-correction verification still found unsupported claims/);
-  assert.match(monitor, /Independent audit completed; a conservative correction is queued/);
+  assert.match(monitor, /correctionCompleted: true/);
+  assert.match(monitor, /there will be no further rewrite loop/);
+  assert.match(monitor, /maximumModelCalls: VERIFICATION_ATTEMPT_LIMIT/);
+  assert.doesNotMatch(monitor, /fresh evidence-check pass is queued/);
   assert.match(monitor, /coverageScore must be an integer from 0 to 100/);
   assert.match(monitor, /recommendationVerificationEvidence/);
   assert.match(monitor, /document\.status IN \('ready', 'partial'\)/);
@@ -150,14 +171,14 @@ test("a transient verifier timeout preserves the draft and resumes verification 
   assert.match(monitor, /isPublishedRecommendation\(review\) \? 1 : 0/);
   assert.match(monitor, /deepseek_verification_pending/);
   assert.doesNotMatch(monitor, /\.\.\.degradedRecommendationReview\(review, evidenceVerificationReport\(\{ initial \}\)\),\s*verificationRetryable: true/);
-  assert.match(client, /正在逐篇核对推荐证据/);
+  assert.match(client, /正在核对推荐依据/);
   assert.match(client, /篇待处理/);
   assert.match(monitor, /BACKGROUND_VERIFICATION_RETRY_MS = 10 \* 60 \* 1000/);
-  assert.match(monitor, /Pi 将在后台自动完成改写与复核，无需你确认/);
-  assert.match(client, /这些论文已完成深度评审，后续审计无需你确认/);
+  assert.match(monitor, /Pi 会在后台自动继续/);
+  assert.match(client, /正在完成最后的推荐判断/);
   assert.match(client, /recommendationAuditPhaseLabel/);
-  assert.match(client, /初审完成 · 正在自动改写/);
-  assert.match(client, /已自动改写 · 等待复核/);
+  assert.match(client, /正在核对并修正/);
+  assert.match(client, /正在核对/);
 });
 
 test("an incomplete recommendation draft can regenerate once without trapping the scan", async () => {
