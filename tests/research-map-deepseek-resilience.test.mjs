@@ -22,7 +22,19 @@ test("research-map classifies truncated and malformed DeepSeek JSON as retryable
   assert.match(parser, /return JSON\.parse\(candidate\) as T/);
   assert.match(parser, /isRetryableDeepSeekJsonError/);
   assert.match(call, /parseDeepSeekJsonPayload<T>/);
+  assert.match(call, /AbortSignal\.timeout\(Math\.max\(8_000, Math\.min\(55_000/);
   assert.doesNotMatch(call, /return JSON\.parse\(content\)/);
+});
+
+test("first route generation and paper selection stay below the request boundary", async () => {
+  const route = await readFile(routePath, "utf8");
+  const directions = section(route, "async function generateDirections", "function roleDates");
+  const selection = section(route, "async function selectPapers", "async function interpretDirection");
+
+  assert.match(directions, /3200,[\s\S]*thinking: "disabled", timeoutMs: 28_000/);
+  assert.match(selection, /7600,[\s\S]*thinking: "disabled", timeoutMs: 50_000/);
+  assert.doesNotMatch(directions, /\n\s*8000,/);
+  assert.doesNotMatch(selection, /\n\s*20000,/);
 });
 
 test("paper-network Pi analysis retries a smaller balanced input and preserves untouched relations", async () => {

@@ -213,7 +213,11 @@ type DeepSeekResponse = {
   error?: { message?: string };
 };
 type DeepSeekJsonFailureKind = "empty" | "truncated" | "invalid_json";
-type DeepSeekCallOptions = { reasoningEffort?: "low" | "medium" | "high" };
+type DeepSeekCallOptions = {
+  reasoningEffort?: "low" | "medium" | "high";
+  thinking?: "enabled" | "disabled";
+  timeoutMs?: number;
+};
 
 class DeepSeekJsonResponseError extends Error {
   readonly kind: DeepSeekJsonFailureKind;
@@ -465,12 +469,13 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
     body: JSON.stringify({
       model: MODEL,
       messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
-      thinking: { type: "enabled" },
+      thinking: { type: options.thinking || "enabled" },
       reasoning_effort: options.reasoningEffort || "high",
       response_format: { type: "json_object" },
       max_tokens: maxTokens,
       stream: false,
     }),
+    signal: AbortSignal.timeout(Math.max(8_000, Math.min(55_000, options.timeoutMs || 52_000))),
   });
   const data = await response.json() as DeepSeekResponse;
   if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro research-map analysis failed");
@@ -497,8 +502,9 @@ async function generateDirections(database: D1Database, workspaceId: string, spa
       `Research space: ${space.name} — ${space.description}`,
       `Research memory and preference evidence: ${memory || "none"}`,
     ].join("\n"),
-    8000,
+    3200,
     apiKey,
+    { reasoningEffort: "low", thinking: "disabled", timeoutMs: 28_000 },
   );
   const directions = (parsed.directions || []).map((item, index) => ({
     key: `${cleanText(item.key || "direction").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 52)}-${index + 1}`,
@@ -627,8 +633,9 @@ async function selectPapers(
       `Existing route papers: ${JSON.stringify(existingEvidence)}`,
       `Candidate records: ${JSON.stringify(compact)}`,
     ].join("\n"),
-    20000,
+    7600,
     apiKey,
+    { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 50_000 },
   );
   const allowed = new Set(candidates.map((item) => item.directionKey + ":" + item.canonicalId));
   const selections = (parsed.selections || []).map((item) => ({
@@ -675,8 +682,9 @@ async function interpretDirection(
       `Direction: ${JSON.stringify({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, userRole: track.user_role, depthScore: track.depth_score + track.interaction_score, supportScore: track.support_score })}`,
       `Route evidence papers: ${JSON.stringify(evidence)}`,
     ].join("\n"),
-    7000,
+    4800,
     apiKey,
+    { reasoningEffort: "medium", timeoutMs: 48_000 },
   );
   return sanitizeIntelligence(parsed.directionIntelligence, track.id, new Set(evidence.map((item) => item.canonicalId)));
 }
@@ -1182,7 +1190,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
     `Research space: ${space.name} — ${space.description}`,
     `Research memory and preference evidence: ${memory || "none"}`,
     `Existing directions: ${JSON.stringify(tracks.results.map((track) => ({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, paperCountHint: track.expansion_count, searchQueries: parseJsonArray(track.search_queries) })))}`,
-  ].join("\n"), 10000, apiKey);
+  ].join("\n"), 5600, apiKey, { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 42_000 });
   const validIds = new Set(tracks.results.map((track) => track.id));
   for (const profile of parsed.profiles || []) {
     const trackId = cleanText(profile.trackId || "");
