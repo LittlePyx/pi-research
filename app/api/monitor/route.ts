@@ -567,7 +567,7 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v16-quality-learning";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v17-core-evidence";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
 ]);
@@ -2163,6 +2163,15 @@ function recommendationVerificationFields(review: PaperReview) {
   });
 }
 
+function recommendationVerificationRequiredFields(review: PaperReview) {
+  const populated = new Set(recommendationVerificationFields(review));
+  // Abstract evidence is authoritative for the paper's problem, method,
+  // contribution, and factual summary. Personalized fit, reading focus, and
+  // research decisions are grounded in the research-space context instead and
+  // must not be rejected merely because the abstract cannot prove user intent.
+  return ["summary", "problem", "method", "contribution"].filter((field) => populated.has(field));
+}
+
 function correctedRecommendationReview(review: PaperReview, value: unknown): PaperReview | null {
   if (!value || typeof value !== "object") return null;
   const corrected = value as Record<string, unknown>;
@@ -2342,8 +2351,8 @@ async function verifyRecommendationBatch(input: {
             ? "Correct every supplied draft into a complete conservative bilingual replacement. Apply the supplied audit exactly, retain supported substance, remove or qualify unsupported claims, and do not add new claims."
             : "Audit every supplied paper. coverageScore must be an integer from 0 to 100. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
           correctionMode
-            ? "Every corrected field must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation. The verification object is the final evidence decision: check the corrected draft, cover every populated substantive field, and cite a supplied evidenceId for every supported or qualified claim."
-            : "claimChecks must cover every populated substantive field. Every supported or qualified check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
+            ? "Every corrected paper-fact claim must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation. The verification object is the final evidence decision: cover the core fields summary, problem, method, and contribution when populated, and cite a supplied evidenceId for every supported or qualified core claim. Personalized fit and reading guidance remain research-context judgments."
+            : "claimChecks must cover the core paper-fact fields summary, problem, method, and contribution when populated. Personalized whyRead, readingFocus, researchProblemImpact, and researchDecision are research-context judgments, not abstract claims. Every supported or qualified core check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
           "Treat title, authors, venue, date, and citation count only as metadata. Evidence units support only what they state or directly entail. Route context and user fit do not prove paper findings.",
           "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it.",
           correctionMode ? "Keep the correction concise while preserving every required bilingual field. Preserve empty researchProblemImpact and researchDecision fields as empty; never invent user-specific context. If the corrected draft cannot pass, return insufficient; there will be no further rewrite loop." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
@@ -2403,6 +2412,7 @@ async function verifyRecommendationBatch(input: {
       const evidenceById = new Map((evidence?.units || []).map((unit) => [unit.id, unit.text]));
       const options = {
         allowedFields: recommendationVerificationFields(correctedReview),
+        requiredFields: recommendationVerificationRequiredFields(correctedReview),
         allowedEvidenceIds: new Set(evidenceById.keys()),
         evidenceById,
         evidenceTexts: (evidence?.units || []).map((unit) => unit.text),
@@ -2453,6 +2463,7 @@ async function verifyRecommendationBatch(input: {
     const evidenceById = new Map(evidence.units.map((unit) => [unit.id, unit.text]));
     const report = sanitizeEvidenceVerificationDraft(raw, {
       allowedFields: recommendationVerificationFields(review),
+      requiredFields: recommendationVerificationRequiredFields(review),
       allowedEvidenceIds: new Set(evidenceById.keys()),
       evidenceById,
       evidenceTexts: evidence.units.map((unit) => unit.text),

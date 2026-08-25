@@ -96,6 +96,7 @@ export function sanitizeEvidenceVerificationDraft(
     evidenceById?: Map<string, string>;
     evidenceTexts?: string[];
     requireAllFields?: boolean;
+    requiredFields?: readonly string[];
   } = {},
 ) {
   const draft = value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -138,7 +139,10 @@ export function sanitizeEvidenceVerificationDraft(
   const reason = cleanText(draft.reason, 900);
   const coverageScore = boundedScore(draft.coverageScore);
   const groundedFields = new Set(claimChecks.filter((item) => item.grounded).map((item) => item.field));
-  const allFieldsCovered = !options.requireAllFields || Array.from(allowedFields).every((field) => supportedFields.includes(field) && groundedFields.has(field));
+  const requiredFields = options.requiredFields?.length
+    ? options.requiredFields.filter((field) => allowedFields.has(field))
+    : Array.from(allowedFields);
+  const allFieldsCovered = !options.requireAllFields || requiredFields.every((field) => supportedFields.includes(field) && groundedFields.has(field));
   const clean = unsupportedFields.length === 0 && overstatements.length === 0 && contradictionRisks.length === 0
     && claimChecks.some((item) => item.grounded) && allFieldsCovered;
   const verdict: EvidenceVerificationVerdict = requestedVerdict === "verified" && (!clean || coverageScore < 90)

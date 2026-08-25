@@ -53,6 +53,52 @@ test("verification retains only real evidence ids", () => {
   assert.equal(result.claimChecks[0].evidenceQuote, "The source contains bounded evidence.");
 });
 
+test("abstract verification requires core paper facts without pretending to prove personalized reading guidance", () => {
+  const allowedFields = ["summary", "whyRead", "problem", "method", "contribution", "readingFocus"];
+  const requiredFields = ["summary", "problem", "method", "contribution"];
+  const evidenceById = new Map([["abstract:1", "The supplied abstract supports the bounded core paper facts."]]);
+  const result = sanitizeEvidenceVerificationDraft({
+    verdict: "verified",
+    coverageScore: 94,
+    supportedFields: requiredFields,
+    supportedEvidenceIds: ["abstract:1"],
+    claimChecks: requiredFields.map((field) => ({
+      field,
+      claimExcerpt: `${field} factual statement`,
+      evidenceId: "abstract:1",
+      verdict: "supported",
+    })),
+  }, {
+    allowedFields,
+    requiredFields,
+    allowedEvidenceIds: new Set(evidenceById.keys()),
+    evidenceById,
+    requireAllFields: true,
+  });
+  assert.equal(result.clean, true);
+  assert.equal(result.supportedFields.includes("whyRead"), false);
+
+  const missingCore = sanitizeEvidenceVerificationDraft({
+    verdict: "verified",
+    coverageScore: 96,
+    supportedFields: requiredFields.filter((field) => field !== "contribution"),
+    claimChecks: requiredFields.filter((field) => field !== "contribution").map((field) => ({
+      field,
+      claimExcerpt: `${field} factual statement`,
+      evidenceId: "abstract:1",
+      verdict: "supported",
+    })),
+  }, {
+    allowedFields,
+    requiredFields,
+    allowedEvidenceIds: new Set(evidenceById.keys()),
+    evidenceById,
+    requireAllFields: true,
+  });
+  assert.equal(missingCore.clean, false);
+  assert.equal(missingCore.verdict, "revise");
+});
+
 test("verification normalizes a fractional coverage score without weakening evidence checks", () => {
   const evidence = "The abstract states the bounded contribution used by this recommendation.";
   const result = sanitizeEvidenceVerificationDraft({
@@ -180,6 +226,8 @@ test("verification is bounded to two content passes while one transport retry pr
   assert.doesNotMatch(monitor, /fresh evidence-check pass is queued/);
   assert.match(monitor, /coverageScore must be an integer from 0 to 100/);
   assert.match(monitor, /recommendationVerificationEvidence/);
+  assert.match(monitor, /recommendationVerificationRequiredFields/);
+  assert.match(monitor, /Personalized fit and reading guidance remain research-context judgments/);
   assert.match(monitor, /requiredFields: populatedFields/);
   assert.match(monitor, /document\.status IN \('ready', 'partial'\)/);
   assert.match(monitor, /abstractEvidenceUnits/);

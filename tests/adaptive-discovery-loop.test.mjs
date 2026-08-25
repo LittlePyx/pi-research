@@ -85,7 +85,7 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DAILY_RECOMMENDATION_MIN_TARGET = 3/);
   assert.match(monitor, /DAILY_RECOMMENDATION_MAX_TARGET = 6/);
   assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 5/);
-  assert.match(monitor, /continuous-recommendation-v16-quality-learning/);
+  assert.match(monitor, /continuous-recommendation-v17-core-evidence/);
   assert.match(monitor, /FRESH_LANE_SCREEN_LIMIT = 8/);
   assert.match(monitor, /FRESH_LANE_DEEP_REVIEW_LIMIT = 2/);
   assert.match(monitor, /selectFreshLaneScreeningCandidates/);

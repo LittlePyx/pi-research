@@ -75,7 +75,7 @@ test("monitor retrieval and both LLM review passes consume benchmark calibration
   assert.match(monitor, /mergeBenchmarkQueryCoverage/);
   assert.match(monitor, /discoveryCalibrationSignals/);
   assert.ok((monitor.match(/benchmarkCalibrationPrompt/g) || []).length >= 3);
-  assert.match(monitor, /continuous-recommendation-v16-quality-learning/);
+  assert.match(monitor, /continuous-recommendation-v17-core-evidence/);
   assert.match(liveBenchmark, /response\.headers\.get\("retry-after"\)/);
   assert.match(liveBenchmark, /pacedOpenAlexRequest/);
   assert.match(liveBenchmark, /openAlexBlockedUntil/);
