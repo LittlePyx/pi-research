@@ -555,9 +555,10 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v13-bounded-verification";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v14-resilient-verification";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
+  "continuous-recommendation-v13-bounded-verification",
   "continuous-recommendation-v12-fresh-yield",
 ]);
 const MONITOR_RELIABILITY_PERIOD_DAYS = 14;
@@ -568,9 +569,11 @@ const DEEP_REVIEW_PRIMARY_TIMEOUT_MS = 22_000;
 const DEEP_REVIEW_RETRY_TIMEOUT_MS = 16_000;
 const VERIFICATION_TIMEOUT_MS = 24_000;
 const VERIFICATION_CORRECTION_TIMEOUT_MS = 32_000;
-// One independent audit plus one evidence-grounded correction/final decision. Content failures never loop.
-const VERIFICATION_ATTEMPT_LIMIT = 2;
-const VERIFICATION_BATCH_SIZE = 2;
+// At most two completed content passes: one audit and one correction/final decision.
+// A third transport attempt is reserved only for a timeout or unusable response, so infrastructure latency cannot consume the correction pass.
+const VERIFICATION_CONTENT_PASS_LIMIT = 2;
+const VERIFICATION_ATTEMPT_LIMIT = 3;
+const VERIFICATION_BATCH_SIZE = 1;
 const INCOMPLETE_DRAFT_REGENERATION_LIMIT = 1;
 const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
 const BACKGROUND_VERIFICATION_RETRY_MS = 10 * 60 * 1000;
@@ -6702,7 +6705,7 @@ export async function POST(request: Request) {
           await saveScanWorkQueue(database, job.id, work);
           if (work.verificationIds.length) {
             await setStage("verifying_recommendations", "deep_reviewing", 94,
-              `已形成 ${work.verificationIds.length} 篇高潜力解读，正在两篇一组核对书目与摘要证据`);
+              `已形成 ${work.verificationIds.length} 篇高潜力解读，正在逐篇核对书目与摘要证据`);
             return Response.json(await readState(database, space, { verifyingRecommendations: true }), { status: 202 });
           }
           work.evidenceIds = [];
@@ -6824,7 +6827,8 @@ export async function POST(request: Request) {
                     metadata: {
                       canonicalId: batchId, verificationAttempt, draftPreserved: true, retryScope: "verification_only",
                       correctionRequested: persistedReview.verificationReport?.correctionRequested === true,
-                      maximumModelCalls: VERIFICATION_ATTEMPT_LIMIT,
+                      maximumContentPasses: VERIFICATION_CONTENT_PASS_LIMIT,
+                      maximumTransportAttempts: VERIFICATION_ATTEMPT_LIMIT,
                     },
                   });
                 } else {

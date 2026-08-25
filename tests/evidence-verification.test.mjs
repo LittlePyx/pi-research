@@ -27,6 +27,19 @@ test("a verifier cannot mark incomplete or risky evidence as verified", () => {
   assert.deepEqual(result.unsupportedFields, ["method"]);
 });
 
+test("structured verifier warnings remain readable instead of becoming object placeholders", () => {
+  const result = sanitizeEvidenceVerificationDraft({
+    verdict: "revise",
+    coverageScore: 84,
+    supportedFields: ["summary"],
+    overstatements: [{ field: "limitations", reason: "The limitation is not stated by the abstract." }],
+    contradictionRisks: [{ claimExcerpt: "Always converges", description: "The supplied evidence only reports empirical convergence." }],
+  }, { allowedFields: fields });
+  assert.deepEqual(result.overstatements, ["The limitation is not stated by the abstract."]);
+  assert.deepEqual(result.contradictionRisks, ["Always converges"]);
+  assert.doesNotMatch(JSON.stringify(result), /\[object Object\]/);
+});
+
 test("verification retains only real evidence ids", () => {
   const result = sanitizeEvidenceVerificationDraft({
     verdict: "verified",
@@ -135,7 +148,7 @@ test("recommendations and research actions use independent verification and fail
   assert.match(migration, /PRAGMA optimize/);
 });
 
-test("verification is bounded to one audit and one correction while transient failures preserve the draft", async () => {
+test("verification is bounded to two content passes while one transport retry preserves the correction opportunity", async () => {
   const [monitor, verification, client] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/evidence-verification.ts", import.meta.url), "utf8"),
@@ -146,9 +159,11 @@ test("verification is bounded to one audit and one correction while transient fa
   assert.match(monitor, /verificationStatus: "pending"/);
   assert.match(monitor, /checkpoint === "verifying_recommendations"/);
   assert.match(monitor, /draftPreserved: true, retryScope: "verification_only"/);
-  assert.match(monitor, /VERIFICATION_ATTEMPT_LIMIT = 2/);
-  assert.match(monitor, /VERIFICATION_BATCH_SIZE = 2/);
-  assert.match(monitor, /One independent audit plus one evidence-grounded correction\/final decision/);
+  assert.match(monitor, /VERIFICATION_CONTENT_PASS_LIMIT = 2/);
+  assert.match(monitor, /VERIFICATION_ATTEMPT_LIMIT = 3/);
+  assert.match(monitor, /VERIFICATION_BATCH_SIZE = 1/);
+  assert.match(monitor, /At most two completed content passes/);
+  assert.match(monitor, /A third transport attempt is reserved only for a timeout or unusable response/);
   assert.match(monitor, /work\.verificationAttempts\[canonicalId\]/);
   assert.match(monitor, /work\.verificationFailureCount >= VERIFICATION_CIRCUIT_FAILURE_LIMIT/);
   assert.match(monitor, /remaining drafts were deferred without more model calls/);
@@ -160,7 +175,8 @@ test("verification is bounded to one audit and one correction while transient fa
   assert.match(monitor, /correctionRequested: true/);
   assert.match(monitor, /correctionCompleted: true/);
   assert.match(monitor, /there will be no further rewrite loop/);
-  assert.match(monitor, /maximumModelCalls: VERIFICATION_ATTEMPT_LIMIT/);
+  assert.match(monitor, /maximumContentPasses: VERIFICATION_CONTENT_PASS_LIMIT/);
+  assert.match(monitor, /maximumTransportAttempts: VERIFICATION_ATTEMPT_LIMIT/);
   assert.doesNotMatch(monitor, /fresh evidence-check pass is queued/);
   assert.match(monitor, /coverageScore must be an integer from 0 to 100/);
   assert.match(monitor, /recommendationVerificationEvidence/);
@@ -184,6 +200,7 @@ test("verification is bounded to one audit and one correction while transient fa
   assert.match(monitor, /resumedDeepReviewAfterVerification/);
   assert.doesNotMatch(client, /证据审计|自动审计|后台审计|审计通过/);
   assert.match(monitor, /secondId && !firstCorrectionMode/);
+  assert.match(monitor, /正在逐篇核对书目与摘要证据/);
 });
 
 test("an incomplete recommendation draft can regenerate once without trapping the scan", async () => {

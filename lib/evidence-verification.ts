@@ -24,7 +24,11 @@ function allowedList(value: unknown, allowed: Set<string>, limit: number) {
 
 function textList(value: unknown, limit: number, itemLimit = 320) {
   if (!Array.isArray(value)) return [] as string[];
-  return Array.from(new Set(value.map((item) => cleanText(item, itemLimit)).filter(Boolean))).slice(0, limit);
+  return Array.from(new Set(value.map((item) => {
+    if (!item || typeof item !== "object") return cleanText(item, itemLimit);
+    const record = item as Record<string, unknown>;
+    return cleanText(record.reason || record.text || record.claimExcerpt || record.description, itemLimit);
+  }).filter(Boolean))).slice(0, limit);
 }
 
 export type VerificationEvidenceUnit = {
