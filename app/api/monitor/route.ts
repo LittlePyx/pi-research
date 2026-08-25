@@ -504,6 +504,7 @@ type ScanWorkQueue = {
   selectionFailureReasons: Record<string, number>;
   deepCompletedIds: string[];
   deepDeferredIds: string[];
+  evidenceExcludedIds: string[];
   retryDeepIds: string[];
   verificationIds: string[];
   verificationCompletedIds: string[];
@@ -5304,7 +5305,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
     freshLaneActive: false, freshLaneCompleted: false, freshLaneCandidateIds: [], freshLaneReviewedIds: [], freshLaneDeferredIds: [],
     screens: [], deepIds: [], guardedFallbackIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
     deepCompletedIds: [], rawCandidateCount: 0, newCandidateCount: 0,
-    deepDeferredIds: [], retryDeepIds: [],
+    deepDeferredIds: [], evidenceExcludedIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
     verificationAttempts: {}, draftRegenerationAttempts: {},
     evidenceIds: [], evidenceCompletedIds: [],
@@ -5354,6 +5355,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
         : {},
       deepCompletedIds: Array.isArray(parsed.deepCompletedIds) ? parsed.deepCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       deepDeferredIds: Array.isArray(parsed.deepDeferredIds) ? parsed.deepDeferredIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
+      evidenceExcludedIds: Array.isArray(parsed.evidenceExcludedIds) ? parsed.evidenceExcludedIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
       retryDeepIds: Array.isArray(parsed.retryDeepIds) ? parsed.retryDeepIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_CARRYOVER_LIMIT) : [],
       verificationIds: Array.isArray(parsed.verificationIds) ? parsed.verificationIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
       verificationCompletedIds: Array.isArray(parsed.verificationCompletedIds) ? parsed.verificationCompletedIds.filter((id): id is string => typeof id === "string").slice(0, DEEP_REVIEW_MAX_LIMIT) : [],
@@ -5392,7 +5394,7 @@ function newScanWorkQueue(): ScanWorkQueue {
     freshLaneActive: false, freshLaneCompleted: false, freshLaneCandidateIds: [], freshLaneReviewedIds: [], freshLaneDeferredIds: [],
     screens: [], deepIds: [], guardedFallbackIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
     deepCompletedIds: [], rescueScreenIds: [], rescueScreened: false,
-    deepDeferredIds: [], retryDeepIds: [],
+    deepDeferredIds: [], evidenceExcludedIds: [], retryDeepIds: [],
     verificationIds: [], verificationCompletedIds: [], verificationDeferredIds: [],
     verificationAttempts: {}, draftRegenerationAttempts: {},
     evidenceIds: [], evidenceCompletedIds: [],
@@ -5461,6 +5463,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     ...work.deepIds,
     ...work.deepCompletedIds,
     ...work.deepDeferredIds,
+    ...work.evidenceExcludedIds,
     ...work.retryDeepIds,
     ...work.verificationIds,
     ...work.verificationCompletedIds,
@@ -5491,6 +5494,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     guardedFallbackIds: work.guardedFallbackIds,
     deepCompletedIds: work.deepCompletedIds,
     deepDeferredIds: work.deepDeferredIds,
+    evidenceExcludedIds: work.evidenceExcludedIds,
     retryDeepIds: work.retryDeepIds,
     verificationIds: work.verificationIds,
     verificationCompletedIds: work.verificationCompletedIds,
@@ -5510,6 +5514,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     .filter(([id]) => reviewableIds.has(id)));
   work.guardedFallbackIds = work.guardedFallbackIds.filter((id) => reviewableIds.has(id) && work.deepIds.includes(id));
   work.deepDeferredIds = work.deepDeferredIds.filter((id) => reviewableIds.has(id));
+  work.evidenceExcludedIds = work.evidenceExcludedIds.filter((id) => reviewableIds.has(id));
   work.retryDeepIds = work.retryDeepIds.filter((id) => reviewableIds.has(id));
   work.verificationIds = work.verificationIds.filter((id) => reviewableIds.has(id));
   work.verificationCompletedIds = work.verificationCompletedIds.filter((id) => reviewableIds.has(id));
@@ -5528,6 +5533,7 @@ async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: s
     guardedFallbackIds: work.guardedFallbackIds,
     deepCompletedIds: work.deepCompletedIds,
     deepDeferredIds: work.deepDeferredIds,
+    evidenceExcludedIds: work.evidenceExcludedIds,
     retryDeepIds: work.retryDeepIds,
     verificationIds: work.verificationIds,
     verificationCompletedIds: work.verificationCompletedIds,
@@ -6436,6 +6442,7 @@ export async function POST(request: Request) {
       work.selectionFailureReasons = {};
       work.deepCompletedIds = [];
       work.deepDeferredIds = [];
+      work.evidenceExcludedIds = [];
       work.verificationIds = [];
       work.verificationCompletedIds = [];
       work.verificationDeferredIds = [];
@@ -6775,6 +6782,7 @@ export async function POST(request: Request) {
         work.guardedFallbackIds = [];
         work.deepCompletedIds = [];
         work.deepDeferredIds = [];
+        work.evidenceExcludedIds = [];
         work.verificationIds = [];
         work.verificationCompletedIds = [];
         work.verificationDeferredIds = [];
@@ -6825,6 +6833,7 @@ export async function POST(request: Request) {
         work.selectionFailureReasons = {};
         work.deepCompletedIds = earlyReviews.map((review) => review.canonicalId);
         work.deepDeferredIds = [];
+        work.evidenceExcludedIds = [];
         work.verificationIds = [...earlyVerificationDeferredIds];
         work.verificationCompletedIds = [];
         // The durable-horizon pass happens later in the same scan, so it is a
@@ -7021,6 +7030,10 @@ export async function POST(request: Request) {
           true,
         ).slice(0, DEEP_REVIEW_MAX_LIMIT);
         const removedForEvidence = [...previousDeepIds].filter((id) => !work.deepIds.includes(id) && !pinnedIds.has(id));
+        work.evidenceExcludedIds = Array.from(new Set([
+          ...work.evidenceExcludedIds,
+          ...removedForEvidence,
+        ])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
         updateDeepSelectionDiagnostics(work, refreshedCandidates);
         await saveScanWorkQueue(database, job.id, work);
         if (removedForEvidence.length) await recordReliabilityEvent(database, {
@@ -7163,6 +7176,7 @@ export async function POST(request: Request) {
           const recommendationShortfall = Math.max(0, HIGH_POTENTIAL_DRAFT_TARGET - potentialRecommendations);
           if (recommendationShortfall && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
+            const rescueCandidates = allCandidates.filter((candidate) => !work.evidenceExcludedIds.includes(candidate.canonicalId));
             const secondWaveLimit = Math.min(
               DEEP_REVIEW_RESCUE_LIMIT,
               DEEP_REVIEW_MAX_LIMIT - work.deepIds.length,
@@ -7170,7 +7184,7 @@ export async function POST(request: Request) {
             );
             const scheduled = new Set(work.deepIds);
             const rescueIds = chooseBudgetedDeepCandidateIds(
-              allCandidates,
+              rescueCandidates,
               work.screens,
               work.currentCandidateIds,
               Math.min(DEEP_REVIEW_MAX_LIMIT, work.deepIds.length + secondWaveLimit),
@@ -7424,7 +7438,8 @@ export async function POST(request: Request) {
           }
           if (work.freshLaneActive) return continueAfterFreshLane();
           const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
-          const availableCandidates = allCandidates.filter((candidate) => !work.deepIds.includes(candidate.canonicalId));
+          const rescueCandidates = allCandidates.filter((candidate) => !work.evidenceExcludedIds.includes(candidate.canonicalId));
+          const availableCandidates = rescueCandidates.filter((candidate) => !work.deepIds.includes(candidate.canonicalId));
           const formalRescueSize = formalRecommendationRescueSize({
             published,
             reviewed: work.deepIds.length,
@@ -7436,7 +7451,7 @@ export async function POST(request: Request) {
           if (formalRescueSize > 0) {
             const scheduled = new Set(work.deepIds);
             const formalRescueIds = chooseBudgetedDeepCandidateIds(
-              allCandidates,
+              rescueCandidates,
               work.screens,
               work.currentCandidateIds,
               Math.min(DEEP_REVIEW_MAX_LIMIT, work.deepIds.length + formalRescueSize),

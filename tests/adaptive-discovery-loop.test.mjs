@@ -174,6 +174,9 @@ test("screening refreshes stale fallback plans and enriches evidence before deep
   assert.match(monitor, /fetchSemanticScholarAbstracts/);
   assert.match(monitor, /fetchOpenAlexAbstract/);
   assert.match(monitor, /checkpoint === "enriching_abstracts"/);
+  assert.match(monitor, /evidenceExcludedIds: string\[\]/);
+  assert.match(monitor, /work\.evidenceExcludedIds = Array\.from\(new Set/);
+  assert.match(monitor, /rescueCandidates = allCandidates\.filter\(\(candidate\) => !work\.evidenceExcludedIds\.includes\(candidate\.canonicalId\)\)/);
   assert.match(monitor, /MONITOR_REVIEW_PIPELINE_RELEASED_AT/);
   assert.match(profiles, /stochastic localization/);
   assert.match(profiles, /log-Sobolev inequality/);
