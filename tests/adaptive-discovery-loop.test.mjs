@@ -85,9 +85,11 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /DAILY_RECOMMENDATION_MIN_TARGET = 3/);
   assert.match(monitor, /DAILY_RECOMMENDATION_MAX_TARGET = 6/);
   assert.match(monitor, /HIGH_POTENTIAL_DRAFT_TARGET = 5/);
-  assert.match(monitor, /continuous-recommendation-v15-fresh-first/);
+  assert.match(monitor, /continuous-recommendation-v16-quality-learning/);
   assert.match(monitor, /FRESH_LANE_SCREEN_LIMIT = 8/);
   assert.match(monitor, /FRESH_LANE_DEEP_REVIEW_LIMIT = 2/);
+  assert.match(monitor, /selectFreshLaneScreeningCandidates/);
+  assert.match(monitor, /Math\.min\(2, limit\)/);
   assert.match(monitor, /checkpoint === "fresh_deduplicating"/);
   assert.match(monitor, /continueAfterFreshLane/);
   assert.match(monitor, /fresh_lane_completed/);
@@ -105,6 +107,7 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /正在追加 \$\{rescueIds\.length\} 篇第二批评审/);
   assert.match(monitor, /formalRecommendationRescueSize/);
   assert.match(monitor, /formal_yield_rescue_started/);
+  assert.match(monitor, /daily_target_reached_early/);
   assert.match(monitor, /质量门槛不变/);
   assert.match(monitor, /retryAfterMinutes: Math\.max/);
   assert.match(client, /刚才没有启动重复扫描/);

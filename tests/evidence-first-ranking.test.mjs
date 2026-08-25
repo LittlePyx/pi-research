@@ -11,7 +11,7 @@ test("the monitor verifies recommendation content without a full-text verificati
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0036_bouncy_lord_hawal.sql", import.meta.url), "utf8"),
   ]);
-  assert.match(monitor, /continuous-recommendation-v15-fresh-first/);
+  assert.match(monitor, /continuous-recommendation-v16-quality-learning/);
   assert.match(monitor, /verifying_recommendations/);
   assert.match(monitor, /proposed_recommendation_tier/);
   assert.match(monitor, /const effectiveTier = proposedTier/);

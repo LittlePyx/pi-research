@@ -153,6 +153,65 @@ async function refreshResearchLoopAfterFeedback(database: D1Database, spaceId: s
   ).bind(spaceId, paperId, spaceId).run();
 }
 
+async function recordRecommendationFeedbackOutcome(database: D1Database, input: {
+  spaceId: string;
+  paperId: string;
+  kind: "save" | "relevant" | "not_relevant" | "later";
+  value: boolean;
+  reasonCode?: FeedbackReasonCode | null;
+}) {
+  try {
+    const [audit, sources] = await Promise.all([
+      database.prepare(
+        `SELECT scan_job_id, horizon, recommendation_tier, provenance_json, reviewed_at
+         FROM recommendation_audit_events WHERE space_id = ? AND paper_id = ?
+         ORDER BY reviewed_at DESC, rowid DESC LIMIT 1`,
+      ).bind(input.spaceId, input.paperId).first<{
+        scan_job_id: string;
+        horizon: string;
+        recommendation_tier: string;
+        provenance_json: string;
+        reviewed_at: string;
+      }>(),
+      database.prepare(
+        `SELECT source_key, channel, query_key, appearances FROM monitor_candidate_sources
+         WHERE space_id = ? AND paper_id = ? ORDER BY last_seen_at DESC LIMIT 8`,
+      ).bind(input.spaceId, input.paperId).all<{
+        source_key: string;
+        channel: string;
+        query_key: string;
+        appearances: number;
+      }>(),
+    ]);
+    const outcome = input.value && (input.kind === "save" || input.kind === "relevant")
+      ? "success"
+      : input.value && input.kind === "not_relevant" && input.reasonCode !== "duplicate_known"
+        ? "degraded"
+        : "info";
+    await database.prepare(
+      `INSERT INTO monitor_reliability_events
+       (id, space_id, scan_job_id, kind, stage, source, outcome, message, metadata_json)
+       VALUES (?, ?, ?, 'recommendation_feedback_outcome', 'user_feedback', 'quality-learning', ?, ?, ?)`,
+    ).bind(
+      crypto.randomUUID(), input.spaceId, audit?.scan_job_id || null, outcome,
+      "An explicit recommendation outcome was attributed to its discovery branches for future planning",
+      JSON.stringify({
+        paperId: input.paperId,
+        feedbackKind: input.kind,
+        value: input.value,
+        reasonCode: input.reasonCode || null,
+        horizon: audit?.horizon || null,
+        recommendationTier: audit?.recommendation_tier || null,
+        provenance: audit?.provenance_json ? JSON.parse(audit.provenance_json) : [],
+        branches: sources.results,
+      }),
+    ).run();
+  } catch (error) {
+    // Feedback must remain responsive even if internal attribution telemetry is unavailable.
+    console.error("Failed to attribute recommendation feedback", error);
+  }
+}
+
 export async function POST(request: Request) {
   const user = getApiUser(request);
 
@@ -231,6 +290,7 @@ export async function POST(request: Request) {
        ON CONFLICT(space_id, paper_id) DO UPDATE SET snoozed_until = excluded.snoozed_until, updated_at = CURRENT_TIMESTAMP`,
     ).bind(crypto.randomUUID(), spaceId, paperId, snoozedUntil).run();
     await addResearchTrackSignal(DB, spaceId, paperId, 1);
+    await recordRecommendationFeedbackOutcome(DB, { spaceId, paperId, kind, value: true });
     return NextResponse.json({ ok: true, state: "snoozed", snoozedUntil, effect: feedbackEffect(kind, true, null) });
   }
 
@@ -313,6 +373,7 @@ export async function POST(request: Request) {
 
   if (kind === "save" || kind === "relevant" || kind === "not_relevant") {
     await refreshResearchLoopAfterFeedback(DB, spaceId, paperId);
+    await recordRecommendationFeedbackOutcome(DB, { spaceId, paperId, kind, value: body.value, reasonCode });
   }
 
   return NextResponse.json({

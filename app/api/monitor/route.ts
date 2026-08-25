@@ -22,6 +22,10 @@ import {
   formalYieldBranchAdjustment,
   shouldRefreshFreshYieldPlan,
 } from "../../../lib/discovery/fresh-yield.mjs";
+import {
+  buildRecommendationQualitySnapshot,
+  selectVerificationPhaseBatch,
+} from "../../../lib/discovery/quality-learning.mjs";
 import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
 import { mergeDailyBriefHistory } from "../../../lib/daily-brief-history.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
@@ -563,7 +567,7 @@ const HORIZONS = [
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
 const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
-const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v15-fresh-first";
+const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v16-quality-learning";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
 ]);
@@ -579,7 +583,7 @@ const VERIFICATION_CORRECTION_TIMEOUT_MS = 32_000;
 // A third transport attempt is reserved only for a timeout or unusable response, so infrastructure latency cannot consume the correction pass.
 const VERIFICATION_CONTENT_PASS_LIMIT = 2;
 const VERIFICATION_ATTEMPT_LIMIT = 3;
-const VERIFICATION_BATCH_SIZE = 1;
+const VERIFICATION_BATCH_SIZE = 3;
 const INCOMPLETE_DRAFT_REGENERATION_LIMIT = 1;
 const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
 const BACKGROUND_VERIFICATION_RETRY_MS = 10 * 60 * 1000;
@@ -3966,6 +3970,22 @@ function selectHorizonScreeningCandidates(candidates: Candidate[], limit: number
   return [...seeded, ...selectBalancedByGroup(remaining, candidateDirectionKey, Math.max(0, limit - seeded.length))];
 }
 
+function selectFreshLaneScreeningCandidates(candidates: Candidate[], limit: number) {
+  // The newest-paper lane is small, so reserve up to two screening positions
+  // for route-origin discoveries before generic queries can fill the batch.
+  // Every reserved paper still passes the same LLM and evidence gates later.
+  const routeCandidates = selectHorizonScreeningCandidates(
+    candidates.filter((candidate) => candidate.provenance.some(isMonitorRouteProvenance)),
+    Math.min(2, limit),
+  );
+  const reservedIds = new Set(routeCandidates.map((candidate) => candidate.canonicalId));
+  const fill = selectHorizonScreeningCandidates(
+    candidates.filter((candidate) => !reservedIds.has(candidate.canonicalId)),
+    Math.max(0, limit - routeCandidates.length),
+  );
+  return [...routeCandidates, ...fill].slice(0, limit);
+}
+
 function selectUnseenReviewBatch(candidates: Candidate[]) {
   const selected: Candidate[] = [];
   for (const horizon of ["days", "months", "years"] as Horizon[]) {
@@ -6347,6 +6367,55 @@ export async function POST(request: Request) {
         deepDeferredIds: work.deepDeferredIds,
         reviews: finalizedReviews,
       });
+      const auditTokens = await database.prepare(
+        `SELECT COALESCE(SUM(allocated_input_tokens), 0) AS review_input_tokens,
+          COALESCE(SUM(allocated_output_tokens), 0) AS review_output_tokens,
+          COALESCE(SUM(verification_input_tokens), 0) AS verification_input_tokens,
+          COALESCE(SUM(verification_output_tokens), 0) AS verification_output_tokens
+         FROM recommendation_audit_events WHERE scan_job_id = ?`,
+      ).bind(job.id).first<{
+        review_input_tokens: number;
+        review_output_tokens: number;
+        verification_input_tokens: number;
+        verification_output_tokens: number;
+      }>();
+      const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
+      const qualitySnapshot = buildRecommendationQualitySnapshot({
+        discovered: job.discovered_count,
+        newCandidates: work.newCandidateCount,
+        screened: work.screens.length,
+        deepScheduled: work.deepIds.length,
+        deepCompleted: finalizedReviews.length,
+        deepDeferred: work.deepDeferredIds.length,
+        verificationPending,
+        verificationFailed,
+        published: recommended,
+        firstRecommendationMs: firstRecommendationAt
+          ? databaseTime(firstRecommendationAt) - databaseTime(job.started_at)
+          : null,
+        reviewInputTokens: auditTokens?.review_input_tokens || 0,
+        reviewOutputTokens: auditTokens?.review_output_tokens || 0,
+        verificationInputTokens: auditTokens?.verification_input_tokens || 0,
+        verificationOutputTokens: auditTokens?.verification_output_tokens || 0,
+        publishedPapers: finalizedReviews.filter(isPublishedRecommendation).map((review) => {
+          const candidate = candidateById.get(review.canonicalId);
+          return {
+            horizon: candidate?.horizon || "days",
+            directionKey: candidate ? candidateDirectionKey(candidate) : "",
+            routeIds: candidate?.provenance.map((entry) => entry.routeId || "").filter(Boolean) || [],
+          };
+        }),
+      });
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: job.id,
+        kind: "recommendation_quality_snapshot",
+        stage: "finalizing",
+        source: "internal-quality-learning",
+        outcome: recommended >= DAILY_RECOMMENDATION_MIN_TARGET ? "success" : recommended ? "info" : "degraded",
+        message: "Internal recommendation yield, route coverage, latency, and token efficiency were recorded for the next discovery plan",
+        metadata: qualitySnapshot,
+      });
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: job.id,
@@ -6478,7 +6547,7 @@ export async function POST(request: Request) {
       } else if (job.checkpoint === "fresh_deduplicating") {
         const currentIds = new Set(work.currentCandidateIds);
         const discovered = await pendingCandidateQueue(database, space.id, work.discoveredCandidateIds);
-        const newestCandidates = selectHorizonScreeningCandidates(
+        const newestCandidates = selectFreshLaneScreeningCandidates(
           discovered.filter((candidate) => candidate.horizon === "days" && currentIds.has(candidate.canonicalId)),
           FRESH_LANE_SCREEN_LIMIT,
         );
@@ -6940,24 +7009,35 @@ export async function POST(request: Request) {
             const usageDate = shanghaiDateKey(new Date());
             const workspaceScope = "monitor-workspace:" + user.userId.replace(/^anonymous:/, "");
             const spaceScope = "monitor-space:" + space.id;
-            const firstCorrectionMode = draft.verificationReport?.correctionRequested === true;
-            const batchIds = [canonicalId];
-            const batchCandidates = [...candidates];
-            const batchDrafts = [draft];
-            const secondId = work.verificationIds.find((id) => !handled.has(id) && id !== canonicalId);
-            if (secondId && !firstCorrectionMode && batchIds.length < VERIFICATION_BATCH_SIZE) {
-              const [secondCandidates, secondDrafts] = await Promise.all([
-                pendingCandidateQueue(database, space.id, [secondId]),
-                loadPersistedReviews(database, space.id, [secondId]),
-              ]);
-              const secondDraft = secondDrafts.find((review) => review.verificationRetryable);
-              if (secondCandidates.length && secondDraft && hasCompleteRecommendationDraft(secondDraft)
-                && (secondDraft.verificationReport?.correctionRequested === true) === firstCorrectionMode) {
-                batchIds.push(secondId);
-                batchCandidates.push(...secondCandidates);
-                batchDrafts.push(secondDraft);
-              }
-            }
+            const poolIds = [
+              canonicalId,
+              ...work.verificationIds.filter((id) => !handled.has(id) && id !== canonicalId),
+            ].slice(0, VERIFICATION_BATCH_SIZE * 3);
+            const additionalIds = poolIds.filter((id) => id !== canonicalId);
+            const [additionalCandidates, additionalDrafts] = additionalIds.length
+              ? await Promise.all([
+                  pendingCandidateQueue(database, space.id, additionalIds),
+                  loadPersistedReviews(database, space.id, additionalIds),
+                ])
+              : [[], []] as [Candidate[], PaperReview[]];
+            const candidateById = new Map([...candidates, ...additionalCandidates]
+              .map((candidate) => [candidate.canonicalId, candidate] as const));
+            const draftById = new Map([draft, ...additionalDrafts.filter((review) => review.verificationRetryable)]
+              .map((review) => [review.canonicalId, review] as const));
+            const batchEntries = selectVerificationPhaseBatch(poolIds.map((id) => {
+              const candidate = candidateById.get(id);
+              const pendingDraft = draftById.get(id);
+              return {
+                id,
+                candidate,
+                draft: pendingDraft,
+                ready: Boolean(candidate && pendingDraft && hasCompleteRecommendationDraft(pendingDraft)),
+                correctionRequested: pendingDraft?.verificationReport?.correctionRequested === true,
+              };
+            }), VERIFICATION_BATCH_SIZE);
+            const batchIds = batchEntries.map((entry) => entry.id);
+            const batchCandidates = batchEntries.map((entry) => entry.candidate as Candidate);
+            const batchDrafts = batchEntries.map((entry) => entry.draft as PaperReview);
             const verificationAttempts = new Map(batchIds.map((id) => {
               const attempt = Math.min(VERIFICATION_ATTEMPT_LIMIT, (work.verificationAttempts[id] || 0) + 1);
               work.verificationAttempts[id] = attempt;
@@ -7072,6 +7152,23 @@ export async function POST(request: Request) {
             await setStage("deep_reviewing", "deep_reviewing", work.freshLaneActive ? 40 : 86,
               `已有 ${published} 篇正式入选；继续解读 ${remainingDeepIds.length} 篇已排队论文，争取达到 ${DAILY_RECOMMENDATION_MIN_TARGET} 篇`);
             return Response.json(await readState(database, space, { resumedDeepReviewAfterVerification: true }), { status: 202 });
+          }
+          if (published >= DAILY_RECOMMENDATION_MIN_TARGET && remainingDeepIds.length) {
+            await recordReliabilityEvent(database, {
+              spaceId: space.id,
+              scanJobId: job.id,
+              kind: "daily_target_reached_early",
+              stage: "verifying_recommendations",
+              source: MONITOR_MODEL,
+              outcome: "success",
+              message: "The formal daily target was reached, so unused deep-review slots were left in the durable candidate pool",
+              metadata: {
+                published,
+                minimumTarget: DAILY_RECOMMENDATION_MIN_TARGET,
+                deferredReviewSlots: remainingDeepIds.length,
+                qualityGateUnchanged: true,
+              },
+            });
           }
           if (work.freshLaneActive) return continueAfterFreshLane();
           const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);

@@ -161,7 +161,7 @@ test("verification is bounded to two content passes while one transport retry pr
   assert.match(monitor, /draftPreserved: true, retryScope: "verification_only"/);
   assert.match(monitor, /VERIFICATION_CONTENT_PASS_LIMIT = 2/);
   assert.match(monitor, /VERIFICATION_ATTEMPT_LIMIT = 3/);
-  assert.match(monitor, /VERIFICATION_BATCH_SIZE = 1/);
+  assert.match(monitor, /VERIFICATION_BATCH_SIZE = 3/);
   assert.match(monitor, /At most two completed content passes/);
   assert.match(monitor, /A third transport attempt is reserved only for a timeout or unusable response/);
   assert.match(monitor, /work\.verificationAttempts\[canonicalId\]/);
@@ -199,7 +199,8 @@ test("verification is bounded to two content passes while one transport retry pr
   assert.match(monitor, /earlyVerificationThreshold/);
   assert.match(monitor, /resumedDeepReviewAfterVerification/);
   assert.doesNotMatch(client, /证据审计|自动审计|后台审计|审计通过/);
-  assert.match(monitor, /secondId && !firstCorrectionMode/);
+  assert.match(monitor, /selectVerificationPhaseBatch/);
+  assert.match(monitor, /VERIFICATION_BATCH_SIZE \* 3/);
   assert.match(monitor, /正在逐篇核对书目与摘要证据/);
 });
 

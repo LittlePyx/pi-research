@@ -65,8 +65,9 @@ test("unavailable analysis is not mislabeled as a zero-recommendation quality ou
 });
 
 test("monitor persists internal reliability telemetry without exposing a user quality console", async () => {
-  const [route, schema, repository, client] = await Promise.all([
+  const [route, feedback, schema, repository, client] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/feedback/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
@@ -78,6 +79,10 @@ test("monitor persists internal reliability telemetry without exposing a user qu
   assert.match(route, /: "scan_completed"/);
   assert.match(route, /kind: "scan_failed"/);
   assert.match(route, /kind: "first_recommendation_ready"/);
+  assert.match(route, /kind: "recommendation_quality_snapshot"/);
+  assert.match(route, /buildRecommendationQualitySnapshot/);
+  assert.match(feedback, /recommendation_feedback_outcome/);
+  assert.match(feedback, /recordRecommendationFeedbackOutcome/);
   assert.match(route, /internalReliability/);
   assert.match(client, /const SHOW_INTERNAL_QUALITY_UI = false/);
   assert.doesNotMatch(client, /monitor\?\.internalReliability/);
