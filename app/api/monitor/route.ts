@@ -53,6 +53,7 @@ import {
 } from "../../../lib/monitor-automation.mjs";
 import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
+import { buildMonitorBudgetDecision } from "../../../lib/monitor-budget-policy.mjs";
 import {
   deepReviewCompletion,
   isFatalModelFailure,
@@ -482,6 +483,7 @@ type HorizonScanStats = {
   completed: boolean;
 };
 type ScanWorkQueue = {
+  scanMode: "full" | "fresh_only";
   discoveredCandidateIds: string[];
   candidateIds: string[];
   currentCandidateIds: string[];
@@ -594,6 +596,8 @@ const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
 const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 64;
 const MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS = 16;
+const MONITOR_COMPACT_SCAN_MINIMUM_CALLS = 6;
+const MONITOR_SPACE_DAILY_BASE_RESERVE = 24;
 const MONITOR_SEMANTIC_SCHOLAR_DAILY_LIMIT = 90;
 const MONITOR_MODEL = "deepseek-v4-pro";
 const RECOMMENDATION_THRESHOLD = 72;
@@ -1706,23 +1710,34 @@ async function readMonitorAnalysisBudget(
   const usageDate = shanghaiDateKey(new Date());
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
   const spaceScope = "monitor-space:" + spaceId;
-  const [globalUsed, workspaceUsed, spaceUsed] = await Promise.all([
+  const [globalUsed, workspaceUsed, spaceUsed, otherSpaces] = await Promise.all([
     usageCount(database, "monitor:global", usageDate),
     usageCount(database, workspaceScope, usageDate),
     usageCount(database, spaceScope, usageDate),
+    database.prepare(
+      `SELECT s.id, COALESCE(u.request_count, 0) AS request_count
+       FROM research_spaces s
+       LEFT JOIN ai_usage_daily u ON u.scope = ('monitor-space:' || s.id) AND u.usage_date = ?
+       WHERE s.owner_user_id = ? AND s.id <> ?
+        AND EXISTS (SELECT 1 FROM monitor_runs r WHERE r.space_id = s.id)`,
+    ).bind(usageDate, userId, spaceId).all<{ id: string; request_count: number }>(),
   ]);
-  const remaining = Math.max(0, Math.min(
-    MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT - globalUsed,
-    MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT - workspaceUsed,
-    MONITOR_SPACE_DAILY_ANALYSIS_LIMIT - spaceUsed,
-  ));
+  const decision = buildMonitorBudgetDecision({
+    globalRemaining: MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT - globalUsed,
+    workspaceRemaining: MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT - workspaceUsed,
+    spaceRemaining: MONITOR_SPACE_DAILY_ANALYSIS_LIMIT - spaceUsed,
+    otherSpaceUsages: otherSpaces.results.map((row) => row.request_count || 0),
+    minimumCalls,
+    fullScanMinimum: MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS,
+    compactScanMinimum: MONITOR_COMPACT_SCAN_MINIMUM_CALLS,
+    baseReserve: MONITOR_SPACE_DAILY_BASE_RESERVE,
+  });
   const tomorrow = new Date(Date.now() + 86_400_000);
   return {
     used: spaceUsed,
     limit: MONITOR_SPACE_DAILY_ANALYSIS_LIMIT,
-    remaining,
+    ...decision,
     minimumToStart: minimumCalls,
-    available: remaining >= minimumCalls,
     resetsAt: new Date(`${shanghaiDateKey(tomorrow)}T00:00:00+08:00`).toISOString(),
   };
 }
@@ -4977,6 +4992,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         verificationPendingCount: scanWork ? Math.max(0, scanWork.verificationIds.length - scanWork.verificationCompletedIds.length) : 0,
         horizonStats: scanHorizonStats,
         pipelineVersion: scanWork?.pipelineVersion || "",
+        scanMode: scanWork?.scanMode || "full",
         needsRefresh: job.status === "ready" && !COMPATIBLE_MONITOR_PIPELINE_VERSIONS.has(scanWork?.pipelineVersion || ""),
         attempt: job.attempt,
         triggerSource: job.trigger_source,
@@ -5214,6 +5230,7 @@ function parseFrozenQueryPlan(value: unknown): QueryPlan | undefined {
 
 function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
   const fallback: ScanWorkQueue = {
+    scanMode: "full",
     discoveredCandidateIds: [], candidateIds: [], currentCandidateIds: [],
     freshLaneActive: false, freshLaneCompleted: false, freshLaneCandidateIds: [], freshLaneReviewedIds: [], freshLaneDeferredIds: [],
     screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
@@ -5241,6 +5258,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       };
     }
     return {
+      scanMode: parsed.scanMode === "fresh_only" ? "fresh_only" : "full",
       discoveredCandidateIds: Array.isArray(parsed.discoveredCandidateIds)
         ? parsed.discoveredCandidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT)
         : Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
@@ -5299,6 +5317,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
 
 function newScanWorkQueue(): ScanWorkQueue {
   return {
+    scanMode: "full",
     discoveredCandidateIds: [], candidateIds: [], currentCandidateIds: [],
     freshLaneActive: false, freshLaneCompleted: false, freshLaneCandidateIds: [], freshLaneReviewedIds: [], freshLaneDeferredIds: [],
     screens: [], deepIds: [], deepSelectionOrigins: {}, selectionFailureReasons: {},
@@ -5873,17 +5892,22 @@ export async function POST(request: Request) {
     ? payload.trigger : payload.force ? "manual" : "visit";
   let advanceLockJobId = "";
   let advanceLockToken = "";
-  const enforceAnalysisBudget = async (minimumCalls: number) => {
-    const budget = await readMonitorAnalysisBudget(database, user.userId, space.id, minimumCalls);
-    if (budget.available) return null;
-    if (trigger === "scheduled") await deferMonitorAutomation(database, space.id, budget.resetsAt);
+  const enforceAnalysisBudget = async (
+    minimumCalls: number,
+    existingBudget?: Awaited<ReturnType<typeof readMonitorAnalysisBudget>>,
+    budgetClass: "manual" | "background" = trigger === "manual" ? "manual" : "background",
+  ) => {
+    const budget = existingBudget || await readMonitorAnalysisBudget(database, user.userId, space.id, minimumCalls);
+    const allowed = budgetClass === "manual" ? budget.available : budget.backgroundAvailable;
+    if (allowed) return null;
+    if (budgetClass === "background") await deferMonitorAutomation(database, space.id, budget.resetsAt);
     const state = await readState(database, space, {
       cached: true,
       throttled: true,
-      quotaActionRequired: trigger === "manual",
-      automationDeferred: trigger === "scheduled",
+      quotaActionRequired: budgetClass === "manual",
+      automationDeferred: budgetClass === "background",
     });
-    if (trigger !== "manual") return Response.json(state);
+    if (budgetClass !== "manual") return Response.json(state);
     return Response.json({ ...state, error: "monitor_analysis_budget_insufficient" }, { status: 429 });
   };
   const rejectUnavailableModel = async (error: unknown, job?: {
@@ -6024,7 +6048,11 @@ export async function POST(request: Request) {
       const incompleteDraftCarryover = Boolean(incompleteDraftCarryoverIds.length);
       const qualityCarryover = verificationCarryover || incompleteDraftCarryover;
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
-      const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
+      const compactResetEligible = trigger !== "manual"
+        && previousWork.scanMode === "fresh_only"
+        && Boolean(previousJob?.status === "ready" && previousTime)
+        && shanghaiDateKey(now) !== shanghaiDateKey(new Date(previousTime));
+      const minimumAge = compactResetEligible ? 0 : payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
       if (!qualityCarryover && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
         return Response.json(await readState(database, space, {
           cached: true,
@@ -6040,9 +6068,12 @@ export async function POST(request: Request) {
           : verificationCarryover ? "verifying_recommendations" : "planning";
       const resumable = Boolean(!pipelineOutdated && resumeCheckpoint !== "planning"
         && (previousJob?.status === "error" || qualityCarryover));
-      const quotaResponse = await enforceAnalysisBudget(resumable
+      const startMinimum = resumable
         ? minimumAnalysisCallsForCheckpoint(resumeCheckpoint)
-        : MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS);
+        : MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS;
+      const startBudget = await readMonitorAnalysisBudget(database, user.userId, space.id, startMinimum);
+      const compactStart = Boolean(!resumable && trigger === "manual" && startBudget.recommendedMode === "fresh_only");
+      const quotaResponse = await enforceAnalysisBudget(startMinimum, startBudget);
       if (quotaResponse) return quotaResponse;
       if (trigger !== "scheduled") {
         const modelResponse = await preflightModel(resumable && previousJob?.status === "error"
@@ -6072,6 +6103,7 @@ export async function POST(request: Request) {
       }
       const initialCheckpoint = resumable ? resumeCheckpoint : "planning";
       const initialWork = resumable ? previousWork : newScanWorkQueue();
+      if (!resumable) initialWork.scanMode = compactStart ? "fresh_only" : "full";
       if (!resumable && previousJob?.status === "ready" && previousWork.deepDeferredIds.length) {
         initialWork.retryDeepIds = previousWork.deepDeferredIds.slice(0, DEEP_REVIEW_CARRYOVER_LIMIT);
       }
@@ -6114,7 +6146,11 @@ export async function POST(request: Request) {
         stage: initialCheckpoint,
         source: trigger,
         outcome: "info",
-        metadata: { attempt: resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, resumeOfJobId: resumable ? previousJob?.id || null : null },
+        metadata: {
+          attempt: resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1,
+          resumeOfJobId: resumable ? previousJob?.id || null : null,
+          scanMode: initialWork.scanMode,
+        },
       });
       return Response.json(await readState(database, space, { accepted: true }), { status: 202 });
     }
@@ -6182,6 +6218,14 @@ export async function POST(request: Request) {
     if (action !== "advance") return Response.json({ error: "Unknown monitoring action" }, { status: 400 });
     if (!apiKey) return Response.json({ error: "请先在网页中连接 DeepSeek API Key" }, { status: 400 });
     if (["ready", "error"].includes(job.status)) return Response.json(await readState(database, space, { cached: true }));
+    if (job.trigger_source === "scheduled") {
+      const quotaResponse = await enforceAnalysisBudget(
+        minimumAnalysisCallsForCheckpoint(job.checkpoint),
+        undefined,
+        "background",
+      );
+      if (quotaResponse) return quotaResponse;
+    }
     advanceLockToken = crypto.randomUUID();
     const advanceLock = await database.prepare(
       `UPDATE monitor_scan_jobs SET advance_lock_token = ?, advance_lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP
@@ -6236,6 +6280,51 @@ export async function POST(request: Request) {
       ])).slice(0, FRESH_LANE_DEEP_REVIEW_LIMIT);
       work.freshLaneActive = false;
       work.freshLaneCompleted = true;
+      await saveScanWorkQueue(database, job.id, work);
+      await recordReliabilityEvent(database, {
+        spaceId: space.id,
+        scanJobId: job.id,
+        kind: "fresh_lane_completed",
+        stage: "fresh-first",
+        source: MONITOR_MODEL,
+        outcome: published ? "success" : work.freshLaneDeferredIds.length ? "degraded" : "info",
+        durationMs: Math.max(0, Date.now() - databaseTime(job.started_at)),
+        message: work.scanMode === "fresh_only"
+          ? "The budget-preserving newest-paper pass completed without lowering the quality gate"
+          : "The newest-paper lane produced an early quality decision before durable-horizon discovery continued",
+        metadata: {
+          screened: work.freshLaneCandidateIds.length,
+          reviewed: work.freshLaneReviewedIds.length,
+          deferred: work.freshLaneDeferredIds.length,
+          published,
+          qualityGateUnchanged: true,
+        },
+      });
+      if (work.scanMode === "fresh_only") {
+        await recordReliabilityEvent(database, {
+          spaceId: space.id,
+          scanJobId: job.id,
+          kind: "compact_scan_completed",
+          stage: "fresh-first",
+          source: MONITOR_MODEL,
+          outcome: published ? "success" : work.freshLaneDeferredIds.length ? "degraded" : "info",
+          durationMs: Math.max(0, Date.now() - databaseTime(job.started_at)),
+          message: "The compact scan completed the latest 14-day lane and reserved longer horizons for the next budget reset",
+          metadata: {
+            published,
+            screened: work.freshLaneCandidateIds.length,
+            reviewed: work.freshLaneReviewedIds.length,
+            deferred: work.freshLaneDeferredIds.length,
+            nextScope: "months_and_years_after_reset",
+            qualityGateUnchanged: true,
+          },
+        });
+        await setStage("finalizing", "deep_reviewing", 99,
+          published
+            ? `近 14 天已有 ${published} 篇通过严格判断；正在整理结果，半年与五年窗口将在额度刷新后继续`
+            : "近 14 天严格判断已完成；正在整理结果，半年与五年窗口将在额度刷新后继续");
+        return Response.json(await readState(database, space, { compactScanComplete: true }), { status: 202 });
+      }
       work.candidateIds = [...work.discoveredCandidateIds];
       work.screens = [];
       work.deepIds = [];
@@ -6251,23 +6340,6 @@ export async function POST(request: Request) {
       work.rescueScreenIds = [];
       work.rescueScreened = false;
       await saveScanWorkQueue(database, job.id, work);
-      await recordReliabilityEvent(database, {
-        spaceId: space.id,
-        scanJobId: job.id,
-        kind: "fresh_lane_completed",
-        stage: "fresh-first",
-        source: MONITOR_MODEL,
-        outcome: published ? "success" : work.freshLaneDeferredIds.length ? "degraded" : "info",
-        durationMs: Math.max(0, Date.now() - databaseTime(job.started_at)),
-        message: "The newest-paper lane produced an early quality decision before durable-horizon discovery continued",
-        metadata: {
-          screened: work.freshLaneCandidateIds.length,
-          reviewed: work.freshLaneReviewedIds.length,
-          deferred: work.freshLaneDeferredIds.length,
-          published,
-          qualityGateUnchanged: true,
-        },
-      });
       await setStage("discovering_months", "discovering_months", 24,
         published
           ? `近 14 天优先判断已产生 ${published} 篇可读结果；继续检索近 6 个月与核心补读`
@@ -6294,7 +6366,10 @@ export async function POST(request: Request) {
       });
       const rejected = Math.max(0, work.screens.length - recommended);
       const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
-      const nextRunAt = new Date(completedAt.getTime() + (verificationPending ? BACKGROUND_VERIFICATION_RETRY_MS : CADENCE_MS)).toISOString();
+      const compactResetAt = new Date(`${shanghaiDateKey(new Date(completedAt.getTime() + CADENCE_MS))}T00:00:00+08:00`).toISOString();
+      const nextRunAt = verificationPending
+        ? new Date(completedAt.getTime() + BACKGROUND_VERIFICATION_RETRY_MS).toISOString()
+        : work.scanMode === "fresh_only" ? compactResetAt : new Date(completedAt.getTime() + CADENCE_MS).toISOString();
       if (recommended && !firstRecommendationAt) {
         firstRecommendationAt = completedAt.toISOString();
         await database.prepare(
@@ -6418,9 +6493,10 @@ export async function POST(request: Request) {
           };
         }),
       });
+      const acceptanceTarget = work.scanMode === "fresh_only" ? 1 : DAILY_RECOMMENDATION_MIN_TARGET;
       const acceptanceGate = evaluateRecommendationAcceptanceGate({
         ...qualitySnapshot,
-        target: DAILY_RECOMMENDATION_MIN_TARGET,
+        target: acceptanceTarget,
       });
       await recordReliabilityEvent(database, {
         spaceId: space.id,
@@ -6428,7 +6504,7 @@ export async function POST(request: Request) {
         kind: "recommendation_quality_snapshot",
         stage: "finalizing",
         source: "internal-quality-learning",
-        outcome: recommended >= DAILY_RECOMMENDATION_MIN_TARGET ? "success" : recommended ? "info" : "degraded",
+        outcome: recommended >= acceptanceTarget ? "success" : recommended ? "info" : "degraded",
         message: "Internal recommendation yield, route coverage, latency, and token efficiency were recorded for the next discovery plan",
         metadata: qualitySnapshot,
       });
@@ -6489,7 +6565,11 @@ export async function POST(request: Request) {
            current_source = ?, progress = 100, new_candidate_count = ?,
            duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?,
            error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        ).bind(completion.state === "analysis_unavailable"
+        ).bind(work.scanMode === "fresh_only" && !verificationPending
+          ? recommended
+            ? `近 14 天扫描已完成，${recommended} 篇推荐可阅读；半年与五年窗口将在额度刷新后继续`
+            : "近 14 天严格筛选已完成，暂无强推荐；半年与五年窗口将在额度刷新后继续"
+          : completion.state === "analysis_unavailable"
           ? `候选与筛选结果已保存；${work.deepDeferredIds.length} 篇高潜力论文等待模型恢复后续评`
           : verificationPending
             ? `本轮发现与解读已完成；${verificationPending} 篇已保存核对进度，Pi 会在后台自动继续${verificationFailed ? `；另有 ${verificationFailed} 篇证据未通过` : ""}`
@@ -6518,6 +6598,7 @@ export async function POST(request: Request) {
           completionState: completion.state,
           recommended,
           duplicates: duplicateCount,
+          scanMode: work.scanMode,
         },
       });
       return Response.json(await readState(database, space, { mainComplete: true }));
@@ -6559,11 +6640,14 @@ export async function POST(request: Request) {
         await saveScanWorkQueue(database, job.id, work);
         const runFreshLane = horizonKey === "days" && !work.freshLaneCompleted && newlyDiscoveredIds.length > 0;
         const nextCheckpoint = horizonKey === "days"
-          ? runFreshLane ? "fresh_deduplicating" : "discovering_months"
+          ? runFreshLane ? "fresh_deduplicating" : work.scanMode === "fresh_only" ? "finalizing" : "discovering_months"
           : horizonKey === "months" ? "discovering_years" : "deduplicating";
-        const nextStatus = ["deduplicating", "fresh_deduplicating"].includes(nextCheckpoint) ? "deduplicating" : nextCheckpoint;
-        const progress = horizonKey === "days" ? runFreshLane ? 23 : 24 : horizonKey === "months" ? 36 : 50;
+        const nextStatus = ["deduplicating", "fresh_deduplicating"].includes(nextCheckpoint)
+          ? "deduplicating" : nextCheckpoint === "finalizing" ? "deep_reviewing" : nextCheckpoint;
+        const progress = nextCheckpoint === "finalizing" ? 99
+          : horizonKey === "days" ? runFreshLane ? 23 : 24 : horizonKey === "months" ? 36 : 50;
         const source = nextCheckpoint === "fresh_deduplicating" ? "正在优先准备近 14 天的新论文"
+          : nextCheckpoint === "finalizing" ? "近 14 天暂无未评审新候选；本轮不重复处理旧论文，正在整理结果"
           : nextCheckpoint === "deduplicating" ? "正在去重并准备候选队列"
             : nextCheckpoint === "discovering_months" ? "正在检索近 6 个月" : "正在回溯近 5 年";
         await database.prepare(
@@ -6596,7 +6680,11 @@ export async function POST(request: Request) {
           work.freshLaneCompleted = true;
           work.candidateIds = [...work.discoveredCandidateIds];
           await saveScanWorkQueue(database, job.id, work);
-          await setStage("discovering_months", "discovering_months", 24, "近 14 天暂无未评审新候选；继续检索近 6 个月", "months");
+          if (work.scanMode === "fresh_only") {
+            await setStage("finalizing", "deep_reviewing", 99, "近 14 天暂无可进入评审的新候选；正在整理结果");
+          } else {
+            await setStage("discovering_months", "discovering_months", 24, "近 14 天暂无未评审新候选；继续检索近 6 个月", "months");
+          }
         } else {
           await setStage("enriching_screening_abstracts", "screening", 26,
             `优先为 ${newestCandidates.length} 篇近 14 天新论文补全摘要证据`);

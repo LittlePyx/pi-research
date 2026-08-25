@@ -362,6 +362,14 @@ type MonitorState = {
     remaining: number;
     minimumToStart: number;
     available: boolean;
+    fullAvailable?: boolean;
+    compactAvailable?: boolean;
+    recommendedMode?: "full" | "fresh_only" | "wait";
+    compactMinimum?: number;
+    estimatedFullScans?: number;
+    backgroundRemaining?: number;
+    backgroundAvailable?: boolean;
+    protectedForOtherSpaces?: number;
     resetsAt: string;
   };
   source: string;
@@ -400,6 +408,7 @@ type MonitorState = {
       screened: number;
     }>;
     pipelineVersion?: string;
+    scanMode?: "full" | "fresh_only";
     needsRefresh?: boolean;
     attempt?: number;
     triggerSource?: string;
@@ -2882,6 +2891,9 @@ export default function ResearchApp({ user }: { user: User }) {
   const failedScanJob = monitor?.status === "error" ? monitor.scanJob || null : null;
   const failedScanError = failedScanJob?.error || monitor?.error || "";
   const resumeAvailable = Boolean(failedScanJob && (failedScanJob.candidateCount || failedScanJob.reviewedCount || failedScanJob.checkpoint === "retry_pending"));
+  const compactScanAvailable = Boolean(!scanIsActive
+    && monitor?.analysisBudget?.recommendedMode === "fresh_only"
+    && !resumeAvailable);
   const scanProgress = scanIsActive
     ? Math.max(monitorProgressByStatus[effectiveScanStatus], activeScanJob?.progress || 0)
     : monitor?.status === "ready" ? 100 : 0;
@@ -4994,12 +5006,13 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
-                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
+                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
                 </div>
               </div>
-              {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><span>◷</span><p>{locale === "zh" ? `今天还剩 ${monitor?.analysisBudget?.remaining || 0} 次智能调用，不足以完成下一批；Pi 不会重复检索，现有论文与断点均已保留。` : `${monitor?.analysisBudget?.remaining || 0} AI calls remain today, not enough for the next batch. Pi will not repeat retrieval, and all papers and checkpoints are preserved.`}</p></div>}
+              {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><span>◷</span><p>{locale === "zh" ? "今天的完整扫描额度已用完；Pi 会在刷新后继续，现有论文、偏好与断点均已保留。" : "Today's full-scan budget is exhausted. Pi will continue after the reset; papers, preferences, and checkpoints are preserved."}</p></div>}
+              {compactScanAvailable && !manualCooldownBlocked && <div className="v2-scan-budget-note" role="status"><span>↗</span><p>{locale === "zh" ? "今天适合先看最新变化：本轮只扫描近 14 天并完成最多 2 篇严格判断；半年和五年窗口会在额度刷新后自动继续，论文与偏好不会丢失。" : "Start with the newest changes today: this pass scans the latest 14 days and strictly evaluates up to two papers. Six-month and five-year horizons continue after the reset, with papers and preferences preserved."}</p></div>}
               {manualCooldownBlocked && !scanIsActive && <div className="v2-scan-cooldown-note" role="status"><span>◷</span><div><strong>{locale === "zh" ? "刚才没有启动重复扫描" : "A duplicate scan was not started"}</strong><p>{locale === "zh" ? `上次扫描仍在费用保护期，约 ${monitor?.retryAfterMinutes || 1} 分钟后可再次运行；现有推荐、论文库和进度都没有变化。` : `The previous scan is still inside its cost-protection window. Try again in about ${monitor?.retryAfterMinutes || 1} minutes; recommendations, library papers, and progress remain unchanged.`}</p></div></div>}
-              {monitor?.scanJob?.needsRefresh && !scanIsActive && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先完成近 14 天新论文的优先判断，再继续半年与五年补读；按研究方向保留名额，质量门槛不变。此次升级重扫不受本小时冷却限制。" : "The new method decides on papers from the latest 14 days first, then continues with six-month and five-year catch-up. Research directions keep protected slots and the quality gate is unchanged. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}
+              {monitor?.scanJob?.needsRefresh && !scanIsActive && !compactScanAvailable && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先完成近 14 天新论文的优先判断，再继续半年与五年补读；按研究方向保留名额，质量门槛不变。此次升级重扫不受本小时冷却限制。" : "The new method decides on papers from the latest 14 days first, then continues with six-month and five-year catch-up. Research directions keep protected slots and the quality gate is unchanged. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}
               {monitor?.status === "error" && credentialFailureRecovered && (
                 <div className="v2-scan-credential-restored" role="status"><span>✓</span><div><strong>{locale === "zh" ? "模型连接已恢复，扫描断点仍在" : "Model connection restored; checkpoint preserved"}</strong><p>{locale === "zh" ? "无需重新检索候选；使用上方“从断点继续”即可恢复。" : "Candidates will not be retrieved again; use Resume above to continue."}</p></div></div>
               )}
