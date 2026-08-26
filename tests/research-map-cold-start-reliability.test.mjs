@@ -7,6 +7,8 @@ import {
   defensiveResearchTrackBuildStatus,
   MAX_RESEARCH_TRACK_BUILD_ATTEMPTS,
   mergeResearchTrackSourceBatches,
+  researchTrackSourcePlan,
+  researchTrackTopicalFit,
   resolveResearchTrackBuildStatus,
 } from "../lib/research-map-reliability.ts";
 
@@ -61,6 +63,37 @@ test("a route without visible evidence can never resolve ready", () => {
   assert.equal(defensiveResearchTrackBuildStatus("ready", 0, 0), "retryable");
 });
 
+test("bounded cold-start retries rotate providers instead of replaying one degraded source", () => {
+  assert.deepEqual(researchTrackSourcePlan(0).map((task) => task.provider), ["crossref", "crossref", "crossref"]);
+  assert.deepEqual(researchTrackSourcePlan(1).map((task) => task.provider), ["openalex", "openalex", "arxiv"]);
+  assert.deepEqual(researchTrackSourcePlan(2).map((task) => task.provider), ["crossref", "openalex", "arxiv"]);
+  assert.equal(researchTrackSourcePlan(20).length, 3);
+});
+
+test("route-specific precision gate keeps direct work and rejects adjacent-field title drift", () => {
+  const informationTheory = {
+    titleEn: "Rate-distortion theory and finite-blocklength coding",
+    searchQueries: ["rate distortion finite blocklength information theory", "lossy source coding dispersion"],
+  };
+  assert.equal(researchTrackTopicalFit(informationTheory, {
+    title: "Finite Blocklength Rate-Distortion Theory",
+    abstractText: "Lossy source coding with dispersion bounds.",
+  }).accepted, true);
+  assert.equal(researchTrackTopicalFit(informationTheory, {
+    title: "Gaussian Approximation Potentials: The Accuracy of Quantum Mechanics without the Electrons",
+    abstractText: "Density-functional calculations and molecular simulation.",
+  }).accepted, false);
+
+  const appliedMath = {
+    titleEn: "KLS conjecture and concentration inequalities",
+    searchQueries: ["KLS conjecture log concave measures", "isoperimetric concentration convex geometry"],
+  };
+  assert.equal(researchTrackTopicalFit(appliedMath, {
+    title: "The KLS conjecture, thin shell estimates and concentration",
+    abstractText: "Log-concave measures in convex geometry.",
+  }).accepted, true);
+});
+
 test("the D1 migration repairs legacy ready routes with zero nodes without touching populated history", async () => {
   const sqlite = new DatabaseSync(":memory:");
   try {
@@ -91,12 +124,38 @@ test("the D1 migration repairs legacy ready routes with zero nodes without touch
   }
 });
 
+test("the due-retry migration adds the bounded scheduler index", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec(`CREATE TABLE research_tracks (
+      id TEXT PRIMARY KEY, space_id TEXT NOT NULL, build_status TEXT NOT NULL,
+      build_retry_at TEXT, build_attempt_count INTEGER NOT NULL DEFAULT 0
+    );`);
+    sqlite.exec((await readFile(new URL("../drizzle/0042_equal_dakota_north.sql", import.meta.url), "utf8"))
+      .replaceAll("--> statement-breakpoint", ""));
+    assert.equal(sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM pragma_index_list('research_tracks') WHERE name = 'idx_research_tracks_retry_due'",
+    ).get().count, 1);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("cold-start API code persists degraded state and queues retrieved candidates before route selection", async () => {
-  const route = await readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8");
+  const [route, repository] = await Promise.all([
+    readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
+  ]);
   assert.match(route, /Promise\.allSettled/);
   assert.match(route, /protectedBaselineCandidates/);
+  assert.match(route, /coverage\.route_id = \?/);
+  assert.match(route, /ORDER BY route_candidate DESC/);
+  assert.match(route, /researchTrackSourcePlan/);
+  assert.match(route, /researchTrackTopicalFit/);
   assert.match(route, /const queueCandidates = candidates\.slice\(0, 24\)/);
   assert.match(route, /build_status = \?, build_attempt_count = \?, build_source_status_json = \?, build_error = \?, build_retry_at = \?/);
   assert.match(route, /resolveResearchTrackBuildStatus/);
   assert.doesNotMatch(route, /UPDATE research_tracks SET expansion_count = 0, updated_at/);
+  assert.ok(repository.indexOf("ALTER TABLE research_tracks ADD COLUMN build_retry_at")
+    < repository.indexOf("CREATE INDEX IF NOT EXISTS idx_research_tracks_retry_due"));
 });

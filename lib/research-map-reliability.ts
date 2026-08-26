@@ -2,6 +2,25 @@ import type { ResearchTrackBuildStatus, ResearchTrackRole, ResearchTrackSourceSt
 
 export const MAX_RESEARCH_TRACK_BUILD_ATTEMPTS = 3;
 
+export type ResearchTrackDiscoveryProvider = "crossref" | "openalex" | "arxiv";
+
+export type ResearchTrackDiscoveryTask = {
+  provider: ResearchTrackDiscoveryProvider;
+  role: ResearchTrackRole;
+};
+
+export type ResearchTrackTopic = {
+  titleEn: string;
+  summaryEn?: string;
+  searchQueries: string[];
+};
+
+export type ResearchTrackTopicCandidate = {
+  title: string;
+  abstractText?: string;
+  venue?: string;
+};
+
 export type ResearchTrackSourceBatch<T> = {
   source: string;
   role: ResearchTrackRole;
@@ -31,6 +50,78 @@ export type ResearchTrackBuildResolutionInput = {
 function safeError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "Source unavailable");
   return message.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").slice(0, 240);
+}
+
+/**
+ * Cold-start retries deliberately change providers instead of replaying the
+ * same degraded request. Each pass is capped at three external calls; the
+ * protected local baseline is appended separately when a pass is thin.
+ */
+export function researchTrackSourcePlan(attemptCount: number): ResearchTrackDiscoveryTask[] {
+  const attempt = Math.max(0, Math.floor(attemptCount));
+  if (attempt === 0) return [
+    { provider: "crossref", role: "foundation" },
+    { provider: "crossref", role: "milestone" },
+    { provider: "crossref", role: "frontier" },
+  ];
+  if (attempt === 1) return [
+    { provider: "openalex", role: "foundation" },
+    { provider: "openalex", role: "milestone" },
+    { provider: "arxiv", role: "frontier" },
+  ];
+  return [
+    { provider: "crossref", role: "foundation" },
+    { provider: "openalex", role: "milestone" },
+    { provider: "arxiv", role: "frontier" },
+  ];
+}
+
+const GENERIC_ROUTE_TERMS = new Set([
+  "about", "across", "advanced", "analysis", "approach", "based", "between", "development", "effects",
+  "evidence", "framework", "from", "general", "information", "into", "method", "model", "network", "novel",
+  "paper", "problem", "research", "results", "study", "system", "theory", "through", "toward", "using", "with",
+]);
+
+function normalizedTopicWords(value: string) {
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(/\s+/).filter(Boolean);
+}
+
+function topicTerms(topic: ResearchTrackTopic) {
+  const original = [topic.titleEn, ...topic.searchQueries].join(" ");
+  const acronyms = original.match(/\b[A-Z][A-Z0-9-]{1,7}\b/g) || [];
+  return Array.from(new Set([
+    ...normalizedTopicWords(original).filter((term) => term.length >= 4 && !GENERIC_ROUTE_TERMS.has(term)),
+    ...acronyms.map((term) => term.toLocaleLowerCase()),
+  ])).slice(0, 32);
+}
+
+function topicTermAppears(term: string, words: string[]) {
+  return words.some((word) => word === term
+    || (term.length >= 6 && word.length >= 6 && (word.startsWith(term) || term.startsWith(word))));
+}
+
+/**
+ * A deliberately conservative pre-model precision gate. It only rejects
+ * candidates with no substantive route signal; the model remains responsible
+ * for the nuanced quality decision. At least one signal must occur in the
+ * title so an incidental abstract mention cannot feed an adjacent field into
+ * the shared queue.
+ */
+export function researchTrackTopicalFit(topic: ResearchTrackTopic, candidate: ResearchTrackTopicCandidate) {
+  const terms = topicTerms(topic);
+  const titleWords = normalizedTopicWords(candidate.title);
+  const bodyWords = normalizedTopicWords(`${candidate.title} ${candidate.abstractText || ""} ${candidate.venue || ""}`);
+  const titleMatches = terms.filter((term) => topicTermAppears(term, titleWords));
+  const bodyMatches = terms.filter((term) => topicTermAppears(term, bodyWords));
+  const accepted = titleMatches.length >= 2
+    || (titleMatches.length >= 1 && bodyMatches.length >= 2)
+    || (terms.length === 1 && titleMatches.length === 1);
+  return {
+    accepted,
+    titleMatchCount: titleMatches.length,
+    totalMatchCount: bodyMatches.length,
+    matchedTerms: bodyMatches,
+  };
 }
 
 /**

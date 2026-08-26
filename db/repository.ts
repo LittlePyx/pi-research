@@ -351,6 +351,7 @@ export async function ensureSchema(database = getDatabase()) {
     ["build_retry_at", "ALTER TABLE research_tracks ADD COLUMN build_retry_at TEXT"],
   ] as const;
   for (const [name, statement] of researchTrackAdditions) if (!researchTrackColumnNames.has(name)) await database.prepare(statement).run();
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_research_tracks_retry_due ON research_tracks(build_status, build_retry_at, build_attempt_count, space_id)").run();
   await database.prepare(
     `UPDATE research_tracks SET build_status = 'retryable', build_error = COALESCE(build_error, 'missing_visible_evidence')
      WHERE build_status IN ('ready', 'partial') AND NOT EXISTS (

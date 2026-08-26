@@ -1049,7 +1049,10 @@ export const researchTracks = sqliteTable(
     createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
-  (table) => [index("idx_research_tracks_space_position").on(table.spaceId, table.position)],
+  (table) => [
+    index("idx_research_tracks_space_position").on(table.spaceId, table.position),
+    index("idx_research_tracks_retry_due").on(table.buildStatus, table.buildRetryAt, table.buildAttemptCount, table.spaceId),
+  ],
 );
 
 export const researchTrackEdges = sqliteTable(

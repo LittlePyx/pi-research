@@ -1,9 +1,10 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { buildArxivSearchQuery, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
-import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, resolveResearchTrackBuildStatus, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
+import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
@@ -120,6 +121,19 @@ type CrossrefItem = {
   type?: string;
 };
 type CrossrefResponse = { message?: { items?: CrossrefItem[] } };
+type OpenAlexWork = {
+  id?: string;
+  doi?: string | null;
+  title?: string;
+  display_name?: string;
+  relevance_score?: number;
+  publication_date?: string | null;
+  cited_by_count?: number;
+  authorships?: Array<{ author?: { display_name?: string } }>;
+  primary_location?: { landing_page_url?: string | null; source?: { display_name?: string } | null } | null;
+  abstract_inverted_index?: Record<string, number[]> | null;
+};
+type OpenAlexResponse = { results?: OpenAlexWork[] };
 type ProtectedBaselineRow = {
   canonical_id: string;
   doi: string | null;
@@ -132,6 +146,8 @@ type ProtectedBaselineRow = {
   abstract_text: string;
   relevance_score: number;
   quality_score: number;
+  source: string;
+  route_candidate: number;
 };
 type DirectionDraft = {
   key: string;
@@ -157,6 +173,7 @@ type MapCandidate = {
   citationCount: number;
   abstractText: string;
   proposedRole: ResearchTrackRole;
+  source: ResearchTrackDiscoveryProvider | "shared-monitor-baseline";
 };
 type Selection = {
   directionKey: string;
@@ -445,6 +462,7 @@ async function normalizeItem(item: CrossrefItem, directionKey: string, proposedR
     citationCount: Math.max(0, Math.round(item["is-referenced-by-count"] || 0)),
     abstractText: cleanText(item.abstract || "").slice(0, 700),
     proposedRole,
+    source: "crossref",
   };
 }
 
@@ -492,6 +510,26 @@ async function recordUsage(database: D1Database, scope: string, date: string, in
      input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens,
      updated_at = CURRENT_TIMESTAMP`,
   ).bind(crypto.randomUUID(), scope, date, inputTokens, outputTokens).run();
+}
+
+async function recordResearchRouteReliabilityEvent(database: D1Database, spaceId: string, input: {
+  trackId: string;
+  outcome: "success" | "degraded" | "failed" | "info";
+  message: string;
+  metadata: Record<string, unknown>;
+}) {
+  try {
+    await database.prepare(
+      `INSERT INTO monitor_reliability_events
+       (id, space_id, kind, stage, source, outcome, message, metadata_json)
+       VALUES (?, ?, 'research_route_build', 'cold_start', 'research-route', ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), spaceId, input.outcome, input.message.slice(0, 500), JSON.stringify({
+      trackId: input.trackId,
+      ...input.metadata,
+    })).run();
+  } catch {
+    // Internal telemetry must never become a new route-build failure mode.
+  }
 }
 
 async function callDeepSeek<T>(database: D1Database, workspaceId: string, system: string, prompt: string, maxTokens: number, apiKey: string, options: DeepSeekCallOptions = {}) {
@@ -600,18 +638,111 @@ async function fetchCrossref(query: string, role: ResearchTrackRole, offset: num
   return (await response.json() as CrossrefResponse).message?.items || [];
 }
 
-async function discoverCandidates(directions: DirectionDraft[], offset: number, rows: number) {
+function openAlexAbstract(index: Record<string, number[]> | null | undefined) {
+  if (!index) return "";
+  const words: Array<[number, string]> = [];
+  for (const [word, positions] of Object.entries(index)) for (const position of positions) words.push([position, word]);
+  return cleanText(words.sort((left, right) => left[0] - right[0]).map((entry) => entry[1]).join(" ")).slice(0, 1200);
+}
+
+async function fetchOpenAlex(query: string, role: ResearchTrackRole, offset: number, rows: number) {
+  const dates = roleDates(role);
+  const endpoint = new URL("https://api.openalex.org/works");
+  endpoint.searchParams.set("search", cleanText(query).slice(0, 420));
+  endpoint.searchParams.set("filter", `from_publication_date:${dates.from},to_publication_date:${dates.until},is_paratext:false`);
+  endpoint.searchParams.set("page", String(Math.floor(offset / rows) + 1));
+  endpoint.searchParams.set("per-page", String(rows));
+  endpoint.searchParams.set("sort", role === "frontier" ? "relevance_score:desc" : "cited_by_count:desc");
+  endpoint.searchParams.set("select", "id,doi,title,display_name,relevance_score,publication_date,cited_by_count,authorships,primary_location,abstract_inverted_index");
+  endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
+  const options: RequestInit = {
+    headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+    signal: AbortSignal.timeout(20_000),
+  };
+  let response = await fetch(endpoint, options);
+  if (response.status === 429) {
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    response = await fetch(endpoint, options);
+  }
+  if (!response.ok) throw new Error(`OpenAlex returned ${response.status}`);
+  return (await response.json() as OpenAlexResponse).results || [];
+}
+
+async function normalizeOpenAlexItem(item: OpenAlexWork, directionKey: string, proposedRole: ResearchTrackRole): Promise<MapCandidate | null> {
+  const title = cleanText(item.display_name || item.title || "");
+  if (title.length < 12 || NON_PAPER_PHRASES.test(title)) return null;
+  const doi = item.doi?.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "").trim().toLocaleLowerCase() || null;
+  return {
+    directionKey,
+    canonicalId: doi ? "doi:" + doi : await titleFingerprint(title),
+    doi,
+    title,
+    authors: (item.authorships || []).slice(0, 8).map((entry) => cleanText(entry.author?.display_name || "")).filter(Boolean).join(", "),
+    venue: cleanText(item.primary_location?.source?.display_name || ""),
+    url: item.primary_location?.landing_page_url || item.doi || item.id || "",
+    publishedAt: item.publication_date || null,
+    citationCount: Math.max(0, Math.round(item.cited_by_count || 0)),
+    abstractText: openAlexAbstract(item.abstract_inverted_index),
+    proposedRole,
+    source: "openalex",
+  };
+}
+
+async function fetchArxiv(query: string, role: ResearchTrackRole, offset: number, rows: number) {
+  const dates = roleDates(role);
+  const endpoint = new URL("https://export.arxiv.org/api/query");
+  endpoint.searchParams.set("search_query", buildArxivSearchQuery(query, new Date(`${dates.from}T00:00:00Z`), new Date(`${dates.until}T23:59:59Z`)));
+  endpoint.searchParams.set("start", String(offset));
+  endpoint.searchParams.set("max_results", String(rows));
+  endpoint.searchParams.set("sortBy", role === "frontier" ? "submittedDate" : "relevance");
+  endpoint.searchParams.set("sortOrder", "descending");
+  const response = await fetch(endpoint, {
+    headers: { Accept: "application/atom+xml", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!response.ok) throw new Error(`arXiv returned ${response.status}`);
+  return parseArxivAtom(await response.text());
+}
+
+async function normalizeArxivItem(item: ReturnType<typeof parseArxivAtom>[number], directionKey: string, proposedRole: ResearchTrackRole): Promise<MapCandidate | null> {
+  const title = cleanText(item.title || "");
+  if (title.length < 12 || NON_PAPER_PHRASES.test(title)) return null;
+  const doi = item.doi?.trim().toLocaleLowerCase() || null;
+  return {
+    directionKey,
+    canonicalId: doi ? "doi:" + doi : `arxiv:${item.arxivId.toLocaleLowerCase()}`,
+    doi,
+    title,
+    authors: item.authors.slice(0, 8).map(cleanText).filter(Boolean).join(", "),
+    venue: item.primaryCategory ? `arXiv · ${item.primaryCategory}` : "arXiv",
+    url: item.url || `https://arxiv.org/abs/${item.arxivId}`,
+    publishedAt: item.publishedAt,
+    citationCount: 0,
+    abstractText: cleanText(item.abstract || "").slice(0, 1200),
+    proposedRole,
+    source: "arxiv",
+  };
+}
+
+async function discoverCandidates(directions: DirectionDraft[], offset: number, rows: number, attemptCount: number) {
   const discovered: MapCandidate[] = [];
   const sources: ResearchTrackSourceReport[] = [];
+  let topicalRejectedCount = 0;
   for (const direction of directions) {
-    const roles = ["foundation", "milestone", "frontier"] as ResearchTrackRole[];
-    const settled = await Promise.allSettled(roles.map(async (role) => {
+    const plan = researchTrackSourcePlan(attemptCount);
+    const settled = await Promise.allSettled(plan.map(async ({ provider, role }) => {
       const query = direction.searchQueries[(role === "foundation" ? 0 : role === "milestone" ? 1 : 2) % direction.searchQueries.length];
-      const items = await fetchCrossref(query, role, offset, rows);
-      const normalized = await Promise.all(items.map((item) => normalizeItem(item, direction.key, role)));
-      return normalized.filter((item): item is MapCandidate => Boolean(item));
+      const normalized = provider === "crossref"
+        ? await Promise.all((await fetchCrossref(query, role, offset, rows)).map((item) => normalizeItem(item, direction.key, role)))
+        : provider === "openalex"
+          ? await Promise.all((await fetchOpenAlex(query, role, offset, rows)).map((item) => normalizeOpenAlexItem(item, direction.key, role)))
+          : await Promise.all((await fetchArxiv(query, role, offset, rows)).map((item) => normalizeArxivItem(item, direction.key, role)));
+      const paperCandidates = normalized.filter((item): item is MapCandidate => Boolean(item));
+      const accepted = paperCandidates.filter((item) => researchTrackTopicalFit(direction, item).accepted);
+      topicalRejectedCount += paperCandidates.length - accepted.length;
+      return accepted;
     }));
-    const merged = mergeResearchTrackSourceBatches(roles.map((role, index) => ({ source: "crossref", role, result: settled[index] })));
+    const merged = mergeResearchTrackSourceBatches(plan.map(({ provider, role }, index) => ({ source: provider, role, result: settled[index] })));
     discovered.push(...merged.candidates);
     sources.push(...merged.sources);
     if (directions.length > 1) await new Promise((resolve) => setTimeout(resolve, 180));
@@ -629,14 +760,7 @@ async function discoverCandidates(directions: DirectionDraft[], offset: number, 
       capped.push(...values.filter((item) => item.directionKey === direction.key && item.proposedRole === role).slice(0, 8));
     }
   }
-  return { candidates: capped, sources, errors: sources.flatMap((source) => source.error ? [source.error] : []) };
-}
-
-function routeSearchTerms(direction: DirectionDraft) {
-  const ignored = new Set(["the", "and", "for", "with", "from", "into", "using", "study", "theory", "method", "analysis", "research"]);
-  return Array.from(new Set([direction.titleEn, direction.summaryEn, ...direction.searchQueries]
-    .join(" ").toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/)
-    .filter((term) => term.length >= 4 && !ignored.has(term)))).slice(0, 24);
+  return { candidates: capped, sources, errors: sources.flatMap((source) => source.error ? [source.error] : []), topicalRejectedCount };
 }
 
 function baselineRole(publishedAt: string | null): ResearchTrackRole {
@@ -656,17 +780,23 @@ async function protectedBaselineCandidates(
 ) {
   const rows = await database.prepare(
     `SELECT p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.citation_count,
-     p.relevance_score, COALESCE(i.abstract_text, '') AS abstract_text, COALESCE(i.quality_score, 0) AS quality_score
+     p.relevance_score, p.source, COALESCE(i.abstract_text, '') AS abstract_text, COALESCE(i.quality_score, 0) AS quality_score,
+     CASE WHEN EXISTS (
+      SELECT 1 FROM monitor_candidate_sources candidate
+      JOIN monitor_discovery_coverage coverage ON coverage.space_id = candidate.space_id
+       AND coverage.horizon = p.horizon AND coverage.source_key = candidate.source_key AND coverage.query_key = candidate.query_key
+      WHERE candidate.space_id = p.space_id AND candidate.paper_id = p.id AND coverage.route_id = ?
+     ) THEN 1 ELSE 0 END AS route_candidate
      FROM monitored_papers p LEFT JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
-     WHERE p.space_id = ? ORDER BY p.relevance_score DESC, COALESCE(i.quality_score, 0) DESC, p.last_seen_at DESC LIMIT 120`,
-  ).bind(spaceId).all<ProtectedBaselineRow>();
-  const terms = routeSearchTerms(direction);
+     WHERE p.space_id = ? ORDER BY route_candidate DESC, p.relevance_score DESC,
+      COALESCE(i.quality_score, 0) DESC, p.last_seen_at DESC LIMIT 240`,
+  ).bind(direction.key, spaceId).all<ProtectedBaselineRow>();
   return rows.results.map((row) => {
-    const text = `${row.title} ${row.abstract_text} ${row.venue}`.toLocaleLowerCase();
-    const termMatches = terms.reduce((count, term) => count + (text.includes(term) ? 1 : 0), 0);
-    return { row, termMatches };
-  }).filter(({ row, termMatches }) => !excludedCanonicalIds.has(row.canonical_id) && termMatches > 0)
-    .sort((left, right) => right.termMatches - left.termMatches || right.row.relevance_score - left.row.relevance_score
+    const fit = researchTrackTopicalFit(direction, { title: row.title, abstractText: row.abstract_text, venue: row.venue });
+    return { row, fit };
+  }).filter(({ row, fit }) => !excludedCanonicalIds.has(row.canonical_id) && fit.accepted)
+    .sort((left, right) => right.row.route_candidate - left.row.route_candidate
+      || right.fit.totalMatchCount - left.fit.totalMatchCount || right.row.relevance_score - left.row.relevance_score
       || right.row.quality_score - left.row.quality_score || right.row.citation_count - left.row.citation_count)
     .slice(0, Math.max(0, limit)).map(({ row }) => ({
       directionKey: direction.key,
@@ -680,6 +810,7 @@ async function protectedBaselineCandidates(
       citationCount: row.citation_count,
       abstractText: row.abstract_text,
       proposedRole: baselineRole(row.published_at),
+      source: row.source === "crossref" || row.source === "openalex" || row.source === "arxiv" ? row.source : "shared-monitor-baseline",
     } satisfies MapCandidate));
 }
 
@@ -1520,6 +1651,7 @@ export async function POST(request: Request) {
     const { database, space, user } = context;
     const workspaceId = user.userId.replace(/^anonymous:/, "");
     const apiKey = resolveDeepSeekCredential(request).apiKey;
+    const scheduledRetry = request.headers.get("x-pi-scheduled-route-retry") === "1";
     const memory = await importedMemory(database, space.id);
 
     if (payload.action === "network") {
@@ -1635,7 +1767,7 @@ export async function POST(request: Request) {
       return Response.json(await readMap(database, space.id, { interpretedTrackId: track.id }));
     }
     const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14 : ((track.expansion_count + 1) * 16) % 608;
-    const discovery = await discoverCandidates([direction], offset, hydrating ? 14 : 16);
+    const discovery = await discoverCandidates([direction], offset, hydrating ? 14 : 16, hydrating ? track.build_attempt_count : 0);
     const existingIds = new Set(existing.results.map((row) => row.canonical_id));
     let candidates = discovery.candidates.filter((item) => !existingIds.has(item.canonicalId));
     const sourceStatuses = [...discovery.sources];
@@ -1695,11 +1827,11 @@ export async function POST(request: Request) {
         qualityScore: Math.min(72, 46 + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 5)
           + (candidate.abstractText.length >= 180 ? 5 : 0)),
         priorityVenue: false,
-        source: synthesisExpanding ? "research-synthesis" : "research-route",
+        source: candidate.source === "shared-monitor-baseline" ? "research-route" : candidate.source,
         provenance: [{
           sourceKey: `research-route:${sourceKind}`,
-          channel: "topic" as const,
-          queryKey: `${track.id}:${querySuffix}`,
+          channel: candidate.source === "arxiv" ? "preprint" as const : candidate.source === "openalex" ? "semantic" as const : "topic" as const,
+          queryKey: `${track.id}:${candidate.source}:${querySuffix}`,
           queryText: targetedExpanding ? targetedQuery : queries.join(" | "),
           routeId: track.id,
         }],
@@ -1726,8 +1858,11 @@ export async function POST(request: Request) {
         addedCount += 1;
       }
     }
+    let resolvedBuildStatus: string | null = null;
     if (!targetedExpanding) {
-      const nextAttemptCount = payload.force === true && ["empty", "failed"].includes(track.build_status)
+      const deferredForCredential = scheduledRetry && candidates.length > 0 && !apiKey;
+      const nextAttemptCount = deferredForCredential ? Math.max(0, track.build_attempt_count)
+        : payload.force === true && ["empty", "failed"].includes(track.build_status)
         ? 1 : Math.max(0, track.build_attempt_count) + 1;
       const buildStatus = resolveResearchTrackBuildStatus({
         existingPaperCount: existing.results.length,
@@ -1741,10 +1876,12 @@ export async function POST(request: Request) {
       });
       const issueCodes = [
         discovery.errors.length ? "source_unavailable" : "",
-        selectionError ? "model_unavailable" : "",
+        selectionError ? deferredForCredential ? "model_credential_required" : "model_unavailable" : "",
         existing.results.length + addedCount === 0 ? "no_visible_evidence" : "",
       ].filter(Boolean);
-      const retryAt = buildStatus === "retryable" ? researchTrackRetryAt(nextAttemptCount) : null;
+      const retryAt = buildStatus === "retryable"
+        ? researchTrackRetryAt(nextAttemptCount, deferredForCredential ? Date.now() + 6 * 60 * 60 * 1000 : Date.now())
+        : null;
       await database.prepare(
         `UPDATE research_tracks SET
          expansion_count = CASE WHEN ? = 1 AND ? > 0 THEN 0 WHEN ? = 0 THEN expansion_count + 1 ELSE expansion_count END,
@@ -1756,6 +1893,23 @@ export async function POST(request: Request) {
         buildStatus, nextAttemptCount, JSON.stringify(sourceStatuses), issueCodes.join(",") || null, retryAt,
         hydrating ? 1 : 0, track.id, space.id,
       ).run();
+      resolvedBuildStatus = buildStatus;
+      await recordResearchRouteReliabilityEvent(database, space.id, {
+        trackId: track.id,
+        outcome: buildStatus === "ready" ? "success" : buildStatus === "partial" || buildStatus === "retryable" ? "degraded" : "failed",
+        message: `Research route build resolved ${buildStatus}`,
+        metadata: {
+          scheduledRetry,
+          attemptCount: nextAttemptCount,
+          candidateCount: candidates.length,
+          topicalRejectedCount: discovery.topicalRejectedCount,
+          selectedPaperCount: addedCount,
+          retainedPaperCount: existing.results.length,
+          queuedForReviewCount: queueResult.queuedForReviewCount,
+          sourceStatuses,
+          issueCodes,
+        },
+      });
     }
     if (!targetedExpanding) await saveDirectionIntelligence(database, space.id, track.id, reviewed.intelligence[0] || null);
     return Response.json(await readMap(database, space.id, {
@@ -1765,7 +1919,9 @@ export async function POST(request: Request) {
       reviewInProgressCount: queueResult.reviewingCount,
       alreadyReviewedCount: queueResult.alreadyReviewedCount,
       discoveredRouteCandidateCount: candidates.length,
+      topicalRejectedCandidateCount: discovery.topicalRejectedCount,
       routeSourceStatuses: sourceStatuses,
+      routeBuildStatus: resolvedBuildStatus,
       routeBuildDegraded: discovery.errors.length > 0 || Boolean(selectionError),
       hydratedTrackId: hydrating ? track.id : null,
       gapExpanded: gapExpanding,

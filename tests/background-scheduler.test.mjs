@@ -44,6 +44,13 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /scheduler_lease_expired/);
   assert.match(worker, /datetime\('now', '-20 minutes'\)/);
   assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 1/);
+  assert.match(worker, /SCHEDULED_ROUTE_RETRY_BATCH_SIZE = 1/);
+  assert.match(worker, /track\.build_status = 'retryable'/);
+  assert.match(worker, /track\.build_attempt_count < 3/);
+  assert.match(worker, /datetime\(track\.build_retry_at\) <= CURRENT_TIMESTAMP/);
+  assert.match(worker, /datetime\(run\.last_user_activity_at\) > datetime\('now', '-7 days'\)/);
+  assert.match(worker, /x-pi-scheduled-route-retry/);
+  assert.match(worker, /recordResearchRouteSentinel/);
   assert.match(worker, /datetime\(r\.last_user_activity_at\) DESC/);
   assert.match(
     worker,

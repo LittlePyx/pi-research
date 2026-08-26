@@ -7,6 +7,7 @@ import {
   monitorSchedulerSecretMatches,
   shouldWakeMonitorScheduler,
 } from "../lib/monitor-scheduler.mjs";
+import { recordResearchRouteSentinel } from "../lib/research-route-sentinel";
 
 interface Env {
   ASSETS: Fetcher;
@@ -32,6 +33,7 @@ type SchedulerTrigger = "cloudflare_cron" | "external_watchdog" | "visit_backsto
 
 const SCHEDULED_SPACE_BATCH_SIZE = 1;
 const SCHEDULED_ADVANCE_STEPS = 1;
+const SCHEDULED_ROUTE_RETRY_BATCH_SIZE = 1;
 const SCHEDULER_LEASE_MS = MONITOR_SCHEDULER_BUCKET_MS - 60_000;
 const HARD_STALE_JOB_HOURS = 6;
 const VISIT_BACKSTOP_GAP_MS = 25 * 60 * 1000;
@@ -144,6 +146,95 @@ async function recoverStaleMonitorJobs(env: Env) {
   return recoveredJobCount;
 }
 
+type ScheduledRouteRetryRow = {
+  track_id: string;
+  space_id: string;
+  owner_user_id: string;
+  build_attempt_count: number;
+};
+
+async function recordScheduledRouteRetryEvent(env: Env, row: ScheduledRouteRetryRow, outcome: "success" | "degraded" | "failed", metadata: Record<string, unknown>) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO monitor_reliability_events
+       (id, space_id, kind, stage, source, outcome, message, metadata_json)
+       VALUES (?, ?, 'research_route_retry', 'scheduled', 'research-route', ?, ?, ?)`,
+    ).bind(
+      crypto.randomUUID(), row.space_id, outcome, `Scheduled research route retry ${outcome}`,
+      JSON.stringify({ trackId: row.track_id, attemptCountBefore: row.build_attempt_count, ...metadata }),
+    ).run();
+  } catch {
+    // Retry telemetry must not prevent later scheduled work.
+  }
+}
+
+async function runScheduledResearchRouteRetry(env: Env, ctx: ExecutionContext) {
+  const due = await env.DB.prepare(
+    `SELECT track.id AS track_id, track.space_id, track.build_attempt_count, space.owner_user_id
+     FROM research_tracks track
+     JOIN research_spaces space ON space.id = track.space_id
+     JOIN monitor_runs run ON run.space_id = track.space_id
+     WHERE track.build_status = 'retryable'
+      AND track.build_attempt_count < 3
+      AND (track.build_retry_at IS NULL OR datetime(track.build_retry_at) <= CURRENT_TIMESTAMP)
+      AND space.owner_user_id LIKE 'anonymous:%'
+      AND run.automation_paused_at IS NULL
+      AND run.scheduled_runs_since_activity < 3
+      AND run.last_user_activity_at IS NOT NULL
+      AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
+     ORDER BY datetime(run.last_user_activity_at) DESC, datetime(track.build_retry_at) ASC, datetime(track.updated_at) ASC
+     LIMIT ?`,
+  ).bind(SCHEDULED_ROUTE_RETRY_BATCH_SIZE).first<ScheduledRouteRetryRow>();
+  if (!due) return { attempted: false as const, spaceId: null as string | null };
+
+  const workspaceId = due.owner_user_id.startsWith("anonymous:") ? due.owner_user_id.slice("anonymous:".length) : "";
+  if (!workspaceId) return { attempted: false as const, spaceId: due.space_id };
+  const response = await handler.fetch(new Request("https://pi-research.internal/api/research-map", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: `pi_anonymous_workspace=${workspaceId}`,
+      "x-pi-scheduled-route-retry": "1",
+    },
+    body: JSON.stringify({ spaceId: due.space_id, action: "hydrate", trackId: due.track_id }),
+  }), env, ctx);
+  const state = await response.json().catch(() => ({})) as {
+    routeBuildStatus?: string | null;
+    reviewQueuedCount?: number;
+    discoveredRouteCandidateCount?: number;
+    tracks?: Array<{ id?: string; buildStatus?: string; papers?: unknown[] }>;
+  };
+  const track = state.tracks?.find((item) => item.id === due.track_id);
+  const buildStatus = state.routeBuildStatus || track?.buildStatus || "unknown";
+  const outcome = response.ok && (buildStatus === "ready" || buildStatus === "partial") ? "success"
+    : response.ok ? "degraded" : "failed";
+  await recordScheduledRouteRetryEvent(env, due, outcome, {
+    httpStatus: response.status,
+    buildStatus,
+    visiblePaperCount: track?.papers?.length || 0,
+    discoveredCandidateCount: state.discoveredRouteCandidateCount || 0,
+    queuedForReviewCount: state.reviewQueuedCount || 0,
+  });
+  return { attempted: true as const, spaceId: due.space_id, trackId: due.track_id, outcome, buildStatus };
+}
+
+async function runScheduledResearchRouteSentinel(env: Env, preferredSpaceId?: string | null) {
+  const selected = preferredSpaceId ? { id: preferredSpaceId } : await env.DB.prepare(
+    `SELECT space.id FROM research_spaces space
+     JOIN monitor_runs run ON run.space_id = space.id
+     WHERE space.owner_user_id LIKE 'anonymous:%' AND run.automation_paused_at IS NULL
+      AND run.last_user_activity_at IS NOT NULL
+      AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
+     ORDER BY datetime(run.last_user_activity_at) DESC LIMIT 1`,
+  ).first<{ id: string }>();
+  if (!selected?.id) return null;
+  try {
+    return await recordResearchRouteSentinel(env.DB, selected.id);
+  } catch {
+    return { outcome: "failed" as const, issues: ["sentinel_query_failed"] };
+  }
+}
+
 async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger: SchedulerTrigger) {
   await reconcileExpiredSchedulerTicks(env);
   const lease = await acquireSchedulerLease(env, trigger);
@@ -156,6 +247,8 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
   let pausedCount = 0;
   let failedCount = 0;
   let recoveredJobCount = 0;
+  let routeRetry: Awaited<ReturnType<typeof runScheduledResearchRouteRetry>> | null = null;
+  let routeSentinel: Awaited<ReturnType<typeof runScheduledResearchRouteSentinel>> | null = null;
   let tickError = "";
 
   try {
@@ -228,6 +321,8 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
       advancedCount += result.value.advanced;
       if (result.value.completed) completedCount += 1;
     }
+    routeRetry = await runScheduledResearchRouteRetry(env, ctx);
+    routeSentinel = await runScheduledResearchRouteSentinel(env, routeRetry.spaceId || due.results[0]?.id || null);
   } catch (error) {
     tickError = error instanceof Error ? error.message.slice(0, 300) : "Scheduled monitor sweep failed";
     failedCount += 1;
@@ -239,7 +334,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     ).bind(new Date().toISOString(), dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount,
       failedCount, recoveredJobCount, tickError, tickId, leaseToken).run().catch(() => undefined);
   }
-  return { acquired: true, trigger, dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount, failedCount, recoveredJobCount, tickError };
+  return { acquired: true, trigger, dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount, failedCount, recoveredJobCount, routeRetry, routeSentinel, tickError };
 }
 
 // Image security config. SVG sources with .svg extension auto-skip the
