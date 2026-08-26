@@ -3,6 +3,7 @@ import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
+import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, resolveResearchTrackBuildStatus, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
@@ -15,6 +16,11 @@ type TrackRow = {
   summary_en: string;
   search_queries: string;
   expansion_count: number;
+  build_status: string;
+  build_attempt_count: number;
+  build_source_status_json: string;
+  build_error: string | null;
+  build_retry_at: string | null;
   user_role: ResearchDirectionRole;
   depth_score: number;
   support_score: number;
@@ -114,6 +120,19 @@ type CrossrefItem = {
   type?: string;
 };
 type CrossrefResponse = { message?: { items?: CrossrefItem[] } };
+type ProtectedBaselineRow = {
+  canonical_id: string;
+  doi: string | null;
+  title: string;
+  authors: string;
+  venue: string;
+  url: string;
+  published_at: string | null;
+  citation_count: number;
+  abstract_text: string;
+  relevance_score: number;
+  quality_score: number;
+};
 type DirectionDraft = {
   key: string;
   titleZh: string;
@@ -301,6 +320,27 @@ function parseJsonArray(value: string) {
   try {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseTrackSourceStatuses(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item): ResearchTrackSourceReport[] => {
+      if (!item || typeof item !== "object") return [];
+      const row = item as Partial<ResearchTrackSourceReport>;
+      if (typeof row.source !== "string" || !["foundation", "milestone", "frontier", "baseline"].includes(String(row.role))
+        || !["ok", "empty", "failed", "cached"].includes(String(row.status))) return [];
+      return [{
+        source: cleanText(row.source).slice(0, 80),
+        role: row.role as ResearchTrackSourceReport["role"],
+        status: row.status as ResearchTrackSourceReport["status"],
+        candidateCount: Math.max(0, Math.round(Number(row.candidateCount) || 0)),
+      }];
+    }).slice(0, 12);
   } catch {
     return [];
   }
@@ -562,14 +602,18 @@ async function fetchCrossref(query: string, role: ResearchTrackRole, offset: num
 
 async function discoverCandidates(directions: DirectionDraft[], offset: number, rows: number) {
   const discovered: MapCandidate[] = [];
+  const sources: ResearchTrackSourceReport[] = [];
   for (const direction of directions) {
-    const batches = await Promise.all((["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map(async (role) => {
+    const roles = ["foundation", "milestone", "frontier"] as ResearchTrackRole[];
+    const settled = await Promise.allSettled(roles.map(async (role) => {
       const query = direction.searchQueries[(role === "foundation" ? 0 : role === "milestone" ? 1 : 2) % direction.searchQueries.length];
       const items = await fetchCrossref(query, role, offset, rows);
       const normalized = await Promise.all(items.map((item) => normalizeItem(item, direction.key, role)));
       return normalized.filter((item): item is MapCandidate => Boolean(item));
     }));
-    discovered.push(...batches.flat());
+    const merged = mergeResearchTrackSourceBatches(roles.map((role, index) => ({ source: "crossref", role, result: settled[index] })));
+    discovered.push(...merged.candidates);
+    sources.push(...merged.sources);
     if (directions.length > 1) await new Promise((resolve) => setTimeout(resolve, 180));
   }
   const unique = new Map<string, MapCandidate>();
@@ -585,7 +629,58 @@ async function discoverCandidates(directions: DirectionDraft[], offset: number, 
       capped.push(...values.filter((item) => item.directionKey === direction.key && item.proposedRole === role).slice(0, 8));
     }
   }
-  return capped;
+  return { candidates: capped, sources, errors: sources.flatMap((source) => source.error ? [source.error] : []) };
+}
+
+function routeSearchTerms(direction: DirectionDraft) {
+  const ignored = new Set(["the", "and", "for", "with", "from", "into", "using", "study", "theory", "method", "analysis", "research"]);
+  return Array.from(new Set([direction.titleEn, direction.summaryEn, ...direction.searchQueries]
+    .join(" ").toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/)
+    .filter((term) => term.length >= 4 && !ignored.has(term)))).slice(0, 24);
+}
+
+function baselineRole(publishedAt: string | null): ResearchTrackRole {
+  const year = Number(publishedAt?.slice(0, 4) || 0);
+  const current = new Date().getUTCFullYear();
+  if (!year || year <= current - 10) return "foundation";
+  if (year <= current - 5) return "milestone";
+  return "frontier";
+}
+
+async function protectedBaselineCandidates(
+  database: D1Database,
+  spaceId: string,
+  direction: DirectionDraft,
+  excludedCanonicalIds: Set<string>,
+  limit = 12,
+) {
+  const rows = await database.prepare(
+    `SELECT p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.citation_count,
+     p.relevance_score, COALESCE(i.abstract_text, '') AS abstract_text, COALESCE(i.quality_score, 0) AS quality_score
+     FROM monitored_papers p LEFT JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+     WHERE p.space_id = ? ORDER BY p.relevance_score DESC, COALESCE(i.quality_score, 0) DESC, p.last_seen_at DESC LIMIT 120`,
+  ).bind(spaceId).all<ProtectedBaselineRow>();
+  const terms = routeSearchTerms(direction);
+  return rows.results.map((row) => {
+    const text = `${row.title} ${row.abstract_text} ${row.venue}`.toLocaleLowerCase();
+    const termMatches = terms.reduce((count, term) => count + (text.includes(term) ? 1 : 0), 0);
+    return { row, termMatches };
+  }).filter(({ row, termMatches }) => !excludedCanonicalIds.has(row.canonical_id) && termMatches > 0)
+    .sort((left, right) => right.termMatches - left.termMatches || right.row.relevance_score - left.row.relevance_score
+      || right.row.quality_score - left.row.quality_score || right.row.citation_count - left.row.citation_count)
+    .slice(0, Math.max(0, limit)).map(({ row }) => ({
+      directionKey: direction.key,
+      canonicalId: row.canonical_id,
+      doi: row.doi,
+      title: row.title,
+      authors: row.authors,
+      venue: row.venue,
+      url: row.url,
+      publishedAt: row.published_at,
+      citationCount: row.citation_count,
+      abstractText: row.abstract_text,
+      proposedRole: baselineRole(row.published_at),
+    } satisfies MapCandidate));
 }
 
 async function selectPapers(
@@ -1176,7 +1271,7 @@ function heatLevel(score: number, recentPaperCount: number): ResearchHeatLevel {
 
 async function structureExistingTracks(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, apiKey: string) {
   const tracks = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
+    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
   ).bind(space.id).all<TrackRow>();
   if (tracks.results.length < 2) return;
   const parsed = await callDeepSeek<{
@@ -1216,7 +1311,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
   const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult] = await Promise.all([
-    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
+    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
       `SELECT tp.id, tp.track_id, tp.canonical_id, tp.doi, tp.title, tp.authors, tp.venue, tp.url,
@@ -1331,7 +1426,11 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
         createdAt: change.created_at,
       } : null;
     })(),
-    buildStatus: row.expansion_count < 0 ? "queued" : "ready",
+    buildStatus: defensiveResearchTrackBuildStatus(row.build_status, row.expansion_count, papersByTrack.get(row.id)?.length || 0),
+    buildAttemptCount: Math.max(0, row.build_attempt_count || 0),
+    buildSourceStatuses: parseTrackSourceStatuses(row.build_source_status_json),
+    buildError: row.build_error,
+    buildRetryAt: row.build_retry_at,
     intelligence: parseStoredIntelligence(row),
     updatedAt: row.updated_at,
     papers: papersByTrack.get(row.id) || [],
@@ -1351,8 +1450,12 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const currentPaperRevision = researchPaperSetRevision(papersResult.results.map(toCoverageCandidate));
   const storedCoverage = storedNetworkState.coverage;
   const needsStructure = tracks.length > 1 && !edges.length;
-  const pendingTrackIds = tracks.filter((track) => track.buildStatus === "queued").map((track) => track.id);
-  const intelligenceEligibleTracks = tracks.filter((track) => track.buildStatus === "ready" && track.papers.length > 0);
+  const retryableTrackIds = tracks.filter((track) => track.buildStatus === "retryable" && track.buildAttemptCount < MAX_RESEARCH_TRACK_BUILD_ATTEMPTS).map((track) => track.id);
+  const pendingTrackIds = tracks.filter((track) => track.buildStatus === "queued").map((track) => track.id).concat(retryableTrackIds);
+  const partialTrackIds = tracks.filter((track) => track.buildStatus === "partial").map((track) => track.id);
+  const emptyTrackIds = tracks.filter((track) => track.buildStatus === "empty").map((track) => track.id);
+  const failedTrackIds = tracks.filter((track) => track.buildStatus === "failed").map((track) => track.id);
+  const intelligenceEligibleTracks = tracks.filter((track) => ["ready", "partial"].includes(track.buildStatus) && track.papers.length > 0);
   const pendingIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => !track.intelligence).map((track) => track.id);
   return {
     tracks,
@@ -1381,7 +1484,15 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     model: MODEL,
     generated: tracks.length > 0,
     needsStructure,
-    buildProgress: { ready: tracks.length - pendingTrackIds.length, total: tracks.length, pendingTrackIds },
+    buildProgress: {
+      ready: tracks.filter((track) => track.papers.length > 0).length,
+      total: tracks.length,
+      pendingTrackIds,
+      retryableTrackIds,
+      partialTrackIds,
+      emptyTrackIds,
+      failedTrackIds,
+    },
     intelligenceProgress: { ready: intelligenceEligibleTracks.length - pendingIntelligenceTrackIds.length, total: intelligenceEligibleTracks.length, pendingTrackIds: pendingIntelligenceTrackIds },
     ...extra,
   } satisfies ResearchMapState & Record<string, unknown>;
@@ -1443,7 +1554,7 @@ export async function POST(request: Request) {
       const trackIdByKey = new Map<string, string>();
       for (const direction of directions) trackIdByKey.set(direction.key, crypto.randomUUID());
       const outlineStatements = directions.map((direction, position) => database.prepare(
-          "INSERT INTO research_tracks (id, space_id, title_zh, title_en, summary_zh, summary_en, search_queries, position, expansion_count, user_role, depth_score, support_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, -1, ?, ?, ?)",
+          "INSERT INTO research_tracks (id, space_id, title_zh, title_en, summary_zh, summary_en, search_queries, position, expansion_count, build_status, user_role, depth_score, support_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, -1, 'queued', ?, ?, ?)",
         ).bind(trackIdByKey.get(direction.key), space.id, direction.titleZh, direction.titleEn, direction.summaryZh, direction.summaryEn, JSON.stringify(direction.searchQueries), position,
           direction.userRole, direction.depthScore, direction.supportScore));
       for (const relationship of generated.relationships) {
@@ -1464,10 +1575,13 @@ export async function POST(request: Request) {
     const targetedExpanding = gapExpanding || actionExpanding;
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
-      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
     ).bind(trackId, space.id).first<TrackRow>();
     if (!track) return Response.json({ error: "Research direction not found" }, { status: 404 });
-    if (hydrating && track.expansion_count >= 0) return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
+    if (hydrating && track.build_status === "ready") return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
+    if (hydrating && track.build_attempt_count >= MAX_RESEARCH_TRACK_BUILD_ATTEMPTS && payload.force !== true) {
+      return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0, retryLimitReached: true }));
+    }
     const queries = parseJsonArray(track.search_queries);
     if (!queries.length) throw new Error("This direction has no usable discovery queries");
     const synthesisGap = gapExpanding ? await database.prepare(
@@ -1520,32 +1634,52 @@ export async function POST(request: Request) {
       await saveDirectionIntelligence(database, space.id, track.id, intelligence);
       return Response.json(await readMap(database, space.id, { interpretedTrackId: track.id }));
     }
-    const offset = hydrating ? 0 : ((track.expansion_count + 1) * 16) % 608;
-    let candidates = await discoverCandidates([direction], offset, hydrating ? 14 : 16);
+    const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14 : ((track.expansion_count + 1) * 16) % 608;
+    const discovery = await discoverCandidates([direction], offset, hydrating ? 14 : 16);
     const existingIds = new Set(existing.results.map((row) => row.canonical_id));
-    candidates = candidates.filter((item) => !existingIds.has(item.canonicalId));
-    const reviewed = candidates.length ? await selectPapers(
-      database,
-      workspaceId,
-      space,
-      memory,
-      [direction],
-      candidates,
-      hydrating ? "initialize" : "expand",
-      apiKey,
-      existingEvidence.map((item) => ({ canonicalId: item.canonicalId, title: item.title, publishedAt: item.publishedAt, role: item.role, summaryEn: item.summaryEn, rationaleEn: item.rationaleEn, provenance: item.provenance })),
-    ) : { selections: [], intelligence: [] };
+    let candidates = discovery.candidates.filter((item) => !existingIds.has(item.canonicalId));
+    const sourceStatuses = [...discovery.sources];
+    if (hydrating && (candidates.length < 8 || discovery.errors.length > 0)) {
+      const baseline = await protectedBaselineCandidates(database, space.id, direction, new Set([...existingIds, ...candidates.map((item) => item.canonicalId)]));
+      candidates = [...candidates, ...baseline];
+      sourceStatuses.push({ source: "shared-monitor-baseline", role: "baseline", status: baseline.length ? "cached" : "empty", candidateCount: baseline.length });
+    }
+    const uniqueCandidates = new Map<string, MapCandidate>();
+    for (const candidate of candidates) {
+      const current = uniqueCandidates.get(candidate.canonicalId);
+      if (!current || candidate.abstractText.length > current.abstractText.length || candidate.citationCount > current.citationCount) uniqueCandidates.set(candidate.canonicalId, candidate);
+    }
+    candidates = Array.from(uniqueCandidates.values()).slice(0, 36);
+    let selectionError: unknown = null;
+    let reviewed: Awaited<ReturnType<typeof selectPapers>> = { selections: [], intelligence: [] };
+    if (candidates.length) {
+      try {
+        reviewed = await selectPapers(
+          database,
+          workspaceId,
+          space,
+          memory,
+          [direction],
+          candidates,
+          hydrating ? "initialize" : "expand",
+          apiKey,
+          existingEvidence.map((item) => ({ canonicalId: item.canonicalId, title: item.title, publishedAt: item.publishedAt, role: item.role, summaryEn: item.summaryEn, rationaleEn: item.rationaleEn, provenance: item.provenance })),
+        );
+      } catch (error) {
+        selectionError = error;
+      }
+    }
     const selections = reviewed.selections;
     const candidateById = new Map(candidates.map((item) => [item.canonicalId, item]));
     const inserted = new Set<string>();
     let position = existing.results.length;
     let addedCount = 0;
-    const queueCandidates = selections.flatMap((selection) => {
-      const candidate = candidateById.get(selection.canonicalId);
-      if (!candidate || inserted.has(selection.canonicalId)) return [];
-      inserted.add(selection.canonicalId);
-      const sourceKind = actionExpanding ? "action" : gapExpanding ? "gap" : selection.role;
-      return [{
+    const synthesisExpanding = gapExpanding && Boolean(synthesisGap?.next_search_query.trim());
+    const queueCandidates = candidates.slice(0, 24).map((candidate) => {
+      const sourceKind = actionExpanding ? "action" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
+      const querySuffix = actionExpanding ? `action:${payload.actionRunId}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
+        : gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}:${candidate.proposedRole}`;
+      return {
         canonicalId: candidate.canonicalId,
         doi: candidate.doi,
         title: candidate.title,
@@ -1561,15 +1695,15 @@ export async function POST(request: Request) {
         qualityScore: Math.min(72, 46 + Math.round(Math.log1p(Math.max(0, candidate.citationCount)) * 5)
           + (candidate.abstractText.length >= 180 ? 5 : 0)),
         priorityVenue: false,
-        source: "research-route",
+        source: synthesisExpanding ? "research-synthesis" : "research-route",
         provenance: [{
           sourceKey: `research-route:${sourceKind}`,
           channel: "topic" as const,
-          queryKey: `${track.id}:${actionExpanding ? `action:${payload.actionRunId}` : gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}`}`,
+          queryKey: `${track.id}:${querySuffix}`,
           queryText: targetedExpanding ? targetedQuery : queries.join(" | "),
           routeId: track.id,
         }],
-      }];
+      };
     });
     const queueResult = await enqueueMonitorCandidates(database, space.id, queueCandidates, { recordDiscoveryCoverage: true });
     if (targetedExpanding) {
@@ -1592,11 +1726,36 @@ export async function POST(request: Request) {
         addedCount += 1;
       }
     }
-    if (hydrating) {
-      await database.prepare("UPDATE research_tracks SET expansion_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?").bind(track.id, space.id).run();
-    } else {
-      await database.prepare("UPDATE research_tracks SET expansion_count = expansion_count + 1, interaction_score = MIN(35, interaction_score + 5), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
-        .bind(track.id, space.id).run();
+    if (!targetedExpanding) {
+      const nextAttemptCount = payload.force === true && ["empty", "failed"].includes(track.build_status)
+        ? 1 : Math.max(0, track.build_attempt_count) + 1;
+      const buildStatus = resolveResearchTrackBuildStatus({
+        existingPaperCount: existing.results.length,
+        selectedPaperCount: addedCount,
+        candidateCount: candidates.length,
+        sourceSuccessCount: sourceStatuses.filter((source) => source.status !== "failed").length,
+        sourceFailureCount: sourceStatuses.filter((source) => source.status === "failed").length,
+        modelAttempted: candidates.length > 0,
+        modelSucceeded: candidates.length === 0 || !selectionError,
+        attemptCount: nextAttemptCount,
+      });
+      const issueCodes = [
+        discovery.errors.length ? "source_unavailable" : "",
+        selectionError ? "model_unavailable" : "",
+        existing.results.length + addedCount === 0 ? "no_visible_evidence" : "",
+      ].filter(Boolean);
+      const retryAt = buildStatus === "retryable" ? researchTrackRetryAt(nextAttemptCount) : null;
+      await database.prepare(
+        `UPDATE research_tracks SET
+         expansion_count = CASE WHEN ? = 1 AND ? > 0 THEN 0 WHEN ? = 0 THEN expansion_count + 1 ELSE expansion_count END,
+         build_status = ?, build_attempt_count = ?, build_source_status_json = ?, build_error = ?, build_retry_at = ?,
+         interaction_score = CASE WHEN ? = 0 THEN MIN(35, interaction_score + 5) ELSE interaction_score END,
+         updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?`,
+      ).bind(
+        hydrating ? 1 : 0, existing.results.length + addedCount, hydrating ? 1 : 0,
+        buildStatus, nextAttemptCount, JSON.stringify(sourceStatuses), issueCodes.join(",") || null, retryAt,
+        hydrating ? 1 : 0, track.id, space.id,
+      ).run();
     }
     if (!targetedExpanding) await saveDirectionIntelligence(database, space.id, track.id, reviewed.intelligence[0] || null);
     return Response.json(await readMap(database, space.id, {
@@ -1605,6 +1764,9 @@ export async function POST(request: Request) {
       reviewQueuedCount: queueResult.queuedForReviewCount,
       reviewInProgressCount: queueResult.reviewingCount,
       alreadyReviewedCount: queueResult.alreadyReviewedCount,
+      discoveredRouteCandidateCount: candidates.length,
+      routeSourceStatuses: sourceStatuses,
+      routeBuildDegraded: discovery.errors.length > 0 || Boolean(selectionError),
       hydratedTrackId: hydrating ? track.id : null,
       gapExpanded: gapExpanding,
       actionExpanded: actionExpanding,

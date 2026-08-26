@@ -288,6 +288,13 @@
       "when": 1787562376752,
       "tag": "0040_silent_leopardon",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1787716807003,
+      "tag": "0041_tricky_midnight",
+      "breakpoints": true
     }
   ]
 }

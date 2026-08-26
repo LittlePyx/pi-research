@@ -32,6 +32,7 @@ export type MonitorRouteOriginKind =
   | "route_milestone"
   | "route_frontier"
   | "route_gap"
+  | "route_synthesis"
   | "route_network"
   | "route_search";
 
@@ -119,6 +120,7 @@ export function monitorRouteOriginKind(sourceKey: string, routeId?: string | nul
   if (sourceKey === "research-route:milestone") return "route_milestone";
   if (sourceKey === "research-route:frontier") return "route_frontier";
   if (sourceKey === "research-route:gap" || sourceKey.startsWith("crossref:route-gap:")) return "route_gap";
+  if (sourceKey === "research-route:synthesis") return "route_synthesis";
   if (sourceKey === "research-route:network") return "route_network";
   if (sourceKey.startsWith("research-route:") || sourceKey.startsWith("crossref:route:")) return "route_search";
   if (routeId?.trim()) return "route_search";

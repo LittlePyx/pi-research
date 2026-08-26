@@ -345,7 +345,7 @@ type Candidate = {
   relevanceScore: number;
   qualityScore: number;
   priorityVenue: boolean;
-  source: "crossref" | "semantic_scholar" | "openalex" | "arxiv" | "research-route" | "research-network";
+  source: "crossref" | "semantic_scholar" | "openalex" | "arxiv" | "research-route" | "research-synthesis" | "research-network";
   discoveryChannel: "topic" | "journal" | "author" | "semantic" | "preprint" | "citation";
   provenance: CandidateProvenance[];
 };
@@ -1159,21 +1159,21 @@ async function routeDiscoveryQueries(
   const gapRows = selectedRows.flatMap(({ row, role }) => {
     const intelligence = directionDiscoverySignal(row.intelligence_json, row.intelligence_updated_at);
     const actionQuery = cleanText(row.action_next_search_query || "");
-    if (actionQuery && asciiOnly(actionQuery)) return [{ row, role, intelligence: { nextSearchQuery: actionQuery, confidence: 100 } }];
+    if (actionQuery && asciiOnly(actionQuery)) return [{ row, role, sourceKey: "research-route:action", intelligence: { nextSearchQuery: actionQuery, confidence: 100 } }];
     const problemQuery = cleanText(row.problem_next_search_query || "");
-    if (problemQuery && asciiOnly(problemQuery)) return [{ row, role, intelligence: { nextSearchQuery: problemQuery, confidence: 96 } }];
+    if (problemQuery && asciiOnly(problemQuery)) return [{ row, role, sourceKey: "research-route:problem", intelligence: { nextSearchQuery: problemQuery, confidence: 96 } }];
     const synthesisQuery = cleanText(row.synthesis_next_search_query || "");
-    if (synthesisQuery && asciiOnly(synthesisQuery)) return [{ row, role, intelligence: {
+    if (synthesisQuery && asciiOnly(synthesisQuery)) return [{ row, role, sourceKey: "research-route:synthesis", intelligence: {
       nextSearchQuery: synthesisQuery,
       confidence: Math.max(Number(row.synthesis_confidence || 0), intelligence?.confidence || 0),
     } }];
     if (!intelligence?.nextSearchQuery || !asciiOnly(intelligence.nextSearchQuery)) return [];
-    return [{ row, role, intelligence }];
+    return [{ row, role, sourceKey: "research-route:gap", intelligence }];
   }).sort((left, right) => right.intelligence.confidence - left.intelligence.confidence);
   const gap = gapRows.length ? gapRows[round % gapRows.length] : null;
   const gapPlan: DiscoveryQuery[] = gap ? [{
     key: `research-route-gap-${gap.row.id}`,
-    sourceKey: "research-route:gap",
+    sourceKey: gap.sourceKey,
     query: cleanText(gap.intelligence.nextSearchQuery).slice(0, 480),
     sort: horizon.key === "days" ? "published" : horizon.sort,
     rotating: true,
@@ -3984,7 +3984,8 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
       : row.source === "openalex" ? "openalex" as const
         : row.source === "arxiv" ? "arxiv" as const
           : row.source === "research-route" ? "research-route" as const
-            : row.source === "research-network" ? "research-network" as const
+            : row.source === "research-synthesis" ? "research-synthesis" as const
+              : row.source === "research-network" ? "research-network" as const
               : "crossref" as const,
     discoveryChannel: row.source === "arxiv" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
     provenance: provenanceByPaper.get(row.paper_id)?.length ? provenanceByPaper.get(row.paper_id)! : [{
@@ -4258,10 +4259,13 @@ function monitorVerificationPhase(status: EvidenceVerificationStatus, rawReport:
 function toPaper(paper: PaperRow, now: number) {
   const originKind = monitorRouteOriginKind(paper.discovery_source_key, paper.discovery_route_id);
   const discoveryType = originKind === "route_gap" ? "gap" as const
+    : originKind === "route_synthesis" ? "synthesis" as const
     : originKind === "route_network" ? "citation_network" as const
       : originKind ? "route_search" as const : null;
   const sourceLabels = originKind === "route_gap"
     ? { zh: "研究路线缺口深挖", en: "Research-route gap discovery" }
+    : originKind === "route_synthesis"
+      ? { zh: "研究综合后续发现", en: "Research-synthesis follow-up" }
     : originKind === "route_network"
       ? { zh: "论文引用网络扩展", en: "Citation-network expansion" }
       : originKind === "route_foundation"

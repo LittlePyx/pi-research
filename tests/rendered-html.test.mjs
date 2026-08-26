@@ -149,8 +149,10 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /Foundation = field-defining concepts or methods/);
   assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand"/);
   assert.match(mapRoute, /INSERT OR IGNORE INTO research_track_papers/);
-  assert.match(mapRoute, /expansion_count, user_role/);
-  assert.match(mapRoute, /VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, -1/);
+  assert.match(mapRoute, /expansion_count, build_status, user_role/);
+  assert.match(mapRoute, /VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, -1, 'queued'/);
+  assert.match(mapRoute, /defensiveResearchTrackBuildStatus/);
+  assert.match(mapRoute, /resolveResearchTrackBuildStatus/);
   assert.match(mapRoute, /outlineReady: true/);
   assert.match(mapRoute, /const hydrating = payload\.action === "hydrate"/);
   assert.match(mapRoute, /const gapExpanding = payload\.action === "expand-gap"/);

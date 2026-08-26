@@ -1,7 +1,8 @@
 export type ResearchTrackRole = "foundation" | "milestone" | "frontier";
 export type ResearchDirectionRole = "core" | "support" | "explore";
 export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
-export type ResearchTrackBuildStatus = "queued" | "ready";
+export type ResearchTrackBuildStatus = "queued" | "retryable" | "partial" | "empty" | "failed" | "ready";
+export type ResearchTrackSourceStatus = "ok" | "empty" | "failed" | "cached";
 export type ResearchEvidenceProvenance = "system_curated" | "user_confirmed";
 export type ResearchPaperEdgeKind = "citation" | "similarity" | "semantic" | "path";
 export type ResearchPaperNetworkStatus = "idle" | "building" | "ready" | "partial" | "error";
@@ -223,6 +224,15 @@ export type ResearchTrack = {
   discoveryEffect: ResearchRouteDiscoveryEffect;
   latestChange: ResearchTrackLatestChange | null;
   buildStatus: ResearchTrackBuildStatus;
+  buildAttemptCount: number;
+  buildSourceStatuses: Array<{
+    source: string;
+    role: ResearchTrackRole | "baseline";
+    status: ResearchTrackSourceStatus;
+    candidateCount: number;
+  }>;
+  buildError: string | null;
+  buildRetryAt: string | null;
   intelligence: ResearchDirectionIntelligence | null;
   updatedAt: string;
   papers: ResearchTrackPaper[];
@@ -283,6 +293,10 @@ export type ResearchMapState = {
     ready: number;
     total: number;
     pendingTrackIds: string[];
+    retryableTrackIds?: string[];
+    partialTrackIds?: string[];
+    emptyTrackIds?: string[];
+    failedTrackIds?: string[];
   };
   intelligenceProgress?: {
     ready: number;

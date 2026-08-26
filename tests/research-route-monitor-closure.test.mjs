@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("route, gap, and citation-network discoveries share the daily quality queue", async () => {
+test("route, gap, synthesis, and citation-network discoveries share the daily quality queue", async () => {
   const [monitor, mapRoute, networkRoute, queue, app] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
@@ -13,6 +13,8 @@ test("route, gap, and citation-network discoveries share the daily quality queue
 
   assert.match(monitor, /await enqueueMonitorCandidates\(database, spaceId, candidates\)/);
   assert.match(mapRoute, /sourceKey: `research-route:\$\{sourceKind\}`/);
+  assert.match(mapRoute, /synthesisExpanding \? "synthesis"/);
+  assert.match(monitor, /sourceKey: "research-route:synthesis"/);
   assert.match(mapRoute, /recordDiscoveryCoverage: true/);
   assert.doesNotMatch(mapRoute, /upsertRouteGapResearchMapEvidence/);
   assert.match(networkRoute, /enqueueNetworkReviewCandidates\(database, spaceId, seedRows, cached, expansionKey\)/);
@@ -30,6 +32,7 @@ test("route, gap, and citation-network discoveries share the daily quality queue
   assert.match(app, /前沿追踪/);
   assert.match(app, /奠基补齐/);
   assert.match(app, /证据缺口/);
+  assert.match(app, /研究综合/);
   assert.match(app, /引用网络/);
 });
 

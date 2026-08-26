@@ -69,6 +69,7 @@ test("focused mode protects core route and gap plans without admitting adjacent 
 test("route provenance keeps provider-specific route and gap semantics", () => {
   assert.equal(monitorRouteOriginKind("research-route:foundation", "track-a"), "route_foundation");
   assert.equal(monitorRouteOriginKind("research-route:frontier", "track-a"), "route_frontier");
+  assert.equal(monitorRouteOriginKind("research-route:synthesis", "track-a"), "route_synthesis");
   assert.equal(monitorRouteOriginKind("research-route:network", "track-a"), "route_network");
   assert.equal(monitorRouteOriginKind("crossref:route:track-a"), "route_search");
   assert.equal(monitorRouteOriginKind("crossref:route-gap:track-a"), "route_gap");
