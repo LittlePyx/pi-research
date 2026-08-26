@@ -159,3 +159,17 @@ test("cold-start API code persists degraded state and queues retrieved candidate
   assert.ok(repository.indexOf("ALTER TABLE research_tracks ADD COLUMN build_retry_at")
     < repository.indexOf("CREATE INDEX IF NOT EXISTS idx_research_tracks_retry_due"));
 });
+
+test("the route workspace reads existing maps without a query-string GET or model credential", async () => {
+  const [app, route] = await Promise.all([
+    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(app, /fetch\("\/api\/research-map\?spaceId="/);
+  assert.match(app, /async function readResearchMapState\(spaceId: string\)/);
+  assert.match(app, /JSON\.stringify\(\{ spaceId, action: "read" \}\)/);
+  const readBranch = route.indexOf('if (payload.action === "read")');
+  const credentialResolution = route.indexOf("const apiKey = resolveDeepSeekCredential(request).apiKey", readBranch);
+  assert.ok(readBranch > 0);
+  assert.ok(credentialResolution > readBranch);
+});

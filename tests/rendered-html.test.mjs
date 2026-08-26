@@ -147,7 +147,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /reasoning_effort: options\.reasoningEffort \|\| "high"/);
   assert.match(mapRoute, /WORKSPACE_DAILY_LIMIT = 32/);
   assert.match(mapRoute, /Foundation = field-defining concepts or methods/);
-  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand"/);
+  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand"/);
   assert.match(mapRoute, /INSERT OR IGNORE INTO research_track_papers/);
   assert.match(mapRoute, /expansion_count, build_status, user_role/);
   assert.match(mapRoute, /VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, -1, 'queued'/);
@@ -163,7 +163,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /interpretDirection/);
   assert.match(mapRoute, /evidenceCanonicalIds/);
   assert.match(mapRoute, /Distinguish metadata-supported statements from your synthesis/);
-  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret"/);
+  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret"/);
   assert.match(mapRoute, /structureExistingTracks/);
   assert.match(mapRoute, /research_track_edges/);
   assert.match(mapRoute, /userRole \(core\|support\|explore\)/);
@@ -171,7 +171,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /last14Days \* 30 \+ last6Months \* 10/);
   assert.match(mapRoute, /recentPaperCount/);
   assert.match(mapRoute, /api\.semanticscholar\.org\/graph\/v1\/paper\/batch/);
-  assert.match(mapRoute, /action\?: "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret" \| "structure" \| "activity" \| "network" \| "reconcile"/);
+  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret" \| "structure" \| "activity" \| "network" \| "reconcile"/);
   assert.match(mapRoute, /reconcileConfirmedResearchMapEvidence/);
   assert.match(mapRoute, /ep\.status = 'confirmed'/);
   assert.match(mapRoute, /system_curated/);

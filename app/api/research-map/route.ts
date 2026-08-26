@@ -1643,12 +1643,13 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
     const { database, space, user } = context;
+    if (payload.action === "read") return Response.json(await readMap(database, space.id, { cached: true }));
     const workspaceId = user.userId.replace(/^anonymous:/, "");
     const apiKey = resolveDeepSeekCredential(request).apiKey;
     const scheduledRetry = request.headers.get("x-pi-scheduled-route-retry") === "1";

@@ -2476,6 +2476,17 @@ function ReadingOrderWorkbench({
   </section>;
 }
 
+async function readResearchMapState(spaceId: string) {
+  const response = await fetch("/api/research-map", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ spaceId, action: "read" }),
+  });
+  const data = await response.json() as ResearchMapState & { error?: string };
+  if (!response.ok) throw new Error(data.error || "research map unavailable");
+  return data;
+}
+
 async function requestPaperNetworkBuildPhase(spaceId: string, phase: Exclude<PaperNetworkBuildPhase, null>, force: boolean) {
   const response = await fetch("/api/research-map", {
     method: "POST",
@@ -3289,13 +3300,14 @@ export default function ResearchApp({ user }: { user: User }) {
       if (!requestIsCurrent()) return;
       setResearchNetworkDecisions((current) => ({ ...current, [candidate.canonicalId]: action === "accept" ? "accepted" : "dismissed" }));
       if (action === "accept") {
-        const mapResponse = await fetch("/api/research-map?spaceId=" + encodeURIComponent(spaceId));
-        if (mapResponse.ok) {
-          const nextMap = await mapResponse.json() as ResearchMapState;
+        try {
+          const nextMap = await readResearchMapState(spaceId);
           if (requestIsCurrent()) {
             setResearchMap(nextMap);
             setResearchNetworkCandidates((current) => current.filter((item) => item.id !== candidate.id));
           }
+        } catch {
+          // The accepted paper remains durable; the next map visit retries the read.
         }
       }
       if (requestIsCurrent() && action === "dismiss" && selectedNetworkNode?.paper.canonicalId === candidate.canonicalId) setSelectedNetworkPaperId(null);
@@ -3480,12 +3492,10 @@ export default function ResearchApp({ user }: { user: User }) {
       setMapOutlinePhase(0);
       setMapBuildErrors({});
       try {
-        let response = await fetch("/api/research-map?spaceId=" + encodeURIComponent(activeSpace.id));
-        let data = await response.json() as ResearchMapState & { error?: string };
-        if (!response.ok) throw new Error(data.error || "map unavailable");
+        let data = await readResearchMapState(activeSpace.id);
         if (!data.generated) {
           setMapAction("initialize");
-          response = await fetch("/api/research-map", {
+          const response = await fetch("/api/research-map", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ spaceId: activeSpace.id, action: "initialize" }),
@@ -3494,7 +3504,7 @@ export default function ResearchApp({ user }: { user: User }) {
           if (!response.ok) throw new Error(data.error || "map generation failed");
         } else if (data.needsStructure) {
           setMapAction("structure");
-          response = await fetch("/api/research-map", {
+          const response = await fetch("/api/research-map", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ spaceId: activeSpace.id, action: "structure" }),
