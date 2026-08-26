@@ -63,6 +63,9 @@ type InsightStageRow = {
 };
 
 const MAX_BATCH_SIZE = 70;
+const TITLE_IDENTITY_LOOKUP_BATCH_SIZE = 16;
+const TITLE_IDENTITY_LOOKUP_TOKEN_LIMIT = 160;
+const TITLE_IDENTITY_LOOKUP_TOKENS_PER_TITLE = 2;
 
 /**
  * Current route-pipeline workload plus the durable history of recommendations
@@ -206,6 +209,16 @@ function normalizedTitleKey(value: string) {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
+function boundedTitleLookupTokens(value: string) {
+  // Provider metadata can contain an unbroken, oversized title token. D1
+  // rejects oversized LIKE patterns, so identity prefetch uses bounded literal
+  // substrings and leaves the exact title/author/year decision to JavaScript.
+  return Array.from(new Set(value.split(/\s+/).filter(Boolean)))
+    .sort((left, right) => right.length - left.length)
+    .slice(0, TITLE_IDENTITY_LOOKUP_TOKENS_PER_TITLE)
+    .map((token) => token.slice(0, TITLE_IDENTITY_LOOKUP_TOKEN_LIMIT));
+}
+
 function normalizedAuthorTokens(value: string) {
   return Array.from(new Set(value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(/\s+/)
     .filter((token) => token.length >= 3))).sort();
@@ -273,11 +286,12 @@ function coalesceBatchWorkIdentities(candidates: MonitorCandidateInput[]) {
 async function existingRowsForTitles(database: D1Database, spaceId: string, candidates: MonitorCandidateInput[]) {
   const titleLookups = Array.from(new Set(candidates.map((candidate) => normalizedTitleKey(candidate.title)).filter(Boolean)));
   const rows = new Map<string, ExistingIdentityRow>();
-  for (let start = 0; start < titleLookups.length; start += 25) {
-    const chunk = titleLookups.slice(start, start + 25);
-    const tokenGroups = chunk.map((title) => title.split(/\s+/).filter(Boolean).sort((left, right) => right.length - left.length).slice(0, 2));
-    const clauses = tokenGroups.map((tokens) => `(${tokens.map(() => "lower(title) LIKE ?").join(" AND ")})`);
-    const parameters = tokenGroups.flatMap((tokens) => tokens.map((token) => `%${token}%`));
+  for (let start = 0; start < titleLookups.length; start += TITLE_IDENTITY_LOOKUP_BATCH_SIZE) {
+    const chunk = titleLookups.slice(start, start + TITLE_IDENTITY_LOOKUP_BATCH_SIZE);
+    const tokenGroups = chunk.map(boundedTitleLookupTokens).filter((tokens) => tokens.length > 0);
+    const clauses = tokenGroups.map((tokens) => `(${tokens.map(() => "instr(lower(title), ?) > 0").join(" AND ")})`);
+    const parameters = tokenGroups.flat();
+    if (!clauses.length) continue;
     const result = await database.prepare(
       `SELECT id, canonical_id, doi, title, authors, published_at FROM monitored_papers
        WHERE space_id = ? AND (${clauses.join(" OR ")})`,

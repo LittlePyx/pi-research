@@ -111,7 +111,9 @@ test("DOI-less Semantic Scholar and OpenAlex discoveries share a work identity",
   assert.match(queue, /async function sharedCanonicalId/);
   assert.match(queue, /crypto\.subtle\.digest\("SHA-256"/);
   assert.match(queue, /return "title:"/);
-  assert.match(queue, /lower\(title\) LIKE \?/);
+  assert.match(queue, /instr\(lower\(title\), \?\) > 0/);
+  assert.match(queue, /TITLE_IDENTITY_LOOKUP_TOKEN_LIMIT/);
+  assert.doesNotMatch(queue, /lower\(title\) LIKE \?/);
   assert.match(queue, /compatibleResearchWorkMetadata/);
 });
 

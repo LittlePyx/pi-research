@@ -588,6 +588,56 @@ test("legacy DOI-less rows are reused across punctuation and whitespace variants
   }
 });
 
+test("oversized provider titles cannot break D1 identity lookup or reset retained review history", async () => {
+  const { sqlite, database } = createFixture();
+  const oversizedTitle = `Information${"x".repeat(60_000)}`;
+  try {
+    sqlite.prepare(
+      `INSERT INTO monitored_papers
+       (id, space_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon)
+       VALUES (?, 'space-a', 'legacy:oversized-title', NULL, ?, 'Ada Researcher', 'Research Archive',
+        'https://example.test/oversized', '2026-08-01', 'legacy-provider', 'months')`,
+    ).run("paper-oversized", oversizedTitle);
+    sqlite.prepare(
+      `INSERT INTO paper_insights
+       (paper_id, space_id, abstract_text, analysis_source, analysis_model, llm_recommended)
+       VALUES ('paper-oversized', 'space-a', 'Previously reviewed evidence.', 'deepseek', 'deepseek-v4-pro', 1)`,
+    ).run();
+
+    const candidates = Array.from({ length: 70 }, (_, index) => index === 0
+      ? queueCandidate({
+        canonicalId: "openalex:oversized-title",
+        doi: null,
+        title: oversizedTitle,
+        authors: "Ada Researcher",
+        publishedAt: "2026-08-01",
+        source: "openalex",
+        provenance: [{ sourceKey: "openalex:topic", channel: "semantic", queryKey: "oversized-title" }],
+      })
+      : queueCandidate({
+        canonicalId: `crossref:10.2000/${index}`,
+        doi: `10.2000/${index}`,
+        title: `Bounded lookup candidate ${index}`,
+        authors: `Researcher ${index}`,
+        url: `https://example.test/bounded-${index}`,
+        provenance: [{ sourceKey: "crossref:topic", channel: "topic", queryKey: `bounded-${index}` }],
+      }));
+
+    const result = await enqueueMonitorCandidates(database, "space-a", candidates);
+    assert.equal(result.candidateCount, 70);
+    assert.equal(result.newCandidateCount, 69);
+    assert.equal(result.recommendedCount, 1);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = 'space-a'").get().count, 71);
+    assert.equal(sqlite.prepare("SELECT id FROM monitored_papers WHERE canonical_id = 'legacy:oversized-title'").get().id, "paper-oversized");
+    assert.deepEqual(
+      { ...sqlite.prepare("SELECT analysis_source, analysis_model, llm_recommended FROM paper_insights WHERE paper_id = 'paper-oversized'").get() },
+      { analysis_source: "deepseek", analysis_model: "deepseek-v4-pro", llm_recommended: 1 },
+    );
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("same-title DOI-less works with conflicting authors or years remain separate", async () => {
   const { sqlite, database } = createFixture();
   const candidate = (canonicalId, authors, publishedAt) => ({
