@@ -1250,6 +1250,7 @@ function directionRelationshipLabel(kind: ResearchMapState["edges"][number]["kin
 
 function routePaperCurationSourceLabel(paper: ResearchTrackPaper, locale: Locale) {
   if (paper.curationSource === "system_model_selection_guard") return locale === "zh" ? "Pi 选择一致性守卫" : "Pi selection consistency guard";
+  if (paper.curationSource === "system_semantic_precision_guard") return locale === "zh" ? "Pi 独立语义精度守卫" : "Pi independent semantic precision guard";
   if (paper.curationSource === "user_evidence_confirmation") return locale === "zh" ? "用户证据确认" : "User evidence confirmation";
   if (paper.curationSource === "user_network_acceptance") return locale === "zh" ? "引用网络确认" : "Citation-network confirmation";
   return locale === "zh" ? "路线人工复核" : "Route curation review";
@@ -3544,6 +3545,25 @@ export default function ResearchApp({ user }: { user: User }) {
             }
           } catch {
             if (!cancelled) setMapBuildErrors((current) => ({ ...current, [trackId]: true }));
+          }
+        }
+        if (!cancelled && data.generated && data.tracks.some((track) => track.papers.length > 0)) {
+          try {
+            const precisionResponse = await fetch("/api/research-map", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ spaceId: activeSpace.id, action: "audit-precision" }),
+            });
+            const audited = await precisionResponse.json() as ResearchMapState & { error?: string };
+            if (!precisionResponse.ok) throw new Error(audited.error || "route precision audit failed");
+            if (!cancelled) {
+              data = audited;
+              setResearchMap(audited);
+              setSelectedThread((current) => audited.tracks.find((track) => track.id === current?.id) || audited.tracks[0] || null);
+            }
+          } catch {
+            // Precision review is private and non-blocking. Existing evidence
+            // remains available and the audit is retried on a later visit.
           }
         }
         for (const trackId of data.intelligenceProgress?.pendingTrackIds || []) {

@@ -1134,6 +1134,32 @@ export const researchTrackPaperCurationEvents = sqliteTable(
   ],
 );
 
+export const researchTrackPaperPrecisionAudits = sqliteTable(
+  "research_track_paper_precision_audits",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    trackPaperId: text("track_paper_id").notNull().references(() => researchTrackPapers.id, { onDelete: "cascade" }),
+    gateVersion: text("gate_version").notNull(),
+    verdict: text("verdict").notNull(),
+    confidence: integer("confidence").notNull().default(0),
+    reasonZh: text("reason_zh").notNull().default(""),
+    reasonEn: text("reason_en").notNull().default(""),
+    evidenceJson: text("evidence_json").notNull().default("[]"),
+    model: text("model").notNull().default(""),
+    status: text("status").notNull().default("shadow"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    appliedAt: text("applied_at"),
+  },
+  (table) => [
+    index("idx_track_paper_precision_audits_paper_created").on(table.trackPaperId, table.createdAt),
+    index("idx_track_paper_precision_audits_space_status").on(table.spaceId, table.status, table.createdAt),
+    check("track_paper_precision_audits_verdict_check", sql`${table.verdict} in ('direct', 'borderline', 'off_topic')`),
+    check("track_paper_precision_audits_status_check", sql`${table.status} in ('shadow', 'applied', 'superseded')`),
+  ],
+);
+
 export const researchMapEvidenceProposals = sqliteTable(
   "research_map_evidence_proposals",
   {

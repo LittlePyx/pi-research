@@ -312,4 +312,9 @@ export type ResearchMapState = {
     total: number;
     pendingTrackIds: string[];
   };
+  precisionAuditProgress?: {
+    pending: number;
+    shadow: number;
+    highConfidenceOffTopic: number;
+  };
 };

@@ -7,6 +7,7 @@ import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPape
 import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSelectionContradiction, type ResearchTrackPaperCurationReasonCode, type ResearchTrackPaperCurationStatus } from "../../../lib/research-map-curation";
+import { applyStoredResearchRoutePrecisionAudits, RESEARCH_ROUTE_PRECISION_GATE_VERSION, researchRoutePrecisionAuditProgress, routePrecisionAcceptedForActiveNode, routePrecisionAutoDeactivates, routePrecisionJudgmentIdentity, sanitizeResearchRoutePrecisionJudgments } from "../../../lib/research-map-precision";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -191,6 +192,24 @@ type Selection = {
   summaryEn: string;
   rationaleZh: string;
   rationaleEn: string;
+};
+type ExistingPrecisionPaperRow = {
+  id: string;
+  track_id: string;
+  canonical_id: string;
+  title: string;
+  authors: string;
+  venue: string;
+  published_at: string | null;
+  abstract_text: string;
+  role: ResearchTrackRole;
+  summary_en: string;
+  rationale_en: string;
+  track_title_zh: string;
+  track_title_en: string;
+  track_summary_zh: string;
+  track_summary_en: string;
+  search_queries: string;
 };
 type TrackEvidenceCountRow = { track_id: string; confirmed_count: number; pending_count: number };
 type TrackReviewQueueCountRow = {
@@ -844,11 +863,7 @@ async function selectPapers(
     citations: item.citationCount,
     abstract: item.abstractText,
   }));
-  const parsed = await callDeepSeek<{ selections?: Array<Partial<Selection>>; directionIntelligence?: Array<Partial<DirectionIntelligenceDraft>> }>(
-    database,
-    workspaceId,
-    "You are Pi Research's evidence-disciplined academic map editor. Select only real, representative papers and return strict JSON.",
-    [
+  const selectionPrompt = [
       "Return {\"selections\":[...],\"directionIntelligence\":[...]} using only supplied canonicalId and directionKey values.",
       "Each selection needs directionKey, canonicalId, role (foundation|milestone|frontier), summaryZh, summaryEn, rationaleZh, rationaleEn.",
       "Each directionIntelligence item needs directionKey, assessmentZh/En, opportunityZh/En, watchSignalZh/En, evidenceGapZh/En, nextSearchQuery, confidence (0-100), and evidenceCanonicalIds (1-6 exact IDs from supplied candidates or existing accepted papers).",
@@ -866,12 +881,43 @@ async function selectPapers(
       "Existing route papers include provenance. system_curated means Pi selected the paper as useful context; user_confirmed alone means the user accepted it as formal evidence.",
       `Existing route papers: ${JSON.stringify(existingEvidence)}`,
       `Candidate records: ${JSON.stringify(compact)}`,
-    ].join("\n"),
-    7600,
-    apiKey,
-    { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 50_000 },
-  );
+    ].join("\n");
+  const precisionPrompt = [
+    "Return {\"judgments\":[...]} with exactly one judgment for every supplied candidate.",
+    "Each judgment needs directionKey, canonicalId, verdict (direct|borderline|off_topic), confidence (0-100), reasonZh, reasonEn, and evidenceTerms (0-8 short title/abstract terms).",
+    "This is an independent semantic precision gate, not a quality ranking. direct means the paper's central question, theorem, method, or result belongs to the exact route and it can represent that route. borderline means a useful bridge or background connection exists but the paper should remain a review candidate rather than an active representative route node. off_topic means the connection depends on metaphor, a generic word, a broad methodological analogy, or a different research field.",
+    "Judge only title, abstract, venue, and supplied route definition. Missing abstracts increase uncertainty; never infer results from titles alone. Famous or highly cited work outside the exact route is off_topic. Do not use the first editor's selection or rationale as evidence.",
+    `Research space: ${space.name} — ${space.description}`,
+    `Directions: ${JSON.stringify(directions)}`,
+  ];
+  const precisionBatches = Array.from({ length: Math.ceil(compact.length / 18) }, (_, index) => compact.slice(index * 18, index * 18 + 18));
+  const [parsed, precisionResponses] = await Promise.all([
+    callDeepSeek<{ selections?: Array<Partial<Selection>>; directionIntelligence?: Array<Partial<DirectionIntelligenceDraft>> }>(
+      database,
+      workspaceId,
+      "You are Pi Research's evidence-disciplined academic map editor. Select only real, representative papers and return strict JSON.",
+      selectionPrompt,
+      7600,
+      apiKey,
+      { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 50_000 },
+    ),
+    Promise.all(precisionBatches.map((batch) => callDeepSeek<{ judgments?: unknown }>(
+        database,
+        workspaceId,
+        "You are Pi Research's independent route-paper semantic precision auditor. Return strict JSON without chain-of-thought.",
+        [...precisionPrompt, `Candidate records: ${JSON.stringify(batch)}`].join("\n"),
+        Math.min(3300, 900 + batch.length * 120),
+        apiKey,
+        { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 44_000 },
+      ))),
+  ]);
   const allowed = new Set(candidates.map((item) => item.directionKey + ":" + item.canonicalId));
+  const precisionJudgments = sanitizeResearchRoutePrecisionJudgments(
+    precisionResponses.flatMap((response) => Array.isArray(response.judgments) ? response.judgments : []),
+    allowed,
+  );
+  if (precisionJudgments.length !== allowed.size) throw new Error("Route semantic precision audit returned incomplete coverage");
+  const precisionByIdentity = new Map(precisionJudgments.map((judgment) => [routePrecisionJudgmentIdentity(judgment), judgment]));
   const selections = (parsed.selections || []).map((item) => ({
     directionKey: cleanText(item.directionKey || ""),
     canonicalId: cleanText(item.canonicalId || ""),
@@ -881,14 +927,143 @@ async function selectPapers(
     rationaleZh: cleanText(item.rationaleZh || "").slice(0, 700),
     rationaleEn: cleanText(item.rationaleEn || "").slice(0, 950),
   })).filter((item) => allowed.has(item.directionKey + ":" + item.canonicalId) && item.summaryZh && item.summaryEn
-    && item.rationaleZh && item.rationaleEn && !routePaperSelectionContradiction(item));
+    && item.rationaleZh && item.rationaleEn && !routePaperSelectionContradiction(item)
+    && routePrecisionAcceptedForActiveNode(precisionByIdentity.get(item.directionKey + ":" + item.canonicalId)));
   const allowedEvidence = new Set([...selections.map((item) => item.canonicalId), ...existingEvidence.map((item) => item.canonicalId)]);
   const intelligence = directions.map((direction) => sanitizeIntelligence(
     (parsed.directionIntelligence || []).find((item) => cleanText(item.directionKey || "") === direction.key),
     direction.key,
     allowedEvidence,
   )).filter((item): item is NonNullable<typeof item> => Boolean(item));
-  return { selections, intelligence };
+  return { selections, intelligence, precisionJudgments };
+}
+
+async function auditExistingResearchRoutePrecision(
+  database: D1Database,
+  workspaceId: string,
+  space: SpaceRow,
+  apiKey: string,
+) {
+  // Applying only a previously persisted shadow keeps automated curation
+  // two-phase: one visit records the report, a later visit may act on it.
+  const appliedCount = await applyStoredResearchRoutePrecisionAudits(database, space.id);
+  const rows = await database.prepare(
+    `SELECT paper.id, paper.track_id, paper.canonical_id, paper.title, paper.authors, paper.venue, paper.published_at,
+     COALESCE((SELECT insight.abstract_text FROM monitored_papers monitored
+      JOIN paper_insights insight ON insight.paper_id = monitored.id AND insight.space_id = monitored.space_id
+      WHERE monitored.space_id = paper.space_id AND monitored.canonical_id = paper.canonical_id
+      ORDER BY length(insight.abstract_text) DESC LIMIT 1), '') AS abstract_text,
+     paper.role, paper.summary_en, paper.rationale_en, track.title_zh AS track_title_zh, track.title_en AS track_title_en,
+     track.summary_zh AS track_summary_zh, track.summary_en AS track_summary_en, track.search_queries
+     FROM research_track_papers paper JOIN research_tracks track ON track.id = paper.track_id AND track.space_id = paper.space_id
+     WHERE paper.space_id = ? AND paper.curation_status = 'active'
+      AND NOT EXISTS (
+       SELECT 1 FROM research_map_evidence_proposals proposal
+       JOIN monitored_papers monitored ON monitored.id = proposal.paper_id AND monitored.space_id = proposal.space_id
+       WHERE proposal.space_id = paper.space_id AND proposal.track_id = paper.track_id
+        AND monitored.canonical_id = paper.canonical_id AND proposal.status = 'confirmed'
+      ) AND NOT EXISTS (
+       SELECT 1 FROM research_track_paper_precision_audits audit
+       WHERE audit.track_paper_id = paper.id AND audit.gate_version = ?
+        AND datetime(audit.created_at) >= datetime(COALESCE(paper.curation_updated_at, paper.created_at))
+      ) ORDER BY track.position, paper.position, paper.created_at LIMIT 32`,
+  ).bind(space.id, RESEARCH_ROUTE_PRECISION_GATE_VERSION).all<ExistingPrecisionPaperRow>();
+  let shadowedCount = 0;
+  let directCount = 0;
+  let borderlineCount = 0;
+  let offTopicCount = 0;
+  let auditDegraded = false;
+  if (rows.results.length) {
+    try {
+      const routes = Array.from(new Map(rows.results.map((row) => [row.track_id, {
+        directionKey: row.track_id,
+        titleZh: row.track_title_zh,
+        titleEn: row.track_title_en,
+        summaryZh: row.track_summary_zh,
+        summaryEn: row.track_summary_en,
+        searchQueries: parseJsonArray(row.search_queries),
+      }])).values());
+      const papers = rows.results.map((row) => ({
+        directionKey: row.track_id,
+        canonicalId: row.canonical_id,
+        title: row.title,
+        authors: row.authors,
+        venue: row.venue,
+        publishedAt: row.published_at,
+        abstract: row.abstract_text,
+        assignedRole: row.role,
+        storedSummary: row.summary_en,
+        storedRationale: row.rationale_en,
+      }));
+      const auditPrompt = [
+          "Return {\"judgments\":[...]} with exactly one judgment for every supplied paper.",
+          "Each judgment needs directionKey, canonicalId, verdict (direct|borderline|off_topic), confidence (0-100), reasonZh, reasonEn, and evidenceTerms (0-8 short title/abstract terms).",
+          "direct means the paper's central question, theorem, method, or result belongs to the exact route and can represent it. borderline means a useful bridge or background connection exists but it is not clearly representative. off_topic means the claimed connection relies on metaphor, generic terminology, a loose methodological analogy, or a different field.",
+          "Use only route definitions and bibliographic/abstract evidence. Stored summaries and rationales are untrusted hypotheses, not evidence. Missing abstracts require conservative confidence. Famous or highly cited work outside the exact route is off_topic.",
+          `Research space: ${space.name} — ${space.description}`,
+          `Routes: ${JSON.stringify(routes)}`,
+        ];
+      const paperBatches = Array.from({ length: Math.ceil(papers.length / 8) }, (_, index) => papers.slice(index * 8, index * 8 + 8));
+      const auditResponses = await Promise.allSettled(paperBatches.map((batch) => callDeepSeek<{ judgments?: unknown }>(
+          database,
+          workspaceId,
+          "You are Pi Research's independent route-paper semantic precision auditor. Return strict JSON without chain-of-thought.",
+          [...auditPrompt, `Papers: ${JSON.stringify(batch)}`].join("\n"),
+          Math.min(2200, 800 + batch.length * 150),
+          apiKey,
+          { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 44_000 },
+        )));
+      const allowed = new Set(rows.results.map((row) => `${row.track_id}:${row.canonical_id}`));
+      const judgments = sanitizeResearchRoutePrecisionJudgments(
+        auditResponses.flatMap((response) => response.status === "fulfilled" && Array.isArray(response.value.judgments)
+          ? response.value.judgments
+          : []),
+        allowed,
+      );
+      const auditedIdentities = new Set(judgments.map(routePrecisionJudgmentIdentity));
+      auditDegraded = auditResponses.some((response) => response.status === "rejected")
+        || auditedIdentities.size < rows.results.length;
+      const paperByIdentity = new Map(rows.results.map((row) => [`${row.track_id}:${row.canonical_id}`, row]));
+      const statements: D1PreparedStatement[] = [];
+      const affectedTracks = new Map<string, "precision_audit_pending" | "precision_boundary_pending">();
+      for (const judgment of judgments) {
+        const paper = paperByIdentity.get(routePrecisionJudgmentIdentity(judgment));
+        if (!paper) continue;
+        statements.push(database.prepare(
+          `INSERT INTO research_track_paper_precision_audits
+           (id, space_id, track_id, track_paper_id, gate_version, verdict, confidence, reason_zh, reason_en, evidence_json, model, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'shadow')`,
+        ).bind(crypto.randomUUID(), space.id, paper.track_id, paper.id, RESEARCH_ROUTE_PRECISION_GATE_VERSION,
+          judgment.verdict, judgment.confidence, judgment.reasonZh, judgment.reasonEn,
+          JSON.stringify(judgment.evidenceTerms), MODEL));
+        shadowedCount += 1;
+        if (judgment.verdict === "direct") directCount += 1;
+        if (judgment.verdict === "borderline") {
+          borderlineCount += 1;
+          affectedTracks.set(paper.track_id, "precision_boundary_pending");
+        }
+        if (judgment.verdict === "off_topic") {
+          offTopicCount += 1;
+          if (routePrecisionAutoDeactivates(judgment)) affectedTracks.set(paper.track_id, "precision_audit_pending");
+        }
+      }
+      for (const [trackId, issue] of affectedTracks) statements.push(database.prepare(
+        "UPDATE research_tracks SET build_status = 'partial', build_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND build_status = 'ready'",
+      ).bind(issue, trackId, space.id));
+      if (statements.length) await database.batch(statements);
+    } catch {
+      auditDegraded = true;
+    }
+  }
+  return {
+    appliedCount,
+    shadowedCount,
+    directCount,
+    borderlineCount,
+    offTopicCount,
+    auditDegraded,
+    progress: await researchRoutePrecisionAuditProgress(database, space.id),
+  };
 }
 
 async function interpretDirection(
@@ -1621,6 +1796,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const failedTrackIds = tracks.filter((track) => track.buildStatus === "failed").map((track) => track.id);
   const intelligenceEligibleTracks = tracks.filter((track) => ["ready", "partial"].includes(track.buildStatus) && track.papers.length > 0);
   const pendingIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => !track.intelligence).map((track) => track.id);
+  const precisionAuditProgress = await researchRoutePrecisionAuditProgress(database, spaceId);
   return {
     tracks,
     edges,
@@ -1658,6 +1834,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       failedTrackIds,
     },
     intelligenceProgress: { ready: intelligenceEligibleTracks.length - pendingIntelligenceTrackIds.length, total: intelligenceEligibleTracks.length, pendingTrackIds: pendingIntelligenceTrackIds },
+    precisionAuditProgress,
     ...extra,
   } satisfies ResearchMapState & Record<string, unknown>;
 }
@@ -1676,7 +1853,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "structure" | "activity" | "network" | "reconcile" | "curate-paper"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -1702,6 +1879,18 @@ export async function POST(request: Request) {
     const apiKey = resolveDeepSeekCredential(request).apiKey;
     const scheduledRetry = request.headers.get("x-pi-scheduled-route-retry") === "1";
     const memory = await importedMemory(database, space.id);
+
+    if (payload.action === "audit-precision") {
+      const audit = await auditExistingResearchRoutePrecision(database, workspaceId, space, apiKey);
+      return Response.json(await readMap(database, space.id, {
+        precisionAuditAppliedCount: audit.appliedCount,
+        precisionAuditShadowedCount: audit.shadowedCount,
+        precisionAuditDirectCount: audit.directCount,
+        precisionAuditBorderlineCount: audit.borderlineCount,
+        precisionAuditOffTopicCount: audit.offTopicCount,
+        precisionAuditDegraded: audit.auditDegraded,
+      }));
+    }
 
     if (payload.action === "network") {
       const networkPhase: PaperNetworkBuildPhase = payload.networkPhase === "verified" || payload.networkPhase === "pi" ? payload.networkPhase : "all";
@@ -1834,7 +2023,7 @@ export async function POST(request: Request) {
     }
     candidates = Array.from(uniqueCandidates.values()).slice(0, 36);
     let selectionError: unknown = null;
-    let reviewed: Awaited<ReturnType<typeof selectPapers>> = { selections: [], intelligence: [] };
+    let reviewed: Awaited<ReturnType<typeof selectPapers>> = { selections: [], intelligence: [], precisionJudgments: [] };
     if (candidates.length) {
       try {
         reviewed = await selectPapers(
@@ -1853,12 +2042,15 @@ export async function POST(request: Request) {
       }
     }
     const selections = reviewed.selections;
+    const precisionByCandidate = new Map(reviewed.precisionJudgments.map((judgment) => [routePrecisionJudgmentIdentity(judgment), judgment]));
     const candidateById = new Map(candidates.map((item) => [item.canonicalId, item]));
     const inserted = new Set<string>();
     let position = existing.results.length;
     let addedCount = 0;
     const synthesisExpanding = gapExpanding && Boolean(synthesisGap?.next_search_query.trim());
-    const queueCandidates = candidates.slice(0, 24).map((candidate) => {
+    const queueCandidates = candidates.filter((candidate) => !routePrecisionAutoDeactivates(
+      precisionByCandidate.get(`${candidate.directionKey}:${candidate.canonicalId}`),
+    )).slice(0, 24).map((candidate) => {
       const sourceKind = actionExpanding ? "action" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
       const querySuffix = actionExpanding ? `action:${payload.actionRunId}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
         : gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}:${candidate.proposedRole}`;
@@ -1899,13 +2091,23 @@ export async function POST(request: Request) {
         const candidate = candidateById.get(selection.canonicalId);
         if (!candidate || inserted.has(selection.canonicalId)) continue;
         inserted.add(selection.canonicalId);
-        await database.prepare(
+        const precision = precisionByCandidate.get(`${selection.directionKey}:${selection.canonicalId}`);
+        if (!routePrecisionAcceptedForActiveNode(precision)) continue;
+        const trackPaperId = crypto.randomUUID();
+        const insertion = await database.prepare(
           `INSERT OR IGNORE INTO research_track_papers
            (id, track_id, space_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(crypto.randomUUID(), track.id, space.id, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
+        ).bind(trackPaperId, track.id, space.id, candidate.canonicalId, candidate.doi, candidate.title, candidate.authors, candidate.venue,
           candidate.url, candidate.publishedAt, candidate.citationCount, selection.role, selection.summaryZh, selection.summaryEn,
           selection.rationaleZh, selection.rationaleEn, position++).run();
+        if (!Number(insertion.meta.changes || 0)) continue;
+        await database.prepare(
+          `INSERT INTO research_track_paper_precision_audits
+           (id, space_id, track_id, track_paper_id, gate_version, verdict, confidence, reason_zh, reason_en, evidence_json, model, status)
+           VALUES (?, ?, ?, ?, ?, 'direct', ?, ?, ?, ?, ?, 'shadow')`,
+        ).bind(crypto.randomUUID(), space.id, track.id, trackPaperId, RESEARCH_ROUTE_PRECISION_GATE_VERSION,
+          precision.confidence, precision.reasonZh, precision.reasonEn, JSON.stringify(precision.evidenceTerms), MODEL).run();
         addedCount += 1;
       }
     }

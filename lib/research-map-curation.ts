@@ -5,6 +5,7 @@ export type ResearchTrackPaperCurationReasonCode =
   | "weak_evidence"
   | "misleading_role"
   | "selection_contradiction"
+  | "semantic_mismatch"
   | "restored";
 
 export type ResearchTrackPaperCurationResult = {
@@ -30,6 +31,7 @@ const REASON_COPY: Record<ResearchTrackPaperCurationReasonCode, { zh: string; en
   weak_evidence: { zh: "现有摘要或结构化证据不足以支持它作为路线代表作。", en: "Available abstract or structured evidence is too weak for a representative route node." },
   misleading_role: { zh: "当前证据无法支持它在路线中的阶段定位。", en: "Current evidence does not support this paper's assigned stage in the route." },
   selection_contradiction: { zh: "模型选择结果与其理由矛盾：理由明确表示该论文不相关或不应纳入。", en: "The model selection contradicted its rationale, which explicitly said the paper was unrelated or should not be included." },
+  semantic_mismatch: { zh: "独立语义复核确认该论文与这条研究路线存在明确主题错配。", en: "An independent semantic review found a clear topical mismatch with this research route." },
   restored: { zh: "人工复核后恢复为活跃路线节点。", en: "Restored as an active route node after review." },
 };
 
@@ -102,6 +104,7 @@ export async function curateResearchTrackPaper(database: D1Database, input: {
   reasonCode?: ResearchTrackPaperCurationReasonCode;
   source?: string;
   actorKind?: "user" | "system";
+  auditEvidence?: Array<Record<string, unknown>>;
 }): Promise<ResearchTrackPaperCurationResult> {
   const row = await database.prepare(
     `SELECT tp.id, tp.track_id, tp.canonical_id, tp.title, tp.rationale_zh, tp.rationale_en,
@@ -130,6 +133,7 @@ export async function curateResearchTrackPaper(database: D1Database, input: {
     { kind: "route", titleZh: row.track_title_zh, titleEn: row.track_title_en },
     { kind: "paper", canonicalId: row.canonical_id, title: row.title },
     ...(row.rationale_en || row.rationale_zh ? [{ kind: "selection_rationale", zh: row.rationale_zh, en: row.rationale_en }] : []),
+    ...(input.auditEvidence || []).slice(0, 6),
   ]);
 
   await database.batch([

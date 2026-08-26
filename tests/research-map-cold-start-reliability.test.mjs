@@ -152,7 +152,8 @@ test("cold-start API code persists degraded state and queues retrieved candidate
   assert.match(route, /ORDER BY route_candidate DESC/);
   assert.match(route, /researchTrackSourcePlan/);
   assert.match(route, /researchTrackTopicalFit/);
-  assert.match(route, /const queueCandidates = candidates\.slice\(0, 24\)/);
+  assert.match(route, /const queueCandidates = candidates\.filter\(\(candidate\) => !routePrecisionAutoDeactivates/);
+  assert.match(route, /\.slice\(0, 24\)\.map\(\(candidate\) =>/);
   assert.match(route, /build_status = \?, build_attempt_count = \?, build_source_status_json = \?, build_error = \?, build_retry_at = \?/);
   assert.match(route, /resolveResearchTrackBuildStatus/);
   assert.doesNotMatch(route, /UPDATE research_tracks SET expansion_count = 0, updated_at/);
