@@ -122,6 +122,7 @@ async function sourceClaims(database: D1Database, spaceId: string, trackId: stri
        OR (
         EXISTS (SELECT 1 FROM research_track_papers route_paper
          WHERE route_paper.space_id = claim.space_id AND route_paper.track_id = ?
+          AND route_paper.curation_status = 'active'
           AND (route_paper.canonical_id = paper.canonical_id
            OR (COALESCE(route_paper.doi, '') != '' AND lower(route_paper.doi) = lower(COALESCE(paper.doi, '')))
            OR lower(trim(route_paper.title)) = lower(trim(paper.title))))

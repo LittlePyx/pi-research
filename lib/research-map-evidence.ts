@@ -352,6 +352,11 @@ export async function reconcileConfirmedResearchMapEvidence(
         SELECT 1 FROM research_track_papers tp
         WHERE tp.space_id = ep.space_id AND tp.track_id = ep.track_id AND tp.canonical_id = p.canonical_id
        )
+       OR EXISTS (
+        SELECT 1 FROM research_track_papers tp
+        WHERE tp.space_id = ep.space_id AND tp.track_id = ep.track_id AND tp.canonical_id = p.canonical_id
+         AND tp.curation_status = 'deactivated'
+       )
        OR NOT EXISTS (
         SELECT 1 FROM research_map_changes c
         WHERE c.space_id = ep.space_id AND c.track_id = ep.track_id AND c.paper_id = ep.paper_id
@@ -378,7 +383,11 @@ export async function reconcileConfirmedResearchMapEvidence(
           summary_zh = CASE WHEN excluded.summary_zh <> '' THEN excluded.summary_zh ELSE research_track_papers.summary_zh END,
           summary_en = CASE WHEN excluded.summary_en <> '' THEN excluded.summary_en ELSE research_track_papers.summary_en END,
           rationale_zh = CASE WHEN excluded.rationale_zh <> '' THEN excluded.rationale_zh ELSE research_track_papers.rationale_zh END,
-          rationale_en = CASE WHEN excluded.rationale_en <> '' THEN excluded.rationale_en ELSE research_track_papers.rationale_en END`,
+          rationale_en = CASE WHEN excluded.rationale_en <> '' THEN excluded.rationale_en ELSE research_track_papers.rationale_en END,
+          curation_status = 'active', curation_reason_code = 'restored',
+          curation_reason_zh = '用户确认后恢复为正式路线证据。',
+          curation_reason_en = 'Restored as formal route evidence after user confirmation.',
+          curation_source = 'user_evidence_confirmation', curation_updated_at = CURRENT_TIMESTAMP`,
       ).bind(
         `proposal-track-paper:${row.id}`, row.track_id, spaceId, row.canonical_id, row.doi, row.paper_title,
         row.authors, row.venue, row.url, row.published_at, row.citation_count, normalizedRole(row.map_role),
@@ -460,7 +469,11 @@ export function reconcileResearchMapEvidenceStatements(
        ON CONFLICT(track_id, canonical_id) DO UPDATE SET role = excluded.role,
         summary_zh = CASE WHEN excluded.summary_zh <> '' THEN excluded.summary_zh ELSE research_track_papers.summary_zh END,
         summary_en = CASE WHEN excluded.summary_en <> '' THEN excluded.summary_en ELSE research_track_papers.summary_en END,
-        rationale_zh = excluded.rationale_zh, rationale_en = excluded.rationale_en`,
+        rationale_zh = excluded.rationale_zh, rationale_en = excluded.rationale_en,
+        curation_status = 'active', curation_reason_code = 'restored',
+        curation_reason_zh = '用户确认后恢复为正式路线证据。',
+        curation_reason_en = 'Restored as formal route evidence after user confirmation.',
+        curation_source = 'user_evidence_confirmation', curation_updated_at = CURRENT_TIMESTAMP`,
       `proposal-track-paper:${crypto.randomUUID()}`,
     ),
     bind(
@@ -570,7 +583,11 @@ export async function promoteResearchMapEvidence(
           summary_zh = CASE WHEN excluded.summary_zh <> '' THEN excluded.summary_zh ELSE research_track_papers.summary_zh END,
           summary_en = CASE WHEN excluded.summary_en <> '' THEN excluded.summary_en ELSE research_track_papers.summary_en END,
           rationale_zh = CASE WHEN excluded.rationale_zh <> '' THEN excluded.rationale_zh ELSE research_track_papers.rationale_zh END,
-          rationale_en = CASE WHEN excluded.rationale_en <> '' THEN excluded.rationale_en ELSE research_track_papers.rationale_en END`,
+          rationale_en = CASE WHEN excluded.rationale_en <> '' THEN excluded.rationale_en ELSE research_track_papers.rationale_en END,
+          curation_status = 'active', curation_reason_code = 'restored',
+          curation_reason_zh = '用户确认后恢复为正式路线证据。',
+          curation_reason_en = 'Restored as formal route evidence after user confirmation.',
+          curation_source = 'user_evidence_confirmation', curation_updated_at = CURRENT_TIMESTAMP`,
       ).bind(
         crypto.randomUUID(), row.track_id, spaceId, row.canonical_id, row.doi, row.paper_title, row.authors,
         row.venue, row.url, row.published_at, row.citation_count, normalizedRole(row.map_role), row.summary_zh,

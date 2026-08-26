@@ -4057,13 +4057,29 @@ main { min-width: 0; }
 .v2-route-provenance.user_confirmed { background: #e4efe8; color: #326148; }
 .v2-route-evidence-chain article h3 { margin: 8px 0 0; color: #34463c; font: 400 15px/1.4 Georgia,serif; }
 .v2-route-evidence-chain article p { margin: 8px 0 0; color: #68736c; display: -webkit-box; overflow: hidden; font-size: 11px; line-height: 1.55; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
-.v2-route-evidence-chain article footer { margin-top: 11px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.v2-route-evidence-chain article footer { margin-top: 11px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
 .v2-route-evidence-chain article footer button { padding: 0; border: 0; background: transparent; color: #416650; font-size: 10px; font-weight: 760; }
+.v2-route-evidence-chain article footer button.v2-route-node-deactivate { margin-left: auto; color: #916052; }
 .v2-route-evidence-chain article footer a { color: #315d48; font-size: 10px; font-weight: 760; }
 .v2-route-chain-empty { min-height: 105px; padding: 15px; border: 1px dashed #cbd6ce; border-radius: 9px; color: #718078; display: flex; align-items: center; gap: 10px; }
 .v2-route-chain-empty > span { font-size: 18px; }
 .v2-route-chain-empty p { margin: 0 auto 0 0; font-size: 11px; }
 .v2-route-chain-empty button { border: 0; background: transparent; color: #315d48; font-size: 10px; font-weight: 760; }
+.v2-route-deactivated-nodes { margin: 0 20px 20px; border: 1px solid #dccfc7; border-radius: 9px; background: #faf6f2; }
+.v2-route-deactivated-nodes > summary { padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; }
+.v2-route-deactivated-nodes > summary::-webkit-details-marker { display: none; }
+.v2-route-deactivated-nodes > summary span small,.v2-route-deactivated-nodes > summary span strong { display: block; }
+.v2-route-deactivated-nodes > summary small { color: #98796b; font-size: 8px; font-weight: 800; letter-spacing: .08em; }
+.v2-route-deactivated-nodes > summary strong { margin-top: 3px; color: #6e5044; font-size: 12px; }
+.v2-route-deactivated-nodes > summary b { min-width: 24px; height: 24px; border-radius: 50%; background: #eadbd2; color: #795748; display: grid; place-items: center; font-size: 10px; }
+.v2-route-deactivated-nodes > div { padding: 0 13px 13px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+.v2-route-deactivated-nodes article { padding: 13px; border: 1px solid #e5d9d1; border-radius: 8px; background: rgba(255,255,255,.65); }
+.v2-route-deactivated-nodes article header,.v2-route-deactivated-nodes article footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.v2-route-deactivated-nodes article header span { color: #8b5f50; font-size: 9px; font-weight: 800; }
+.v2-route-deactivated-nodes article header small,.v2-route-deactivated-nodes article footer span { color: #927d74; font-size: 9px; }
+.v2-route-deactivated-nodes article h3 { margin: 9px 0 0; color: #5f4b43; font: 400 14px/1.4 Georgia,serif; }
+.v2-route-deactivated-nodes article p { margin: 7px 0 10px; color: #7b685f; font-size: 10px; line-height: 1.55; }
+.v2-route-deactivated-nodes article footer button { min-height: 28px; padding: 0 9px; border: 1px solid #bfa79b; border-radius: 5px; background: #fff; color: #74564a; font-size: 9px; font-weight: 800; }
 
 .v2-route-evidence-status { display: flex; gap: 7px; }
 .v2-route-evidence-status span { min-width: 70px; padding: 7px 9px; border-radius: 7px; background: #edf3ef; color: #647268; font-size: 9px; text-align: center; }
@@ -4144,6 +4160,7 @@ main { min-width: 0; }
   .v2-route-assessment-cards article.lead { grid-column: auto; }
   .v2-route-evidence-chain > section { grid-template-columns: 1fr; }
   .v2-route-evidence-chain > section > div { padding: 0 0 0 12px; }
+  .v2-route-deactivated-nodes > div { grid-template-columns: 1fr; }
   .v2-route-gap-primary { padding: 20px; }
   .v2-route-gap-primary footer { align-items: stretch; flex-direction: column; }
   .v2-route-agenda-grid { grid-template-columns: 1fr; }

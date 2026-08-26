@@ -55,7 +55,7 @@ async function resolveEngagementTrack(database: D1Database, spaceId: string, pap
     `SELECT t.id, t.title_zh, t.title_en FROM monitored_papers p
      JOIN research_track_papers tp ON tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
      JOIN research_tracks t ON t.id = tp.track_id AND t.space_id = tp.space_id
-     WHERE p.id = ? AND p.space_id = ? ORDER BY tp.position LIMIT 1`,
+     WHERE p.id = ? AND p.space_id = ? AND tp.curation_status = 'active' ORDER BY tp.position LIMIT 1`,
   ).bind(paperId, spaceId).first<EngagementTrack>();
   if (formal) return formal;
   const proposal = await database.prepare(
@@ -148,7 +148,7 @@ async function refreshResearchLoopAfterFeedback(database: D1Database, spaceId: s
      WHERE space_id = ? AND id IN (
        SELECT tp.track_id FROM research_track_papers tp
        JOIN monitored_papers mp ON mp.space_id = tp.space_id AND mp.canonical_id = tp.canonical_id
-       WHERE mp.id = ? AND mp.space_id = ?
+       WHERE mp.id = ? AND mp.space_id = ? AND tp.curation_status = 'active'
      )`,
   ).bind(spaceId, paperId, spaceId).run();
 }

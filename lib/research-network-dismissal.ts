@@ -80,7 +80,7 @@ export function researchNetworkDismissalStatements(
         SELECT DISTINCT seed.track_id
         FROM research_network_candidate_edges edge
         JOIN research_track_papers seed ON seed.id = edge.seed_paper_id AND seed.space_id = edge.space_id
-        WHERE edge.candidate_id = ? AND edge.space_id = ?
+        WHERE edge.candidate_id = ? AND edge.space_id = ? AND seed.curation_status = 'active'
        ) AND ${dismissedCandidateExists}`,
     ).bind(spaceId, candidateId, spaceId, candidateId, spaceId),
     database.prepare(

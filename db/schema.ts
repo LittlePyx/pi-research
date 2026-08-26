@@ -1093,12 +1093,44 @@ export const researchTrackPapers = sqliteTable(
     summaryEn: text("summary_en").notNull().default(""),
     rationaleZh: text("rationale_zh").notNull().default(""),
     rationaleEn: text("rationale_en").notNull().default(""),
+    curationStatus: text("curation_status").notNull().default("active"),
+    curationReasonCode: text("curation_reason_code"),
+    curationReasonZh: text("curation_reason_zh").notNull().default(""),
+    curationReasonEn: text("curation_reason_en").notNull().default(""),
+    curationSource: text("curation_source").notNull().default(""),
+    curationEvidenceJson: text("curation_evidence_json").notNull().default("[]"),
+    curationUpdatedAt: text("curation_updated_at"),
     position: integer("position").notNull().default(0),
     createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
   (table) => [
     uniqueIndex("idx_research_track_papers_track_canonical").on(table.trackId, table.canonicalId),
     index("idx_research_track_papers_track_position").on(table.trackId, table.position),
+    index("idx_research_track_papers_space_curation").on(table.spaceId, table.curationStatus, table.trackId),
+    check("research_track_papers_curation_status_check", sql`${table.curationStatus} in ('active', 'deactivated')`),
+  ],
+);
+
+export const researchTrackPaperCurationEvents = sqliteTable(
+  "research_track_paper_curation_events",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    trackPaperId: text("track_paper_id").notNull().references(() => researchTrackPapers.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    reasonZh: text("reason_zh").notNull().default(""),
+    reasonEn: text("reason_en").notNull().default(""),
+    source: text("source").notNull().default(""),
+    actorKind: text("actor_kind").notNull().default("system"),
+    evidenceJson: text("evidence_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    index("idx_track_paper_curation_events_paper_created").on(table.trackPaperId, table.createdAt),
+    index("idx_track_paper_curation_events_space_created").on(table.spaceId, table.createdAt),
+    check("track_paper_curation_events_action_check", sql`${table.action} in ('deactivated', 'reactivated')`),
   ],
 );
 

@@ -6,6 +6,7 @@ import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
 import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
+import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSelectionContradiction, type ResearchTrackPaperCurationReasonCode, type ResearchTrackPaperCurationStatus } from "../../../lib/research-map-curation";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -59,6 +60,13 @@ type TrackPaperRow = {
   position: number;
   created_at?: string;
   provenance: "system_curated" | "user_confirmed";
+  curation_status: ResearchTrackPaperCurationStatus;
+  curation_reason_code: string | null;
+  curation_reason_zh: string;
+  curation_reason_en: string;
+  curation_source: string;
+  curation_evidence_json: string;
+  curation_updated_at: string | null;
 };
 type PaperEdgeRow = {
   id: string;
@@ -872,7 +880,8 @@ async function selectPapers(
     summaryEn: cleanText(item.summaryEn || "").slice(0, 1100),
     rationaleZh: cleanText(item.rationaleZh || "").slice(0, 700),
     rationaleEn: cleanText(item.rationaleEn || "").slice(0, 950),
-  })).filter((item) => allowed.has(item.directionKey + ":" + item.canonicalId) && item.summaryZh && item.summaryEn && item.rationaleZh && item.rationaleEn);
+  })).filter((item) => allowed.has(item.directionKey + ":" + item.canonicalId) && item.summaryZh && item.summaryEn
+    && item.rationaleZh && item.rationaleEn && !routePaperSelectionContradiction(item));
   const allowedEvidence = new Set([...selections.map((item) => item.canonicalId), ...existingEvidence.map((item) => item.canonicalId)]);
   const intelligence = directions.map((direction) => sanitizeIntelligence(
     (parsed.directionIntelligence || []).find((item) => cleanText(item.directionKey || "") === direction.key),
@@ -939,7 +948,23 @@ function toPaper(row: TrackPaperRow): ResearchTrackPaper {
     rationaleEn: row.rationale_en,
     position: row.position,
     provenance: row.provenance,
+    curationStatus: row.curation_status === "deactivated" ? "deactivated" : "active",
+    curationReasonCode: row.curation_reason_code,
+    curationReasonZh: row.curation_reason_zh,
+    curationReasonEn: row.curation_reason_en,
+    curationSource: row.curation_source,
+    curationEvidence: parseJsonRecords(row.curation_evidence_json),
+    curationUpdatedAt: row.curation_updated_at,
   };
+}
+
+function parseJsonRecords(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
+  } catch {
+    return [];
+  }
 }
 
 function toPaperEdge(row: PaperEdgeRow): ResearchPaperEdge {
@@ -1263,7 +1288,7 @@ async function rebuildPaperNetwork(
 ) {
   const [allPapers, state] = await Promise.all([
     database.prepare(
-      "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, position, created_at FROM research_track_papers WHERE space_id = ? ORDER BY (SELECT position FROM research_tracks WHERE id = research_track_papers.track_id), position, created_at",
+      "SELECT id, track_id, canonical_id, doi, title, authors, venue, url, published_at, citation_count, role, summary_zh, summary_en, rationale_zh, rationale_en, curation_status, curation_reason_code, curation_reason_zh, curation_reason_en, curation_source, curation_evidence_json, curation_updated_at, position, created_at FROM research_track_papers WHERE space_id = ? AND curation_status = 'active' ORDER BY (SELECT position FROM research_tracks WHERE id = research_track_papers.track_id), position, created_at",
     ).bind(space.id).all<TrackPaperRow>(),
     database.prepare("SELECT status, built_paper_count, model, sources_json, error, updated_at FROM research_paper_network_states WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<PaperNetworkStateRow>(),
@@ -1447,7 +1472,8 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     database.prepare(
       `SELECT tp.id, tp.track_id, tp.canonical_id, tp.doi, tp.title, tp.authors, tp.venue, tp.url,
        tp.published_at, tp.citation_count, tp.role, tp.summary_zh, tp.summary_en, tp.rationale_zh,
-       tp.rationale_en, tp.position, tp.created_at,
+       tp.rationale_en, tp.curation_status, tp.curation_reason_code, tp.curation_reason_zh, tp.curation_reason_en,
+       tp.curation_source, tp.curation_evidence_json, tp.curation_updated_at, tp.position, tp.created_at,
        CASE WHEN EXISTS (
         SELECT 1 FROM research_map_evidence_proposals ep
         JOIN monitored_papers mp ON mp.id = ep.paper_id AND mp.space_id = ep.space_id
@@ -1488,7 +1514,11 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const discoveryEffectsByTrack = new Map(discoveryEffectsResult.results.map((row) => [row.track_id, row]));
   const latestChangeByTrack = new Map(latestChangesResult.results.map((row) => [row.track_id, row]));
   const papersByTrack = new Map<string, ResearchTrackPaper[]>();
-  for (const row of papersResult.results) papersByTrack.set(row.track_id, [...(papersByTrack.get(row.track_id) || []), toPaper(row)]);
+  const deactivatedPapersByTrack = new Map<string, ResearchTrackPaper[]>();
+  for (const row of papersResult.results) {
+    const destination = row.curation_status === "deactivated" ? deactivatedPapersByTrack : papersByTrack;
+    destination.set(row.track_id, [...(destination.get(row.track_id) || []), toPaper(row)]);
+  }
   const heatByTrack = new Map(tracksResult.results.map((row) => [row.id, heatEvidence(papersByTrack.get(row.id) || [])]));
   const maxHeatRaw = Math.max(0, ...Array.from(heatByTrack.values()).map((item) => item.raw));
   const tracks: ResearchTrack[] = tracksResult.results.map((row) => ({
@@ -1565,6 +1595,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     intelligence: parseStoredIntelligence(row),
     updatedAt: row.updated_at,
     papers: papersByTrack.get(row.id) || [],
+    deactivatedPapers: deactivatedPapersByTrack.get(row.id) || [],
   }));
   const edges: ResearchTrackEdge[] = edgesResult.results.map((row) => ({
     id: row.id,
@@ -1575,10 +1606,12 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     relationshipEn: row.relationship_en,
     strength: row.strength,
   }));
-  const paperEdges = paperEdgesResult.results.map(toPaperEdge);
-  const uniquePaperCount = new Set(papersResult.results.map((paper) => paper.canonical_id)).size;
+  const activePaperIds = new Set(papersResult.results.filter((paper) => paper.curation_status !== "deactivated").map((paper) => paper.id));
+  const activePaperRows = papersResult.results.filter((paper) => paper.curation_status !== "deactivated");
+  const paperEdges = paperEdgesResult.results.filter((edge) => activePaperIds.has(edge.source_paper_id) && activePaperIds.has(edge.target_paper_id)).map(toPaperEdge);
+  const uniquePaperCount = new Set(activePaperRows.map((paper) => paper.canonical_id)).size;
   const storedNetworkState = paperNetworkState ? parseStoredPaperNetworkState(paperNetworkState.sources_json) : { sources: [], coverage: null };
-  const currentPaperRevision = researchPaperSetRevision(papersResult.results.map(toCoverageCandidate));
+  const currentPaperRevision = researchPaperSetRevision(activePaperRows.map(toCoverageCandidate));
   const storedCoverage = storedNetworkState.coverage;
   const needsStructure = tracks.length > 1 && !edges.length;
   const retryableTrackIds = tracks.filter((track) => track.buildStatus === "retryable" && track.buildAttemptCount < MAX_RESEARCH_TRACK_BUILD_ATTEMPTS).map((track) => track.id);
@@ -1597,7 +1630,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       paperCount: uniquePaperCount,
       totalPaperCount: uniquePaperCount,
       builtPaperCount: paperNetworkState?.built_paper_count || 0,
-      coveredPaperIds: storedCoverage?.coveredPaperIds || [],
+      coveredPaperIds: (storedCoverage?.coveredPaperIds || []).filter((paperId) => activePaperIds.has(paperId)),
       coveredPaperHash: storedCoverage?.coveredPaperHash || "",
       coverageRevision: storedCoverage?.coverageRevision || 0,
       coverageCursor: storedCoverage?.nextCursor || 0,
@@ -1643,13 +1676,28 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "structure" | "activity" | "network" | "reconcile"; trackId?: string; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "structure" | "activity" | "network" | "reconcile" | "curate-paper"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
     const { database, space, user } = context;
     if (payload.action === "read") return Response.json(await readMap(database, space.id, { cached: true }));
+    if (payload.action === "curate-paper") {
+      const trackId = payload.trackId?.trim() || "";
+      const paperId = payload.paperId?.trim() || "";
+      if (!trackId || !paperId || !["active", "deactivated"].includes(payload.curationStatus || "")) {
+        return Response.json({ error: "trackId, paperId, and curationStatus are required" }, { status: 400 });
+      }
+      const result = await curateResearchTrackPaper(database, {
+        spaceId: space.id,
+        trackId,
+        paperId,
+        status: payload.curationStatus as ResearchTrackPaperCurationStatus,
+        reasonCode: payload.curationReasonCode,
+      });
+      return Response.json(await readMap(database, space.id, { curationChanged: result.changed, curatedPaperId: paperId }));
+    }
     const workspaceId = user.userId.replace(/^anonymous:/, "");
     const apiKey = resolveDeepSeekCredential(request).apiKey;
     const scheduledRetry = request.headers.get("x-pi-scheduled-route-retry") === "1";
@@ -1744,7 +1792,7 @@ export async function POST(request: Request) {
       depthScore: track.depth_score,
       supportScore: track.support_score,
     };
-    const existing = await database.prepare(
+    const [existing, allExistingIds] = await Promise.all([database.prepare(
       `SELECT tp.canonical_id, tp.title, tp.authors, tp.venue, tp.published_at, tp.citation_count, tp.role,
        tp.summary_zh, tp.summary_en, tp.rationale_zh, tp.rationale_en,
        CASE WHEN EXISTS (
@@ -1753,9 +1801,11 @@ export async function POST(request: Request) {
         WHERE ep.space_id = tp.space_id AND ep.track_id = tp.track_id
          AND mp.canonical_id = tp.canonical_id AND ep.status = 'confirmed'
        ) THEN 'user_confirmed' ELSE 'system_curated' END AS provenance
-       FROM research_track_papers tp WHERE tp.track_id = ? ORDER BY tp.position`,
+       FROM research_track_papers tp WHERE tp.track_id = ? AND tp.curation_status = 'active' ORDER BY tp.position`,
     )
-      .bind(track.id).all<ExistingPaperEvidence>();
+      .bind(track.id).all<ExistingPaperEvidence>(), database.prepare(
+        "SELECT canonical_id FROM research_track_papers WHERE track_id = ?",
+      ).bind(track.id).all<{ canonical_id: string }>()]);
     const existingEvidence = existing.results.map((item) => ({
       canonicalId: item.canonical_id, title: item.title, authors: item.authors, venue: item.venue, publishedAt: item.published_at,
       citations: item.citation_count, role: item.role, summaryZh: item.summary_zh, summaryEn: item.summary_en, rationaleZh: item.rationale_zh, rationaleEn: item.rationale_en,
@@ -1769,7 +1819,7 @@ export async function POST(request: Request) {
     }
     const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14 : ((track.expansion_count + 1) * 16) % 608;
     const discovery = await discoverCandidates([direction], offset, hydrating ? 14 : 16, hydrating ? track.build_attempt_count : 0);
-    const existingIds = new Set(existing.results.map((row) => row.canonical_id));
+    const existingIds = new Set(allExistingIds.results.map((row) => row.canonical_id));
     let candidates = discovery.candidates.filter((item) => !existingIds.has(item.canonicalId));
     const sourceStatuses = [...discovery.sources];
     if (hydrating && (candidates.length < 8 || discovery.errors.length > 0)) {
@@ -1930,6 +1980,9 @@ export async function POST(request: Request) {
       gapQuery: targetedExpanding ? targetedQuery : undefined,
     }));
   } catch (error) {
+    if (error instanceof ResearchTrackPaperCurationError) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.code === "not_found" ? 404 : 409 });
+    }
     return Response.json({ error: error instanceof Error ? error.message : "Unable to build the research map" }, { status: 502 });
   }
 }

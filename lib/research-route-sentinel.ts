@@ -81,12 +81,19 @@ export async function recordResearchRouteSentinel(database: D1Database, spaceId:
          AND coverage.horizon = paper.horizon AND coverage.source_key = candidate.source_key
          AND coverage.query_key = candidate.query_key
         WHERE candidate.space_id = ? AND COALESCE(coverage.route_id, '') <> ''
+         AND NOT EXISTS (
+          SELECT 1 FROM research_track_papers inactive_route_paper
+          WHERE inactive_route_paper.space_id = candidate.space_id
+           AND inactive_route_paper.track_id = coverage.route_id
+           AND inactive_route_paper.canonical_id = paper.canonical_id
+           AND inactive_route_paper.curation_status = 'deactivated'
+         )
        )
        SELECT
         (SELECT COUNT(*) FROM research_tracks track WHERE track.space_id = ? AND track.build_status = 'ready'
-         AND NOT EXISTS (SELECT 1 FROM research_track_papers paper WHERE paper.space_id = track.space_id AND paper.track_id = track.id)) AS ready_zero_count,
+         AND NOT EXISTS (SELECT 1 FROM research_track_papers paper WHERE paper.space_id = track.space_id AND paper.track_id = track.id AND paper.curation_status = 'active')) AS ready_zero_count,
         (SELECT COUNT(*) FROM research_tracks track WHERE track.space_id = ? AND track.build_status = 'partial'
-         AND NOT EXISTS (SELECT 1 FROM research_track_papers paper WHERE paper.space_id = track.space_id AND paper.track_id = track.id)) AS partial_zero_count,
+         AND NOT EXISTS (SELECT 1 FROM research_track_papers paper WHERE paper.space_id = track.space_id AND paper.track_id = track.id AND paper.curation_status = 'active')) AS partial_zero_count,
         (SELECT COUNT(*) FROM research_tracks WHERE space_id = ? AND build_status = 'retryable') AS retryable_count,
         (SELECT COUNT(*) FROM research_tracks WHERE space_id = ? AND build_status = 'retryable'
          AND (build_retry_at IS NULL OR datetime(build_retry_at) <= CURRENT_TIMESTAMP)) AS retryable_due_count,

@@ -310,7 +310,7 @@ async function actionEvidence(database: D1Database, action: ActionContextRow) {
        LEFT JOIN paper_insights insight ON insight.paper_id = paper.id AND insight.space_id = paper.space_id
        LEFT JOIN paper_evidence_documents document ON document.paper_id = paper.id AND document.space_id = paper.space_id
        LEFT JOIN research_track_papers formal ON formal.space_id = paper.space_id AND formal.track_id = ?
-        AND formal.canonical_id = paper.canonical_id
+        AND formal.canonical_id = paper.canonical_id AND formal.curation_status = 'active'
        LEFT JOIN research_map_evidence_proposals proposal ON proposal.space_id = paper.space_id
         AND proposal.track_id = ? AND proposal.paper_id = paper.id AND proposal.status = 'confirmed'
        WHERE paper.space_id = ? AND (formal.id IS NOT NULL OR proposal.id IS NOT NULL OR insight.research_problem_id = ?)

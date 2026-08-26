@@ -308,7 +308,7 @@ test("Today route provenance falls back only to route sources seen before review
   const sqlite = new DatabaseSync(":memory:");
   try {
     sqlite.exec(`
-      CREATE TABLE monitored_papers (id TEXT PRIMARY KEY, space_id TEXT, horizon TEXT);
+      CREATE TABLE monitored_papers (id TEXT PRIMARY KEY, space_id TEXT, horizon TEXT, canonical_id TEXT);
       CREATE TABLE paper_insights (paper_id TEXT, space_id TEXT, updated_at TEXT);
       CREATE TABLE monitor_candidate_sources (
         id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT, source_key TEXT, query_key TEXT, first_seen_at TEXT
@@ -320,7 +320,11 @@ test("Today route provenance falls back only to route sources seen before review
         id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT, recommended INTEGER,
         reviewed_at TEXT, provenance_json TEXT
       );
-      INSERT INTO monitored_papers VALUES ('paper-a', 'space-a', 'years');
+      CREATE TABLE research_track_papers (
+        id TEXT PRIMARY KEY, space_id TEXT, track_id TEXT, canonical_id TEXT,
+        curation_status TEXT NOT NULL DEFAULT 'active'
+      );
+      INSERT INTO monitored_papers VALUES ('paper-a', 'space-a', 'years', 'doi:10.1/a');
       INSERT INTO paper_insights VALUES ('paper-a', 'space-a', '2026-08-21 10:00:00');
       INSERT INTO monitor_candidate_sources VALUES
         ('source-after', 'space-a', 'paper-a', 'crossref:topic', 'after', '2026-08-21 11:00:00');

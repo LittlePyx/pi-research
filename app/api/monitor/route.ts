@@ -82,6 +82,7 @@ import {
   type ResearchGuidanceTrackSnapshot,
 } from "../../../lib/monitor-route-planning";
 import { formalResearchMapEvidencePredicate, promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
+import { activeResearchRouteSupplyPredicate } from "../../../lib/research-map-curation";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
@@ -1582,7 +1583,7 @@ async function fetchCitationFrontier(
 ) {
   const seeds = await database.prepare(
     `SELECT track_id, doi, url, title FROM research_track_papers
-     WHERE space_id = ? AND (doi IS NOT NULL OR url LIKE '%arxiv.org/%')
+     WHERE space_id = ? AND curation_status = 'active' AND (doi IS NOT NULL OR url LIKE '%arxiv.org/%')
      ORDER BY CASE role WHEN 'milestone' THEN 0 ELSE 1 END, citation_count DESC, created_at ASC LIMIT 24`,
   ).bind(space.id).all<{ track_id: string; doi: string | null; url: string; title: string }>();
   if (!seeds.results.length) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
@@ -3922,6 +3923,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
          WHERE suppressed.space_id = p.space_id AND suppressed.paper_id = p.id
            AND suppressed.feedback = 'not_relevant'
        )
+       AND ${activeResearchRouteSupplyPredicate("p")}
      ORDER BY CASE WHEN i.analysis_source = 'deepseek_verification_pending' THEN 3
        WHEN i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded'
          AND (lower(i.screening_reason) LIKE '%timeout%' OR lower(i.screening_reason) LIKE '%aborted%' OR lower(i.screening_reason) LIKE '%temporarily unavailable%') THEN 2
@@ -3948,6 +3950,13 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
        LEFT JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id
          AND coverage.horizon = paper.horizon AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
        WHERE cs.space_id = ? AND cs.paper_id IN (${placeholders})
+        AND NOT EXISTS (
+         SELECT 1 FROM research_track_papers inactive_route_paper
+         WHERE inactive_route_paper.space_id = cs.space_id
+          AND inactive_route_paper.canonical_id = paper.canonical_id
+          AND inactive_route_paper.track_id = coverage.route_id
+          AND inactive_route_paper.curation_status = 'deactivated'
+        )
        ORDER BY cs.last_seen_at DESC`,
     ).bind(spaceId, ...ids).all<{
       paper_id: string; source_key: string; channel: string; query_key: string; appearances: number; query_text: string; route_id: string;
@@ -4409,7 +4418,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.verification_coverage_score, 0) AS verification_coverage_score,
        COALESCE(i.verification_json, '{}') AS verification_json,
        COALESCE((SELECT tp.track_id FROM research_track_papers tp
-         WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
+         WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id AND tp.curation_status = 'active'
          ORDER BY tp.position LIMIT 1),
          (SELECT ep.track_id FROM research_map_evidence_proposals ep
           WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending', 'confirmed')
@@ -4418,13 +4427,13 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id, '') AS discovery_route_id,
        COALESCE(route_track.interaction_score,
          (SELECT t.interaction_score FROM research_track_papers tp JOIN research_tracks t ON t.id = tp.track_id AND t.space_id = tp.space_id
-          WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), 0)
+          WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id AND tp.curation_status = 'active' ORDER BY tp.position LIMIT 1), 0)
        + COALESCE((
          SELECT MIN(18, COALESCE(SUM(event.weight), 0)) FROM paper_engagement_events event
          WHERE event.space_id = p.space_id AND event.occurred_at >= datetime('now', '-90 days')
           AND event.route_id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id,
             (SELECT tp.track_id FROM research_track_papers tp
-             WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1))
+             WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id AND tp.curation_status = 'active' ORDER BY tp.position LIMIT 1))
           AND NOT EXISTS (
             SELECT 1 FROM research_preference_signals disabled
             WHERE disabled.space_id = event.space_id AND disabled.source_type = 'passive_engagement'
@@ -4441,6 +4450,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
          ORDER BY CASE proposal.status WHEN 'confirmed' THEN 0 ELSE 1 END, proposal.updated_at DESC LIMIT 1),
         (SELECT route_paper.rationale_zh FROM research_track_papers route_paper
          WHERE route_paper.space_id = p.space_id AND route_paper.canonical_id = p.canonical_id
+          AND route_paper.curation_status = 'active'
           AND route_paper.track_id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
          ORDER BY route_paper.position LIMIT 1), '') AS discovery_route_impact_zh,
        COALESCE(
@@ -4451,6 +4461,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
          ORDER BY CASE proposal.status WHEN 'confirmed' THEN 0 ELSE 1 END, proposal.updated_at DESC LIMIT 1),
         (SELECT route_paper.rationale_en FROM research_track_papers route_paper
          WHERE route_paper.space_id = p.space_id AND route_paper.canonical_id = p.canonical_id
+          AND route_paper.curation_status = 'active'
           AND route_paper.track_id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
          ORDER BY route_paper.position LIMIT 1), '') AS discovery_route_impact_en,
        CASE
@@ -4527,7 +4538,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COUNT(tp.id) AS paper_count, MAX(COALESCE(tp.created_at, t.created_at)) AS latest_activity_at
        FROM research_tracks t
        LEFT JOIN research_track_papers tp ON tp.track_id = t.id AND tp.space_id = t.space_id
-        AND tp.created_at >= datetime('now', '-7 days')
+        AND tp.curation_status = 'active' AND tp.created_at >= datetime('now', '-7 days')
        WHERE t.space_id = ? AND (t.created_at >= datetime('now', '-7 days') OR tp.id IS NOT NULL)
        GROUP BY t.id, t.title_zh, t.title_en, t.created_at
        ORDER BY latest_activity_at DESC LIMIT 12`,
@@ -4542,6 +4553,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        FROM monitored_papers p
        JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id AND i.llm_recommended = 1
        JOIN research_track_papers tp ON tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id
+        AND tp.curation_status = 'active'
        JOIN research_map_evidence_proposals ep ON ep.space_id = p.space_id AND ep.paper_id = p.id
         AND ep.track_id = tp.track_id AND ep.status = 'confirmed'
        JOIN research_tracks t ON t.id = tp.track_id AND t.space_id = tp.space_id
@@ -4583,7 +4595,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       `SELECT t.id, t.title_zh, t.title_en, COUNT(DISTINCT mp.id) AS papers,
        SUM(CASE WHEN f.saved = 1 OR f.feedback = 'relevant' THEN 1 ELSE 0 END) AS accepted
        FROM research_tracks t
-       LEFT JOIN research_track_papers tp ON tp.track_id = t.id AND tp.space_id = t.space_id
+       LEFT JOIN research_track_papers tp ON tp.track_id = t.id AND tp.space_id = t.space_id AND tp.curation_status = 'active'
        LEFT JOIN monitored_papers mp ON mp.space_id = t.space_id AND mp.canonical_id = tp.canonical_id
        LEFT JOIN paper_feedback f ON f.paper_id = mp.id AND f.space_id = mp.space_id
        WHERE t.space_id = ? GROUP BY t.id, t.title_zh, t.title_en
@@ -5751,22 +5763,22 @@ async function loadPersistedReviews(database: D1Database, spaceId: string, canon
        WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
        ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
        (SELECT tp.track_id FROM research_track_papers tp
-        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS track_id,
+        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id AND tp.curation_status = 'active' ORDER BY tp.position LIMIT 1), '') AS track_id,
      COALESCE((SELECT ep.map_role FROM research_map_evidence_proposals ep
        WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
        ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
        (SELECT tp.role FROM research_track_papers tp
-        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), 'frontier') AS map_role,
+        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id AND tp.curation_status = 'active' ORDER BY tp.position LIMIT 1), 'frontier') AS map_role,
      COALESCE((SELECT ep.rationale_zh FROM research_map_evidence_proposals ep
        WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
        ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
        (SELECT tp.rationale_zh FROM research_track_papers tp
-        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_zh,
+        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id AND tp.curation_status = 'active' ORDER BY tp.position LIMIT 1), '') AS map_rationale_zh,
      COALESCE((SELECT ep.rationale_en FROM research_map_evidence_proposals ep
        WHERE ep.space_id = p.space_id AND ep.paper_id = p.id AND ep.status IN ('pending','confirmed')
        ORDER BY CASE ep.status WHEN 'confirmed' THEN 0 ELSE 1 END, ep.updated_at DESC LIMIT 1),
        (SELECT tp.rationale_en FROM research_track_papers tp
-        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id ORDER BY tp.position LIMIT 1), '') AS map_rationale_en
+        WHERE tp.space_id = p.space_id AND tp.canonical_id = p.canonical_id AND tp.curation_status = 'active' ORDER BY tp.position LIMIT 1), '') AS map_rationale_en
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
      LEFT JOIN paper_evidence_documents ed ON ed.paper_id = p.id AND ed.space_id = p.space_id
      WHERE p.space_id = ? AND p.canonical_id IN (${placeholders})`,

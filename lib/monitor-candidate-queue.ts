@@ -84,6 +84,13 @@ export const RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL = `WITH queue_counts AS (
    AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
   WHERE cs.space_id = ? AND COALESCE(coverage.route_id, '') <> ''
    AND NOT EXISTS (
+    SELECT 1 FROM research_track_papers inactive_route_paper
+    WHERE inactive_route_paper.space_id = cs.space_id
+     AND inactive_route_paper.track_id = coverage.route_id
+     AND inactive_route_paper.canonical_id = p.canonical_id
+     AND inactive_route_paper.curation_status = 'deactivated'
+   )
+   AND NOT EXISTS (
     SELECT 1 FROM paper_feedback dismissed
     WHERE dismissed.space_id = cs.space_id AND dismissed.paper_id = cs.paper_id
      AND dismissed.feedback = 'not_relevant'

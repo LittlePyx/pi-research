@@ -69,7 +69,8 @@ function fixture(candidateStatus = "ghost") {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE research_track_papers (
-      id TEXT PRIMARY KEY, track_id TEXT NOT NULL, space_id TEXT NOT NULL
+      id TEXT PRIMARY KEY, track_id TEXT NOT NULL, space_id TEXT NOT NULL,
+      curation_status TEXT NOT NULL DEFAULT 'active'
     );
     CREATE TABLE research_network_candidate_edges (
       id TEXT PRIMARY KEY, space_id TEXT NOT NULL, candidate_id TEXT NOT NULL,

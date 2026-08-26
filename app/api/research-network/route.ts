@@ -542,7 +542,7 @@ async function resolveSeeds(database: D1Database, spaceId: string, originCanonic
       WHERE ep.space_id = tp.space_id AND ep.track_id = tp.track_id
        AND mp.canonical_id = tp.canonical_id AND ep.status = 'confirmed'
      ) THEN 1 ELSE 0 END AS confirmed
-     FROM research_track_papers tp WHERE tp.space_id = ?
+     FROM research_track_papers tp WHERE tp.space_id = ? AND tp.curation_status = 'active'
      ORDER BY confirmed DESC, CASE tp.role WHEN 'frontier' THEN 0 WHEN 'milestone' THEN 1 ELSE 2 END,
       tp.citation_count DESC, tp.created_at ASC`,
   ).bind(spaceId).all<SeedRow>();
@@ -915,7 +915,7 @@ async function loadCandidates(database: D1Database, spaceId: string, seedRows: S
     `SELECT e.candidate_id, e.seed_paper_id, p.canonical_id AS seed_canonical_id, e.kind, e.direction, e.is_influential, e.evidence_source,
      e.expansion_key, e.seed_set_json, e.expires_at
      FROM research_network_candidate_edges e JOIN research_track_papers p ON p.id = e.seed_paper_id
-     WHERE e.space_id = ? AND e.candidate_id IN (${candidatePlaceholders})
+     WHERE e.space_id = ? AND p.curation_status = 'active' AND e.candidate_id IN (${candidatePlaceholders})
      AND ((e.kind IN ('reference', 'citation') AND e.seed_paper_id IN (${placeholders}))
        OR (e.kind LIKE 'recommendation:%' AND e.expansion_key = ?))${includeStale ? "" : " AND datetime(e.expires_at) >= datetime('now')"}`,
   ).bind(spaceId, ...candidates.results.map((row) => row.id), ...seedRows.map((row) => row.id), expansionKey).all<CandidateEdgeRow>();
@@ -1703,7 +1703,8 @@ async function candidateWithRelations(database: D1Database, spaceId: string, can
   const edges = await database.prepare(
     `SELECT e.candidate_id, e.seed_paper_id, p.canonical_id AS seed_canonical_id, e.kind, e.direction, e.is_influential, e.evidence_source,
      e.expansion_key, e.seed_set_json, e.expires_at
-     FROM research_network_candidate_edges e JOIN research_track_papers p ON p.id = e.seed_paper_id WHERE e.candidate_id = ? AND e.space_id = ?`,
+     FROM research_network_candidate_edges e JOIN research_track_papers p ON p.id = e.seed_paper_id
+     WHERE e.candidate_id = ? AND e.space_id = ? AND p.curation_status = 'active'`,
   ).bind(candidateId, spaceId).all<CandidateEdgeRow>();
   const relations = edges.results.flatMap((edge) => {
     const kind = storedRelationKind(edge.kind);
@@ -1791,7 +1792,7 @@ export async function PATCH(request: Request) {
   let trackId = cleanText(body.trackId);
   if (!trackId) {
     const fallback = await database.prepare(
-      "SELECT p.track_id FROM research_network_candidate_edges e JOIN research_track_papers p ON p.id = e.seed_paper_id WHERE e.candidate_id = ? AND e.space_id = ? ORDER BY e.score DESC LIMIT 1",
+      "SELECT p.track_id FROM research_network_candidate_edges e JOIN research_track_papers p ON p.id = e.seed_paper_id WHERE e.candidate_id = ? AND e.space_id = ? AND p.curation_status = 'active' ORDER BY e.score DESC LIMIT 1",
     ).bind(candidateId, spaceId).first<{ track_id: string }>();
     trackId = fallback?.track_id || "";
   }
@@ -1862,7 +1863,11 @@ export async function PATCH(request: Request) {
       citation_count = MAX(research_track_papers.citation_count, excluded.citation_count), role = excluded.role,
       summary_zh = CASE WHEN excluded.summary_zh <> '' THEN excluded.summary_zh ELSE research_track_papers.summary_zh END,
       summary_en = CASE WHEN excluded.summary_en <> '' THEN excluded.summary_en ELSE research_track_papers.summary_en END,
-      rationale_zh = excluded.rationale_zh, rationale_en = excluded.rationale_en`,
+      rationale_zh = excluded.rationale_zh, rationale_en = excluded.rationale_en,
+      curation_status = 'active', curation_reason_code = 'restored',
+      curation_reason_zh = '用户通过引用网络确认后恢复为正式路线证据。',
+      curation_reason_en = 'Restored as formal route evidence after user confirmation in the citation network.',
+      curation_source = 'user_network_acceptance', curation_updated_at = CURRENT_TIMESTAMP`,
   ).bind(stableFormalId, trackId, spaceId, acceptedCanonicalId, candidate.doi || null, candidate.title, candidate.authors,
     candidate.venue, candidate.url, candidate.publishedAt, candidate.citationCount, role, candidate.abstractText,
     candidate.abstractText, rationaleZh, rationaleEn, trackId));
@@ -1883,7 +1888,8 @@ export async function PATCH(request: Request) {
         (id, space_id, source_paper_id, target_paper_id, kind, relation_kind, relationship_zh, relationship_en, confidence, evidence_source)
         SELECT ?, ?, ${sourceExpression}, ${targetExpression}, 'citation', 'cites', ?, ?, 100, ?
         FROM research_track_papers candidate_paper
-        WHERE candidate_paper.track_id = ? AND candidate_paper.canonical_id = ? AND candidate_paper.id <> ?
+        WHERE candidate_paper.track_id = ? AND candidate_paper.canonical_id = ?
+         AND candidate_paper.curation_status = 'active' AND candidate_paper.id <> ?
         ON CONFLICT DO UPDATE SET confidence = 100,
         evidence_source = excluded.evidence_source, relationship_zh = excluded.relationship_zh, relationship_en = excluded.relationship_en`,
     ).bind(`network-edge:${candidateId}:${edge.seed_paper_id}:${edge.direction}`, spaceId, edge.seed_paper_id,

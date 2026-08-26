@@ -304,9 +304,12 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS research_track_edges (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, source_track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, target_track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, kind TEXT NOT NULL DEFAULT 'builds_on', relationship_zh TEXT NOT NULL DEFAULT '', relationship_en TEXT NOT NULL DEFAULT '', strength INTEGER NOT NULL DEFAULT 50, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_track_edges_pair_kind ON research_track_edges(source_track_id, target_track_id, kind)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_track_edges_space ON research_track_edges(space_id)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS research_track_papers (id TEXT PRIMARY KEY NOT NULL, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, canonical_id TEXT NOT NULL, doi TEXT, title TEXT NOT NULL, authors TEXT NOT NULL DEFAULT '', venue TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', published_at TEXT, citation_count INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_track_papers (id TEXT PRIMARY KEY NOT NULL, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, canonical_id TEXT NOT NULL, doi TEXT, title TEXT NOT NULL, authors TEXT NOT NULL DEFAULT '', venue TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', published_at TEXT, citation_count INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', curation_status TEXT NOT NULL DEFAULT 'active', curation_reason_code TEXT, curation_reason_zh TEXT NOT NULL DEFAULT '', curation_reason_en TEXT NOT NULL DEFAULT '', curation_source TEXT NOT NULL DEFAULT '', curation_evidence_json TEXT NOT NULL DEFAULT '[]', curation_updated_at TEXT, position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_track_papers_track_canonical ON research_track_papers(track_id, canonical_id)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_track_papers_track_position ON research_track_papers(track_id, position)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_track_paper_curation_events (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, track_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, action TEXT NOT NULL, reason_code TEXT NOT NULL, reason_zh TEXT NOT NULL DEFAULT '', reason_en TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', actor_kind TEXT NOT NULL DEFAULT 'system', evidence_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_track_paper_curation_events_paper_created ON research_track_paper_curation_events(track_paper_id, created_at)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_track_paper_curation_events_space_created ON research_track_paper_curation_events(space_id, created_at)"),
     ...researchMapEvidenceProposalBootstrapSql.map((statement) => database.prepare(statement)),
     ...researchSynthesisBootstrapSql.map((statement) => database.prepare(statement)),
     ...researchProblemBootstrapSql.map((statement) => database.prepare(statement)),
@@ -352,10 +355,60 @@ export async function ensureSchema(database = getDatabase()) {
   ] as const;
   for (const [name, statement] of researchTrackAdditions) if (!researchTrackColumnNames.has(name)) await database.prepare(statement).run();
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_research_tracks_retry_due ON research_tracks(build_status, build_retry_at, build_attempt_count, space_id)").run();
+  const researchTrackPaperColumns = await database.prepare("PRAGMA table_info(research_track_papers)").all<{ name: string }>();
+  const researchTrackPaperColumnNames = new Set(researchTrackPaperColumns.results.map((column) => column.name));
+  const researchTrackPaperAdditions = [
+    ["curation_status", "ALTER TABLE research_track_papers ADD COLUMN curation_status TEXT NOT NULL DEFAULT 'active'"],
+    ["curation_reason_code", "ALTER TABLE research_track_papers ADD COLUMN curation_reason_code TEXT"],
+    ["curation_reason_zh", "ALTER TABLE research_track_papers ADD COLUMN curation_reason_zh TEXT NOT NULL DEFAULT ''"],
+    ["curation_reason_en", "ALTER TABLE research_track_papers ADD COLUMN curation_reason_en TEXT NOT NULL DEFAULT ''"],
+    ["curation_source", "ALTER TABLE research_track_papers ADD COLUMN curation_source TEXT NOT NULL DEFAULT ''"],
+    ["curation_evidence_json", "ALTER TABLE research_track_papers ADD COLUMN curation_evidence_json TEXT NOT NULL DEFAULT '[]'"],
+    ["curation_updated_at", "ALTER TABLE research_track_papers ADD COLUMN curation_updated_at TEXT"],
+  ] as const;
+  for (const [name, statement] of researchTrackPaperAdditions) if (!researchTrackPaperColumnNames.has(name)) await database.prepare(statement).run();
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_research_track_papers_space_curation ON research_track_papers(space_id, curation_status, track_id)").run();
+  await database.prepare("CREATE TABLE IF NOT EXISTS research_track_paper_curation_events (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, track_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, action TEXT NOT NULL, reason_code TEXT NOT NULL, reason_zh TEXT NOT NULL DEFAULT '', reason_en TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', actor_kind TEXT NOT NULL DEFAULT 'system', evidence_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run();
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_track_paper_curation_events_paper_created ON research_track_paper_curation_events(track_paper_id, created_at)").run();
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_track_paper_curation_events_space_created ON research_track_paper_curation_events(space_id, created_at)").run();
+  await database.prepare(
+    `INSERT OR IGNORE INTO research_track_paper_curation_events
+     (id, space_id, track_id, track_paper_id, action, reason_code, reason_zh, reason_en, source, actor_kind, evidence_json, created_at)
+     SELECT 'bootstrap-selection-contradiction:' || paper.id, paper.space_id, paper.track_id, paper.id, 'deactivated',
+      'selection_contradiction', '模型选择结果与其理由矛盾：理由明确表示该论文不相关或不应纳入。',
+      'The model selection contradicted its rationale, which explicitly said the paper was unrelated or should not be included.',
+      'system_model_selection_guard', 'system', json_array(json_object('kind', 'selection_rationale', 'zh', paper.rationale_zh, 'en', paper.rationale_en)), CURRENT_TIMESTAMP
+     FROM research_track_papers paper
+     WHERE paper.curation_status = 'active' AND NOT EXISTS (
+      SELECT 1 FROM research_map_evidence_proposals proposal JOIN monitored_papers monitored
+       ON monitored.id = proposal.paper_id AND monitored.space_id = proposal.space_id
+      WHERE proposal.space_id = paper.space_id AND proposal.track_id = paper.track_id
+       AND monitored.canonical_id = paper.canonical_id AND proposal.status = 'confirmed'
+     ) AND (
+      lower(paper.rationale_en) LIKE '%so it is rejected%'
+      OR lower(paper.rationale_en) LIKE '%not selected%'
+      OR lower(paper.rationale_en) LIKE '%should not be included%'
+      OR (lower(paper.rationale_en) LIKE '%unrelated%' AND lower(paper.rationale_en) LIKE '%reject%')
+      OR paper.rationale_zh LIKE '%不选入%' OR paper.rationale_zh LIKE '%不应纳入%'
+      OR (paper.rationale_zh LIKE '%不相关%' AND paper.rationale_zh LIKE '%拒绝%')
+     )`,
+  ).run();
+  await database.prepare(
+    `UPDATE research_track_papers SET curation_status = 'deactivated', curation_reason_code = 'selection_contradiction',
+     curation_reason_zh = '模型选择结果与其理由矛盾：理由明确表示该论文不相关或不应纳入。',
+     curation_reason_en = 'The model selection contradicted its rationale, which explicitly said the paper was unrelated or should not be included.',
+     curation_source = 'system_model_selection_guard',
+     curation_evidence_json = json_array(json_object('kind', 'selection_rationale', 'zh', rationale_zh, 'en', rationale_en)),
+     curation_updated_at = CURRENT_TIMESTAMP
+     WHERE curation_status = 'active' AND id IN (
+      SELECT track_paper_id FROM research_track_paper_curation_events WHERE id = 'bootstrap-selection-contradiction:' || research_track_papers.id
+     )`,
+  ).run();
   await database.prepare(
     `UPDATE research_tracks SET build_status = 'retryable', build_error = COALESCE(build_error, 'missing_visible_evidence')
      WHERE build_status IN ('ready', 'partial') AND NOT EXISTS (
       SELECT 1 FROM research_track_papers paper WHERE paper.track_id = research_tracks.id AND paper.space_id = research_tracks.space_id
+       AND paper.curation_status = 'active'
      )`,
   ).run();
   const feedbackColumns = await database.prepare("PRAGMA table_info(paper_feedback)").all<{ name: string }>();

@@ -237,6 +237,13 @@ function createFixture() {
       summary_en TEXT NOT NULL DEFAULT '',
       rationale_zh TEXT NOT NULL DEFAULT '',
       rationale_en TEXT NOT NULL DEFAULT '',
+      curation_status TEXT NOT NULL DEFAULT 'active',
+      curation_reason_code TEXT,
+      curation_reason_zh TEXT NOT NULL DEFAULT '',
+      curation_reason_en TEXT NOT NULL DEFAULT '',
+      curation_source TEXT NOT NULL DEFAULT '',
+      curation_evidence_json TEXT NOT NULL DEFAULT '[]',
+      curation_updated_at TEXT,
       position INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(track_id, canonical_id)

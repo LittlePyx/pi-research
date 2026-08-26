@@ -4,6 +4,7 @@ export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
 export type ResearchTrackBuildStatus = "queued" | "retryable" | "partial" | "empty" | "failed" | "ready";
 export type ResearchTrackSourceStatus = "ok" | "empty" | "failed" | "cached";
 export type ResearchEvidenceProvenance = "system_curated" | "user_confirmed";
+export type ResearchTrackPaperCurationStatus = "active" | "deactivated";
 export type ResearchPaperEdgeKind = "citation" | "similarity" | "semantic" | "path";
 export type ResearchPaperNetworkStatus = "idle" | "building" | "ready" | "partial" | "error";
 
@@ -165,6 +166,13 @@ export type ResearchTrackPaper = {
   rationaleEn: string;
   position: number;
   provenance?: ResearchEvidenceProvenance;
+  curationStatus: ResearchTrackPaperCurationStatus;
+  curationReasonCode: string | null;
+  curationReasonZh: string;
+  curationReasonEn: string;
+  curationSource: string;
+  curationEvidence: Array<Record<string, unknown>>;
+  curationUpdatedAt: string | null;
 };
 
 export type ResearchTrackLatestChange = {
@@ -236,6 +244,7 @@ export type ResearchTrack = {
   intelligence: ResearchDirectionIntelligence | null;
   updatedAt: string;
   papers: ResearchTrackPaper[];
+  deactivatedPapers?: ResearchTrackPaper[];
 };
 
 export type ResearchTrackEdge = {

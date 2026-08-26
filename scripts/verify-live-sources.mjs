@@ -65,5 +65,5 @@ const results = await Promise.all([
 ]);
 
 const healthy = results.filter((result) => result.status === "healthy").length;
-assert.ok(healthy >= 3, `Expected at least three healthy discovery providers, received ${healthy}`);
 process.stdout.write(`${JSON.stringify({ healthy, providers: results }, null, 2)}\n`);
+assert.ok(healthy >= 3, `Expected at least three healthy discovery providers, received ${healthy}`);

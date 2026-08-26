@@ -107,6 +107,13 @@ export const PRE_REVIEW_ROUTE_ORIGIN_SUBQUERY = `(SELECT space_id, paper_id, sou
  JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id
   AND coverage.horizon = paper.horizon AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
  WHERE COALESCE(coverage.route_id, '') <> ''
+  AND NOT EXISTS (
+   SELECT 1 FROM research_track_papers inactive_route_paper
+   WHERE inactive_route_paper.space_id = cs.space_id
+    AND inactive_route_paper.track_id = coverage.route_id
+    AND inactive_route_paper.canonical_id = paper.canonical_id
+    AND inactive_route_paper.curation_status = 'deactivated'
+  )
   AND datetime(cs.first_seen_at) <= datetime(insight.updated_at)
 ) WHERE origin_rank = 1)`;
 
