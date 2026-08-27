@@ -53,6 +53,9 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /recordResearchRouteSentinel/);
   assert.match(worker, /recordMonitorOperationalSentinel/);
   assert.match(worker, /Pi monitor operational sentinel/);
+  assert.match(worker, /readMonitorReliabilityHealth/);
+  assert.match(worker, /api\/internal\/reliability/);
+  assert.match(worker, /reliability_health_query_failed/);
   assert.match(worker, /datetime\(r\.last_user_activity_at\) DESC/);
   assert.match(
     worker,
@@ -63,11 +66,16 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(schema, /leaseToken: text\("lease_token"\)/);
   assert.match(schema, /recoveredJobCount: integer\("recovered_job_count"\)/);
   assert.match(schema, /healthStatus: text\("health_status"\)/);
+  assert.match(schema, /idx_monitor_reliability_kind_outcome_created/);
   assert.match(repository, /PRAGMA table_info\(monitor_scheduler_ticks\)/);
+  assert.match(repository, /CREATE INDEX IF NOT EXISTS idx_monitor_reliability_kind_outcome_created/);
   assert.match(worker, /gapMinutes > 25 \? "recovered_gap" : "healthy"/);
   assert.match(workflow, /cron: "17,47 \* \* \* \*"/);
   assert.match(workflow, /--max-time 240/);
   assert.match(workflow, /jq -e '\(\.acquired == true\) or \(\.acquired == false\)'/);
   assert.match(workflow, /secrets\.PI_SCHEDULER_SECRET/);
   assert.match(workflow, /api\/internal\/scheduler/);
+  assert.match(workflow, /api\/internal\/reliability/);
+  assert.match(workflow, /persistentCriticalCount/);
+  assert.match(workflow, /jq -e '\.healthy == true'/);
 });

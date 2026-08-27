@@ -232,6 +232,7 @@ export const monitorReliabilityEvents = sqliteTable(
     index("idx_monitor_reliability_space_created").on(table.spaceId, table.createdAt),
     index("idx_monitor_reliability_job_created").on(table.scanJobId, table.createdAt),
     index("idx_monitor_reliability_space_source_created").on(table.spaceId, table.source, table.createdAt),
+    index("idx_monitor_reliability_kind_outcome_created").on(table.kind, table.outcome, table.createdAt),
   ],
 );
 

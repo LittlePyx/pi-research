@@ -1,0 +1,1 @@
+CREATE INDEX `idx_monitor_reliability_kind_outcome_created` ON `monitor_reliability_events` (`kind`,`outcome`,`created_at`);

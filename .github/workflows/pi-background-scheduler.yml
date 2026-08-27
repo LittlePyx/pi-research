@@ -27,3 +27,10 @@ jobs:
             --header "Authorization: Bearer $PI_SCHEDULER_SECRET" \
             https://pi-research-agent.qiudao-pika.chatgpt.site/api/internal/scheduler)"
           jq -e '(.acquired == true) or (.acquired == false)' <<<"$response" >/dev/null
+          health="$(curl --silent --show-error --fail-with-body \
+            --retry 2 --retry-all-errors --connect-timeout 15 --max-time 30 \
+            --request POST \
+            --header "Authorization: Bearer $PI_SCHEDULER_SECRET" \
+            https://pi-research-agent.qiudao-pika.chatgpt.site/api/internal/reliability)"
+          jq '{status, persistentCriticalCount, currentCriticalCount, currentDegradedCount, blockingReasons, incidents, scheduler}' <<<"$health"
+          jq -e '.healthy == true' <<<"$health" >/dev/null

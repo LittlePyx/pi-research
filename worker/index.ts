@@ -8,6 +8,7 @@ import {
   shouldWakeMonitorScheduler,
 } from "../lib/monitor-scheduler.mjs";
 import { recordMonitorOperationalSentinel } from "../lib/monitor-operational-sentinel";
+import { readMonitorReliabilityHealth } from "../lib/monitor-reliability-health";
 import { recordResearchRouteSentinel } from "../lib/research-route-sentinel";
 
 interface Env {
@@ -405,6 +406,25 @@ const worker = {
       }
       const result = await runScheduledMonitorSweep(env, ctx, "external_watchdog");
       return Response.json(result);
+    }
+
+    if (url.pathname === "/api/internal/reliability" && request.method === "POST") {
+      if (!env.MONITOR_SCHEDULER_SECRET) return Response.json({ error: "scheduler_not_configured" }, { status: 503 });
+      if (!monitorSchedulerSecretMatches(request.headers.get("Authorization"), env.MONITOR_SCHEDULER_SECRET)) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      try {
+        return Response.json(await readMonitorReliabilityHealth(env.DB), {
+          headers: { "Cache-Control": "no-store" },
+        });
+      } catch (error) {
+        console.error("Pi monitor reliability health query failed", error);
+        return Response.json({
+          healthy: false,
+          status: "critical",
+          blockingReasons: ["reliability_health_query_failed"],
+        }, { status: 503, headers: { "Cache-Control": "no-store" } });
+      }
     }
 
     if (env.DB && shouldWakeMonitorScheduler(request.method, url.pathname)) {
