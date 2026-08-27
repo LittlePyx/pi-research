@@ -164,7 +164,10 @@ export async function curateResearchTrackPaper(database: D1Database, input: {
         SELECT 1 FROM research_track_papers active_paper WHERE active_paper.track_id = research_tracks.id
          AND active_paper.space_id = research_tracks.space_id AND active_paper.curation_status = 'active'
        ) OR (? = 'active' AND build_status IN ('retryable','empty','failed')) THEN CURRENT_TIMESTAMP ELSE build_retry_at END,
-       intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP
+       intelligence_status = 'pending', intelligence_attempt_count = 0,
+       intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL,
+       intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP,
+       updated_at = CURRENT_TIMESTAMP
        WHERE id = ? AND space_id = ?`,
     ).bind(input.status, input.status, input.status, row.track_id, input.spaceId),
     database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date >= date('now')").bind(input.spaceId),

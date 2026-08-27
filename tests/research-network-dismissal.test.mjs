@@ -66,6 +66,9 @@ function fixture(candidateStatus = "ghost") {
     CREATE TABLE research_tracks (
       id TEXT PRIMARY KEY, space_id TEXT NOT NULL, intelligence_json TEXT NOT NULL DEFAULT '{}',
       intelligence_model TEXT NOT NULL DEFAULT '', intelligence_updated_at TEXT,
+      intelligence_status TEXT NOT NULL DEFAULT 'ready', intelligence_attempt_count INTEGER NOT NULL DEFAULT 0,
+      intelligence_error TEXT, intelligence_retry_at TEXT, intelligence_lock_token TEXT,
+      intelligence_lock_expires_at TEXT, intelligence_refresh_requested_at TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE research_track_papers (
@@ -124,10 +127,13 @@ test("network dismissal atomically records explicit negative feedback and invali
   );
   assert.equal(sqlite.prepare("SELECT active FROM research_preference_signals WHERE id = 'old-signal'").get().active, 0);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_preference_signals WHERE source_id = 'paper-a:network_dismissed' AND active = 1").get().count, 1);
-  assert.deepEqual(
-    { ...sqlite.prepare("SELECT intelligence_json, intelligence_model, intelligence_updated_at FROM research_tracks WHERE id = 'track-a'").get() },
-    { intelligence_json: "{}", intelligence_model: "", intelligence_updated_at: null },
-  );
+  const savedGuidance = sqlite.prepare(
+    "SELECT intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status FROM research_tracks WHERE id = 'track-a'",
+  ).get();
+  assert.equal(savedGuidance.intelligence_json, '{"nextSearchQuery":"old query"}');
+  assert.equal(savedGuidance.intelligence_model, "deepseek-v4-pro");
+  assert.ok(savedGuidance.intelligence_updated_at);
+  assert.equal(savedGuidance.intelligence_status, "pending");
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitor_query_plans WHERE id = 'today'").get().count, 0);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitor_query_plans WHERE id = 'tomorrow'").get().count, 1);
 

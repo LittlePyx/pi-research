@@ -1046,12 +1046,20 @@ export const researchTracks = sqliteTable(
     intelligenceJson: text("intelligence_json").notNull().default("{}"),
     intelligenceModel: text("intelligence_model").notNull().default(""),
     intelligenceUpdatedAt: text("intelligence_updated_at"),
+    intelligenceStatus: text("intelligence_status").notNull().default("pending"),
+    intelligenceAttemptCount: integer("intelligence_attempt_count").notNull().default(0),
+    intelligenceError: text("intelligence_error"),
+    intelligenceRetryAt: text("intelligence_retry_at"),
+    intelligenceLockToken: text("intelligence_lock_token"),
+    intelligenceLockExpiresAt: text("intelligence_lock_expires_at"),
+    intelligenceRefreshRequestedAt: text("intelligence_refresh_requested_at"),
     createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
   (table) => [
     index("idx_research_tracks_space_position").on(table.spaceId, table.position),
     index("idx_research_tracks_retry_due").on(table.buildStatus, table.buildRetryAt, table.buildAttemptCount, table.spaceId),
+    index("idx_research_tracks_intelligence_due").on(table.spaceId, table.intelligenceStatus, table.intelligenceRetryAt, table.intelligenceLockExpiresAt, table.position),
   ],
 );
 

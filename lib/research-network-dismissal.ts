@@ -74,7 +74,9 @@ export function researchNetworkDismissalStatements(
     ),
     database.prepare(
       `UPDATE research_tracks
-       SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL,
+       SET intelligence_status = 'pending', intelligence_attempt_count = 0,
+        intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL,
+        intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP
        WHERE space_id = ? AND id IN (
         SELECT DISTINCT seed.track_id

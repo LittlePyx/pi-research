@@ -89,5 +89,6 @@ test("targeted gap and research-action expansion queue reviewable evidence inste
   assert.match(route, /enqueueMonitorCandidates/);
   assert.match(targetedBranch, /addedCount = queueResult\.queuedForReviewCount/);
   assert.doesNotMatch(targetedBranch, /INSERT (?:OR IGNORE )?INTO research_track_papers/);
-  assert.match(route, /if \(!targetedExpanding\) await saveDirectionIntelligence/);
+  assert.match(route, /if \(!targetedExpanding\) \{[\s\S]*saveDirectionIntelligence/);
+  assert.match(route, /else if \(addedCount > 0\)[\s\S]*intelligence_status = 'pending'/);
 });

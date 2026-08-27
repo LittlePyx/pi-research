@@ -314,7 +314,9 @@ function isSystemCuratedReview(row: EvidenceProposalRow) {
 
 function invalidationStatements(database: D1Database, spaceId: string, trackIds: string[]) {
   const statements: D1PreparedStatement[] = trackIds.map((trackId) => database.prepare(
-    `UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL,
+    `UPDATE research_tracks SET intelligence_status = 'pending', intelligence_attempt_count = 0,
+     intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL,
+     intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP,
      updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?`,
   ).bind(trackId, spaceId));
   statements.push(
@@ -514,7 +516,9 @@ export function reconcileResearchMapEvidenceStatements(
     ),
     bind(
       `${decisionCtes}
-       UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL,
+       UPDATE research_tracks SET intelligence_status = 'pending', intelligence_attempt_count = 0,
+        intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL,
+        intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP
        WHERE id = (SELECT track_id FROM active) AND space_id = ?1
         AND EXISTS (SELECT 1 FROM active JOIN final_state WHERE ${activeDecisionChanges})`,
@@ -738,7 +742,9 @@ export function confirmedExternalResearchMapEvidenceStatements(
    AND ep.status IN ('pending', 'confirmed')`;
   const supersedeStatements = [
     database.prepare(
-      `UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL,
+      `UPDATE research_tracks SET intelligence_status = 'pending', intelligence_attempt_count = 0,
+       intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL,
+       intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP,
        updated_at = CURRENT_TIMESTAMP WHERE space_id = ?1 AND id IN (
         SELECT ep.track_id FROM research_map_evidence_proposals ep
         JOIN monitored_papers p ON p.id = ep.paper_id AND p.space_id = ep.space_id
@@ -829,7 +835,9 @@ export function confirmedExternalResearchMapEvidenceStatements(
     proposalStatement,
     mapChangeStatement,
     database.prepare(
-      `UPDATE research_tracks SET intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL,
+      `UPDATE research_tracks SET intelligence_status = 'pending', intelligence_attempt_count = 0,
+       intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL,
+       intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP,
        updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?`,
     ).bind(input.trackId, input.spaceId),
     database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date >= date('now')").bind(input.spaceId),

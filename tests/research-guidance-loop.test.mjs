@@ -57,7 +57,8 @@ test("today feedback refreshes direction intelligence and research memory", asyn
     readFile(feedbackPath, "utf8"), readFile(libraryPath, "utf8"), readFile(mapPath, "utf8"),
   ]);
   assert.match(feedback, /refreshResearchLoopAfterFeedback/);
-  assert.match(feedback, /intelligence_json = '\{\}'/);
+  assert.match(feedback, /intelligence_status = 'pending'/);
+  assert.doesNotMatch(feedback, /intelligence_json = '\{\}'/);
   assert.match(feedback, /kind === "save" \|\| kind === "relevant" \|\| kind === "not_relevant"/);
   assert.match(feedback, /reconcileResearchMapEvidenceStatements/);
   assert.match(feedback, /DB\.batch\(\[\s*feedbackStatement,[\s\S]*\.\.\.reconcileResearchMapEvidenceStatements/);

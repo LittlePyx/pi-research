@@ -3566,24 +3566,35 @@ export default function ResearchApp({ user }: { user: User }) {
             // remains available and the audit is retried on a later visit.
           }
         }
-        for (const trackId of data.intelligenceProgress?.pendingTrackIds || []) {
-          if (cancelled) break;
+        for (let intelligencePass = 0; intelligencePass < 2; intelligencePass += 1) {
+          if (cancelled || !data.intelligenceProgress
+            || data.intelligenceProgress.ready >= data.intelligenceProgress.total) break;
+          const trackId = data.intelligenceProgress.pendingTrackIds[0]
+            || data.intelligenceProgress.staleTrackIds?.[0]
+            || data.intelligenceProgress.retryableTrackIds?.[0]
+            || data.intelligenceProgress.runningTrackIds?.[0]
+            || null;
           setMapIntelligenceTrackId(trackId);
           try {
             const interpretationResponse = await fetch("/api/research-map", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ spaceId: activeSpace.id, action: "interpret", trackId }),
+              body: JSON.stringify({ spaceId: activeSpace.id, action: "advance-intelligence" }),
             });
-            const interpreted = await interpretationResponse.json() as ResearchMapState & { error?: string };
+            const interpreted = await interpretationResponse.json() as ResearchMapState & {
+              error?: string;
+              intelligenceAdvance?: { status?: "idle" | "ready" | "retryable" | "superseded"; trackId?: string };
+            };
             if (!interpretationResponse.ok) throw new Error(interpreted.error || "direction interpretation failed");
             if (!cancelled) {
               data = interpreted;
               setResearchMap(interpreted);
               setSelectedThread((current) => interpreted.tracks.find((track) => track.id === current?.id) || interpreted.tracks[0] || null);
             }
+            if (interpreted.intelligenceAdvance?.status === "idle" || interpreted.intelligenceAdvance?.status === "superseded") break;
           } catch {
-            // The direction remains usable and will be interpreted again on the next visit.
+            // The saved assessment remains usable; the durable job state is retried later.
+            break;
           }
         }
       } catch {
@@ -4676,11 +4687,16 @@ export default function ResearchApp({ user }: { user: User }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ spaceId: activeSpace.id, action: "interpret", trackId: thread.id }),
       });
-      const data = await response.json() as ResearchMapState & { error?: string };
+      const data = await response.json() as ResearchMapState & {
+        error?: string;
+        intelligenceAdvance?: { status?: "idle" | "ready" | "retryable" | "superseded" };
+      };
       if (!response.ok) throw new Error(data.error || "direction interpretation failed");
       setResearchMap(data);
       setSelectedThread(data.tracks.find((item) => item.id === thread.id) || null);
-      setToast(locale === "zh" ? "Pi 已基于当前证据更新方向研判" : "Pi refreshed the direction assessment from current evidence");
+      setToast(data.intelligenceAdvance?.status === "ready"
+        ? (locale === "zh" ? "Pi 已基于当前证据更新方向研判" : "Pi refreshed the direction assessment from current evidence")
+        : (locale === "zh" ? "本次研判已进入重试，旧研判继续保留" : "The refresh will retry; the saved assessment remains available"));
     } catch {
       setToast(locale === "zh" ? "方向研判暂时无法更新" : "The direction assessment could not be refreshed");
     } finally {
@@ -5234,7 +5250,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <>
                 {researchMapMode === "directions" ? <>
                   {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress v2-route-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes await evidence`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成内容已经保存" : "Completed work is saved")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i></section> : null}
-                  {(researchMap.intelligenceProgress?.pendingTrackIds.length || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress v2-route-build-progress" role="status"><div><span className={mapIntelligenceTrackId ? "working" : "paused"}><i>π</i></span><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "Pi 正在形成方向研判" : "Pi is forming a direction assessment") : (locale === "zh" ? "部分方向等待 Pi 研判" : "Some directions await Pi assessment")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "已有路线仍可正常使用" : "Existing routes remain usable")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i></section> : null}
+                  {((researchMap.intelligenceProgress && researchMap.intelligenceProgress.ready < researchMap.intelligenceProgress.total) || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress v2-route-build-progress" role="status"><div><span className={mapIntelligenceTrackId ? "working" : "paused"}><i>π</i></span><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "Pi 正在形成方向研判" : "Pi is forming a direction assessment") : (locale === "zh" ? "部分方向等待 Pi 刷新" : "Some direction assessments await refresh")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "旧研判和已有路线继续保留" : "Saved assessments and existing routes remain available")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i></section> : null}
                   {Boolean((researchMap.buildProgress?.partialTrackIds?.length || 0) + (researchMap.buildProgress?.emptyTrackIds?.length || 0) + (researchMap.buildProgress?.failedTrackIds?.length || 0)) && <section className="v2-map-build-progress v2-route-build-degraded" role="status"><div><span className="paused"><i>!</i></span><div><strong>{locale === "zh" ? "部分路线处于诚实降级状态" : "Some routes are honestly degraded"}</strong><p>{locale === "zh" ? "已有论文和候选均已保留；没有可见证据的路线不会标记为完成。" : "Existing papers and candidates are retained; routes without visible evidence are never marked complete."}</p></div></div></section>}
 
                   <section className="v2-route-brief" aria-label={locale === "zh" ? "研究路线摘要" : "Research route summary"}>

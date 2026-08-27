@@ -7,6 +7,7 @@ import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPape
 import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSelectionContradiction, type ResearchTrackPaperCurationReasonCode, type ResearchTrackPaperCurationStatus } from "../../../lib/research-map-curation";
+import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defensiveResearchTrackIntelligenceStatus, deferResearchTrackIntelligence, requestResearchTrackIntelligenceRefresh } from "../../../lib/research-map-intelligence";
 import { applyStoredResearchRoutePrecisionAudits, RESEARCH_ROUTE_PRECISION_GATE_VERSION, researchRoutePrecisionAuditProgress, routePrecisionAcceptedForActiveNode, routePrecisionAutoDeactivates, routePrecisionJudgmentIdentity, sanitizeResearchRoutePrecisionJudgments } from "../../../lib/research-map-precision";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
@@ -31,6 +32,13 @@ type TrackRow = {
   intelligence_json: string;
   intelligence_model: string;
   intelligence_updated_at: string | null;
+  intelligence_status: string;
+  intelligence_attempt_count: number;
+  intelligence_error: string | null;
+  intelligence_retry_at: string | null;
+  intelligence_lock_token: string | null;
+  intelligence_lock_expires_at: string | null;
+  intelligence_refresh_requested_at: string | null;
   updated_at: string;
 };
 type TrackEdgeRow = {
@@ -544,13 +552,14 @@ async function recordResearchRouteReliabilityEvent(database: D1Database, spaceId
   outcome: "success" | "degraded" | "failed" | "info";
   message: string;
   metadata: Record<string, unknown>;
+  stage?: "cold_start" | "direction_intelligence";
 }) {
   try {
     await database.prepare(
       `INSERT INTO monitor_reliability_events
        (id, space_id, kind, stage, source, outcome, message, metadata_json)
-       VALUES (?, ?, 'research_route_build', 'cold_start', 'research-route', ?, ?, ?)`,
-    ).bind(crypto.randomUUID(), spaceId, input.outcome, input.message.slice(0, 500), JSON.stringify({
+       VALUES (?, ?, 'research_route_build', ?, 'research-route', ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), spaceId, input.stage || "cold_start", input.outcome, input.message.slice(0, 500), JSON.stringify({
       trackId: input.trackId,
       ...input.metadata,
     })).run();
@@ -1092,17 +1101,94 @@ async function interpretDirection(
       `Direction: ${JSON.stringify({ id: track.id, titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, userRole: track.user_role, depthScore: track.depth_score + track.interaction_score, supportScore: track.support_score })}`,
       `Route evidence papers: ${JSON.stringify(evidence)}`,
     ].join("\n"),
-    4800,
+    3400,
     apiKey,
-    { reasoningEffort: "medium", timeoutMs: 48_000 },
+    { reasoningEffort: "low", thinking: "disabled", timeoutMs: 36_000 },
   );
   return sanitizeIntelligence(parsed.directionIntelligence, track.id, new Set(evidence.map((item) => item.canonicalId)));
 }
 
 async function saveDirectionIntelligence(database: D1Database, spaceId: string, trackId: string, intelligence: ReturnType<typeof sanitizeIntelligence>) {
   if (!intelligence) return;
-  await database.prepare("UPDATE research_tracks SET intelligence_json = ?, intelligence_model = ?, intelligence_updated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+  await database.prepare("UPDATE research_tracks SET intelligence_json = ?, intelligence_model = ?, intelligence_updated_at = CURRENT_TIMESTAMP, intelligence_status = 'ready', intelligence_attempt_count = 0, intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL, intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
     .bind(JSON.stringify(intelligence), MODEL, trackId, spaceId).run();
+}
+
+function directionIntelligenceErrorCode(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const name = error instanceof Error ? error.name.toLowerCase() : "";
+  if (name.includes("timeout") || name.includes("abort") || message.includes("timeout") || message.includes("timed out")) return "intelligence_timeout";
+  if (message.includes("budget reached")) return "budget_reached";
+  if (message.includes("required") || message.includes("401") || message.includes("403") || message.includes("429") || message.includes("unavailable")) return "model_unavailable";
+  if (error instanceof DeepSeekJsonResponseError || message.includes("json")) return "invalid_output";
+  return "analysis_failed";
+}
+
+async function advanceDirectionIntelligence(
+  database: D1Database,
+  workspaceId: string,
+  space: SpaceRow,
+  memory: string,
+  apiKey: string,
+  preferredTrackId?: string,
+) {
+  const claim = await claimResearchTrackIntelligence(database, space.id, { preferredTrackId });
+  if (!claim) return { status: "idle" as const };
+
+  const track = await database.prepare(
+    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+  ).bind(claim.trackId, space.id).first<TrackRow>();
+  if (!track) {
+    const deferred = await deferResearchTrackIntelligence(database, {
+      spaceId: space.id, trackId: claim.trackId, lockToken: claim.lockToken,
+      attemptCount: claim.attemptCount, errorCode: "track_unavailable",
+    });
+    return { status: "retryable" as const, trackId: claim.trackId, retryAt: deferred.retryAt, errorCode: "track_unavailable" };
+  }
+
+  const existing = await database.prepare(
+    `SELECT tp.canonical_id, tp.title, tp.authors, tp.venue, tp.published_at, tp.citation_count,
+     tp.role, tp.summary_zh, tp.summary_en, tp.rationale_zh, tp.rationale_en,
+     CASE WHEN EXISTS (
+      SELECT 1 FROM research_map_evidence_proposals ep
+      JOIN monitored_papers mp ON mp.id = ep.paper_id AND mp.space_id = ep.space_id
+      WHERE ep.space_id = tp.space_id AND ep.track_id = tp.track_id
+       AND mp.canonical_id = tp.canonical_id AND ep.status = 'confirmed'
+     ) THEN 'user_confirmed' ELSE 'system_curated' END AS provenance
+     FROM research_track_papers tp
+     WHERE tp.track_id = ? AND tp.space_id = ? AND tp.curation_status = 'active'
+     ORDER BY tp.position`,
+  ).bind(track.id, space.id).all<ExistingPaperEvidence>();
+  const evidence = existing.results.map((item) => ({
+    canonicalId: item.canonical_id, title: item.title, authors: item.authors, venue: item.venue,
+    publishedAt: item.published_at, citations: item.citation_count, role: item.role,
+    summaryZh: item.summary_zh, summaryEn: item.summary_en,
+    rationaleZh: item.rationale_zh, rationaleEn: item.rationale_en, provenance: item.provenance,
+  }));
+
+  try {
+    const intelligence = await interpretDirection(database, workspaceId, space, memory, track, evidence, apiKey);
+    if (!intelligence) throw new Error("No grounded direction intelligence was returned");
+    const changed = await completeResearchTrackIntelligence(database, {
+      spaceId: space.id, trackId: track.id, lockToken: claim.lockToken,
+      intelligenceJson: JSON.stringify(intelligence), model: MODEL,
+    });
+    return changed > 0 ? { status: "ready" as const, trackId: track.id } : { status: "superseded" as const, trackId: track.id };
+  } catch (error) {
+    const errorCode = directionIntelligenceErrorCode(error);
+    const deferred = await deferResearchTrackIntelligence(database, {
+      spaceId: space.id, trackId: track.id, lockToken: claim.lockToken,
+      attemptCount: claim.attemptCount, errorCode,
+    });
+    await recordResearchRouteReliabilityEvent(database, space.id, {
+      trackId: track.id,
+      outcome: "degraded",
+      stage: "direction_intelligence",
+      message: "Direction intelligence was deferred without removing the saved assessment",
+      metadata: { errorCode, retryAt: deferred.retryAt, attemptCount: claim.attemptCount },
+    });
+    return { status: "retryable" as const, trackId: track.id, retryAt: deferred.retryAt, errorCode };
+  }
 }
 
 function toPaper(row: TrackPaperRow): ResearchTrackPaper {
@@ -1602,7 +1688,7 @@ function heatLevel(score: number, recentPaperCount: number): ResearchHeatLevel {
 
 async function structureExistingTracks(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, apiKey: string) {
   const tracks = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
+    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
   ).bind(space.id).all<TrackRow>();
   if (tracks.results.length < 2) return;
   const parsed = await callDeepSeek<{
@@ -1622,7 +1708,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
     const trackId = cleanText(profile.trackId || "");
     if (!validIds.has(trackId)) continue;
     const userRole = DIRECTION_ROLES.has(profile.userRole as ResearchDirectionRole) ? profile.userRole as ResearchDirectionRole : "explore";
-    await database.prepare("UPDATE research_tracks SET user_role = ?, depth_score = ?, support_score = ?, intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+    await database.prepare("UPDATE research_tracks SET user_role = ?, depth_score = ?, support_score = ?, intelligence_status = 'pending', intelligence_attempt_count = 0, intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL, intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
       .bind(userRole, boundedScore(profile.depthScore), boundedScore(profile.supportScore), trackId, space.id).run();
   }
   await database.prepare("DELETE FROM research_track_edges WHERE space_id = ?").bind(space.id).run();
@@ -1642,7 +1728,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
   const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult] = await Promise.all([
-    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
+    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
       `SELECT tp.id, tp.track_id, tp.canonical_id, tp.doi, tp.title, tp.authors, tp.venue, tp.url,
@@ -1768,6 +1854,9 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     buildError: row.build_error,
     buildRetryAt: row.build_retry_at,
     intelligence: parseStoredIntelligence(row),
+    intelligenceStatus: defensiveResearchTrackIntelligenceStatus(row.intelligence_status, Boolean(parseStoredIntelligence(row))),
+    intelligenceRetryAt: row.intelligence_retry_at,
+    intelligenceRefreshRequestedAt: row.intelligence_refresh_requested_at,
     updatedAt: row.updated_at,
     papers: papersByTrack.get(row.id) || [],
     deactivatedPapers: deactivatedPapersByTrack.get(row.id) || [],
@@ -1795,7 +1884,13 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const emptyTrackIds = tracks.filter((track) => track.buildStatus === "empty").map((track) => track.id);
   const failedTrackIds = tracks.filter((track) => track.buildStatus === "failed").map((track) => track.id);
   const intelligenceEligibleTracks = tracks.filter((track) => ["ready", "partial"].includes(track.buildStatus) && track.papers.length > 0);
-  const pendingIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => !track.intelligence).map((track) => track.id);
+  const intelligenceNow = new Date().toISOString();
+  const readyIntelligenceTracks = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus === "ready" && track.intelligence);
+  const pendingIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus === "pending"
+    || (track.intelligenceStatus === "retryable" && (!track.intelligenceRetryAt || track.intelligenceRetryAt <= intelligenceNow))).map((track) => track.id);
+  const retryableIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus === "retryable").map((track) => track.id);
+  const runningIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus === "running").map((track) => track.id);
+  const staleIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus !== "ready" && track.intelligence).map((track) => track.id);
   const precisionAuditProgress = await researchRoutePrecisionAuditProgress(database, spaceId);
   return {
     tracks,
@@ -1833,7 +1928,14 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       emptyTrackIds,
       failedTrackIds,
     },
-    intelligenceProgress: { ready: intelligenceEligibleTracks.length - pendingIntelligenceTrackIds.length, total: intelligenceEligibleTracks.length, pendingTrackIds: pendingIntelligenceTrackIds },
+    intelligenceProgress: {
+      ready: readyIntelligenceTracks.length,
+      total: intelligenceEligibleTracks.length,
+      pendingTrackIds: pendingIntelligenceTrackIds,
+      retryableTrackIds: retryableIntelligenceTrackIds,
+      runningTrackIds: runningIntelligenceTrackIds,
+      staleTrackIds: staleIntelligenceTrackIds,
+    },
     precisionAuditProgress,
     ...extra,
   } satisfies ResearchMapState & Record<string, unknown>;
@@ -1853,7 +1955,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "advance-intelligence" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -1890,6 +1992,16 @@ export async function POST(request: Request) {
         precisionAuditOffTopicCount: audit.offTopicCount,
         precisionAuditDegraded: audit.auditDegraded,
       }));
+    }
+
+    if (payload.action === "advance-intelligence" || payload.action === "interpret") {
+      const preferredTrackId = payload.action === "interpret" ? payload.trackId?.trim() || "" : undefined;
+      if (payload.action === "interpret" && !preferredTrackId) {
+        return Response.json({ error: "trackId is required" }, { status: 400 });
+      }
+      if (preferredTrackId) await requestResearchTrackIntelligenceRefresh(database, space.id, preferredTrackId);
+      const intelligenceAdvance = await advanceDirectionIntelligence(database, workspaceId, space, memory, apiKey, preferredTrackId);
+      return Response.json(await readMap(database, space.id, { intelligenceAdvance }));
     }
 
     if (payload.action === "network") {
@@ -1945,7 +2057,7 @@ export async function POST(request: Request) {
     const targetedExpanding = gapExpanding || actionExpanding;
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
-      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
     ).bind(trackId, space.id).first<TrackRow>();
     if (!track) return Response.json({ error: "Research direction not found" }, { status: 404 });
     if (hydrating && track.build_status === "ready") return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
@@ -2000,12 +2112,6 @@ export async function POST(request: Request) {
       citations: item.citation_count, role: item.role, summaryZh: item.summary_zh, summaryEn: item.summary_en, rationaleZh: item.rationale_zh, rationaleEn: item.rationale_en,
       provenance: item.provenance,
     }));
-    if (payload.action === "interpret") {
-      const intelligence = await interpretDirection(database, workspaceId, space, memory, track, existingEvidence, apiKey);
-      if (!intelligence) return Response.json({ error: "This direction does not yet have enough grounded evidence for an assessment" }, { status: 422 });
-      await saveDirectionIntelligence(database, space.id, track.id, intelligence);
-      return Response.json(await readMap(database, space.id, { interpretedTrackId: track.id }));
-    }
     const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14 : ((track.expansion_count + 1) * 16) % 608;
     const discovery = await discoverCandidates([direction], offset, hydrating ? 14 : 16, hydrating ? track.build_attempt_count : 0);
     const existingIds = new Set(allExistingIds.results.map((row) => row.canonical_id));
@@ -2164,7 +2270,18 @@ export async function POST(request: Request) {
         },
       });
     }
-    if (!targetedExpanding) await saveDirectionIntelligence(database, space.id, track.id, reviewed.intelligence[0] || null);
+    if (!targetedExpanding) {
+      const refreshedIntelligence = reviewed.intelligence[0] || null;
+      if (refreshedIntelligence) await saveDirectionIntelligence(database, space.id, track.id, refreshedIntelligence);
+      else if (addedCount > 0) {
+        await database.prepare(
+          `UPDATE research_tracks SET intelligence_status = 'pending', intelligence_attempt_count = 0,
+           intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL,
+           intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?`,
+        ).bind(track.id, space.id).run();
+      }
+    }
     return Response.json(await readMap(database, space.id, {
       cached: false,
       addedCount,
@@ -2199,7 +2316,7 @@ export async function PATCH(request: Request) {
     }
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
-    await context.database.prepare("UPDATE research_tracks SET user_role = ?, interaction_score = MIN(35, interaction_score + 3), intelligence_json = '{}', intelligence_model = '', intelligence_updated_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+    await context.database.prepare("UPDATE research_tracks SET user_role = ?, interaction_score = MIN(35, interaction_score + 3), intelligence_status = 'pending', intelligence_attempt_count = 0, intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL, intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
       .bind(payload.userRole, trackId, context.space.id).run();
     return Response.json(await readMap(context.database, context.space.id));
   } catch (error) {

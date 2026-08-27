@@ -108,7 +108,10 @@ function createCurationFixture() {
       id TEXT PRIMARY KEY, space_id TEXT NOT NULL, title_zh TEXT NOT NULL, title_en TEXT NOT NULL,
       build_status TEXT NOT NULL DEFAULT 'ready', build_error TEXT, build_retry_at TEXT,
       intelligence_json TEXT NOT NULL DEFAULT '{}', intelligence_model TEXT NOT NULL DEFAULT '',
-      intelligence_updated_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      intelligence_updated_at TEXT, intelligence_status TEXT NOT NULL DEFAULT 'ready',
+      intelligence_attempt_count INTEGER NOT NULL DEFAULT 0, intelligence_error TEXT,
+      intelligence_retry_at TEXT, intelligence_lock_token TEXT, intelligence_lock_expires_at TEXT,
+      intelligence_refresh_requested_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE research_track_papers (
       id TEXT PRIMARY KEY, track_id TEXT NOT NULL, space_id TEXT NOT NULL, canonical_id TEXT NOT NULL,

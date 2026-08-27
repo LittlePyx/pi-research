@@ -171,7 +171,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /last14Days \* 30 \+ last6Months \* 10/);
   assert.match(mapRoute, /recentPaperCount/);
   assert.match(mapRoute, /api\.semanticscholar\.org\/graph\/v1\/paper\/batch/);
-  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret" \| "structure" \| "activity" \| "network" \| "reconcile"/);
+  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret" \| "advance-intelligence" \| "structure" \| "activity" \| "network" \| "reconcile"/);
   assert.match(mapRoute, /reconcileConfirmedResearchMapEvidence/);
   assert.match(mapRoute, /ep\.status = 'confirmed'/);
   assert.match(mapRoute, /system_curated/);

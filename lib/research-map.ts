@@ -242,6 +242,9 @@ export type ResearchTrack = {
   buildError: string | null;
   buildRetryAt: string | null;
   intelligence: ResearchDirectionIntelligence | null;
+  intelligenceStatus: "pending" | "running" | "retryable" | "ready";
+  intelligenceRetryAt: string | null;
+  intelligenceRefreshRequestedAt: string | null;
   updatedAt: string;
   papers: ResearchTrackPaper[];
   deactivatedPapers?: ResearchTrackPaper[];
@@ -311,6 +314,9 @@ export type ResearchMapState = {
     ready: number;
     total: number;
     pendingTrackIds: string[];
+    retryableTrackIds?: string[];
+    runningTrackIds?: string[];
+    staleTrackIds?: string[];
   };
   precisionAuditProgress?: {
     pending: number;

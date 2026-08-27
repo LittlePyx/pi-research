@@ -175,6 +175,13 @@ async function ensureGrowthMapColumns(database: D1Database) {
     { name: "intelligence_json", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_json TEXT NOT NULL DEFAULT '{}'" },
     { name: "intelligence_model", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_model TEXT NOT NULL DEFAULT ''" },
     { name: "intelligence_updated_at", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_updated_at TEXT" },
+    { name: "intelligence_status", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_status TEXT NOT NULL DEFAULT 'pending'" },
+    { name: "intelligence_attempt_count", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_attempt_count INTEGER NOT NULL DEFAULT 0" },
+    { name: "intelligence_error", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_error TEXT" },
+    { name: "intelligence_retry_at", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_retry_at TEXT" },
+    { name: "intelligence_lock_token", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_lock_token TEXT" },
+    { name: "intelligence_lock_expires_at", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_lock_expires_at TEXT" },
+    { name: "intelligence_refresh_requested_at", sql: "ALTER TABLE research_tracks ADD COLUMN intelligence_refresh_requested_at TEXT" },
   ];
   for (const addition of additions) {
     if (!existing.has(addition.name)) await database.prepare(addition.sql).run();
@@ -296,7 +303,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS research_imports (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, source_kind TEXT NOT NULL, file_names TEXT NOT NULL DEFAULT '[]', content_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', safety_attested INTEGER NOT NULL DEFAULT 0, analysis_json TEXT NOT NULL, analysis_model TEXT NOT NULL DEFAULT '', input_chars INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, confirmed_at TEXT)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_imports_space_hash ON research_imports(space_id, content_hash)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_imports_space_status_created ON research_imports(space_id, status, created_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS research_tracks (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', search_queries TEXT NOT NULL DEFAULT '[]', position INTEGER NOT NULL DEFAULT 0, expansion_count INTEGER NOT NULL DEFAULT 0, build_status TEXT NOT NULL DEFAULT 'ready', build_attempt_count INTEGER NOT NULL DEFAULT 0, build_source_status_json TEXT NOT NULL DEFAULT '[]', build_error TEXT, build_retry_at TEXT, user_role TEXT NOT NULL DEFAULT 'explore', depth_score INTEGER NOT NULL DEFAULT 0, support_score INTEGER NOT NULL DEFAULT 0, interaction_score INTEGER NOT NULL DEFAULT 0, intelligence_json TEXT NOT NULL DEFAULT '{}', intelligence_model TEXT NOT NULL DEFAULT '', intelligence_updated_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS research_tracks (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', search_queries TEXT NOT NULL DEFAULT '[]', position INTEGER NOT NULL DEFAULT 0, expansion_count INTEGER NOT NULL DEFAULT 0, build_status TEXT NOT NULL DEFAULT 'ready', build_attempt_count INTEGER NOT NULL DEFAULT 0, build_source_status_json TEXT NOT NULL DEFAULT '[]', build_error TEXT, build_retry_at TEXT, user_role TEXT NOT NULL DEFAULT 'explore', depth_score INTEGER NOT NULL DEFAULT 0, support_score INTEGER NOT NULL DEFAULT 0, interaction_score INTEGER NOT NULL DEFAULT 0, intelligence_json TEXT NOT NULL DEFAULT '{}', intelligence_model TEXT NOT NULL DEFAULT '', intelligence_updated_at TEXT, intelligence_status TEXT NOT NULL DEFAULT 'pending', intelligence_attempt_count INTEGER NOT NULL DEFAULT 0, intelligence_error TEXT, intelligence_retry_at TEXT, intelligence_lock_token TEXT, intelligence_lock_expires_at TEXT, intelligence_refresh_requested_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_tracks_space_position ON research_tracks(space_id, position)"),
     database.prepare("CREATE TABLE IF NOT EXISTS research_map_changes (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, paper_id TEXT NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, kind TEXT NOT NULL DEFAULT 'new_evidence', title_zh TEXT NOT NULL, title_en TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', confidence INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_map_changes_paper_track_kind ON research_map_changes(paper_id, track_id, kind)"),
@@ -358,6 +365,12 @@ export async function ensureSchema(database = getDatabase()) {
   ] as const;
   for (const [name, statement] of researchTrackAdditions) if (!researchTrackColumnNames.has(name)) await database.prepare(statement).run();
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_research_tracks_retry_due ON research_tracks(build_status, build_retry_at, build_attempt_count, space_id)").run();
+  await database.prepare(
+    `UPDATE research_tracks SET intelligence_status = 'ready'
+     WHERE intelligence_status = 'pending' AND intelligence_refresh_requested_at IS NULL
+      AND intelligence_updated_at IS NOT NULL AND intelligence_json <> '{}'`,
+  ).run();
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_research_tracks_intelligence_due ON research_tracks(space_id, intelligence_status, intelligence_retry_at, intelligence_lock_expires_at, position)").run();
   const researchTrackPaperColumns = await database.prepare("PRAGMA table_info(research_track_papers)").all<{ name: string }>();
   const researchTrackPaperColumnNames = new Set(researchTrackPaperColumns.results.map((column) => column.name));
   const researchTrackPaperAdditions = [

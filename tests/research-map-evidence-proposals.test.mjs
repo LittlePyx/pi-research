@@ -204,6 +204,13 @@ function createFixture() {
       intelligence_json TEXT NOT NULL DEFAULT '{}',
       intelligence_model TEXT NOT NULL DEFAULT '',
       intelligence_updated_at TEXT,
+      intelligence_status TEXT NOT NULL DEFAULT 'ready',
+      intelligence_attempt_count INTEGER NOT NULL DEFAULT 0,
+      intelligence_error TEXT,
+      intelligence_retry_at TEXT,
+      intelligence_lock_token TEXT,
+      intelligence_lock_expires_at TEXT,
+      intelligence_refresh_requested_at TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE monitor_query_plans (
@@ -804,7 +811,7 @@ test("a quality-approved system-curated paper can be confirmed without dismissal
   }
 });
 
-test("promotion confirms evidence, writes the formal map once, and invalidates derived guidance", async () => {
+test("promotion confirms evidence, writes the formal map once, and marks saved guidance stale", async () => {
   const { sqlite, database } = createFixture();
   try {
     await upsertPendingResearchMapEvidence(database, [proposal({ mapRole: "milestone" })]);
@@ -833,10 +840,14 @@ test("promotion confirms evidence, writes the formal map once, and invalidates d
       { ...sqlite.prepare("SELECT kind, confidence FROM research_map_changes").get() },
       { kind: "new_evidence", confidence: 82 },
     );
-    assert.deepEqual(
-      { ...sqlite.prepare("SELECT intelligence_json, intelligence_model, intelligence_updated_at FROM research_tracks WHERE id = 'track-a'").get() },
-      { intelligence_json: "{}", intelligence_model: "", intelligence_updated_at: null },
-    );
+    const savedGuidance = sqlite.prepare(
+      "SELECT intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_refresh_requested_at FROM research_tracks WHERE id = 'track-a'",
+    ).get();
+    assert.equal(savedGuidance.intelligence_json, '{"gap":"proof"}');
+    assert.equal(savedGuidance.intelligence_model, "deepseek-v4-pro");
+    assert.ok(savedGuidance.intelligence_updated_at);
+    assert.equal(savedGuidance.intelligence_status, "pending");
+    assert.ok(savedGuidance.intelligence_refresh_requested_at);
     assert.equal(count(sqlite, "monitor_query_plans"), 0);
     assert.deepEqual(
       { ...sqlite.prepare("SELECT status, error FROM research_paper_network_states WHERE space_id = 'space-a'").get() },
