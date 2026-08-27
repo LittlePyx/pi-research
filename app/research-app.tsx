@@ -1530,6 +1530,30 @@ function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) 
   };
 }
 
+async function followMonitorPipeline(
+  spaceId: string,
+  initialMonitor: MonitorState,
+  onUpdate: (monitor: MonitorState) => void,
+  isCancelled: () => boolean = () => false,
+) {
+  let current = initialMonitor;
+  for (let step = 0; step < 400 && !isCancelled() && !["ready", "error"].includes(current.status); step += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    if (isCancelled()) break;
+    try {
+      const response = await fetch("/api/monitor?spaceId=" + encodeURIComponent(spaceId), { cache: "no-store" });
+      const data = await response.json().catch(() => ({})) as { monitor?: MonitorState };
+      if (response.ok && data.monitor) {
+        current = data.monitor;
+        if (!isCancelled()) onUpdate(current);
+      }
+    } catch {
+      // The elected owner remains authoritative; a later read can catch up.
+    }
+  }
+  return current;
+}
+
 async function advanceMonitorPipeline(
   spaceId: string,
   initialMonitor: MonitorState,
@@ -1552,7 +1576,9 @@ async function advanceMonitorPipeline(
     if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan stage unavailable");
     // Another tab or scheduler owns this checkpoint. Stop issuing POSTs and let
     // the read-only poll follow the authoritative job instead of creating a request storm.
-    if (data.monitor.alreadyAdvancing) return current;
+    if (data.monitor.alreadyAdvancing) {
+      return followMonitorPipeline(spaceId, current, onUpdate, isCancelled);
+    }
   }
   if (!isCancelled() && current.status === "ready" && current.scanJob?.checkpoint === "main_complete") {
     void fetch("/api/monitor", {
@@ -3441,6 +3467,9 @@ export default function ResearchApp({ user }: { user: User }) {
           if (!data.monitor.throttled && data.monitor.leaseOwner !== false
             && !data.monitor.alreadyRunning && !["ready", "error"].includes(data.monitor.status)) {
             await advanceMonitorPipeline(activeSpace.id, data.monitor, (nextMonitor) => { if (!cancelled) setMonitor(nextMonitor); }, () => cancelled);
+          } else if (!data.monitor.throttled && !["ready", "error"].includes(data.monitor.status)) {
+            stopPolling();
+            await followMonitorPipeline(activeSpace.id, data.monitor, (nextMonitor) => { if (!cancelled) setMonitor(nextMonitor); }, () => cancelled);
           }
         })
         .catch((error) => {
@@ -4082,6 +4111,12 @@ export default function ResearchApp({ user }: { user: User }) {
             stopPolling();
             setMonitoring(false);
           });
+      } else if (!["ready", "error"].includes(data.monitor.status)) {
+        pipelineDetached = true;
+        stopPolling();
+        void followMonitorPipeline(activeSpace.id, data.monitor, setMonitor)
+          .catch(handlePipelineFailure)
+          .finally(() => setMonitoring(false));
       }
     } catch (error) {
       handlePipelineFailure(error);
@@ -4133,6 +4168,10 @@ export default function ResearchApp({ user }: { user: User }) {
         if (scanData.monitor.leaseOwner !== false && !scanData.monitor.alreadyRunning
           && !["ready", "error"].includes(scanData.monitor.status)) {
           await advanceMonitorPipeline(activeSpace.id, scanData.monitor, setMonitor);
+        } else if (!["ready", "error"].includes(scanData.monitor.status)) {
+          stopPolling?.();
+          stopPolling = null;
+          await followMonitorPipeline(activeSpace.id, scanData.monitor, setMonitor);
         }
       }
     } finally {

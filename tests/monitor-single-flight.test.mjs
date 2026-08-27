@@ -117,7 +117,11 @@ test("route, worker, and browser driver all honor the elected owner", async () =
   assert.match(route, /idempotentReplay: true/);
   assert.match(route, /leaseOwner: true/);
   assert.match(worker, /state\.monitor\.leaseOwner === false \|\| state\.monitor\.alreadyRunning/);
-  assert.match(client, /if \(data\.monitor\.alreadyAdvancing\) return current/);
+  assert.match(client, /async function followMonitorPipeline/);
+  assert.match(client, /fetch\("\/api\/monitor\?spaceId=" \+ encodeURIComponent\(spaceId\), \{ cache: "no-store" \}\)/);
+  assert.match(client, /if \(data\.monitor\.alreadyAdvancing\) \{[\s\S]*return followMonitorPipeline/);
+  assert.match(client, /stopPolling\(\);[\s\S]*await followMonitorPipeline/);
+  assert.doesNotMatch(client, /if \(data\.monitor\.alreadyAdvancing\) return current/);
   assert.match(client, /data\.monitor\.leaseOwner !== false/);
 });
 
