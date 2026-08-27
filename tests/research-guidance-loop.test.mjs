@@ -87,6 +87,6 @@ test("the interface explains the research-route and daily-discovery loop", async
   assert.match(app, /RouteQualityFlow/);
   assert.match(app, /data\.reviewQueuedCount/);
   assert.doesNotMatch(app, /data\.addedCount \? `沿缺口发现/);
-  assert.match(app, /action: "expand-gap"/);
+  assert.match(app, /action: origin === "problem" \? "expand-problem" : "expand-gap"/);
   assert.doesNotMatch(app, /action: "reconcile"/);
 });

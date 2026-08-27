@@ -140,6 +140,7 @@ type ResearchSynthesis = {
   changeSummaryZh: string;
   changeSummaryEn: string;
   nextSearchQuery: string;
+  nextSearchSourceStatementId: string | null;
   confidence: number;
   sourcePaperCount: number;
   fulltextPaperCount: number;
@@ -2760,12 +2761,14 @@ function ResearchSynthesisWorkbench({
 }) {
   const ready = Boolean(synthesis && ["ready", "partial"].includes(synthesis.status) && synthesis.statements.length);
   const availablePapers = synthesis?.availablePaperCount || 0;
+  const searchSourceStatement = synthesis?.nextSearchSourceStatementId
+    ? synthesis.statements.find((statement) => statement.id === synthesis.nextSearchSourceStatementId) || null : null;
   return <section className="v2-route-workspace-panel v2-research-synthesis" role="tabpanel">
     <header><div><p className="v2-kicker">π {locale === "zh" ? "可追溯的跨论文证据综合" : "TRACEABLE CROSS-PAPER SYNTHESIS"}</p><h2>{locale === "zh" ? "哪些判断已经站稳，哪些仍然相互冲突" : "What is stable, what conflicts, and what remains unresolved"}</h2><span className="v2-sr-only">这条路线目前可以怎样判断</span></div><div><span>{ready ? synthesis!.confidence : track.intelligence?.confidence || 0}%<small>{locale === "zh" ? "综合置信度" : "confidence"}</small></span><button type="button" onClick={onRefresh} disabled={loading || !synthesis?.canGenerate}>{loading ? (locale === "zh" ? "Pi 正在综合…" : "Synthesizing…") : ready ? (locale === "zh" ? "按最新证据更新" : "Refresh from evidence") : (locale === "zh" ? "生成跨论文综合" : "Build synthesis")}</button></div></header>
     {ready ? <>
       <div className="v2-synthesis-overview"><div><small>{locale === "zh" ? "这组论文共同回答的问题" : "QUESTION SHARED BY THESE PAPERS"}</small><h3>{locale === "zh" ? synthesis!.questionZh : synthesis!.questionEn}</h3><p>{locale === "zh" ? synthesis!.overviewZh : synthesis!.overviewEn}</p>{(locale === "zh" ? synthesis!.changeSummaryZh : synthesis!.changeSummaryEn) && <aside><b>↗</b><span><strong>{locale === "zh" ? "相较上一版，发生了什么" : "What changed since the previous revision"}</strong>{locale === "zh" ? synthesis!.changeSummaryZh : synthesis!.changeSummaryEn}</span></aside>}</div><dl><div><dt>{locale === "zh" ? "已核验论文" : "Grounded papers"}</dt><dd>{synthesis!.sourcePaperCount}</dd></div><div><dt>{locale === "zh" ? "可核验判断" : "Verified claims"}</dt><dd>{synthesis!.claimCount}</dd></div><div><dt>{locale === "zh" ? "可用论文" : "Available papers"}</dt><dd>{synthesis!.availablePaperCount}</dd></div></dl></div>
-      <div className="v2-synthesis-statement-list">{synthesis!.statements.map((statement, index) => <details className={statement.kind} key={statement.id}><summary><span>{String(index + 1).padStart(2, "0")}</span><div><small>{researchSynthesisKindLabel(statement.kind, locale)}</small><h3>{locale === "zh" ? statement.titleZh : statement.titleEn}</h3><p>{locale === "zh" ? statement.textZh : statement.textEn}</p></div><b>{statement.confidence}%<i>＋</i></b></summary><div className="v2-synthesis-sources"><header><strong>{locale === "zh" ? "回到来源核对" : "Verify in the source"}</strong><span>{statement.sources.length} {locale === "zh" ? "条证据" : "claims"}</span></header>{statement.sources.map((source) => <article key={source.claimId}><div><span>{locale === "zh" ? "已保存证据" : "Saved evidence"}</span><strong>{source.title}</strong><small>{[source.authors, source.publishedAt?.slice(0, 4), source.venue].filter(Boolean).join(" · ")}</small></div><blockquote>“{source.evidenceQuote}”</blockquote><footer><em>{source.locator || (locale === "zh" ? "来源定位待补全" : "Locator pending")}</em>{source.sourceUrl && <a href={source.sourceUrl} target="_blank" rel="noreferrer">{locale === "zh" ? "打开证据" : "Open evidence"} ↗</a>}</footer></article>)}</div></details>)}</div>
-      <footer className="v2-synthesis-next"><div><small>{locale === "zh" ? "综合识别出的下一项关键验证" : "NEXT HIGH-VALUE TEST FROM THE SYNTHESIS"}</small><strong>{synthesis!.nextSearchQuery || (locale === "zh" ? "当前综合尚未形成安全的定向检索式" : "No safe targeted query is ready yet")}</strong><p>{locale === "zh" ? "这条检索会进入共享质量评估；只有通过门槛的真实论文才会回到今日推荐和路线待确认证据。" : "This query enters the shared quality gate. Only real papers that pass return to Today and the route evidence queue."}</p></div><button type="button" onClick={onScanGap} disabled={!synthesis!.nextSearchQuery}>{locale === "zh" ? "沿此缺口继续发现" : "Discover along this gap"} →</button></footer>
+      <div className="v2-synthesis-statement-list">{synthesis!.statements.map((statement, index) => <details className={statement.kind} key={statement.id}><summary><span>{String(index + 1).padStart(2, "0")}</span><div><small>{researchSynthesisKindLabel(statement.kind, locale)}</small><h3>{locale === "zh" ? statement.titleZh : statement.titleEn}</h3><p>{locale === "zh" ? statement.textZh : statement.textEn}</p></div><b>{statement.confidence}%<i>＋</i></b></summary><div className="v2-synthesis-sources"><header><strong>{locale === "zh" ? "回到来源核对" : "Verify in the source"}</strong><span>{statement.sources.length} {locale === "zh" ? "条证据" : "claims"}</span></header>{statement.sources.map((source) => <article key={source.claimId}><div><span>{researchEvidenceLevelLabel(source.evidenceLevel, locale)}</span><strong>{source.title}</strong><small>{[source.authors, source.publishedAt?.slice(0, 4), source.venue].filter(Boolean).join(" · ")}</small></div><blockquote>{source.evidenceQuote}</blockquote><footer><em>{source.locator || (locale === "zh" ? "来源定位待补全" : "Locator pending")} · claim {source.claimId}</em>{source.sourceUrl && <a href={source.sourceUrl} target="_blank" rel="noreferrer">{locale === "zh" ? "打开来源" : "Open source"} ↗</a>}</footer></article>)}</div></details>)}</div>
+      <footer className="v2-synthesis-next"><div><small>{locale === "zh" ? "综合识别出的下一项关键验证" : "NEXT HIGH-VALUE TEST FROM THE SYNTHESIS"}</small><strong>{synthesis!.nextSearchQuery || (locale === "zh" ? "当前综合尚未形成安全的定向检索式" : "No safe targeted query is ready yet")}</strong>{searchSourceStatement && <em>{locale === "zh" ? `来自证据缺口：“${searchSourceStatement.titleZh}”` : `From evidence gap: “${searchSourceStatement.titleEn}”`}</em>}<p>{locale === "zh" ? "这条检索会进入共享质量评估；只有通过门槛的真实论文才会回到今日推荐和路线待确认证据。" : "This query enters the shared quality gate. Only real papers that pass return to Today and the route evidence queue."}</p></div><button type="button" onClick={onScanGap} disabled={!synthesis!.nextSearchQuery || synthesis!.stale}>{locale === "zh" ? "沿此缺口继续发现" : "Discover along this gap"} →</button></footer>
     </> : loading ? <div className="v2-route-panel-empty v2-synthesis-loading"><span>π</span><div><strong>{locale === "zh" ? "Pi 正在逐条比对论文证据" : "Pi is comparing claim-level evidence"}</strong><p>{locale === "zh" ? "正在区分共同结论、条件差异、真正冲突和方法演进。" : "Separating shared conclusions, conditional differences, real conflicts, and method lineage."}</p></div></div> : <div className="v2-route-panel-empty v2-synthesis-empty"><span>◎</span><div><strong>{availablePapers < 2 ? (locale === "zh" ? "还需要至少两篇已确认且可核验的论文" : "At least two confirmed, grounded papers are needed") : (locale === "zh" ? "这条路线还没有形成跨论文综合" : "This route has no cross-paper synthesis yet")}</strong><p>{availablePapers < 2 ? (locale === "zh" ? `目前有 ${availablePapers} 篇论文具备逐条证据。Pi 不会用标题相似或单篇摘要冒充共识与分歧。` : `${availablePapers} paper(s) currently have claim-level evidence. Pi will not turn title similarity or one abstract into consensus.`) : (locale === "zh" ? "现有证据已足够，可以让 Pi 生成带原文定位的综合。" : "Enough evidence is available for a source-linked synthesis.")}</p>{track.intelligence && <small>{locale === "zh" ? `路线级初步研判：${track.intelligence.assessmentZh}` : `Preliminary route assessment: ${track.intelligence.assessmentEn}`}</small>}{error && <em>{error}</em>}</div>{availablePapers >= 2 ? <button type="button" onClick={onRefresh}>{locale === "zh" ? "开始综合" : "Build synthesis"} →</button> : <button type="button" onClick={onExplain}>{locale === "zh" ? "让 Pi 解释还缺什么" : "Ask Pi what is missing"} →</button>}</div>}
   </section>;
 }
@@ -2784,6 +2787,32 @@ function researchProblemRelationLabel(relation: ResearchProblemAssessment["hypot
     qualifies: { zh: "限定", en: "Qualifies" }, method: { zh: "方法支撑", en: "Method support" }, gap: { zh: "仍有缺口", en: "Evidence gap" },
   };
   return labels[relation][locale];
+}
+
+function researchEvidenceLevelLabel(level: ResearchSynthesisSource["evidenceLevel"], locale: Locale) {
+  if (level === "abstract") return locale === "zh" ? "摘要证据" : "Abstract evidence";
+  if (level === "metadata") return locale === "zh" ? "结构化元数据" : "Structured metadata";
+  return locale === "zh" ? "已保存历史证据" : "Saved legacy evidence";
+}
+
+function ResearchStatementTrace({ statementIds, synthesis, locale, userDefined = false }: {
+  statementIds: string[];
+  synthesis: ResearchSynthesis | null;
+  locale: Locale;
+  userDefined?: boolean;
+}) {
+  const statementById = new Map((synthesis?.statements || []).map((statement) => [statement.id, statement]));
+  const statements = Array.from(new Set(statementIds)).flatMap((id) => {
+    const statement = statementById.get(id);
+    return statement ? [statement] : [];
+  });
+  if (!statements.length) return <small className="v2-problem-trace-missing">{userDefined
+    ? (locale === "zh" ? "用户定义假设 · 未绑定综合证据" : "User-defined hypothesis · no synthesis evidence linked")
+    : (locale === "zh" ? "来源已变化，请重新研判" : "Sources changed; refresh the assessment")}</small>;
+  const sourcePaperCount = new Set(statements.flatMap((statement) => statement.sources.map((source) => source.paperId))).size;
+  return <details className="v2-problem-statement-trace"><summary>{locale === "zh"
+    ? `追溯 ${statements.length} 条综合判断 · ${sourcePaperCount} 篇论文`
+    : `Trace ${statements.length} synthesis statement(s) · ${sourcePaperCount} paper(s)`} ＋</summary><div>{statements.map((statement) => <article key={statement.id}><header><span>{researchSynthesisKindLabel(statement.kind, locale)}</span><strong>{locale === "zh" ? statement.titleZh : statement.titleEn}</strong><small>{statement.confidence}%</small></header><p>{locale === "zh" ? statement.textZh : statement.textEn}</p><footer>{statement.sources.map((source) => source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer" key={source.claimId}><strong>{source.title}</strong><small>{researchEvidenceLevelLabel(source.evidenceLevel, locale)} · claim {source.claimId}</small></a> : <span key={source.claimId}><strong>{source.title}</strong><small>{researchEvidenceLevelLabel(source.evidenceLevel, locale)} · claim {source.claimId}</small></span>)}</footer></article>)}</div></details>;
 }
 
 function researchActionStageLabel(stage: string, locale: Locale) {
@@ -2821,9 +2850,10 @@ function ResearchActionRunOutput({ item, locale, busy, completed, onExecute, onD
 }
 
 function ResearchProblemWorkbench({
-  state, loading, action, error, locale, onDraft, onConfirm, onAssess, onUpdateAction, onExecuteAction,
+  state, synthesis, loading, action, error, locale, onDraft, onConfirm, onAssess, onScanProblem, onUpdateAction, onExecuteAction,
 }: {
   state: ResearchProblemState | null;
+  synthesis: ResearchSynthesis | null;
   loading: boolean;
   action: string | null;
   error: string;
@@ -2831,6 +2861,7 @@ function ResearchProblemWorkbench({
   onDraft: () => void;
   onConfirm: (draft: { question: string; objective: string; scope: string; successCriteria: string; stage: ResearchProblemStage; hypotheses: Array<{ statement: string; rationale: string; confidence: number; sourceStatementIds: string[] }> }) => void;
   onAssess: () => void;
+  onScanProblem: () => void;
   onUpdateAction: (actionId: string, status: "accepted" | "done" | "dismissed") => void;
   onExecuteAction: (action: ResearchProblemAction) => void;
 }) {
@@ -2858,8 +2889,8 @@ function ResearchProblemWorkbench({
   return <section className="v2-route-workspace-panel v2-research-problem active" role="tabpanel">
     <header><div><p className="v2-kicker">π {locale === "zh" ? "用户确认的研究问题" : "USER-CONFIRMED RESEARCH PROBLEM"}</p><h2>{state.problem.question}</h2></div><span>{researchProblemStageLabel(state.problem.stage, locale)}</span></header>
     <div className="v2-problem-definition"><article><small>{locale === "zh" ? "当前目标" : "OBJECTIVE"}</small><p>{state.problem.objective}</p></article><article><small>{locale === "zh" ? "范围边界" : "SCOPE"}</small><p>{state.problem.scope}</p></article><article><small>{locale === "zh" ? "推进标准" : "SUCCESS CRITERION"}</small><p>{state.problem.successCriteria}</p></article></div>
-    <section className="v2-problem-confirmed-hypotheses"><header><strong>{locale === "zh" ? "当前假设" : "Current hypotheses"}</strong><span>{state.hypotheses.filter((item) => item.status === "confirmed").length}</span></header>{state.hypotheses.filter((item) => item.status === "confirmed").map((hypothesis, index) => { const impacts = assessment?.hypothesisImpacts.filter((item) => item.hypothesisId === hypothesis.id) || []; return <article key={hypothesis.id}><span>H{index + 1}</span><div><h3>{hypothesis.statement}</h3><p>{hypothesis.rationale}</p>{impacts.map((impact) => <aside className={impact.relation} key={`${impact.hypothesisId}:${impact.relation}`}><b>{researchProblemRelationLabel(impact.relation, locale)}</b><span>{locale === "zh" ? impact.explanationZh : impact.explanationEn}</span><em>{impact.confidence}%</em></aside>)}</div></article>; })}</section>
-    {assessment ? <section className={`v2-problem-assessment ${assessment.stale ? "stale" : ""}`}><header><div><small>{locale === "zh" ? "最新证据对问题的影响" : "LATEST EVIDENCE IMPACT"}</small><strong>{assessment.confidence}% {locale === "zh" ? "当前判断置信度" : "current confidence"}</strong></div><button type="button" disabled={Boolean(action)} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : assessment.stale ? (locale === "zh" ? "按最新证据更新" : "Refresh from evidence") : (locale === "zh" ? "重新研判" : "Reassess")}</button></header><p>{locale === "zh" ? assessment.summaryZh : assessment.summaryEn}</p>{(locale === "zh" ? assessment.changeZh : assessment.changeEn) && <blockquote><b>↗</b><span><strong>{locale === "zh" ? "本次改变" : "What changed"}</strong>{locale === "zh" ? assessment.changeZh : assessment.changeEn}</span></blockquote>}<div><article><small>{locale === "zh" ? "最关键的不确定性" : "KEY UNCERTAINTY"}</small><p>{locale === "zh" ? assessment.uncertaintyZh : assessment.uncertaintyEn}</p></article><article><small>{locale === "zh" ? "下一项需要作出的判断" : "NEXT DECISION"}</small><p>{locale === "zh" ? assessment.nextDecisionZh : assessment.nextDecisionEn}</p></article></div></section> : <section className="v2-problem-assessment empty"><div><strong>{locale === "zh" ? "问题已经确认，等待第一次证据研判" : "The problem is confirmed and ready for its first evidence assessment"}</strong><p>{locale === "zh" ? "Pi 会把跨论文证据映射到你的假设，只提出影响，不修改问题。" : "Pi maps cross-paper evidence to your hypotheses and suggests impacts without changing the problem."}</p></div><button type="button" disabled={Boolean(action) || !state.evidence.canAssess} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : (locale === "zh" ? "开始证据研判" : "Assess evidence")} →</button></section>}
+    <section className="v2-problem-confirmed-hypotheses"><header><strong>{locale === "zh" ? "当前假设" : "Current hypotheses"}</strong><span>{state.hypotheses.filter((item) => item.status === "confirmed").length}</span></header>{state.hypotheses.filter((item) => item.status === "confirmed").map((hypothesis, index) => { const impacts = assessment?.hypothesisImpacts.filter((item) => item.hypothesisId === hypothesis.id) || []; return <article key={hypothesis.id}><span>H{index + 1}</span><div><h3>{hypothesis.statement}</h3><p>{hypothesis.rationale}</p><ResearchStatementTrace statementIds={hypothesis.sourceStatementIds} synthesis={synthesis} locale={locale} userDefined={!hypothesis.sourceStatementIds.length} />{impacts.map((impact) => <aside className={impact.relation} key={`${impact.hypothesisId}:${impact.relation}`}><b>{researchProblemRelationLabel(impact.relation, locale)}</b><span>{locale === "zh" ? impact.explanationZh : impact.explanationEn}</span><em>{impact.confidence}%</em><ResearchStatementTrace statementIds={impact.sourceStatementIds} synthesis={synthesis} locale={locale} /></aside>)}</div></article>; })}</section>
+    {assessment ? <section className={`v2-problem-assessment ${assessment.stale ? "stale" : ""}`}><header><div><small>{locale === "zh" ? "最新证据对问题的影响" : "LATEST EVIDENCE IMPACT"}</small><strong>{assessment.confidence}% {locale === "zh" ? "当前判断置信度" : "current confidence"}</strong></div><button type="button" disabled={Boolean(action)} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : assessment.stale ? (locale === "zh" ? "按最新证据更新" : "Refresh from evidence") : (locale === "zh" ? "重新研判" : "Reassess")}</button></header><p>{locale === "zh" ? assessment.summaryZh : assessment.summaryEn}</p>{(locale === "zh" ? assessment.changeZh : assessment.changeEn) && <blockquote><b>↗</b><span><strong>{locale === "zh" ? "本次改变" : "What changed"}</strong>{locale === "zh" ? assessment.changeZh : assessment.changeEn}</span></blockquote>}<ResearchStatementTrace statementIds={assessment.sourceStatementIds} synthesis={synthesis} locale={locale} /><div><article><small>{locale === "zh" ? "最关键的不确定性" : "KEY UNCERTAINTY"}</small><p>{locale === "zh" ? assessment.uncertaintyZh : assessment.uncertaintyEn}</p></article><article><small>{locale === "zh" ? "下一项需要作出的判断" : "NEXT DECISION"}</small><p>{locale === "zh" ? assessment.nextDecisionZh : assessment.nextDecisionEn}</p></article></div>{assessment.nextSearchQuery && <section className="v2-problem-next-search"><div><small>{locale === "zh" ? "由当前研判生成的定向检索" : "TARGETED SEARCH FROM THIS ASSESSMENT"}</small><code>{assessment.nextSearchQuery}</code><p>{assessment.stale ? (locale === "zh" ? "证据已经变化，请先更新研判；旧检索不会继续供稿。" : "Evidence has changed. Refresh the assessment before this query can supply candidates.") : (locale === "zh" ? "候选进入今日共用的质量评估队列，不会直接改写路线或假设。" : "Candidates enter Today's shared quality queue and do not directly rewrite the route or hypotheses.")}</p></div><button type="button" disabled={Boolean(action) || assessment.stale} onClick={onScanProblem}>{action === "scan-problem" ? (locale === "zh" ? "正在寻找论文…" : "Discovering papers…") : (locale === "zh" ? "沿此不确定性发现论文" : "Discover for this uncertainty")} →</button></section>}</section> : <section className="v2-problem-assessment empty"><div><strong>{locale === "zh" ? "问题已经确认，等待第一次证据研判" : "The problem is confirmed and ready for its first evidence assessment"}</strong><p>{locale === "zh" ? "Pi 会把跨论文证据映射到你的假设，只提出影响，不修改问题。" : "Pi maps cross-paper evidence to your hypotheses and suggests impacts without changing the problem."}</p></div><button type="button" disabled={Boolean(action) || !state.evidence.canAssess} onClick={onAssess}>{action === "assess" ? (locale === "zh" ? "Pi 正在研判…" : "Assessing…") : (locale === "zh" ? "开始证据研判" : "Assess evidence")} →</button></section>}
     <section className="v2-problem-actions"><header><div><strong>{locale === "zh" ? "接下来推进什么" : "What moves the problem forward"}</strong><small>{locale === "zh" ? "接受后由 Pi 执行；结果带来源并长期保存" : "Pi executes accepted actions and saves source-linked results"}</small></div><span>{acceptedActions.length} {locale === "zh" ? "进行中" : "active"}</span></header>
       {state.actions.map((item, index) => <article className={`${item.status} ${item.run?.status || "not-run"}`} key={item.id}><span>{item.status === "done" ? "✓" : String(index + 1).padStart(2, "0")}</span><div className="v2-action-body"><small>{item.kind.toUpperCase()}</small><strong>{locale === "zh" ? item.titleZh : item.titleEn}</strong><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p>{item.status !== "proposed" && <ResearchActionRunOutput item={item} locale={locale} busy={Boolean(action)} completed={item.status === "done"} onExecute={() => onExecuteAction(item)} onDone={() => onUpdateAction(item.id, "done")} />}</div>{item.status === "proposed" && <footer><button type="button" disabled={Boolean(action)} onClick={() => onExecuteAction(item)}>{locale === "zh" ? "接受并让 Pi 执行" : "Accept & execute"}</button><button type="button" disabled={Boolean(action)} onClick={() => onUpdateAction(item.id, "dismissed")}>{locale === "zh" ? "暂不做" : "Dismiss"}</button></footer>}</article>)}
       {!state.actions.length && <p className="v2-problem-no-actions">{locale === "zh" ? "完成一次证据研判后，Pi 会提出 1–3 项具体行动。" : "After an evidence assessment, Pi will propose 1–3 concrete moves."}</p>}
@@ -4818,30 +4849,41 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
-  const scanResearchRouteGap = async (thread: ResearchTrack) => {
-    const hasGapQuery = Boolean((researchSynthesis && selectedThread?.id === thread.id ? researchSynthesis.nextSearchQuery : "") || thread.intelligence?.nextSearchQuery);
-    if (mapAction || mapBuildTrackId || mapIntelligenceTrackId || !hasGapQuery
+  const scanResearchRouteSignal = async (thread: ResearchTrack, origin: "gap" | "problem") => {
+    const hasQuery = origin === "problem"
+      ? Boolean(researchProblemState?.assessment?.nextSearchQuery && !researchProblemState.assessment.stale)
+      : Boolean((researchSynthesis && selectedThread?.id === thread.id ? researchSynthesis.nextSearchQuery : "") || thread.intelligence?.nextSearchQuery);
+    if (mapAction || mapBuildTrackId || mapIntelligenceTrackId || !hasQuery
       || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
-    setMapAction(`gap:${thread.id}`);
+    setMapAction(`${origin}:${thread.id}`);
     try {
       const response = await fetch("/api/research-map", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, action: "expand-gap", trackId: thread.id }),
+        body: JSON.stringify({ spaceId: activeSpace.id, action: origin === "problem" ? "expand-problem" : "expand-gap", trackId: thread.id }),
       });
       const data = await response.json() as ResearchMapState & { reviewQueuedCount?: number; error?: string };
-      if (!response.ok) throw new Error(data.error || "gap expansion failed");
+      if (!response.ok) throw new Error(data.error || `${origin} expansion failed`);
       setResearchMap(data);
       setSelectedThread(data.tracks.find((item) => item.id === thread.id) || thread);
-      setToast(locale === "zh"
-        ? (data.reviewQueuedCount ? `沿缺口发现的 ${data.reviewQueuedCount} 篇候选已进入共享质量队列，将在下一轮审阅` : "本轮没有新的缺口候选进入质量队列，检索位置已保存")
-        : (data.reviewQueuedCount ? `${data.reviewQueuedCount} gap candidates entered the shared queue for the next review pass` : "No new gap candidate entered the quality queue; the search position was saved"));
+      setToast(origin === "problem"
+        ? locale === "zh"
+          ? (data.reviewQueuedCount ? `围绕研究问题发现的 ${data.reviewQueuedCount} 篇候选已进入共享质量队列` : "本轮没有新的研究问题候选，检索位置已保存")
+          : (data.reviewQueuedCount ? `${data.reviewQueuedCount} research-problem candidates entered the shared quality queue` : "No new research-problem candidate entered the queue; the search position was saved")
+        : locale === "zh"
+          ? (data.reviewQueuedCount ? `沿缺口发现的 ${data.reviewQueuedCount} 篇候选已进入共享质量队列，将在下一轮审阅` : "本轮没有新的缺口候选进入质量队列，检索位置已保存")
+          : (data.reviewQueuedCount ? `${data.reviewQueuedCount} gap candidates entered the shared queue for the next review pass` : "No new gap candidate entered the quality queue; the search position was saved"));
     } catch {
-      setToast(locale === "zh" ? "证据缺口扫描暂时未完成，请稍后重试" : "The evidence-gap scan could not finish just now");
+      setToast(origin === "problem"
+        ? (locale === "zh" ? "研究问题扫描暂时未完成，请先保留当前研判" : "The research-problem scan could not finish; the assessment remains saved")
+        : (locale === "zh" ? "证据缺口扫描暂时未完成，请稍后重试" : "The evidence-gap scan could not finish just now"));
     } finally {
       setMapAction(null);
     }
   };
+
+  const scanResearchRouteGap = (thread: ResearchTrack) => scanResearchRouteSignal(thread, "gap");
+  const scanResearchProblemGap = (thread: ResearchTrack) => scanResearchRouteSignal(thread, "problem");
 
   const refreshDirectionIntelligence = async (thread: ResearchTrack) => {
     if (mapAction || mapBuildTrackId || mapIntelligenceTrackId || !thread.papers.length) return;
@@ -5548,7 +5590,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
               <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["problem", "assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab, tabIndex) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{String(tabIndex + 1).padStart(2, "0")}</span><strong>{tab === "problem" ? (locale === "zh" ? "研究问题" : "Research problem") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
 
-              {researchRouteTab === "problem" && <ResearchProblemWorkbench key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} loading={researchProblemLoading} action={researchProblemAction} error={researchProblemError} locale={locale} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} onExecuteAction={(item) => void executeResearchProblemAction(item)} />}
+              {researchRouteTab === "problem" && <ResearchProblemWorkbench key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} synthesis={researchSynthesis} loading={researchProblemLoading} action={researchProblemAction || (mapAction === `problem:${selectedThread.id}` ? "scan-problem" : null)} error={researchProblemError} locale={locale} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onScanProblem={() => void scanResearchProblemGap(selectedThread)} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} onExecuteAction={(item) => void executeResearchProblemAction(item)} />}
               {researchRouteTab === "assessment" && <ResearchSynthesisWorkbench track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} error={researchSynthesisError} locale={locale} onRefresh={() => void refreshResearchSynthesis(selectedThread)} onScanGap={() => void scanResearchRouteGap(selectedThread)} onExplain={() => askAboutResearchRoute(selectedThread, "gap")} />}
 
               {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-evidence-panel" role="tabpanel">

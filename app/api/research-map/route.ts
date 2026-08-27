@@ -11,6 +11,7 @@ import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEviden
 import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSelectionContradiction, type ResearchTrackPaperCurationReasonCode, type ResearchTrackPaperCurationStatus } from "../../../lib/research-map-curation";
 import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defensiveResearchTrackIntelligenceStatus, deferResearchTrackIntelligence, requestResearchTrackIntelligenceRefresh } from "../../../lib/research-map-intelligence";
 import { applyStoredResearchRoutePrecisionAudits, RESEARCH_ROUTE_PRECISION_GATE_VERSION, researchRoutePrecisionAuditProgress, routePrecisionAcceptedForActiveNode, routePrecisionAutoDeactivates, routePrecisionJudgmentIdentity, sanitizeResearchRoutePrecisionJudgments } from "../../../lib/research-map-precision";
+import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -385,6 +386,38 @@ function parseJsonArray(value: string) {
   } catch {
     return [];
   }
+}
+
+async function activeResearchProblemDiscoverySignal(database: D1Database, spaceId: string, trackId: string) {
+  const problem = await database.prepare(
+    `SELECT problem.id, problem.status, problem.updated_at,
+      COALESCE(synthesis.input_revision, '') AS synthesis_revision,
+      COALESCE((SELECT assessment.input_revision FROM research_problem_assessments assessment
+       WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS assessment_input_revision,
+      COALESCE((SELECT assessment.next_search_query FROM research_problem_assessments assessment
+       WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS next_search_query
+     FROM research_problems problem
+     LEFT JOIN research_syntheses synthesis ON synthesis.space_id = problem.space_id AND synthesis.track_id = problem.track_id
+      AND synthesis.status IN ('ready', 'partial')
+     WHERE problem.space_id = ? AND problem.track_id = ? AND problem.status = 'active' LIMIT 1`,
+  ).bind(spaceId, trackId).first<{
+    id: string; status: string; updated_at: string; synthesis_revision: string;
+    assessment_input_revision: string; next_search_query: string;
+  }>();
+  if (!problem) return null;
+  const hypotheses = await database.prepare(
+    `SELECT id, statement, status, updated_at FROM research_problem_hypotheses
+     WHERE problem_id = ? ORDER BY id`,
+  ).bind(problem.id).all<{ id: string; statement: string; status: string; updated_at: string }>();
+  const query = await researchProblemDiscoveryQuery({
+    problemStatus: problem.status,
+    problemUpdatedAt: problem.updated_at,
+    synthesisRevision: problem.synthesis_revision,
+    hypotheses: hypotheses.results.map((item) => ({ id: item.id, statement: item.statement, status: item.status, updatedAt: item.updated_at })),
+    assessmentInputRevision: problem.assessment_input_revision,
+    nextSearchQuery: problem.next_search_query,
+  });
+  return query ? { query, problemId: problem.id, assessmentRevision: problem.assessment_input_revision } : null;
 }
 
 function parseTrackSourceStatuses(value: string) {
@@ -1956,7 +1989,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-action" | "interpret" | "advance-intelligence" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-problem" | "expand-action" | "interpret" | "advance-intelligence" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -2054,8 +2087,9 @@ export async function POST(request: Request) {
 
     const hydrating = payload.action === "hydrate";
     const gapExpanding = payload.action === "expand-gap";
+    const problemExpanding = payload.action === "expand-problem";
     const actionExpanding = payload.action === "expand-action";
-    const targetedExpanding = gapExpanding || actionExpanding;
+    const targetedExpanding = gapExpanding || problemExpanding || actionExpanding;
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
       "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
@@ -2070,6 +2104,7 @@ export async function POST(request: Request) {
     const synthesisGap = gapExpanding ? await database.prepare(
       "SELECT next_search_query FROM research_syntheses WHERE space_id = ? AND track_id = ? AND status IN ('ready', 'partial') AND next_search_query != '' LIMIT 1",
     ).bind(space.id, track.id).first<{ next_search_query: string }>() : null;
+    const problemSignal = problemExpanding ? await activeResearchProblemDiscoverySignal(database, space.id, track.id) : null;
     const actionQuery = actionExpanding ? await database.prepare(
       `SELECT run.search_query FROM research_action_runs run
        JOIN research_problem_actions action ON action.id = run.action_id AND action.status = 'accepted' AND action.kind = 'search'
@@ -2077,11 +2112,13 @@ export async function POST(request: Request) {
         AND run.verification_status IN ('verified', 'revised') AND run.search_query != '' LIMIT 1`,
     ).bind(payload.actionRunId?.trim() || "", space.id, track.id).first<{ search_query: string }>() : null;
     const targetedQuery = actionExpanding ? actionQuery?.search_query.trim() || ""
-      : gapExpanding ? synthesisGap?.next_search_query.trim() || parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
+      : problemExpanding ? problemSignal?.query || ""
+        : gapExpanding ? synthesisGap?.next_search_query.trim() || parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
     if (targetedExpanding && !targetedQuery) {
       return Response.json({ error: actionExpanding
         ? "Run a valid search action before targeted discovery"
-        : "Refresh Pi's direction assessment before scanning this evidence gap" }, { status: 422 });
+        : problemExpanding ? "Refresh the research problem assessment before scanning its uncertainty"
+          : "Refresh Pi's direction assessment before scanning this evidence gap" }, { status: 422 });
     }
     const direction: DirectionDraft = {
       key: track.id,
@@ -2158,8 +2195,8 @@ export async function POST(request: Request) {
     const queueCandidates = candidates.filter((candidate) => !routePrecisionAutoDeactivates(
       precisionByCandidate.get(`${candidate.directionKey}:${candidate.canonicalId}`),
     )).slice(0, 24).map((candidate) => {
-      const sourceKind = actionExpanding ? "action" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
-      const querySuffix = actionExpanding ? `action:${payload.actionRunId}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
+      const sourceKind = actionExpanding ? "action" : problemExpanding ? "problem" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
+      const querySuffix = actionExpanding ? `action:${payload.actionRunId}` : problemExpanding ? `problem:${problemSignal?.assessmentRevision}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
         : gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}:${candidate.proposedRole}`;
       return {
         canonicalId: candidate.canonicalId,
@@ -2296,6 +2333,7 @@ export async function POST(request: Request) {
       routeBuildDegraded: discovery.errors.length > 0 || Boolean(selectionError),
       hydratedTrackId: hydrating ? track.id : null,
       gapExpanded: gapExpanding,
+      problemExpanded: problemExpanding,
       actionExpanded: actionExpanding,
       gapQuery: targetedExpanding ? targetedQuery : undefined,
     }));

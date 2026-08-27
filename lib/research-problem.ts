@@ -61,14 +61,17 @@ export function sanitizeResearchProblemDraft(draft: ResearchProblemDraft, allowe
     const item = raw as Record<string, unknown>;
     const statement = cleanResearchProblemText(item.statement, 520);
     if (!statement) return [];
+    const sourceStatementIds = sourceIds(item.sourceStatementIds, allowedStatementIds, 8);
+    if (!sourceStatementIds.length) return [];
     return [{
       statement,
       rationale: cleanResearchProblemText(item.rationale, 700),
       confidence: researchProblemScore(item.confidence),
-      sourceStatementIds: sourceIds(item.sourceStatementIds, allowedStatementIds, 8),
+      sourceStatementIds,
     }];
   });
   if (!question || !objective || !scope || !successCriteria) throw new Error("Pi returned an incomplete research problem draft");
+  if (!hypotheses.length) throw new Error("Pi returned no traceable research problem hypotheses");
   return { question, objective, scope, successCriteria, stage: researchProblemStage(draft.stage), hypotheses };
 }
 
@@ -81,8 +84,9 @@ export function sanitizeResearchProblemAssessment(draft: ResearchProblemAssessme
     if (!allowedHypothesisIds.has(hypothesisId) || !["supports", "challenges", "qualifies", "method", "gap"].includes(relation)) return [];
     const explanationZh = cleanResearchProblemText(item.explanationZh, 650);
     const explanationEn = cleanResearchProblemText(item.explanationEn, 850);
-    if (!explanationZh || !explanationEn) return [];
-    return [{ hypothesisId, relation, explanationZh, explanationEn, confidence: researchProblemScore(item.confidence), sourceStatementIds: sourceIds(item.sourceStatementIds, allowedStatementIds, 8) }];
+    const sourceStatementIds = sourceIds(item.sourceStatementIds, allowedStatementIds, 8);
+    if (!explanationZh || !explanationEn || !sourceStatementIds.length) return [];
+    return [{ hypothesisId, relation, explanationZh, explanationEn, confidence: researchProblemScore(item.confidence), sourceStatementIds }];
   });
   const actions = (Array.isArray(draft.actions) ? draft.actions : []).slice(0, 3).flatMap((raw) => {
     if (!raw || typeof raw !== "object") return [];
@@ -112,6 +116,7 @@ export function sanitizeResearchProblemAssessment(draft: ResearchProblemAssessme
   if (!result.summaryZh || !result.summaryEn || !result.uncertaintyZh || !result.uncertaintyEn || !result.nextDecisionZh || !result.nextDecisionEn) {
     throw new Error("Pi returned an incomplete research problem assessment");
   }
+  if (!result.sourceStatementIds.length) throw new Error("Pi returned an untraceable research problem assessment");
   return result;
 }
 
@@ -127,4 +132,23 @@ export async function researchProblemInputRevision(input: {
   };
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(stable)));
   return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export async function researchProblemDiscoveryQuery(input: {
+  problemStatus: string;
+  problemUpdatedAt: string;
+  synthesisRevision: string;
+  hypotheses: Array<{ id: string; statement: string; status: string; updatedAt: string }>;
+  assessmentInputRevision: string;
+  nextSearchQuery: unknown;
+}) {
+  if (input.problemStatus !== "active") return "";
+  const query = safeEnglishQuery(input.nextSearchQuery);
+  if (!query || !input.assessmentInputRevision) return "";
+  const currentRevision = await researchProblemInputRevision({
+    problemUpdatedAt: input.problemUpdatedAt,
+    synthesisRevision: input.synthesisRevision,
+    hypotheses: input.hypotheses,
+  });
+  return currentRevision === input.assessmentInputRevision ? query : "";
 }

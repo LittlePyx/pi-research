@@ -156,6 +156,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /outlineReady: true/);
   assert.match(mapRoute, /const hydrating = payload\.action === "hydrate"/);
   assert.match(mapRoute, /const gapExpanding = payload\.action === "expand-gap"/);
+  assert.match(mapRoute, /const problemExpanding = payload\.action === "expand-problem"/);
   assert.match(mapRoute, /parseStoredIntelligence\(track\)\?\.nextSearchQuery/);
   assert.match(mapRoute, /searchQueries: targetedExpanding \? \[targetedQuery\] : queries/);
   assert.match(mapRoute, /buildProgress/);
@@ -163,7 +164,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /interpretDirection/);
   assert.match(mapRoute, /evidenceCanonicalIds/);
   assert.match(mapRoute, /Distinguish metadata-supported statements from your synthesis/);
-  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret"/);
+  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-problem" \| "expand-action" \| "interpret"/);
   assert.match(mapRoute, /structureExistingTracks/);
   assert.match(mapRoute, /research_track_edges/);
   assert.match(mapRoute, /userRole \(core\|support\|explore\)/);
@@ -171,7 +172,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /last14Days \* 30 \+ last6Months \* 10/);
   assert.match(mapRoute, /recentPaperCount/);
   assert.match(mapRoute, /api\.semanticscholar\.org\/graph\/v1\/paper\/batch/);
-  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-action" \| "interpret" \| "advance-intelligence" \| "structure" \| "activity" \| "network" \| "reconcile"/);
+  assert.match(mapRoute, /action\?: "read" \| "initialize" \| "hydrate" \| "expand" \| "expand-gap" \| "expand-problem" \| "expand-action" \| "interpret" \| "advance-intelligence" \| "structure" \| "activity" \| "network" \| "reconcile"/);
   assert.match(mapRoute, /reconcileConfirmedResearchMapEvidence/);
   assert.match(mapRoute, /ep\.status = 'confirmed'/);
   assert.match(mapRoute, /system_curated/);
@@ -226,7 +227,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /当前发现热度/);
   assert.match(client, /action: "hydrate"/);
   assert.doesNotMatch(client, /action: "reconcile"/);
-  assert.match(client, /action: "expand-gap"/);
+  assert.match(client, /action: origin === "problem" \? "expand-problem" : "expand-gap"/);
   assert.match(client, /mapBuildTrackId/);
   assert.match(client, /先建立可浏览的方向骨架/);
   assert.match(client, /已完成内容已经保存/);

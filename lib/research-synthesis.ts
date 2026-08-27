@@ -86,3 +86,9 @@ export function primaryResearchSynthesisGap<T extends { kind: ResearchSynthesisK
   return statements.filter((statement) => statement.kind === "evidence_gap")
     .sort((left, right) => right.confidence - left.confidence)[0] || null;
 }
+
+export function researchSynthesisDiscoveryQuery(value: unknown, statements: Array<{ kind: ResearchSynthesisKind; confidence: number }>) {
+  const query = clean(value, 220);
+  if (!primaryResearchSynthesisGap(statements)) return "";
+  return /^[\x20-\x7E]{4,220}$/.test(query) && !/\b(?:AND|OR|NOT)\b/.test(query) ? query : "";
+}

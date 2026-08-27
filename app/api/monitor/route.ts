@@ -90,6 +90,7 @@ import {
 } from "../../../lib/monitor-route-planning";
 import { formalResearchMapEvidencePredicate, promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { activeResearchRouteSupplyPredicate } from "../../../lib/research-map-curation";
+import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
@@ -721,6 +722,19 @@ function parseVenues(value: string) {
   }
 }
 
+function parseResearchProblemHypotheses(value: string) {
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item) => item && typeof item === "object"
+      && typeof item.id === "string" && typeof item.statement === "string"
+      && typeof item.status === "string" && typeof item.updatedAt === "string"
+      ? [{ id: item.id, statement: item.statement, status: item.status, updatedAt: item.updatedAt }] : []);
+  } catch {
+    return [];
+  }
+}
+
 function sanitizeRetiredFulltextCopy(value: string) {
   return value
     .replace(/并为\s*\d+\s*篇高潜力论文补强原文证据，/g, "并完成书目与摘要证据核对，")
@@ -1111,9 +1125,17 @@ async function routeDiscoveryQueries(
      COALESCE(synthesis.next_search_query, '') AS synthesis_next_search_query,
      COALESCE(synthesis.confidence, 0) AS synthesis_confidence,
      COALESCE(problem.id, '') AS research_problem_id,
+     COALESCE(problem.status, '') AS research_problem_status,
      COALESCE(problem.question, '') AS research_problem_question,
+     COALESCE(problem.updated_at, '') AS research_problem_updated_at,
+     COALESCE(synthesis.input_revision, '') AS synthesis_input_revision,
+     COALESCE((SELECT assessment.input_revision FROM research_problem_assessments assessment
+       WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS problem_assessment_input_revision,
      COALESCE((SELECT assessment.next_search_query FROM research_problem_assessments assessment
        WHERE assessment.problem_id = problem.id ORDER BY assessment.created_at DESC, assessment.rowid DESC LIMIT 1), '') AS problem_next_search_query,
+     COALESCE((SELECT json_group_array(json_object('id', hypothesis.id, 'statement', hypothesis.statement,
+       'status', hypothesis.status, 'updatedAt', hypothesis.updated_at)) FROM research_problem_hypotheses hypothesis
+       WHERE hypothesis.problem_id = problem.id), '[]') AS research_problem_hypotheses_json,
      COALESCE((SELECT run.search_query FROM research_action_runs run
        WHERE run.problem_id = problem.id AND run.status = 'ready'
         AND run.verification_status IN ('verified', 'revised') AND run.search_query != ''
@@ -1137,14 +1159,26 @@ async function routeDiscoveryQueries(
      ) behavior ON behavior.space_id = t.space_id AND behavior.route_id = t.id
       WHERE t.space_id = ? GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score,
       t.interaction_score, behavior.passive_engagement, t.intelligence_json, t.intelligence_updated_at,
-      synthesis.overview_en, synthesis.next_search_query, synthesis.confidence, problem.id, problem.question
+      synthesis.overview_en, synthesis.next_search_query, synthesis.confidence, synthesis.input_revision,
+      problem.id, problem.status, problem.question, problem.updated_at
      ORDER BY CASE WHEN MAX(c.last_scanned_at) IS NULL THEN 0 ELSE 1 END, MAX(c.last_scanned_at),
      CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, t.interaction_score DESC, t.depth_score DESC`,
-  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; research_problem_id: string; research_problem_question: string; problem_next_search_query: string; action_next_search_query: string; last_scanned_at: string | null }>();
+  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; synthesis_input_revision: string; research_problem_id: string; research_problem_status: string; research_problem_question: string; research_problem_updated_at: string; problem_assessment_input_revision: string; problem_next_search_query: string; research_problem_hypotheses_json: string; action_next_search_query: string; last_scanned_at: string | null }>();
+  const routeRows = await Promise.all(rows.results.map(async (row) => ({
+    ...row,
+    problem_next_search_query: await researchProblemDiscoveryQuery({
+      problemStatus: row.research_problem_status,
+      problemUpdatedAt: row.research_problem_updated_at,
+      synthesisRevision: row.synthesis_input_revision,
+      hypotheses: parseResearchProblemHypotheses(row.research_problem_hypotheses_json),
+      assessmentInputRevision: row.problem_assessment_input_revision,
+      nextSearchQuery: row.problem_next_search_query,
+    }),
+  })));
   const coreBudget = mode === "focused" ? 2 : 2;
   const adjacentBudget = mode === "focused" ? 0 : mode === "open" ? 2 : 1;
-  const chooseRoutes = (pool: typeof rows.results, budget: number) => {
-    const chosen: typeof rows.results = [];
+  const chooseRoutes = (pool: typeof routeRows, budget: number) => {
+    const chosen: typeof routeRows = [];
     const engaged = [...pool].filter((row) => row.passive_engagement > 0)
       .sort((left, right) => right.passive_engagement - left.passive_engagement || right.interaction_score - left.interaction_score)[0];
     if (engaged) chosen.push(engaged);
@@ -1154,8 +1188,8 @@ async function routeDiscoveryQueries(
     }
     return chosen.slice(0, budget);
   };
-  const coreRows = chooseRoutes(rows.results.filter((row) => row.user_role !== "explore"), coreBudget);
-  const adjacentRows = chooseRoutes(rows.results.filter((row) => row.user_role === "explore"), adjacentBudget);
+  const coreRows = chooseRoutes(routeRows.filter((row) => row.user_role !== "explore"), coreBudget);
+  const adjacentRows = chooseRoutes(routeRows.filter((row) => row.user_role === "explore"), adjacentBudget);
   const selectedRows = [...coreRows.map((row) => ({ row, role: "core" as const })), ...adjacentRows.map((row) => ({ row, role: "adjacent" as const }))];
   const horizonTask = monitorRouteTaskForHorizon(horizon.key);
   const basePlans = selectedRows.map(({ row, role }) => {

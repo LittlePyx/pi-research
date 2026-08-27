@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   primaryResearchSynthesisGap,
+  researchSynthesisDiscoveryQuery,
   researchSynthesisInputRevision,
   sanitizeResearchSynthesisStatements,
 } from "../lib/research-synthesis.ts";
@@ -43,6 +44,13 @@ test("the highest-confidence evidence gap becomes the next discovery signal", ()
   assert.equal(gap?.id, "c");
 });
 
+test("synthesis discovery requires a traceable evidence-gap statement and safe query", () => {
+  const gap = [{ kind: "evidence_gap", confidence: 76 }];
+  assert.equal(researchSynthesisDiscoveryQuery("inverse stability compactness", gap), "inverse stability compactness");
+  assert.equal(researchSynthesisDiscoveryQuery("inverse stability AND compactness", gap), "");
+  assert.equal(researchSynthesisDiscoveryQuery("inverse stability compactness", [{ kind: "consensus", confidence: 90 }]), "");
+});
+
 test("route synthesis is source-linked, incremental, and feeds daily discovery", async () => {
   const [api, client, monitor, map, repository, schema] = await Promise.all([
     readFile(new URL("../app/api/research-synthesis/route.ts", import.meta.url), "utf8"),
@@ -56,8 +64,12 @@ test("route synthesis is source-linked, incremental, and feeds daily discovery",
   assert.match(api, /sourceClaimIds/);
   assert.match(api, /Distinguish a real contradiction/);
   assert.match(api, /research_synthesis_revisions/);
+  assert.match(api, /nextSearchSourceStatementId/);
+  assert.match(api, /researchSynthesisDiscoveryQuery/);
   assert.match(client, /可追溯的跨论文证据综合/);
   assert.match(client, /回到来源核对/);
+  assert.match(client, /claim \{source\.claimId\}/);
+  assert.match(client, /来自证据缺口/);
   assert.match(monitor, /synthesis_next_search_query/);
   assert.match(monitor, /Grounded cross-paper synthesis/);
   assert.match(map, /SELECT next_search_query FROM research_syntheses/);

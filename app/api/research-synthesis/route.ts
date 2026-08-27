@@ -1,6 +1,8 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import {
+  primaryResearchSynthesisGap,
+  researchSynthesisDiscoveryQuery,
   researchSynthesisInputRevision,
   sanitizeResearchSynthesisStatements,
   type ResearchSynthesisKind,
@@ -190,7 +192,12 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
   })).filter((statement) => statement.sources.length > 0
     && (!["consensus", "disagreement", "method_lineage"].includes(statement.kind)
       || new Set(statement.sources.map((source) => source.paperId)).size >= 2));
-  const sourceEvidenceWithdrawn = Boolean(synthesis?.input_revision && synthesis.input_revision !== revision && availability.paperCount < 2);
+  const synthesisStale = Boolean(synthesis?.input_revision && synthesis.input_revision !== revision);
+  const sourceEvidenceWithdrawn = synthesisStale && availability.paperCount < 2;
+  const primaryGap = primaryResearchSynthesisGap(statements);
+  const nextSearchQuery = synthesisStale || sourceEvidenceWithdrawn
+    ? ""
+    : researchSynthesisDiscoveryQuery(synthesis?.next_search_query || "", statements);
   return {
     synthesis: {
       status: sourceEvidenceWithdrawn ? "empty" : synthesis?.status || "empty",
@@ -200,7 +207,8 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
       overviewEn: synthesis?.overview_en || "",
       changeSummaryZh: synthesis?.change_summary_zh || "",
       changeSummaryEn: synthesis?.change_summary_en || "",
-      nextSearchQuery: synthesis?.next_search_query || "",
+      nextSearchQuery,
+      nextSearchSourceStatementId: nextSearchQuery ? primaryGap?.id || null : null,
       confidence: synthesis?.confidence || 0,
       sourcePaperCount: synthesis?.source_paper_count || 0,
       fulltextPaperCount: synthesis?.fulltext_paper_count || 0,
@@ -209,7 +217,7 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
       availableFulltextPaperCount: availability.fulltextPaperCount,
       availableClaimCount: availability.claimCount,
       canGenerate: availability.paperCount >= 2,
-      stale: Boolean(synthesis?.input_revision && synthesis.input_revision !== revision),
+      stale: synthesisStale,
       model: synthesis?.model || MODEL,
       error: synthesis?.error || null,
       analyzedAt: synthesis?.analyzed_at || null,
@@ -337,8 +345,7 @@ export async function POST(request: Request) {
     if (!questionZh || !questionEn || !overviewZh || !overviewEn) throw new Error("Pi returned an incomplete bilingual synthesis");
     const changeSummaryZh = clean(parsed.changeSummaryZh, 520);
     const changeSummaryEn = clean(parsed.changeSummaryEn, 720);
-    const rawQuery = clean(parsed.nextSearchQuery, 220);
-    const nextSearchQuery = /^[\x20-\x7E]{4,220}$/.test(rawQuery) ? rawQuery : "";
+    const nextSearchQuery = researchSynthesisDiscoveryQuery(parsed.nextSearchQuery, statements);
     const counts = sourceSummary(current.claims);
     const confidenceCap = counts.fulltextPaperCount >= 2 ? 92 : counts.fulltextPaperCount === 1 ? 78 : 64;
     const confidence = Math.min(Math.max(0, Math.round(Number(parsed.confidence) || 0)), confidenceCap);
