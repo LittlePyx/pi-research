@@ -1,0 +1,36 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+const clientPath = new URL("../app/research-app.tsx", import.meta.url);
+const stylesPath = new URL("../app/globals.css", import.meta.url);
+
+test("paper network focus uses the verifiable one-hop evidence contract", async () => {
+  const client = await readFile(clientPath, "utf8");
+
+  assert.match(client, /selectVerifiableOneHopEdges\(edges, selectedPaperId\)/);
+  assert.match(client, /selectVerifiableOneHopEdges\(selectedNetworkRelations, selectedNetworkNode\.paper\.id\)/);
+  assert.match(client, /可核验一跳只显示文献耦合或数据库核验的引用发现关系/);
+  assert.match(client, /没有加入推荐发现线索或 Pi 推断关系/);
+  assert.match(client, /金环只表示起始论文/);
+  assert.match(client, /className="selection-ring"/);
+});
+
+test("shared and bridge views reuse independently verifiable similarity relations", async () => {
+  const client = await readFile(clientPath, "utf8");
+  const uses = client.match(/filter\(isVerifiableSimilarityNeighborEdge\)/g) || [];
+
+  assert.ok(uses.length >= 2);
+  assert.match(client, /const similarityEvidenceEdges = \[/);
+  assert.match(client, /查看可核验一跳/);
+});
+
+test("focus and origin rings remain visually distinct on desktop and narrow screens", async () => {
+  const styles = await readFile(stylesPath, "utf8");
+
+  assert.match(styles, /\.v2-paper-network-node\.selected \.selection-ring\s*\{[^}]*stroke:\s*#173f32/s);
+  assert.match(styles, /\.v2-paper-network-node\.origin \.state-ring\s*\{[^}]*stroke:\s*#b18342/s);
+  assert.doesNotMatch(styles, /\.v2-paper-network-node\.selected \.state-ring/);
+  assert.match(styles, /\.v2-paper-drawer-state\s*\{[^}]*flex-wrap:\s*wrap/s);
+  assert.match(styles, /@media \(max-width: 840px\)[\s\S]*?\.v2-paper-network-stage\.discovery-mode[^}]*grid-template-columns:\s*1fr/);
+});

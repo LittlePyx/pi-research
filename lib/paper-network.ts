@@ -76,6 +76,26 @@ export function paperNetworkEdgeKey(edge: MultiSeedEdge) {
   return `${edge.kind}:${edge.sourcePaperId}:${edge.targetPaperId}:${edge.relationKind}`;
 }
 
+/**
+ * Similarity-mode neighborhoods may contain both evidence-backed relations and
+ * lightweight recommendation leads. A focused one-hop view must remain an
+ * evidence view: bibliographic coupling is computed from shared references,
+ * while verified discovery comes from a provider-confirmed citation/reference.
+ */
+export function isVerifiableSimilarityNeighborEdge(edge: Pick<ResearchPaperEdge, "kind" | "relationKind">) {
+  return edge.kind === "similarity"
+    && (edge.relationKind === "bibliographic_coupling" || edge.relationKind === "verified_discovery");
+}
+
+export function selectVerifiableOneHopEdges<T extends MultiSeedEdge>(edges: T[], focusPaperId: string, limit = 16) {
+  if (!focusPaperId || limit <= 0) return [] as T[];
+  return edges.filter((edge) => isVerifiableSimilarityNeighborEdge(edge)
+      && (edge.sourcePaperId === focusPaperId || edge.targetPaperId === focusPaperId))
+    .sort((left, right) => right.confidence - left.confidence
+      || paperNetworkEdgeKey(left).localeCompare(paperNetworkEdgeKey(right)))
+    .slice(0, limit);
+}
+
 function otherPaperId(edge: MultiSeedEdge, originId: string) {
   if (edge.sourcePaperId === originId) return edge.targetPaperId;
   if (edge.targetPaperId === originId) return edge.sourcePaperId;

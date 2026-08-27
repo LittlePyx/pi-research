@@ -341,7 +341,10 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-paper-network-node\.external-ghost:not\(\.selected\):not\(\.accepted\):not\(\.origin\) \.state-ring \{ fill: none; stroke: transparent; \}/);
   assert.match(css, /\.v2-paper-network-node\.external-ghost \.paper-dot \{[^}]*stroke: #87958d/);
   assert.match(css, /\.v2-paper-network-node\.accepted \.state-ring \{ stroke: #4c8066; \}/);
-  assert.match(css, /\.v2-paper-network-node\.selected \.state-ring \{ stroke: #173f32; stroke-width: 3; \}/);
+  assert.match(client, /className="selection-ring"/);
+  assert.match(css, /\.v2-paper-network-node\.selected \.selection-ring \{ stroke: #173f32; stroke-width: 2\.4; \}/);
+  assert.doesNotMatch(css, /\.v2-paper-network-node\.selected \.state-ring/);
+  assert.match(css, /\.v2-paper-network-node\.origin \.state-ring \{[^}]*stroke: #b18342/);
   assert.match(css, /\.v2-research-network-source-state\.empty/);
   assert.doesNotMatch(css, /#b69a69|#a98d68/);
   assert.ok(css.lastIndexOf(".v2-paper-network-node.origin .state-ring") > css.lastIndexOf(".v2-paper-network-node.external-ghost:not(.selected):not(.accepted):not(.origin) .state-ring"));

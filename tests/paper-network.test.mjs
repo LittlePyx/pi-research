@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds } from "../lib/paper-network.ts";
+import {
+  isVerifiableSimilarityNeighborEdge,
+  paperNetworkEdgeKey,
+  selectBalancedMultiSeedEdges,
+  selectMultiOriginCandidates,
+  selectPaperNetworkActiveNodeIds,
+  selectVerifiableOneHopEdges,
+} from "../lib/paper-network.ts";
 
 function edge(sourcePaperId, targetPaperId, kind = "similarity", confidence = 80) {
   return { sourcePaperId, targetPaperId, kind, confidence, relationKind: kind === "semantic" ? "bridges" : kind };
@@ -20,6 +27,26 @@ test("multi-origin selection replaces duplicate seed links with another neighbor
   assert.equal(incidentCount(selected, "A"), 6);
   assert.equal(incidentCount(selected, "B"), 6);
   assert.equal(new Set(selected.map(paperNetworkEdgeKey)).size, selected.length);
+});
+
+test("focused one-hop keeps only independently verifiable similarity relations", () => {
+  const candidates = [
+    { ...edge("A", "coupled", "similarity", 80), relationKind: "bibliographic_coupling" },
+    { ...edge("A", "verified", "similarity", 70), relationKind: "verified_discovery" },
+    { ...edge("A", "recommended", "similarity", 99), relationKind: "recommendation_discovery" },
+    { ...edge("A", "inferred", "semantic", 98), relationKind: "bridges" },
+    { ...edge("X", "unrelated", "similarity", 97), relationKind: "bibliographic_coupling" },
+  ];
+
+  assert.equal(isVerifiableSimilarityNeighborEdge(candidates[0]), true);
+  assert.equal(isVerifiableSimilarityNeighborEdge(candidates[1]), true);
+  assert.equal(isVerifiableSimilarityNeighborEdge(candidates[2]), false);
+  assert.equal(isVerifiableSimilarityNeighborEdge(candidates[3]), false);
+  assert.deepEqual(
+    selectVerifiableOneHopEdges(candidates, "A").map((item) => item.targetPaperId),
+    ["coupled", "verified"],
+  );
+  assert.deepEqual(selectVerifiableOneHopEdges(candidates, "A", 1).map((item) => item.targetPaperId), ["coupled"]);
 });
 
 test("a low-confidence neighbor shared by multiple origins is retained first", () => {
