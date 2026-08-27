@@ -34,3 +34,21 @@ test("focus and origin rings remain visually distinct on desktop and narrow scre
   assert.match(styles, /\.v2-paper-drawer-state\s*\{[^}]*flex-wrap:\s*wrap/s);
   assert.match(styles, /@media \(max-width: 840px\)[\s\S]*?\.v2-paper-network-stage\.discovery-mode[^}]*grid-template-columns:\s*1fr/);
 });
+
+test("suggested reading order uses the persisted learning path on desktop and narrow screens", async () => {
+  const [client, styles] = await Promise.all([
+    readFile(clientPath, "utf8"),
+    readFile(stylesPath, "utf8"),
+  ]);
+
+  assert.match(client, /function ReadingOrderWorkbench/);
+  assert.match(client, /learningState: LearningPathState/);
+  assert.match(client, /const path = learningState\.path/);
+  assert.match(client, /activeLearningState\.path\?\.steps\.length \|\| 0/);
+  assert.match(client, /paperNetworkMode === "citations" \? <CitationFlowWorkbench[\s\S]*: <ReadingOrderWorkbench/);
+  assert.doesNotMatch(client, /<PaperNetworkGraph[^>]*mode="path"/);
+  assert.match(client, /不表示严格先后，也不会把 Pi 图谱边冒充可执行计划/);
+  assert.match(client, /每个阶段内的多篇论文是并行材料，不再被强行编号/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.v2-reading-progress[^}]*grid-template-columns:\s*1fr/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.v2-reading-fallback-groups[^}]*grid-template-columns:\s*1fr/);
+});

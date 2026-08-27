@@ -278,7 +278,7 @@ type DirectionIntelligenceDraft = {
 type PaperNetworkEdgeDraft = {
   sourcePaperId: string;
   targetPaperId: string;
-  kind: "semantic" | "path";
+  kind: "semantic";
   relationKind: string;
   relationshipZh: string;
   relationshipEn: string;
@@ -321,8 +321,7 @@ const NON_PAPER_PHRASES = /(publication information|information for authors|inst
 const ROLES = new Set<ResearchTrackRole>(["foundation", "milestone", "frontier"]);
 const DIRECTION_ROLES = new Set<ResearchDirectionRole>(["core", "support", "explore"]);
 const EDGE_KINDS = new Set(["builds_on", "bridges", "supports"]);
-const PAPER_RELATION_KINDS = new Set(["extends", "challenges", "applies", "unifies", "bridges", "reframes", "prepares", "advances"]);
-const PAPER_PATH_RELATION_KINDS = new Set(["prepares", "advances"]);
+const PAPER_RELATION_KINDS = new Set(["extends", "challenges", "applies", "unifies", "bridges", "reframes"]);
 const NETWORK_PAPER_LIMIT = 40;
 const GLOBAL_DAILY_LIMIT = 240;
 const WORKSPACE_DAILY_LIMIT = 32;
@@ -1391,9 +1390,8 @@ async function generatePaperNetworkEdges(
       "You are Pi Research's evidence-disciplined scholarly network editor. Return strict JSON and never invent citation claims.",
       [
       "Return {\"edges\":[...]} using only supplied paper ids.",
-      "Create up to 14 semantic edges and 4-8 path edges. Every edge needs sourcePaperId, targetPaperId, kind (semantic|path), relationKind, relationshipZh, relationshipEn, confidence (0-100).",
+      "Create up to 14 semantic edges. Every edge needs sourcePaperId, targetPaperId, kind (semantic), relationKind, relationshipZh, relationshipEn, confidence (0-100).",
       "Semantic relationKind must be extends, challenges, applies, unifies, bridges, or reframes. It describes an evidence-grounded intellectual relationship, not a factual citation unless it appears in actualCitationPairs.",
-      "Path relationKind must be prepares or advances. Direct path edges from earlier foundations or milestones toward the later work a researcher should read next. Build one readable backbone and only a few meaningful branches.",
       "Use the supplied summaries and route rationales. Omit uncertain relationships, avoid generic 'related work' wording, and explain the precise conceptual or methodological connection in one concise sentence per language.",
       "Do not duplicate an actual citation as a semantic edge. Do not connect papers merely because they share a direction label.",
       `Research space: ${space.name} — ${space.description}`,
@@ -1437,26 +1435,24 @@ async function generatePaperNetworkEdges(
   }
   const validIds = new Set(requestedInput.map((paper) => paper.id));
   const citationPairs = new Set(citationEdges.map((edge) => edge.sourcePaperId + ":" + edge.targetPaperId));
-  const counts = { semantic: 0, path: 0 };
+  let semanticCount = 0;
   const unique = new Map<string, Omit<ResearchPaperEdge, "id">>();
   for (const item of parsed.edges || []) {
     const sourcePaperId = cleanText(item.sourcePaperId || "");
     const targetPaperId = cleanText(item.targetPaperId || "");
-    const kind = item.kind === "path" ? "path" : "semantic";
+    if (item.kind !== "semantic") continue;
     if (!validIds.has(sourcePaperId) || !validIds.has(targetPaperId) || sourcePaperId === targetPaperId) continue;
-    if (kind === "semantic" && citationPairs.has(sourcePaperId + ":" + targetPaperId)) continue;
+    if (citationPairs.has(sourcePaperId + ":" + targetPaperId)) continue;
     const rawRelationKind = String(item.relationKind || "");
-    const relationKind = kind === "path"
-      ? PAPER_PATH_RELATION_KINDS.has(rawRelationKind) ? rawRelationKind : "advances"
-      : PAPER_RELATION_KINDS.has(rawRelationKind) ? rawRelationKind : "extends";
+    const relationKind = PAPER_RELATION_KINDS.has(rawRelationKind) ? rawRelationKind : "extends";
     const relationshipZh = cleanText(item.relationshipZh || "").slice(0, 320);
     const relationshipEn = cleanText(item.relationshipEn || "").slice(0, 440);
-    if (!relationshipZh || !relationshipEn || counts[kind] >= (kind === "semantic" ? 14 : 8)) continue;
-    counts[kind] += 1;
-    unique.set(`${sourcePaperId}:${targetPaperId}:${kind}:${relationKind}`, {
+    if (!relationshipZh || !relationshipEn || semanticCount >= 14) continue;
+    semanticCount += 1;
+    unique.set(`${sourcePaperId}:${targetPaperId}:semantic:${relationKind}`, {
       sourcePaperId,
       targetPaperId,
-      kind,
+      kind: "semantic",
       relationKind,
       relationshipZh,
       relationshipEn,
@@ -1464,28 +1460,7 @@ async function generatePaperNetworkEdges(
       evidenceSource: MODEL,
     });
   }
-  const generatedEdges = Array.from(unique.values());
-  const semanticEdges = generatedEdges.filter((edge) => edge.kind === "semantic");
-  const acceptedPathEdges: Array<Omit<ResearchPaperEdge, "id">> = [];
-  const pathAdjacency = new Map<string, string[]>();
-  const canReach = (start: string, target: string) => {
-    const queue = [start];
-    const visited = new Set<string>();
-    while (queue.length) {
-      const current = queue.shift()!;
-      if (current === target) return true;
-      if (visited.has(current)) continue;
-      visited.add(current);
-      queue.push(...(pathAdjacency.get(current) || []));
-    }
-    return false;
-  };
-  for (const edge of generatedEdges.filter((item) => item.kind === "path").sort((left, right) => right.confidence - left.confidence)) {
-    if (canReach(edge.targetPaperId, edge.sourcePaperId)) continue;
-    acceptedPathEdges.push(edge);
-    pathAdjacency.set(edge.sourcePaperId, [...(pathAdjacency.get(edge.sourcePaperId) || []), edge.targetPaperId]);
-  }
-  return { edges: [...semanticEdges, ...acceptedPathEdges], coveredPaperIds: requestedInput.map((paper) => paper.id) };
+  return { edges: Array.from(unique.values()), coveredPaperIds: requestedInput.map((paper) => paper.id) };
 }
 
 type PaperNetworkBuildPhase = "all" | "verified" | "pi";
@@ -1618,7 +1593,7 @@ async function rebuildPaperNetwork(
     return;
   }
   let scholarlyEdges = cachedEdges.filter((edge) => edge.kind === "similarity" || isDatabaseVerifiedCitationEdge(edge));
-  let curatedEdges = cachedEdges.filter((edge) => edge.kind === "semantic" || edge.kind === "path");
+  let curatedEdges = cachedEdges.filter((edge) => edge.kind === "semantic");
   let sources = [...previousSources];
   const errors: string[] = [];
 
@@ -1660,9 +1635,9 @@ async function rebuildPaperNetwork(
         ...freshEdges,
       ];
       sources.push(MODEL);
-      await replacePaperNetworkEdges(database, space.id, ["semantic", "path"], freshEdges, generated.coveredPaperIds);
+      await replacePaperNetworkEdges(database, space.id, ["semantic"], freshEdges, generated.coveredPaperIds);
     } catch (error) {
-      errors.push(`pi: ${error instanceof Error ? error.message : "Pi path analysis failed"}`);
+      errors.push(`pi: ${error instanceof Error ? error.message : "Pi relation analysis failed"}`);
       if (curatedEdges.length) sources.push(`${MODEL}-cache`);
     }
   }
@@ -1884,6 +1859,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const paperEdges = paperEdgesResult.results
     .filter((edge) => activePaperIds.has(edge.source_paper_id) && activePaperIds.has(edge.target_paper_id))
     .map(toPaperEdge)
+    .filter((edge) => edge.kind !== "path")
     .filter((edge) => edge.kind !== "citation" || isDatabaseVerifiedCitationEdge(edge));
   const uniquePaperCount = new Set(activePaperRows.map((paper) => paper.canonical_id)).size;
   const storedNetworkState = paperNetworkState ? parseStoredPaperNetworkState(paperNetworkState.sources_json) : { sources: [], coverage: null };
@@ -1935,7 +1911,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       citationEdgeCount: paperEdges.filter(isDatabaseVerifiedCitationEdge).length,
       similarityEdgeCount: paperEdges.filter((edge) => edge.kind === "similarity").length,
       semanticEdgeCount: paperEdges.filter((edge) => edge.kind === "semantic").length,
-      pathEdgeCount: paperEdges.filter((edge) => edge.kind === "path").length,
+      pathEdgeCount: 0,
       model: paperNetworkState?.model || "",
       sources: storedNetworkState.sources,
       updatedAt: paperNetworkState?.updated_at || null,

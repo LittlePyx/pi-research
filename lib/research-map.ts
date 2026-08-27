@@ -331,6 +331,7 @@ export type ResearchPaperNetworkState = {
   citationEdgeCount: number;
   similarityEdgeCount: number;
   semanticEdgeCount: number;
+  /** Legacy response field. Reading order is sourced from LearningPathState. */
   pathEdgeCount: number;
   model: string;
   sources: string[];

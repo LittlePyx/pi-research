@@ -183,7 +183,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(mapRoute, /kind: "citation"/);
   assert.match(mapRoute, /kind: "similarity"/);
   assert.match(mapRoute, /bibliographic_coupling/);
-  assert.match(mapRoute, /kind \(semantic\|path\)/);
+  assert.match(mapRoute, /kind \(semantic\)/);
+  assert.doesNotMatch(mapRoute, /path edges|kind \(semantic\|path\)/);
   assert.match(mapRoute, /semantic-scholar-cache/);
   assert.match(mapRoute, /DeepSeekJsonResponseError/);
   assert.match(mapRoute, /isRetryableDeepSeekJsonError/);
