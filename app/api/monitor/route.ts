@@ -56,6 +56,12 @@ import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
 import { buildMonitorBudgetDecision } from "../../../lib/monitor-budget-policy.mjs";
 import {
+  MONITOR_NEW_RUN_CLAIM_SQL,
+  MONITOR_RESUME_RUN_CLAIM_SQL,
+  monitorRetryDecision,
+  monitorStartRequestKey,
+} from "../../../lib/monitor-runtime-control.mjs";
+import {
   deepReviewCompletion,
   isFatalModelFailure,
   modelFailureCode,
@@ -164,6 +170,8 @@ type RunRow = {
   new_count: number;
   scanned_count: number;
   discovery_round: number;
+  active_job_id: string | null;
+  lease_generation: number;
   last_trigger: string;
   last_user_activity_at: string | null;
   scheduled_runs_since_activity: number;
@@ -188,6 +196,13 @@ type ScanJobRow = {
   resume_of_job_id: string | null;
   checkpoint: string;
   first_recommendation_at: string | null;
+  request_key: string | null;
+  failure_kind: string;
+  failure_source: string;
+  retry_count: number;
+  next_retry_at: string | null;
+  last_success_stage: string;
+  last_success_source: string;
   started_at: string;
   completed_at: string | null;
   error: string | null;
@@ -3225,8 +3240,8 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     }
     const progressUpdates = [
       database.prepare(
-        "UPDATE monitor_runs SET lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
-      ).bind(new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken),
+        "UPDATE monitor_runs SET lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ? AND active_job_id = ?",
+      ).bind(new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken, jobId),
     ];
     if (manageJobProgress) progressUpdates.unshift(database.prepare(
       "UPDATE monitor_scan_jobs SET checkpoint = 'reviewing', reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -4210,8 +4225,8 @@ async function updateRunPhase(database: D1Database, spaceId: string, jobId: stri
   const progress = status === "deduplicating" ? 54 : status === "reviewing" ? 58 : status === "saving" ? 90 : status === "briefing" ? 94 : 4;
   await database.batch([
     database.prepare(
-      "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
-    ).bind(status, scannedCount, newCount, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), spaceId, lockToken),
+      "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ? AND active_job_id = ?",
+    ).bind(status, scannedCount, newCount, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), spaceId, lockToken, jobId),
     database.prepare(
       "UPDATE monitor_scan_jobs SET status = ?, checkpoint = ?, progress = MAX(progress, ?), discovered_count = ?, recommended_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     ).bind(status, status, progress, scannedCount, newCount, jobId),
@@ -4373,7 +4388,7 @@ function toPaper(paper: PaperRow, now: number) {
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
   const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
-    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
+    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, active_job_id, lease_generation, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
       `SELECT p.id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.horizon,
@@ -4505,9 +4520,13 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     database.prepare(
       `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
        duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-       resume_of_job_id, checkpoint, first_recommendation_at, started_at, completed_at, error, work_queue_json
-       FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
-    ).bind(space.id).first<ScanJobRow>(),
+       resume_of_job_id, checkpoint, first_recommendation_at, request_key, failure_kind, failure_source,
+       retry_count, next_retry_at, last_success_stage, last_success_source,
+       started_at, completed_at, error, work_queue_json
+       FROM monitor_scan_jobs WHERE space_id = ?
+       ORDER BY CASE WHEN id = (SELECT active_job_id FROM monitor_runs WHERE space_id = ?) THEN 0 ELSE 1 END,
+        datetime(started_at) DESC, id DESC LIMIT 1`,
+    ).bind(space.id, space.id).first<ScanJobRow>(),
     database.prepare(
       `SELECT source_key, channel, SUM(attempt_count) AS attempt_count,
        SUM(CASE WHEN total_candidate_count = 0 THEN candidate_count ELSE total_candidate_count END) AS candidate_count,
@@ -5097,6 +5116,12 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         triggerSource: job.trigger_source,
         resumeOfJobId: job.resume_of_job_id,
         checkpoint: job.checkpoint,
+        failureKind: job.failure_kind,
+        failureSource: job.failure_source,
+        retryCount: job.retry_count,
+        nextRetryAt: job.next_retry_at,
+        lastSuccessfulStage: job.last_success_stage,
+        lastSuccessfulSource: job.last_success_source,
         startedAt: job.started_at,
         completedAt: job.completed_at,
         error: job.error,
@@ -5911,10 +5936,11 @@ async function runLegacyMonitor(request: Request) {
       "INSERT OR IGNORE INTO monitor_runs (id, space_id, status, last_trigger, updated_at) VALUES (?, ?, 'idle', ?, CURRENT_TIMESTAMP)",
     ).bind(crypto.randomUUID(), space.id, trigger).run();
     await database.prepare(
-      `UPDATE monitor_runs SET status = 'scanning', lock_token = ?, lock_expires_at = ?, last_trigger = ?,
+      `UPDATE monitor_runs SET status = 'scanning', lock_token = ?, lock_expires_at = ?, active_job_id = ?,
+       lease_generation = lease_generation + 1, last_trigger = ?,
        error = NULL, new_count = 0, scanned_count = 0, updated_at = CURRENT_TIMESTAMP
        WHERE space_id = ? AND (lock_token IS NULL OR lock_expires_at IS NULL OR datetime(lock_expires_at) <= CURRENT_TIMESTAMP)`,
-    ).bind(lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), trigger, space.id).run();
+    ).bind(lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), jobId, trigger, space.id).run();
     const acquired = await database.prepare("SELECT lock_token FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<{ lock_token: string | null }>();
     if (acquired?.lock_token !== lockToken) {
@@ -5988,8 +6014,8 @@ async function runLegacyMonitor(request: Request) {
       }
       await database.batch([
         database.prepare(
-          "UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?, discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
-        ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), newCount, scannedCount, space.id, lockToken),
+          "UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?, discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ? AND active_job_id = ?",
+        ).bind(completedAt.toISOString(), new Date(completedAt.getTime() + CADENCE_MS).toISOString(), newCount, scannedCount, space.id, lockToken, jobId),
         database.prepare(
           "UPDATE monitor_scan_jobs SET status = 'ready', checkpoint = 'complete', current_horizon = '', current_source = '', progress = 100, discovered_count = ?, new_candidate_count = ?, duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(scannedCount, newCandidateCount, duplicateCount, reviews.length, newCount, rejectedCount, completedAt.toISOString(), jobId),
@@ -5998,11 +6024,12 @@ async function runLegacyMonitor(request: Request) {
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 300) : "Monitoring scan failed";
       const failedAt = new Date();
+      const retry = monitorRetryDecision(message, previousJob?.attempt || 0, failedAt.getTime());
       await database.batch([
-        database.prepare("UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?")
-          .bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id, lockToken),
-        database.prepare("UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-          .bind(message, failedAt.toISOString(), jobId),
+        database.prepare("UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ? AND active_job_id = ?")
+          .bind(retry.nextRetryAt, message, space.id, lockToken, jobId),
+        database.prepare("UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', failure_kind = ?, failure_source = 'legacy', retry_count = ?, next_retry_at = ?, error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .bind(retry.errorCode, retry.retryCount, retry.nextRetryAt, message, failedAt.toISOString(), jobId),
       ]);
       return Response.json(await readState(database, space), { status: 502 });
     }
@@ -6012,7 +6039,7 @@ async function runLegacyMonitor(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let payload: { spaceId?: string; force?: boolean; trigger?: ScanTrigger; action?: "start" | "advance" | "enhance" | "legacy"; jobId?: string };
+  let payload: { spaceId?: string; force?: boolean; trigger?: ScanTrigger; action?: "start" | "advance" | "enhance" | "legacy"; jobId?: string; idempotencyKey?: string };
   try {
     payload = await request.json();
   } catch {
@@ -6052,13 +6079,17 @@ export async function POST(request: Request) {
     id: string;
     checkpoint: string;
     work_queue_json: string;
-  }) => {
+    retry_count?: number;
+    current_source?: string;
+  }, lease?: { lockToken: string; jobId: string }) => {
     const message = normalizedDeepSeekProbeError(error).slice(0, 300);
     const failedAt = new Date();
+    const retry = monitorRetryDecision(message, job?.retry_count || 0, failedAt.getTime());
+    const leaseGuard = lease ? " AND lock_token = ? AND active_job_id = ?" : "";
     const statements = [database.prepare(
       `UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL,
-       error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
-    ).bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id)];
+       active_job_id = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?${leaseGuard}`,
+    ).bind(retry.nextRetryAt, message, space.id, ...(lease ? [lease.lockToken, lease.jobId] : []))];
     let resumableCheckpoint = "planning";
     if (job) {
       const work = parseScanWorkQueue(job.work_queue_json);
@@ -6068,8 +6099,10 @@ export async function POST(request: Request) {
       statements.push(database.prepare(
         `UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending',
          current_source = '模型连接检查未通过，扫描尚未继续', work_queue_json = ?, error = ?, completed_at = ?,
+         failure_kind = ?, failure_source = ?, retry_count = ?, next_retry_at = ?,
          updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      ).bind(JSON.stringify(work), message, failedAt.toISOString(), job.id));
+      ).bind(JSON.stringify(work), message, failedAt.toISOString(), retry.errorCode,
+        job.current_source || "model-preflight", retry.retryCount, retry.nextRetryAt, job.id));
     }
     await database.batch(statements);
     if (trigger === "scheduled") await pauseMonitorAutomation(database, space.id, "model_unavailable");
@@ -6082,7 +6115,13 @@ export async function POST(request: Request) {
       outcome: "failed",
       errorCode: monitorErrorCode(message),
       message,
-      metadata: { stoppedBeforeDiscovery: resumableCheckpoint === "planning", checkpointPreserved: Boolean(job) },
+      metadata: {
+        stoppedBeforeDiscovery: resumableCheckpoint === "planning",
+        checkpointPreserved: Boolean(job),
+        retryable: retry.retryable,
+        retryCount: retry.retryCount,
+        nextRetryAt: retry.nextRetryAt,
+      },
     });
     const state = await readState(database, space, {
       cached: true,
@@ -6090,12 +6129,18 @@ export async function POST(request: Request) {
     });
     return Response.json({ ...state, error: message }, { status: 502 });
   };
-  const preflightModel = async (job?: { id: string; checkpoint: string; work_queue_json: string }) => {
+  const preflightModel = async (job?: {
+    id: string;
+    checkpoint: string;
+    work_queue_json: string;
+    retry_count?: number;
+    current_source?: string;
+  }, lease?: { lockToken: string; jobId: string }) => {
     try {
       await verifyDeepSeekCredential(apiKey);
       return null;
     } catch (error) {
-      return rejectUnavailableModel(error, job);
+      return rejectUnavailableModel(error, job, lease);
     }
   };
 
@@ -6121,28 +6166,32 @@ export async function POST(request: Request) {
       }
       await ensurePreference(database, space);
       const previous = await database.prepare(
-        "SELECT status, last_run_at, next_run_at, updated_at, discovery_round, lock_token, lock_expires_at, last_user_activity_at, scheduled_runs_since_activity FROM monitor_runs WHERE space_id = ? LIMIT 1",
-      ).bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; last_user_activity_at: string | null; scheduled_runs_since_activity: number }>();
+        "SELECT status, last_run_at, next_run_at, updated_at, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation, last_user_activity_at, scheduled_runs_since_activity FROM monitor_runs WHERE space_id = ? LIMIT 1",
+      ).bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; active_job_id: string | null; lease_generation: number; last_user_activity_at: string | null; scheduled_runs_since_activity: number }>();
       const activeJob = await database.prepare(
-        "SELECT id, status, checkpoint, work_queue_json FROM monitor_scan_jobs WHERE space_id = ? AND status NOT IN ('ready', 'error') ORDER BY started_at DESC LIMIT 1",
-      ).bind(space.id).first<{ id: string; status: string; checkpoint: string; work_queue_json: string }>();
+        `SELECT id, status, checkpoint, work_queue_json, retry_count, current_source
+         FROM monitor_scan_jobs WHERE space_id = ? AND status NOT IN ('ready', 'error')
+         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, datetime(started_at) DESC, id DESC LIMIT 1`,
+      ).bind(space.id, previous?.active_job_id || "").first<{ id: string; status: string; checkpoint: string; work_queue_json: string; retry_count: number; current_source: string }>();
       const now = new Date();
       const lockExpiry = previous?.lock_expires_at ? Date.parse(previous.lock_expires_at) : 0;
-      if (activeJob && previous && !["idle", "ready", "error"].includes(previous.status)) {
+      if (activeJob && previous) {
         const quotaResponse = await enforceAnalysisBudget(minimumAnalysisCallsForCheckpoint(activeJob.checkpoint));
         if (quotaResponse) return quotaResponse;
         if (previous.lock_token && lockExpiry > now.getTime()) {
-          return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }), { status: 202 });
-        }
-        if (trigger !== "scheduled") {
-          const modelResponse = await preflightModel(activeJob);
-          if (modelResponse) return modelResponse;
+          return Response.json(await readState(database, space, { cached: true, alreadyRunning: true, leaseOwner: false }), { status: 202 });
         }
         const resumedLock = crypto.randomUUID();
-        await database.prepare(
-          "UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
-        ).bind(resumedLock, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), space.id).run();
-        return Response.json(await readState(database, space, { cached: true, alreadyRunning: true }), { status: 202 });
+        const resumed = await database.prepare(MONITOR_RESUME_RUN_CLAIM_SQL)
+          .bind(resumedLock, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), activeJob.id, activeJob.id, space.id).run();
+        if (!Number(resumed.meta?.changes || 0)) {
+          return Response.json(await readState(database, space, { cached: true, alreadyRunning: true, leaseOwner: false }), { status: 202 });
+        }
+        if (trigger !== "scheduled") {
+          const modelResponse = await preflightModel(activeJob, { lockToken: resumedLock, jobId: activeJob.id });
+          if (modelResponse) return modelResponse;
+        }
+        return Response.json(await readState(database, space, { cached: true, resumed: true, leaseOwner: true }), { status: 202 });
       }
       if (trigger !== "manual") {
         const counters = await readAutomationCounters(database, space.id);
@@ -6165,9 +6214,13 @@ export async function POST(request: Request) {
       const previousJob = await database.prepare(
         `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, started_at, completed_at, error
-         FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
-      ).bind(space.id).first<StagedJobRow>();
+         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, request_key,
+         failure_kind, failure_source, retry_count, next_retry_at, last_success_stage, last_success_source,
+         started_at, completed_at, error
+         FROM monitor_scan_jobs WHERE space_id = ?
+         ORDER BY CASE WHEN id = (SELECT active_job_id FROM monitor_runs WHERE space_id = ?) THEN 0 ELSE 1 END,
+          datetime(started_at) DESC, id DESC LIMIT 1`,
+      ).bind(space.id, space.id).first<StagedJobRow>();
       if (trigger !== "manual" && previousJob?.status === "error" && isNonRetryableDeepSeekError(previousJob.error)) {
         if (trigger === "scheduled") await pauseMonitorAutomation(database, space.id, "model_unavailable");
         return Response.json(await readState(database, space, { cached: true, credentialActionRequired: true }));
@@ -6206,6 +6259,9 @@ export async function POST(request: Request) {
           : verificationCarryover ? "verifying_recommendations" : "planning";
       const resumable = Boolean(!pipelineOutdated && resumeCheckpoint !== "planning"
         && (previousJob?.status === "error" || qualityCarryover));
+      const retryLineageJobId = previousJob?.status === "error" && !pipelineOutdated
+        ? previousJob.id : resumable ? previousJob?.id || "" : "";
+      const nextAttempt = retryLineageJobId ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1;
       const startMinimum = resumable
         ? minimumAnalysisCallsForCheckpoint(resumeCheckpoint)
         : MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS;
@@ -6213,12 +6269,6 @@ export async function POST(request: Request) {
       const compactStart = Boolean(!resumable && trigger === "manual" && startBudget.recommendedMode === "fresh_only");
       const quotaResponse = await enforceAnalysisBudget(startMinimum, startBudget);
       if (quotaResponse) return quotaResponse;
-      if (trigger !== "scheduled") {
-        const modelResponse = await preflightModel(resumable && previousJob?.status === "error"
-          ? { id: previousJob.id, checkpoint: resumeCheckpoint, work_queue_json: previousJob.work_queue_json }
-          : undefined);
-        if (modelResponse) return modelResponse;
-      }
       if (resumable) {
         previousWork.resumeCheckpoint = "";
         previousWork.screenFailureCount = 0;
@@ -6258,25 +6308,76 @@ export async function POST(request: Request) {
             ? `从已保存进度继续 · ${new Set([...previousWork.deepCompletedIds, ...previousWork.deepDeferredIds]).size} / ${previousWork.deepIds.length} 篇已处理`
             : "从已保存检查点继续本轮扫描"
         : "Pi 正在制定本轮检索计划";
-      await database.prepare(
-        `UPDATE monitor_runs SET status = ?, next_run_at = CURRENT_TIMESTAMP, lock_token = ?, lock_expires_at = ?, last_trigger = ?, error = NULL,
-         new_count = ?, scanned_count = ?, scheduled_runs_since_activity = scheduled_runs_since_activity + ?,
-         automation_paused_at = NULL, automation_pause_reason = '', updated_at = CURRENT_TIMESTAMP WHERE space_id = ?`,
-      ).bind(initialStatus, lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), trigger,
-        resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.discovered_count || 0 : 0,
-        trigger === "scheduled" ? 1 : 0, space.id).run();
-      await database.prepare(
-        `INSERT INTO monitor_scan_jobs
-         (id, space_id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
-          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-          resume_of_job_id, checkpoint, work_queue_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(jobId, space.id, initialStatus, resumable ? previousJob?.current_horizon || "" : "", initialSource, initialProgress,
-        resumable ? previousJob?.discovered_count || 0 : 0, resumable ? previousJob?.new_candidate_count || 0 : 0,
-        resumable ? previousJob?.duplicate_count || 0 : 0, resumable ? previousJob?.reviewed_count || 0 : 0,
-        resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.rejected_count || 0 : 0,
-        resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null,
-         initialCheckpoint, JSON.stringify(initialWork)).run();
+      const requestKey = cleanText(payload.idempotencyKey || "").slice(0, 180)
+        || monitorStartRequestKey({
+          spaceId: space.id,
+          trigger,
+          now: now.getTime(),
+          resumeOfJobId: retryLineageJobId,
+        });
+      const requestReplay = await database.prepare(
+        `SELECT id, status FROM monitor_scan_jobs WHERE space_id = ? AND request_key = ? LIMIT 1`,
+      ).bind(space.id, requestKey).first<{ id: string; status: string }>();
+      if (requestReplay) {
+        return Response.json(await readState(database, space, {
+          cached: true,
+          idempotentReplay: true,
+          alreadyRunning: !["ready", "error"].includes(requestReplay.status),
+          leaseOwner: false,
+        }), { status: 202 });
+      }
+      let leaseResults: D1Result<unknown>[];
+      try {
+        leaseResults = await database.batch([
+          database.prepare(MONITOR_NEW_RUN_CLAIM_SQL).bind(
+            initialStatus, lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), jobId, trigger,
+            resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.discovered_count || 0 : 0,
+            trigger === "scheduled" ? 1 : 0, space.id,
+          ),
+          database.prepare(
+          `INSERT INTO monitor_scan_jobs
+           (id, space_id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
+            duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
+            resume_of_job_id, checkpoint, work_queue_json, request_key, retry_count, last_success_stage, last_success_source)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (
+            SELECT 1 FROM monitor_runs WHERE space_id = ? AND lock_token = ? AND active_job_id = ?
+           )`,
+          ).bind(jobId, space.id, initialStatus, resumable ? previousJob?.current_horizon || "" : "", initialSource, initialProgress,
+            resumable ? previousJob?.discovered_count || 0 : 0, resumable ? previousJob?.new_candidate_count || 0 : 0,
+            resumable ? previousJob?.duplicate_count || 0 : 0, resumable ? previousJob?.reviewed_count || 0 : 0,
+            resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.rejected_count || 0 : 0,
+            nextAttempt, trigger, retryLineageJobId || null,
+            initialCheckpoint, JSON.stringify(initialWork), requestKey, retryLineageJobId ? previousJob?.retry_count || 0 : 0,
+            resumable ? previousJob?.last_success_stage || "" : "", resumable ? previousJob?.last_success_source || "" : "",
+            space.id, lockToken, jobId),
+        ]);
+      } catch (error) {
+        const replay = await database.prepare(
+          "SELECT id FROM monitor_scan_jobs WHERE space_id = ? AND request_key = ? LIMIT 1",
+        ).bind(space.id, requestKey).first<{ id: string }>();
+        if (replay) {
+          return Response.json(await readState(database, space, {
+            cached: true, idempotentReplay: true, alreadyRunning: true, leaseOwner: false,
+          }), { status: 202 });
+        }
+        throw error;
+      }
+      if (!Number(leaseResults[0]?.meta?.changes || 0) || !Number(leaseResults[1]?.meta?.changes || 0)) {
+        return Response.json(await readState(database, space, {
+          cached: true, alreadyRunning: true, leaseOwner: false,
+        }), { status: 202 });
+      }
+      if (trigger !== "scheduled") {
+        const modelResponse = await preflightModel({
+          id: jobId,
+          checkpoint: initialCheckpoint,
+          work_queue_json: JSON.stringify(initialWork),
+          retry_count: retryLineageJobId ? previousJob?.retry_count || 0 : 0,
+          current_source: initialSource,
+        }, { lockToken, jobId });
+        if (modelResponse) return modelResponse;
+      }
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: jobId,
@@ -6285,27 +6386,34 @@ export async function POST(request: Request) {
         source: trigger,
         outcome: "info",
         metadata: {
-          attempt: resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1,
-          resumeOfJobId: resumable ? previousJob?.id || null : null,
+          attempt: nextAttempt,
+          resumeOfJobId: retryLineageJobId || null,
           scanMode: initialWork.scanMode,
+          requestKey,
         },
       });
-      return Response.json(await readState(database, space, { accepted: true }), { status: 202 });
+      return Response.json(await readState(database, space, { accepted: true, leaseOwner: true }), { status: 202 });
     }
 
     const job = payload.jobId
       ? await database.prepare(
         `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, started_at, completed_at, error
+         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, request_key,
+         failure_kind, failure_source, retry_count, next_retry_at, last_success_stage, last_success_source,
+         started_at, completed_at, error
          FROM monitor_scan_jobs WHERE id = ? AND space_id = ? LIMIT 1`,
       ).bind(payload.jobId, space.id).first<StagedJobRow>()
       : await database.prepare(
         `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
          duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
-         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, started_at, completed_at, error
-         FROM monitor_scan_jobs WHERE space_id = ? ORDER BY started_at DESC LIMIT 1`,
-      ).bind(space.id).first<StagedJobRow>();
+         resume_of_job_id, checkpoint, work_queue_json, first_recommendation_at, request_key,
+         failure_kind, failure_source, retry_count, next_retry_at, last_success_stage, last_success_source,
+         started_at, completed_at, error
+         FROM monitor_scan_jobs WHERE space_id = ?
+         ORDER BY CASE WHEN id = (SELECT active_job_id FROM monitor_runs WHERE space_id = ?) THEN 0 ELSE 1 END,
+          datetime(started_at) DESC, id DESC LIMIT 1`,
+      ).bind(space.id, space.id).first<StagedJobRow>();
     if (!job) return Response.json({ error: "No scan job is available" }, { status: 404 });
     const work = parseScanWorkQueue(job.work_queue_json);
     if (await pruneExplicitlyWithdrawnScanWork(database, space.id, work)) {
@@ -6364,6 +6472,14 @@ export async function POST(request: Request) {
       );
       if (quotaResponse) return quotaResponse;
     }
+    let run = await database.prepare(
+      "SELECT status, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
+    ).bind(space.id).first<{ status: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; active_job_id: string | null; lease_generation: number }>();
+    if (run?.active_job_id !== job.id) {
+      return Response.json(await readState(database, space, {
+        cached: true, staleJob: true, leaseOwner: false,
+      }), { status: 202 });
+    }
     advanceLockToken = crypto.randomUUID();
     const advanceLock = await database.prepare(
       `UPDATE monitor_scan_jobs SET advance_lock_token = ?, advance_lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP
@@ -6372,28 +6488,45 @@ export async function POST(request: Request) {
     ).bind(advanceLockToken, new Date(Date.now() + ADVANCE_LOCK_LEASE_MS).toISOString(), job.id, space.id).run();
     if (!Number(advanceLock.meta?.changes || 0)) {
       advanceLockToken = "";
-      return Response.json(await readState(database, space, { cached: true, alreadyAdvancing: true }), { status: 202 });
+      return Response.json(await readState(database, space, {
+        cached: true, alreadyAdvancing: true, leaseOwner: false,
+      }), { status: 202 });
     }
     advanceLockJobId = job.id;
-    const run = await database.prepare(
-      "SELECT status, discovery_round, lock_token, lock_expires_at FROM monitor_runs WHERE space_id = ? LIMIT 1",
-    ).bind(space.id).first<{ status: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null }>();
+    run = await database.prepare(
+      "SELECT status, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
+    ).bind(space.id).first<{ status: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; active_job_id: string | null; lease_generation: number }>();
+    if (run?.active_job_id !== job.id) {
+      return Response.json(await readState(database, space, {
+        cached: true, staleJob: true, leaseOwner: false,
+      }), { status: 202 });
+    }
     let lockToken = run?.lock_token || "";
     if (!lockToken || !run?.lock_expires_at || Date.parse(run.lock_expires_at) <= Date.now()) lockToken = crypto.randomUUID();
-    await database.prepare(
-      "UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
-    ).bind(lockToken, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id).run();
+    const renewed = await database.prepare(
+      `UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE space_id = ? AND active_job_id = ?
+        AND (lock_token = ? OR lock_token IS NULL OR lock_expires_at IS NULL OR datetime(lock_expires_at) <= CURRENT_TIMESTAMP)`,
+    ).bind(lockToken, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, job.id, run.lock_token || "").run();
+    if (!Number(renewed.meta?.changes || 0)) {
+      return Response.json(await readState(database, space, {
+        cached: true, staleJob: true, leaseOwner: false,
+      }), { status: 202 });
+    }
     const stageStartedAt = Date.now();
     let firstRecommendationAt = job.first_recommendation_at;
 
     const setStage = async (checkpoint: string, status: string, progress: number, source: string, horizon = "") => {
       await database.batch([
         database.prepare(
-          "UPDATE monitor_runs SET status = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?",
-        ).bind(status, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken),
+          "UPDATE monitor_runs SET status = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ? AND active_job_id = ?",
+        ).bind(status, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken, job.id),
         database.prepare(
-          "UPDATE monitor_scan_jobs SET status = ?, checkpoint = ?, current_horizon = ?, current_source = ?, progress = MAX(progress, ?), error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        ).bind(status, checkpoint, horizon, source, progress, job.id),
+          `UPDATE monitor_scan_jobs SET status = ?, checkpoint = ?, current_horizon = ?, current_source = ?,
+           progress = MAX(progress, ?), last_success_stage = ?, last_success_source = ?,
+           failure_kind = '', failure_source = '', next_retry_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+        ).bind(status, checkpoint, horizon, source, progress, job.checkpoint, job.current_source, job.id),
       ]);
       await recordReliabilityEvent(database, {
         spaceId: space.id,
@@ -6699,14 +6832,16 @@ export async function POST(request: Request) {
       await database.batch([
         database.prepare(
           `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,
-           discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, error = NULL,
-           updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ?`,
-        ).bind(completedAt.toISOString(), nextRunAt, recommended, job.discovered_count, space.id, lockToken),
+           discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL,
+           error = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE space_id = ? AND lock_token = ? AND active_job_id = ?`,
+        ).bind(completedAt.toISOString(), nextRunAt, recommended, job.discovered_count, space.id, lockToken, job.id),
         database.prepare(
           `UPDATE monitor_scan_jobs SET status = 'ready', checkpoint = 'main_complete', current_horizon = '',
            current_source = ?, progress = 100, new_candidate_count = ?,
            duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?,
-           error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+           last_success_stage = 'finalizing', last_success_source = current_source,
+           failure_kind = '', failure_source = '', next_retry_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         ).bind(work.scanMode === "fresh_only" && !verificationPending
           ? recommended
             ? `近 14 天扫描已完成，${recommended} 篇推荐可阅读；半年与五年窗口将在额度刷新后继续`
@@ -7532,14 +7667,21 @@ export async function POST(request: Request) {
     } catch (error) {
       const message = normalizedMonitorError(error).slice(0, 300);
       const failedAt = new Date();
+      const retry = monitorRetryDecision(message, job.retry_count || 0, failedAt.getTime());
       work.resumeCheckpoint = job.checkpoint;
       await database.batch([
         database.prepare(
-          "UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?",
-        ).bind(new Date(failedAt.getTime() + ERROR_RETRY_MS).toISOString(), message, space.id),
+          `UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL,
+           active_job_id = NULL, error = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE space_id = ? AND lock_token = ? AND active_job_id = ?`,
+        ).bind(retry.nextRetryAt, message, space.id, lockToken, job.id),
         database.prepare(
-          "UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending', current_source = '扫描已暂停，已保存当前进度', work_queue_json = ?, error = ?, completed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        ).bind(JSON.stringify(work), message, failedAt.toISOString(), job.id),
+          `UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending',
+           current_source = '扫描已暂停，已保存当前进度', work_queue_json = ?, error = ?, completed_at = ?,
+           failure_kind = ?, failure_source = ?, retry_count = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+        ).bind(JSON.stringify(work), message, failedAt.toISOString(), retry.errorCode, job.current_source,
+          retry.retryCount, retry.nextRetryAt, job.id),
       ]);
       await recordReliabilityEvent(database, {
         spaceId: space.id,
@@ -7549,13 +7691,16 @@ export async function POST(request: Request) {
         source: job.current_source,
         outcome: "failed",
         durationMs: Date.now() - stageStartedAt,
-        errorCode: monitorErrorCode(error),
+        errorCode: retry.errorCode,
         message,
         metadata: {
           progress: job.progress,
           screened: work.screens.length,
           deepCompleted: work.deepCompletedIds.length,
           resumableCheckpoint: work.resumeCheckpoint,
+          retryable: retry.retryable,
+          retryCount: retry.retryCount,
+          nextRetryAt: retry.nextRetryAt,
         },
       });
       return Response.json(await readState(database, space), { status: 502 });

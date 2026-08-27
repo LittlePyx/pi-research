@@ -231,13 +231,13 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS semantic_scholar_throttles (id TEXT PRIMARY KEY NOT NULL, scope_key TEXT NOT NULL, failure_count INTEGER NOT NULL DEFAULT 0, next_allowed_at TEXT, last_status INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_scholar_throttles_scope ON semantic_scholar_throttles(scope_key)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_semantic_scholar_throttles_next ON semantic_scholar_throttles(next_allowed_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', last_run_at TEXT, next_run_at TEXT, new_count INTEGER NOT NULL DEFAULT 0, scanned_count INTEGER NOT NULL DEFAULT 0, discovery_round INTEGER NOT NULL DEFAULT 0, lock_token TEXT, lock_expires_at TEXT, last_trigger TEXT NOT NULL DEFAULT 'visit', last_user_activity_at TEXT, scheduled_runs_since_activity INTEGER NOT NULL DEFAULT 0, automation_paused_at TEXT, automation_pause_reason TEXT NOT NULL DEFAULT '', error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'idle', last_run_at TEXT, next_run_at TEXT, new_count INTEGER NOT NULL DEFAULT 0, scanned_count INTEGER NOT NULL DEFAULT 0, discovery_round INTEGER NOT NULL DEFAULT 0, lock_token TEXT, lock_expires_at TEXT, active_job_id TEXT, lease_generation INTEGER NOT NULL DEFAULT 0, last_trigger TEXT NOT NULL DEFAULT 'visit', last_user_activity_at TEXT, scheduled_runs_since_activity INTEGER NOT NULL DEFAULT 0, automation_paused_at TEXT, automation_pause_reason TEXT NOT NULL DEFAULT '', error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_runs_space ON monitor_runs(space_id)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_scheduler_ticks (id TEXT PRIMARY KEY NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, due_space_count INTEGER NOT NULL DEFAULT 0, started_count INTEGER NOT NULL DEFAULT 0, advanced_count INTEGER NOT NULL DEFAULT 0, completed_count INTEGER NOT NULL DEFAULT 0, paused_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, trigger_source TEXT NOT NULL DEFAULT 'cloudflare_cron', lease_token TEXT, lease_expires_at TEXT, recovered_job_count INTEGER NOT NULL DEFAULT 0, previous_tick_at TEXT, gap_minutes INTEGER NOT NULL DEFAULT 0, health_status TEXT NOT NULL DEFAULT 'healthy', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_scheduler_ticks_created ON monitor_scheduler_ticks(created_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_discovery_pages (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, horizon TEXT NOT NULL, query_key TEXT NOT NULL, next_offset INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_discovery_space_horizon_query ON monitor_discovery_pages(space_id, horizon, query_key)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS monitor_scan_jobs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'queued', current_horizon TEXT NOT NULL DEFAULT '', current_source TEXT NOT NULL DEFAULT '', progress INTEGER NOT NULL DEFAULT 0, discovered_count INTEGER NOT NULL DEFAULT 0, new_candidate_count INTEGER NOT NULL DEFAULT 0, duplicate_count INTEGER NOT NULL DEFAULT 0, reviewed_count INTEGER NOT NULL DEFAULT 0, recommended_count INTEGER NOT NULL DEFAULT 0, rejected_count INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 1, trigger_source TEXT NOT NULL DEFAULT 'manual', resume_of_job_id TEXT, checkpoint TEXT NOT NULL DEFAULT 'queued', work_queue_json TEXT NOT NULL DEFAULT '{}', first_recommendation_at TEXT, advance_lock_token TEXT, advance_lock_expires_at TEXT, error TEXT, started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS monitor_scan_jobs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'queued', current_horizon TEXT NOT NULL DEFAULT '', current_source TEXT NOT NULL DEFAULT '', progress INTEGER NOT NULL DEFAULT 0, discovered_count INTEGER NOT NULL DEFAULT 0, new_candidate_count INTEGER NOT NULL DEFAULT 0, duplicate_count INTEGER NOT NULL DEFAULT 0, reviewed_count INTEGER NOT NULL DEFAULT 0, recommended_count INTEGER NOT NULL DEFAULT 0, rejected_count INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 1, trigger_source TEXT NOT NULL DEFAULT 'manual', resume_of_job_id TEXT, checkpoint TEXT NOT NULL DEFAULT 'queued', work_queue_json TEXT NOT NULL DEFAULT '{}', first_recommendation_at TEXT, advance_lock_token TEXT, advance_lock_expires_at TEXT, request_key TEXT, failure_kind TEXT NOT NULL DEFAULT '', failure_source TEXT NOT NULL DEFAULT '', retry_count INTEGER NOT NULL DEFAULT 0, next_retry_at TEXT, last_success_stage TEXT NOT NULL DEFAULT '', last_success_source TEXT NOT NULL DEFAULT '', error TEXT, started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_scan_jobs_space_updated ON monitor_scan_jobs(space_id, updated_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS monitor_reliability_events (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, scan_job_id TEXT REFERENCES monitor_scan_jobs(id) ON DELETE SET NULL, kind TEXT NOT NULL, stage TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL DEFAULT 'info', duration_ms INTEGER NOT NULL DEFAULT 0, error_code TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_reliability_space_created ON monitor_reliability_events(space_id, created_at)"),
@@ -474,13 +474,24 @@ export async function ensureSchema(database = getDatabase()) {
     ["first_recommendation_at", "ALTER TABLE monitor_scan_jobs ADD COLUMN first_recommendation_at TEXT"],
     ["advance_lock_token", "ALTER TABLE monitor_scan_jobs ADD COLUMN advance_lock_token TEXT"],
     ["advance_lock_expires_at", "ALTER TABLE monitor_scan_jobs ADD COLUMN advance_lock_expires_at TEXT"],
+    ["request_key", "ALTER TABLE monitor_scan_jobs ADD COLUMN request_key TEXT"],
+    ["failure_kind", "ALTER TABLE monitor_scan_jobs ADD COLUMN failure_kind TEXT NOT NULL DEFAULT ''"],
+    ["failure_source", "ALTER TABLE monitor_scan_jobs ADD COLUMN failure_source TEXT NOT NULL DEFAULT ''"],
+    ["retry_count", "ALTER TABLE monitor_scan_jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"],
+    ["next_retry_at", "ALTER TABLE monitor_scan_jobs ADD COLUMN next_retry_at TEXT"],
+    ["last_success_stage", "ALTER TABLE monitor_scan_jobs ADD COLUMN last_success_stage TEXT NOT NULL DEFAULT ''"],
+    ["last_success_source", "ALTER TABLE monitor_scan_jobs ADD COLUMN last_success_source TEXT NOT NULL DEFAULT ''"],
   ] as const;
   for (const [name, sql] of scanJobAdditions) if (!scanJobColumnNames.has(name)) await database.prepare(sql).run();
+  await database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_scan_jobs_request_key ON monitor_scan_jobs(space_id, request_key) WHERE request_key IS NOT NULL").run();
+  await database.prepare("CREATE INDEX IF NOT EXISTS idx_monitor_scan_jobs_retry_due ON monitor_scan_jobs(status, next_retry_at, space_id)").run();
   const monitorRunColumns = await database.prepare("PRAGMA table_info(monitor_runs)").all<{ name: string }>();
   const monitorRunColumnNames = new Set(monitorRunColumns.results.map((column) => column.name));
   const monitorRunAdditions = [
     ["lock_token", "ALTER TABLE monitor_runs ADD COLUMN lock_token TEXT"],
     ["lock_expires_at", "ALTER TABLE monitor_runs ADD COLUMN lock_expires_at TEXT"],
+    ["active_job_id", "ALTER TABLE monitor_runs ADD COLUMN active_job_id TEXT"],
+    ["lease_generation", "ALTER TABLE monitor_runs ADD COLUMN lease_generation INTEGER NOT NULL DEFAULT 0"],
     ["last_trigger", "ALTER TABLE monitor_runs ADD COLUMN last_trigger TEXT NOT NULL DEFAULT 'visit'"],
     ["last_user_activity_at", "ALTER TABLE monitor_runs ADD COLUMN last_user_activity_at TEXT"],
     ["scheduled_runs_since_activity", "ALTER TABLE monitor_runs ADD COLUMN scheduled_runs_since_activity INTEGER NOT NULL DEFAULT 0"],
@@ -488,6 +499,27 @@ export async function ensureSchema(database = getDatabase()) {
     ["automation_pause_reason", "ALTER TABLE monitor_runs ADD COLUMN automation_pause_reason TEXT NOT NULL DEFAULT ''"],
   ] as const;
   for (const [name, sql] of monitorRunAdditions) if (!monitorRunColumnNames.has(name)) await database.prepare(sql).run();
+  await database.prepare(
+    `UPDATE monitor_runs SET active_job_id = (
+       SELECT job.id FROM monitor_scan_jobs job
+       WHERE job.space_id = monitor_runs.space_id AND job.status NOT IN ('ready', 'error')
+       ORDER BY datetime(job.started_at) DESC, job.id DESC LIMIT 1
+     )
+     WHERE active_job_id IS NULL AND EXISTS (
+       SELECT 1 FROM monitor_scan_jobs job
+       WHERE job.space_id = monitor_runs.space_id AND job.status NOT IN ('ready', 'error')
+     )`,
+  ).run();
+  await database.prepare(
+    `UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending',
+      failure_kind = 'superseded', failure_source = 'single-flight-migration',
+      error = COALESCE(error, 'superseded_by_active_job'), completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP),
+      updated_at = CURRENT_TIMESTAMP
+     WHERE status NOT IN ('ready', 'error') AND EXISTS (
+       SELECT 1 FROM monitor_runs run WHERE run.space_id = monitor_scan_jobs.space_id
+        AND run.active_job_id IS NOT NULL AND run.active_job_id <> monitor_scan_jobs.id
+     )`,
+  ).run();
   const schedulerTickColumns = await database.prepare("PRAGMA table_info(monitor_scheduler_ticks)").all<{ name: string }>();
   const schedulerTickColumnNames = new Set(schedulerTickColumns.results.map((column) => column.name));
   const schedulerTickAdditions = [

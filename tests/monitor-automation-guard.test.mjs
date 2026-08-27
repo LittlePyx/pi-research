@@ -28,9 +28,10 @@ test("automatic monitoring pauses before unattended research spending can accumu
 });
 
 test("scheduled monitoring persists heartbeats and advances only a bounded checkpoint slice", async () => {
-  const [worker, route, schema, repository, client] = await Promise.all([
+  const [worker, route, runtimeControl, schema, repository, client] = await Promise.all([
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/monitor-runtime-control.mjs", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
@@ -43,7 +44,8 @@ test("scheduled monitoring persists heartbeats and advances only a bounded check
   assert.match(route, /monitorAutomationPauseReason/);
   assert.match(route, /deferMonitorAutomation/);
   assert.match(route, /budget\.resetsAt/);
-  assert.match(route, /scheduled_runs_since_activity = scheduled_runs_since_activity \+ \?/);
+  assert.match(runtimeControl, /scheduled_runs_since_activity = scheduled_runs_since_activity \+ \?/);
+  assert.match(route, /trigger === "scheduled" \? 1 : 0/);
   assert.match(route, /automationPaused: true/);
   assert.match(schema, /monitorSchedulerTicks/);
   assert.match(repository, /idx_monitor_runs_automation_due/);

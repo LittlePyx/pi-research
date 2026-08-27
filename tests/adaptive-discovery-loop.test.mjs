@@ -136,9 +136,11 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(monitor, /const earlyPublished = earlyReviews\.filter\(isPublishedRecommendation\)\.length/);
   assert.match(monitor, /recommendation_acceptance_sentinel/);
   assert.match(monitor, /model_preflight_failed/);
-  assert.match(monitor, /const modelResponse = await preflightModel\(activeJob\)/);
+  assert.match(monitor, /const modelResponse = await preflightModel\(activeJob, \{ lockToken: resumedLock, jobId: activeJob\.id \}\)/);
+  assert.match(monitor, /const modelResponse = await preflightModel\(\{[\s\S]*?\}, \{ lockToken, jobId \}\)/);
   assert.match(monitor, /模型连接检查未通过，扫描尚未继续/);
-  assert.ok(monitor.indexOf("preflightModel(activeJob)") < monitor.indexOf("resumedLock = crypto.randomUUID()"));
+  assert.ok(monitor.indexOf("resumedLock = crypto.randomUUID()") < monitor.indexOf("preflightModel(activeJob"));
+  assert.ok(monitor.indexOf("MONITOR_NEW_RUN_CLAIM_SQL") < monitor.indexOf("preflightModel({"));
   assert.match(monitor, /当前论文响应较慢，正在切换快速模式重试/);
   assert.match(monitor, /deferLlm/);
   assert.match(monitor, /checkpoint = 'main_complete'/);

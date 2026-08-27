@@ -113,6 +113,8 @@ export const monitorRuns = sqliteTable(
     discoveryRound: integer("discovery_round").notNull().default(0),
     lockToken: text("lock_token"),
     lockExpiresAt: text("lock_expires_at"),
+    activeJobId: text("active_job_id"),
+    leaseGeneration: integer("lease_generation").notNull().default(0),
     lastTrigger: text("last_trigger").notNull().default("visit"),
     lastUserActivityAt: text("last_user_activity_at"),
     scheduledRunsSinceActivity: integer("scheduled_runs_since_activity").notNull().default(0),
@@ -190,12 +192,24 @@ export const monitorScanJobs = sqliteTable(
     firstRecommendationAt: text("first_recommendation_at"),
     advanceLockToken: text("advance_lock_token"),
     advanceLockExpiresAt: text("advance_lock_expires_at"),
+    requestKey: text("request_key"),
+    failureKind: text("failure_kind").notNull().default(""),
+    failureSource: text("failure_source").notNull().default(""),
+    retryCount: integer("retry_count").notNull().default(0),
+    nextRetryAt: text("next_retry_at"),
+    lastSuccessStage: text("last_success_stage").notNull().default(""),
+    lastSuccessSource: text("last_success_source").notNull().default(""),
     error: text("error"),
     startedAt: text("started_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     completedAt: text("completed_at"),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
-  (table) => [index("idx_monitor_scan_jobs_space_updated").on(table.spaceId, table.updatedAt)],
+  (table) => [
+    index("idx_monitor_scan_jobs_space_updated").on(table.spaceId, table.updatedAt),
+    uniqueIndex("idx_monitor_scan_jobs_request_key").on(table.spaceId, table.requestKey)
+      .where(sql`${table.requestKey} IS NOT NULL`),
+    index("idx_monitor_scan_jobs_retry_due").on(table.status, table.nextRetryAt, table.spaceId),
+  ],
 );
 
 export const monitorReliabilityEvents = sqliteTable(

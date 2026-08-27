@@ -107,6 +107,7 @@ async function recoverStaleMonitorJobs(env: Env) {
     `SELECT j.id AS job_id, j.space_id FROM monitor_scan_jobs j
      JOIN monitor_runs r ON r.space_id = j.space_id
      WHERE j.status NOT IN ('ready', 'error')
+      AND (r.active_job_id IS NULL OR r.active_job_id = j.id)
       AND datetime(j.updated_at) <= datetime('now', ?)
       AND (r.lock_expires_at IS NULL OR datetime(r.lock_expires_at) <= CURRENT_TIMESTAMP)
      ORDER BY j.updated_at ASC LIMIT 8`,
@@ -118,14 +119,17 @@ async function recoverStaleMonitorJobs(env: Env) {
       env.DB.prepare(
         `UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending',
           current_source = '后台已回收长时间停滞任务，准备从保存点继续',
+          failure_kind = 'stale_scheduler_recovery', failure_source = 'background-scheduler',
+          retry_count = retry_count + 1, next_retry_at = CURRENT_TIMESTAMP,
           error = 'stale_scheduler_recovery', completed_at = COALESCE(completed_at, ?), updated_at = CURRENT_TIMESTAMP
          WHERE id = ? AND status NOT IN ('ready', 'error')`,
       ).bind(recoveredAt, stale.job_id),
       env.DB.prepare(
         `UPDATE monitor_runs SET status = 'error', next_run_at = CURRENT_TIMESTAMP,
-          lock_token = NULL, lock_expires_at = NULL, error = 'stale_scheduler_recovery', updated_at = CURRENT_TIMESTAMP
-         WHERE space_id = ?`,
-      ).bind(stale.space_id),
+          lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL,
+          error = 'stale_scheduler_recovery', updated_at = CURRENT_TIMESTAMP
+         WHERE space_id = ? AND (active_job_id IS NULL OR active_job_id = ?)`,
+      ).bind(stale.space_id, stale.job_id),
     ]);
     recoveredJobCount += 1;
   }
@@ -281,6 +285,8 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
         monitor?: {
           status?: string;
           automationDeferred?: boolean;
+          alreadyRunning?: boolean;
+          leaseOwner?: boolean;
           automation?: { paused?: boolean };
           scanJob?: { id?: string; checkpoint?: string } | null;
         };
@@ -290,6 +296,9 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
         return { paused: Boolean(state.monitor.automation?.paused), deferred: Boolean(state.monitor.automationDeferred), advanced: 0, completed: false };
       }
       if (!response.ok) throw new Error(`Scheduled monitor start returned ${response.status}`);
+      if (state.monitor.leaseOwner === false || state.monitor.alreadyRunning) {
+        return { paused: false, deferred: false, advanced: 0, completed: false, following: true };
+      }
       startedCount += 1;
       let advanced = 0;
       for (let step = 0; step < SCHEDULED_ADVANCE_STEPS && state.monitor && !["ready", "error"].includes(state.monitor.status || ""); step += 1) {

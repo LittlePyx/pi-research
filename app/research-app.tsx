@@ -337,6 +337,9 @@ type MonitorState = {
   explorationRound?: number;
   error: string | null;
   alreadyAdvancing?: boolean;
+  alreadyRunning?: boolean;
+  leaseOwner?: boolean;
+  idempotentReplay?: boolean;
   automationDeferred?: boolean;
   cadenceHours: number;
   lastTrigger?: string;
@@ -416,6 +419,12 @@ type MonitorState = {
     triggerSource?: string;
     resumeOfJobId?: string | null;
     checkpoint?: string;
+    failureKind?: string;
+    failureSource?: string;
+    retryCount?: number;
+    nextRetryAt?: string | null;
+    lastSuccessfulStage?: string;
+    lastSuccessfulSource?: string;
     startedAt: string;
     completedAt: string | null;
     error: string | null;
@@ -1541,7 +1550,9 @@ async function advanceMonitorPipeline(
       if (!isCancelled()) onUpdate(current);
     }
     if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan stage unavailable");
-    if (data.monitor.alreadyAdvancing) await new Promise((resolve) => window.setTimeout(resolve, 900));
+    // Another tab or scheduler owns this checkpoint. Stop issuing POSTs and let
+    // the read-only poll follow the authoritative job instead of creating a request storm.
+    if (data.monitor.alreadyAdvancing) return current;
   }
   if (!isCancelled() && current.status === "ready" && current.scanJob?.checkpoint === "main_complete") {
     void fetch("/api/monitor", {
@@ -3427,7 +3438,8 @@ export default function ResearchApp({ user }: { user: User }) {
           const data = await response.json() as { monitor?: MonitorState; error?: string };
           if (data.monitor && !cancelled) setMonitor(data.monitor);
           if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "monitor unavailable");
-          if (!data.monitor.throttled && !["ready", "error"].includes(data.monitor.status)) {
+          if (!data.monitor.throttled && data.monitor.leaseOwner !== false
+            && !data.monitor.alreadyRunning && !["ready", "error"].includes(data.monitor.status)) {
             await advanceMonitorPipeline(activeSpace.id, data.monitor, (nextMonitor) => { if (!cancelled) setMonitor(nextMonitor); }, () => cancelled);
           }
         })
@@ -4061,7 +4073,8 @@ export default function ResearchApp({ user }: { user: User }) {
       if (data.monitor) setMonitor(data.monitor);
       if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan unavailable");
       if (data.monitor.throttled) setToast(t.manualCooling);
-      else if (!["ready", "error"].includes(data.monitor.status)) {
+      else if (data.monitor.leaseOwner !== false && !data.monitor.alreadyRunning
+        && !["ready", "error"].includes(data.monitor.status)) {
         pipelineDetached = true;
         void advanceMonitorPipeline(activeSpace.id, data.monitor, setMonitor)
           .catch(handlePipelineFailure)
@@ -4117,7 +4130,10 @@ export default function ResearchApp({ user }: { user: User }) {
       const scanData = await scanResponse.json() as { monitor?: MonitorState };
       if (scanData.monitor) {
         setMonitor(scanData.monitor);
-        if (!["ready", "error"].includes(scanData.monitor.status)) await advanceMonitorPipeline(activeSpace.id, scanData.monitor, setMonitor);
+        if (scanData.monitor.leaseOwner !== false && !scanData.monitor.alreadyRunning
+          && !["ready", "error"].includes(scanData.monitor.status)) {
+          await advanceMonitorPipeline(activeSpace.id, scanData.monitor, setMonitor);
+        }
       }
     } finally {
       stopPolling?.();
@@ -5153,6 +5169,9 @@ export default function ResearchApp({ user }: { user: User }) {
                   </summary>
                   <div>
                     <p>{monitorFailureMessage(failedScanError, locale)}</p>
+                    {failedScanJob?.nextRetryAt && <small>{locale === "zh"
+                      ? `Pi 会在 ${formatMonitorDate(failedScanJob.nextRetryAt, locale)} 后自动重试；也可以稍后手动从断点继续。`
+                      : `Pi will retry automatically after ${formatMonitorDate(failedScanJob.nextRetryAt, locale)}; you can also resume the checkpoint later.`}</small>}
                     {isModelCredentialFailure(failedScanError) && <button className="secondary" type="button" onClick={() => { setModelSettingsError(monitorFailureMessage(failedScanError, locale)); setModelSettingsOpen(true); }}>{locale === "zh" ? "检查 Key" : "Check key"}</button>}
                   </div>
                 </details>
