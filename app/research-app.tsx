@@ -1231,6 +1231,18 @@ function RouteQualityFlow({ track, locale }: { track: ResearchTrack; locale: Loc
   </div>;
 }
 
+function researchRouteAttentionTitle(kind: ResearchRouteAttentionKind, locale: Locale) {
+  const labels: Record<ResearchRouteAttentionKind, Localized> = {
+    recover: { zh: "先恢复证据不足的路线", en: "Recover the route with insufficient evidence" },
+    today: { zh: "先处理今日中的路线论文", en: "Handle route papers in Today first" },
+    quality_review: { zh: "等待共享质量队列完成评估", en: "Let the shared quality queue finish reviewing" },
+    confirm_evidence: { zh: "确认待回流的路线证据", en: "Confirm route evidence awaiting feedback" },
+    evidence_gap: { zh: "把关键证据缺口变成下一轮检索", en: "Turn the key evidence gap into the next search" },
+    maintain: { zh: "继续轮换深挖稳定路线", en: "Continue rotating discovery on the stable route" },
+  };
+  return labels[kind][locale];
+}
+
 function RoutePortfolioOverview({
   portfolio,
   todayCount,
@@ -5162,6 +5174,13 @@ export default function ResearchApp({ user }: { user: User }) {
     closeModelSettings();
     window.setTimeout(() => void runManualMonitor(), 0);
   };
+  const handleRouteAttention = () => {
+    if (!routeAttention || !routeAttentionTrack) return;
+    if (["today", "confirm_evidence"].includes(routeAttention.kind)) navigate("today");
+    else if (routeAttention.kind === "evidence_gap") openThread(routeAttentionTrack, "gaps");
+    else if (routeAttention.kind === "quality_review") openThread(routeAttentionTrack);
+    else void expandResearchTrack(routeAttentionTrack);
+  };
 
   return (
     <div className="v2-app">
@@ -5387,19 +5406,14 @@ export default function ResearchApp({ user }: { user: User }) {
                   {((researchMap.intelligenceProgress && researchMap.intelligenceProgress.ready < researchMap.intelligenceProgress.total) || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress v2-route-build-progress" role="status"><div><span className={mapIntelligenceTrackId ? "working" : "paused"}><i>π</i></span><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "Pi 正在形成方向研判" : "Pi is forming a direction assessment") : (locale === "zh" ? "部分方向等待 Pi 刷新" : "Some direction assessments await refresh")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "旧研判和已有路线继续保留" : "Saved assessments and existing routes remain available")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i></section> : null}
                   {Boolean((researchMap.buildProgress?.partialTrackIds?.length || 0) + (researchMap.buildProgress?.emptyTrackIds?.length || 0) + (researchMap.buildProgress?.failedTrackIds?.length || 0)) && <section className="v2-map-build-progress v2-route-build-degraded" role="status"><div><span className="paused"><i>!</i></span><div><strong>{locale === "zh" ? "部分路线处于诚实降级状态" : "Some routes are honestly degraded"}</strong><p>{locale === "zh" ? "已有论文和候选均已保留；没有可见证据的路线不会标记为完成。" : "Existing papers and candidates are retained; routes without visible evidence are never marked complete."}</p></div></div></section>}
 
-                  {routeAttention && routeAttentionTrack && <RoutePortfolioOverview portfolio={routePortfolio} todayCount={routeTodayPaperCount} attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={() => {
-                    if (["today", "confirm_evidence"].includes(routeAttention.kind)) navigate("today");
-                    else if (routeAttention.kind === "evidence_gap") openThread(routeAttentionTrack, "gaps");
-                    else if (routeAttention.kind === "quality_review") openThread(routeAttentionTrack);
-                    else void expandResearchTrack(routeAttentionTrack);
-                  }} />}
+                  {routeAttention && routeAttentionTrack && <RoutePortfolioOverview portfolio={routePortfolio} todayCount={routeTodayPaperCount} attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={handleRouteAttention} />}
 
                   <section className="v2-route-brief" aria-label={locale === "zh" ? "研究路线摘要" : "Research route summary"}>
                     <header><div><p className="v2-kicker">{locale === "zh" ? "路线总览" : "ROUTE OVERVIEW"}</p><h2>{locale === "zh" ? "先判断哪里变化，哪里还缺证据" : "See what changed and where evidence is still thin"}</h2></div><span>{researchMap.tracks.length} {locale === "zh" ? "条路线" : "routes"}</span></header>
                     <div>
                       <article><small>{locale === "zh" ? "近期变化" : "RECENT CHANGE"}</small><strong>{monitor?.mapChanges?.length || 0}</strong><p>{latestRouteChange ? (latestRouteChange.kind === "new_evidence" ? latestRouteChange.paperTitle : (locale === "zh" ? latestRouteChange.titleZh : latestRouteChange.titleEn)) : (locale === "zh" ? "暂时没有新的已确认变化" : "No newly confirmed change yet")}</p><button type="button" onClick={() => navigate("today")}>{locale === "zh" ? "查看今日发现" : "Open today's discovery"} →</button></article>
                       <article className="gap"><small>{locale === "zh" ? "最需补证据" : "THINNEST EVIDENCE"}</small><strong>{routeEvidenceGapTrack ? confirmedRouteEvidenceCount(routeEvidenceGapTrack) : 0}</strong><p>{routeEvidenceGapTrack ? (locale === "zh" ? routeEvidenceGapTrack.titleZh : routeEvidenceGapTrack.titleEn) : (locale === "zh" ? "等待路线建立" : "Awaiting route setup")}</p>{routeEvidenceGapTrack && <button type="button" onClick={() => openThread(routeEvidenceGapTrack, "gaps")}>{locale === "zh" ? "查看缺口" : "Review gap"} →</button>}</article>
-                      <article className="next"><small>{locale === "zh" ? "建议下一步" : "NEXT BEST ACTION"}</small><strong>π</strong><p>{routeEvidenceGapTrack?.intelligence ? (locale === "zh" ? routeEvidenceGapTrack.intelligence.opportunityZh : routeEvidenceGapTrack.intelligence.opportunityEn) : (locale === "zh" ? "先完善证据较薄的核心路线" : "Strengthen the thinnest core route first")}</p>{routeEvidenceGapTrack && <button type="button" onClick={() => openThread(routeEvidenceGapTrack, "agenda")}>{locale === "zh" ? "打开研究议程" : "Open research agenda"} →</button>}</article>
+                      <article className="next"><small>{locale === "zh" ? "统一优先事项" : "SHARED PRIORITY"}</small><strong>π</strong><p>{routeAttention && routeAttentionTrack ? `${researchRouteAttentionTitle(routeAttention.kind, locale)} · ${locale === "zh" ? routeAttentionTrack.titleZh : routeAttentionTrack.titleEn}` : (locale === "zh" ? "等待路线建立" : "Awaiting route setup")}</p>{routeAttention && routeAttentionTrack && <button type="button" onClick={handleRouteAttention}>{locale === "zh" ? "执行下一步" : "Take next step"} →</button>}</article>
                     </div>
                   </section>
 

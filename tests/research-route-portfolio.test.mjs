@@ -18,6 +18,9 @@ test("route funnel uses the same count model on desktop and narrow screens", asy
   ]);
 
   assert.equal(client.match(/<RoutePortfolioOverview portfolio=/g)?.length, 1);
+  assert.match(client, /onAction=\{handleRouteAttention\}/);
+  assert.match(client, /统一优先事项/);
+  assert.match(client, /onClick=\{handleRouteAttention\}/);
   assert.match(client, /const routePortfolio = researchMap\.routePortfolio;/);
   assert.doesNotMatch(client, /researchMap\.routePortfolio\s*\|\|/);
   assert.match(client, /portfolio\.discoveredCount/);
