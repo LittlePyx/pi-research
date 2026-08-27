@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
-import { selectResearchRouteAttention, type ResearchDirectionRole, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
+import { emptyResearchMapState, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
 import { learningResourceHref, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
 import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
@@ -2917,12 +2917,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [researchProblemAction, setResearchProblemAction] = useState<string | null>(null);
   const [researchProblemError, setResearchProblemError] = useState("");
   const researchProblemAutoAttemptRef = useRef(new Set<string>());
-  const [researchMap, setResearchMap] = useState<ResearchMapState>({
-    tracks: [], edges: [], paperEdges: [],
-    routePortfolio: { formalEvidenceCount: 0, discoveredCount: 0, queuedCount: 0, reviewingCount: 0, deepReviewedCount: 0, recommendedCount: 0, acceptedCount: 0, pendingEvidenceCount: 0, readyRouteCount: 0, degradedRouteCount: 0 },
-    paperNetwork: { status: "idle", paperCount: 0, totalPaperCount: 0, builtPaperCount: 0, coveredPaperIds: [], coveredPaperHash: "", coverageRevision: 0, coverageCursor: 0, paperRevision: "", builtPaperRevision: "", citationEdgeCount: 0, similarityEdgeCount: 0, semanticEdgeCount: 0, pathEdgeCount: 0, model: "", sources: [], updatedAt: null, error: null },
-    model: "deepseek-v4-pro", generated: false,
-  });
+  const [researchMap, setResearchMap] = useState<ResearchMapState>(() => emptyResearchMapState());
   const [selectedThread, setSelectedThread] = useState<ResearchTrack | null>(null);
   const [directionOverviewId, setDirectionOverviewId] = useState<string | null>(null);
   const [directionRelationFocusId, setDirectionRelationFocusId] = useState<string | null>(null);
@@ -4113,6 +4108,24 @@ export default function ResearchApp({ user }: { user: User }) {
     learningRequestRef.current += 1;
     resetResearchNetworkExpansion([], space.id);
     setActiveSpaceId(space.id);
+    // Fail closed at the workspace boundary. If the target workspace cannot be
+    // loaded or initialized, no route, synthesis, or problem from the previous
+    // workspace may remain visible.
+    setMonitor(null);
+    setMonitoring(false);
+    setResearchMap(emptyResearchMapState());
+    setSelectedThread(null);
+    setResearchSynthesis(null);
+    setResearchSynthesisLoading(false);
+    setResearchSynthesisError("");
+    setResearchProblemState(null);
+    setResearchProblemLoading(false);
+    setResearchProblemAction(null);
+    setResearchProblemError("");
+    setResearchMapMode("directions");
+    setResearchRouteTab("problem");
+    setDirectionRelationFocusId(null);
+    setDirectionPinnedRelationId(null);
     setPaperNetworkLoading(false);
     setPaperNetworkBuildPhase(null);
     setSelectedNetworkPaperId(null);

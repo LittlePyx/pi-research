@@ -371,3 +371,45 @@ export type ResearchMapState = {
     highConfidenceOffTopic: number;
   };
 };
+
+export function emptyResearchMapState(): ResearchMapState {
+  return {
+    tracks: [],
+    edges: [],
+    paperEdges: [],
+    routePortfolio: {
+      formalEvidenceCount: 0,
+      discoveredCount: 0,
+      queuedCount: 0,
+      reviewingCount: 0,
+      deepReviewedCount: 0,
+      recommendedCount: 0,
+      acceptedCount: 0,
+      pendingEvidenceCount: 0,
+      readyRouteCount: 0,
+      degradedRouteCount: 0,
+    },
+    paperNetwork: {
+      status: "idle",
+      paperCount: 0,
+      totalPaperCount: 0,
+      builtPaperCount: 0,
+      coveredPaperIds: [],
+      coveredPaperHash: "",
+      coverageRevision: 0,
+      coverageCursor: 0,
+      paperRevision: "",
+      builtPaperRevision: "",
+      citationEdgeCount: 0,
+      similarityEdgeCount: 0,
+      semanticEdgeCount: 0,
+      pathEdgeCount: 0,
+      model: "",
+      sources: [],
+      updatedAt: null,
+      error: null,
+    },
+    model: "deepseek-v4-pro",
+    generated: false,
+  };
+}

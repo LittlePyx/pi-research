@@ -1,6 +1,31 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { emptyResearchMapState } from "../lib/research-map.ts";
+
+test("an unavailable target workspace starts from an isolated empty research state", async () => {
+  const first = emptyResearchMapState();
+  const second = emptyResearchMapState();
+  first.tracks.push({ id: "previous-space-route" });
+  first.paperNetwork.coveredPaperIds.push("previous-space-paper");
+
+  assert.equal(second.generated, false);
+  assert.deepEqual(second.tracks, []);
+  assert.deepEqual(second.paperNetwork.coveredPaperIds, []);
+  assert.deepEqual(second.routePortfolio, {
+    formalEvidenceCount: 0, discoveredCount: 0, queuedCount: 0, reviewingCount: 0,
+    deepReviewedCount: 0, recommendedCount: 0, acceptedCount: 0,
+    pendingEvidenceCount: 0, readyRouteCount: 0, degradedRouteCount: 0,
+  });
+
+  const client = await readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8");
+  const switchSpace = client.match(/const switchSpace = \(space: Space\) => \{([\s\S]*?)\n {2}\};/)?.[1] || "";
+  assert.match(switchSpace, /setResearchMap\(emptyResearchMapState\(\)\)/);
+  assert.match(switchSpace, /setSelectedThread\(null\)/);
+  assert.match(switchSpace, /setResearchSynthesis\(null\)/);
+  assert.match(switchSpace, /setResearchProblemState\(null\)/);
+  assert.match(switchSpace, /setMonitor\(null\)/);
+});
 
 test("research-map API exposes one deduplicated route portfolio contract", async () => {
   const route = await readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8");
