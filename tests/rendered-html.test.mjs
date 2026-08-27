@@ -375,7 +375,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /function CitationFlowWorkbench/);
   assert.match(client, /前置知识/);
   assert.match(client, /完整已核验引用清单/);
-  assert.match(client, /证据来源：\$\{item\.edge\.evidenceSource\}/);
+  assert.match(client, /直接引用 · \$\{citationEvidenceProviderLabel\(item\.edge\.evidenceSource\)\} 核验/);
   assert.match(client, /model\.priorAll\.length > model\.prior\.length/);
   assert.match(client, /展开其余 \$\{model\.priorAll\.length - model\.prior\.length\} 篇/);
   assert.match(client, /item\.node\.paper\.authors \|\|/);

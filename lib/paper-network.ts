@@ -76,6 +76,23 @@ export function paperNetworkEdgeKey(edge: MultiSeedEdge) {
   return `${edge.kind}:${edge.sourcePaperId}:${edge.targetPaperId}:${edge.relationKind}`;
 }
 
+const DATABASE_CITATION_SOURCES = new Set(["semantic-scholar", "openalex"]);
+
+/**
+ * Citation edges are binary scholarly facts, not model-scored relationships.
+ * Fail closed unless the stored row uses the direct-citation relation, names a
+ * provider that actually exposes citation/reference data, and carries the
+ * deterministic confidence written by the verified ingestion paths.
+ */
+export function isDatabaseVerifiedCitationEdge(
+  edge: Pick<ResearchPaperEdge, "kind" | "relationKind" | "confidence" | "evidenceSource">,
+) {
+  return edge.kind === "citation"
+    && edge.relationKind.trim().toLocaleLowerCase() === "cites"
+    && edge.confidence === 100
+    && DATABASE_CITATION_SOURCES.has(edge.evidenceSource.trim().toLocaleLowerCase());
+}
+
 /**
  * Similarity-mode neighborhoods may contain both evidence-backed relations and
  * lightweight recommendation leads. A focused one-hop view must remain an

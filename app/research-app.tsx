@@ -5,7 +5,7 @@ import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import { selectResearchRouteAttention, type ResearchDirectionRole, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
 import { learningResourceHref, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
-import { isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
+import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
 
 type Locale = "zh" | "en";
@@ -2028,6 +2028,10 @@ function networkRelationLabel(edge: ResearchPaperEdge, locale: Locale) {
   return labels[edge.relationKind]?.[locale] || (locale === "zh" ? "语义关联" : "Semantic link");
 }
 
+function citationEvidenceProviderLabel(evidenceSource: string) {
+  return evidenceSource.trim().toLocaleLowerCase() === "openalex" ? "OpenAlex" : "Semantic Scholar";
+}
+
 function networkEvidenceLabel(edge: ResearchPaperEdge, locale: Locale) {
   if (edge.kind === "citation") return locale === "zh" ? "数据库核验" : "Database verified";
   if (edge.kind === "similarity") {
@@ -2222,7 +2226,7 @@ function PaperNetworkGraph({
     const filteredIds = new Set(filteredNodes.map((node) => node.paper.id));
     const discoveredEdges = externalNetworkEdges(mergedNodes, externalNodes, externalSimilarityEdges);
     let edges = [...map.paperEdges, ...discoveredEdges].filter((edge) => filteredIds.has(edge.sourcePaperId) && filteredIds.has(edge.targetPaperId)
-      && (mode === "citations" ? edge.kind === "citation" : mode === "path" ? edge.kind === "path" : edge.kind === "similarity"));
+      && (mode === "citations" ? isDatabaseVerifiedCitationEdge(edge) : mode === "path" ? edge.kind === "path" : edge.kind === "similarity"));
     const activeNodeIds = new Set(selectPaperNetworkActiveNodeIds(
       filteredNodes.map((node) => ({
         id: node.paper.id,
@@ -2447,6 +2451,8 @@ function CitationFlowWorkbench({
   selectedPaperId,
   onSelect,
   onExpandFocus,
+  onOpenFocus,
+  onAskFocus,
   expanding,
 }: {
   map: ResearchMapState;
@@ -2455,12 +2461,14 @@ function CitationFlowWorkbench({
   selectedPaperId: string | null;
   onSelect: (paperId: string) => void;
   onExpandFocus: (node: NetworkPaperNode) => void;
+  onOpenFocus: (node: NetworkPaperNode) => void;
+  onAskFocus: (node: NetworkPaperNode) => void;
   expanding: boolean;
 }) {
   const model = useMemo(() => {
     const nodes = buildNetworkPaperNodes(map).filter((node) => trackFilter === "all" || node.trackIds.includes(trackFilter));
     const nodeById = new Map(nodes.map((node) => [node.paper.id, node]));
-    const edges = map.paperEdges.filter((edge) => edge.kind === "citation"
+    const edges = map.paperEdges.filter((edge) => isDatabaseVerifiedCitationEdge(edge)
       && nodeById.has(edge.sourcePaperId) && nodeById.has(edge.targetPaperId));
     const connectedIds = new Set(edges.flatMap((edge) => [edge.sourcePaperId, edge.targetPaperId]));
     const connectedNodes = nodes.filter((node) => connectedIds.has(node.paper.id));
@@ -2486,6 +2494,11 @@ function CitationFlowWorkbench({
       const rightLater = nodeById.get(right.sourcePaperId);
       return (leftLater ? Number(researchPaperYear(leftLater.paper)) : 0) - (rightLater ? Number(researchPaperYear(rightLater.paper)) : 0);
     });
+    const providerCounts = new Map<string, number>();
+    for (const edge of edges) {
+      const provider = citationEvidenceProviderLabel(edge.evidenceSource);
+      providerCounts.set(provider, (providerCounts.get(provider) || 0) + 1);
+    }
     return {
       focus,
       prior: priorAll.slice(0, 8),
@@ -2495,6 +2508,7 @@ function CitationFlowWorkbench({
       ledger,
       nodeById,
       connectedNodes,
+      providers: Array.from(providerCounts.entries()).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])),
       yearStart: years.length ? Math.min(...years) : null,
       yearEnd: years.length ? Math.max(...years) : null,
     };
@@ -2516,17 +2530,18 @@ function CitationFlowWorkbench({
     <strong>{item.node.paper.title}</strong>
     <span className="authors">{item.node.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span>
     <span>{[researchPaperYear(item.node.paper), item.node.paper.venue, `${item.node.paper.citationCount} ${locale === "zh" ? "次被引" : "citations"}`].filter(Boolean).join(" · ")}</span>
-    <em>{locale === "zh" ? `证据来源：${item.edge.evidenceSource}` : `Evidence source: ${item.edge.evidenceSource}`}</em>
+    <em>{locale === "zh" ? `直接引用 · ${citationEvidenceProviderLabel(item.edge.evidenceSource)} 核验` : `Direct citation · verified by ${citationEvidenceProviderLabel(item.edge.evidenceSource)}`}</em>
   </button>;
 
   return <section className="v2-citation-workbench" aria-label={locale === "zh" ? "知识引用流工作台" : "Citation flow workbench"}>
-    <header className="v2-specialized-network-head"><div><p>{locale === "zh" ? "数据库核验的知识传递" : "DATABASE-VERIFIED KNOWLEDGE TRANSFER"}</p><h3>{locale === "zh" ? "看清一篇论文从哪里来，又影响了谁" : "See where a paper came from and what it influenced"}</h3><span>{locale === "zh" ? "选择任意节点作为焦点；这里只展示当前论文库内已确认的直接引用。" : "Choose any node as the focus. Only direct citations verified inside the current library are shown."}</span></div><dl><div><dt>{locale === "zh" ? "真实引用" : "Verified links"}</dt><dd>{model.ledger.length}</dd></div><div><dt>{locale === "zh" ? "链上论文" : "Papers in flow"}</dt><dd>{model.connectedNodes.length}</dd></div><div><dt>{locale === "zh" ? "时间跨度" : "Coverage"}</dt><dd>{model.yearStart && model.yearEnd ? `${model.yearStart}–${model.yearEnd}` : "—"}</dd></div></dl></header>
+    <header className="v2-specialized-network-head"><div><p>{locale === "zh" ? "数据库核验的知识传递" : "DATABASE-VERIFIED KNOWLEDGE TRANSFER"}</p><h3>{locale === "zh" ? "看清一篇论文从哪里来，又影响了谁" : "See where a paper came from and what it influenced"}</h3><span>{locale === "zh" ? "选择任意节点作为焦点；这里只展示当前论文库内已确认的直接引用。" : "Choose any node as the focus. Only direct citations verified inside the current library are shown."}</span></div><dl><div><dt>{locale === "zh" ? "真实引用" : "Verified links"}</dt><dd>{model.ledger.length}</dd></div><div><dt>{locale === "zh" ? "链上论文" : "Papers in flow"}</dt><dd>{model.connectedNodes.length}</dd></div><div><dt>{locale === "zh" ? "时间跨度" : "Coverage"}</dt><dd>{model.yearStart && model.yearEnd ? `${model.yearStart}–${model.yearEnd}` : "—"}</dd></div><div><dt>{locale === "zh" ? "核验来源" : "Providers"}</dt><dd>{model.providers.length}</dd></div></dl></header>
+    <div className="v2-citation-source-summary"><strong>{locale === "zh" ? "只包含数据库确认的直接引用" : "Direct citations confirmed by scholarly databases only"}</strong><span>{model.providers.map(([provider, count]) => `${provider} · ${count}`).join("  /  ")}</span></div>
     <div className="v2-citation-lineage-grid">
       <section className="prior"><header><span>01</span><div><h4>{locale === "zh" ? "前置知识" : "Prior knowledge"}</h4><small>{locale === "zh" ? "焦点论文直接引用的工作" : "Work directly cited by the focus"}</small></div><b>{model.priorAll.length > model.prior.length ? `${model.prior.length}/${model.priorAll.length}` : model.priorAll.length}</b></header><div>{model.prior.length ? <>{model.prior.map((item) => relationCard(item, "prior"))}{model.priorAll.length > model.prior.length && <details className="v2-citation-more"><summary>{locale === "zh" ? `展开其余 ${model.priorAll.length - model.prior.length} 篇` : `Show ${model.priorAll.length - model.prior.length} more`}</summary><div>{model.priorAll.slice(model.prior.length).map((item) => relationCard(item, "prior"))}</div></details>}</> : <p className="v2-citation-gap">{locale === "zh" ? "当前库内尚未核验到它的前置引用。" : "No prior citation has been verified in the current library."}</p>}</div></section>
-      <article className="v2-citation-focus-card"><span>{locale === "zh" ? "当前焦点" : "CURRENT FOCUS"}</span><em>{researchRoleLabel(model.focus.paper.role, locale)} · {researchPaperYear(model.focus.paper)}</em><h4>{model.focus.paper.title}</h4><div className="v2-citation-focus-meta"><span>{model.focus.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span><small>{model.focus.paper.venue || (locale === "zh" ? "来源待核对" : "Venue unavailable")}</small></div><p>{locale === "zh" ? model.focus.paper.rationaleZh : model.focus.paper.rationaleEn}</p><dl><div><dt>{locale === "zh" ? "向前承接" : "Prior"}</dt><dd>{model.priorAll.length}</dd></div><div><dt>{locale === "zh" ? "向后影响" : "Later"}</dt><dd>{model.laterAll.length}</dd></div><div><dt>{locale === "zh" ? "总被引" : "Citations"}</dt><dd>{model.focus.paper.citationCount}</dd></div></dl><button type="button" disabled={expanding} onClick={() => onExpandFocus(model.focus!)}>{expanding ? (locale === "zh" ? "正在寻找前后论文…" : "Discovering nearby papers…") : (locale === "zh" ? "到论文发现扩展前后 1-hop" : "Expand 1-hop in paper discovery")} →</button><small>{locale === "zh" ? "将切换到论文发现；外部候选只有收录后才会进入正式引用流。" : "This opens paper discovery. External candidates enter the formal citation flow only after you add them."}</small></article>
+      <article className="v2-citation-focus-card"><span>{locale === "zh" ? "当前焦点" : "CURRENT FOCUS"}</span><em>{researchRoleLabel(model.focus.paper.role, locale)} · {researchPaperYear(model.focus.paper)}</em><h4>{model.focus.paper.title}</h4><div className="v2-citation-focus-meta"><span>{model.focus.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span><small>{model.focus.paper.venue || (locale === "zh" ? "来源待核对" : "Venue unavailable")}</small></div><p>{locale === "zh" ? model.focus.paper.rationaleZh : model.focus.paper.rationaleEn}</p><dl><div><dt>{locale === "zh" ? "向前承接" : "Prior"}</dt><dd>{model.priorAll.length}</dd></div><div><dt>{locale === "zh" ? "向后影响" : "Later"}</dt><dd>{model.laterAll.length}</dd></div><div><dt>{locale === "zh" ? "总被引" : "Citations"}</dt><dd>{model.focus.paper.citationCount}</dd></div></dl><div className="v2-citation-focus-actions"><a href={model.focus.paper.url || (model.focus.paper.doi ? `https://doi.org/${model.focus.paper.doi}` : "#")} target="_blank" rel="noreferrer" onClick={() => onOpenFocus(model.focus!)}>{locale === "zh" ? "打开原文" : "Open original"} ↗</a><button type="button" onClick={() => onAskFocus(model.focus!)}>{locale === "zh" ? "让 Pi 解释" : "Ask Pi"}</button></div><button type="button" disabled={expanding} onClick={() => onExpandFocus(model.focus!)}>{expanding ? (locale === "zh" ? "正在寻找前后论文…" : "Discovering nearby papers…") : (locale === "zh" ? "到论文发现扩展前后 1-hop" : "Expand 1-hop in paper discovery")} →</button><small>{locale === "zh" ? "扩展候选会进入共享质量评估；只有评审通过才可能出现在今日，只有你收录确认后才进入正式路线与引用流。" : "Expanded candidates enter the shared quality review. Only papers that pass can reach Today, and only your explicit addition confirms formal route and citation-flow evidence."}</small></article>
       <section className="later"><header><span>03</span><div><h4>{locale === "zh" ? "后续发展" : "Later development"}</h4><small>{locale === "zh" ? "直接引用焦点论文的工作" : "Work that directly cites the focus"}</small></div><b>{model.laterAll.length > model.later.length ? `${model.later.length}/${model.laterAll.length}` : model.laterAll.length}</b></header><div>{model.later.length ? <>{model.later.map((item) => relationCard(item, "later"))}{model.laterAll.length > model.later.length && <details className="v2-citation-more"><summary>{locale === "zh" ? `展开其余 ${model.laterAll.length - model.later.length} 篇` : `Show ${model.laterAll.length - model.later.length} more`}</summary><div>{model.laterAll.slice(model.later.length).map((item) => relationCard(item, "later"))}</div></details>}</> : <p className="v2-citation-gap">{locale === "zh" ? "当前库内尚未核验到后续引用。" : "No later citation has been verified in the current library."}</p>}</div></section>
     </div>
-    <section className="v2-citation-ledger"><header><div><strong>{locale === "zh" ? "完整已核验引用清单" : "Complete verified citation ledger"}</strong><small>{locale === "zh" ? "箭头始终表示知识流向：被引工作 → 后续论文" : "Arrows always show knowledge flow: cited work → later paper"}</small></div><span>{model.ledger.length}</span></header><div>{model.ledger.map((edge) => { const prior = model.nodeById.get(edge.targetPaperId); const later = model.nodeById.get(edge.sourcePaperId); if (!prior || !later) return null; return <article key={edge.id}><button type="button" onClick={() => onSelect(prior.paper.id)}><small>{researchPaperYear(prior.paper)}</small><strong>{prior.paper.title}</strong></button><span aria-label={locale === "zh" ? "知识流向" : "knowledge flows to"}>→</span><button type="button" onClick={() => onSelect(later.paper.id)}><small>{researchPaperYear(later.paper)}</small><strong>{later.paper.title}</strong></button></article>; })}</div></section>
+    <section className="v2-citation-ledger"><header><div><strong>{locale === "zh" ? "完整已核验引用清单" : "Complete verified citation ledger"}</strong><small>{locale === "zh" ? "箭头始终表示知识流向：被引工作 → 后续论文" : "Arrows always show knowledge flow: cited work → later paper"}</small></div><span>{model.ledger.length}</span></header><div>{model.ledger.map((edge) => { const prior = model.nodeById.get(edge.targetPaperId); const later = model.nodeById.get(edge.sourcePaperId); if (!prior || !later) return null; return <article key={edge.id}><button type="button" onClick={() => onSelect(prior.paper.id)}><small>{researchPaperYear(prior.paper)}</small><strong>{prior.paper.title}</strong></button><span aria-label={locale === "zh" ? "知识流向" : "knowledge flows to"}>→<small>{citationEvidenceProviderLabel(edge.evidenceSource)}</small></span><button type="button" onClick={() => onSelect(later.paper.id)}><small>{researchPaperYear(later.paper)}</small><strong>{later.paper.title}</strong></button></article>; })}</div></section>
   </section>;
 }
 
@@ -3210,7 +3225,7 @@ export default function ResearchApp({ user }: { user: User }) {
   );
   const visibleCitationEdgeCount = useMemo(() => {
     const visibleIds = new Set(eligibleNetworkPaperNodes.filter((node) => !node.external).map((node) => node.paper.id));
-    return researchMap.paperEdges.filter((edge) => edge.kind === "citation" && visibleIds.has(edge.sourcePaperId) && visibleIds.has(edge.targetPaperId)).length;
+    return researchMap.paperEdges.filter((edge) => isDatabaseVerifiedCitationEdge(edge) && visibleIds.has(edge.sourcePaperId) && visibleIds.has(edge.targetPaperId)).length;
   }, [eligibleNetworkPaperNodes, researchMap.paperEdges]);
   const explicitNetworkOriginNodes = useMemo(() => {
     const nodeByCanonicalId = new Map(eligibleNetworkPaperNodes.map((node) => [node.paper.canonicalId, node]));
@@ -3230,6 +3245,7 @@ export default function ResearchApp({ user }: { user: User }) {
     () => allNetworkPaperNodes.find((node) => node.paper.id === selectedNetworkPaperId) || null,
     [allNetworkPaperNodes, selectedNetworkPaperId],
   );
+  const showNetworkPaperDrawer = Boolean(selectedNetworkNode && paperNetworkMode !== "citations");
   const externalResearchNetworkEdges = useMemo(
     () => externalNetworkEdges(allNetworkPaperNodes, externalNetworkPaperNodes, researchNetworkSimilarityEdges),
     [allNetworkPaperNodes, externalNetworkPaperNodes, researchNetworkSimilarityEdges],
@@ -3241,14 +3257,14 @@ export default function ResearchApp({ user }: { user: User }) {
     [externalResearchNetworkEdges, researchMap.paperEdges, selectedNetworkNode],
   );
   const selectedModeNetworkRelations = useMemo(() => selectedNetworkRelations.filter((edge) => paperNetworkMode === "citations"
-    ? edge.kind === "citation"
+    ? isDatabaseVerifiedCitationEdge(edge)
     : paperNetworkMode === "path" ? false : paperNetworkScope === "one-hop" ? isVerifiableSimilarityNeighborEdge(edge) : true).slice(0, 6), [paperNetworkMode, paperNetworkScope, selectedNetworkRelations]);
   const selectedVerifiableOneHopCount = useMemo(() => selectedNetworkNode
     ? new Set(selectVerifiableOneHopEdges(selectedNetworkRelations, selectedNetworkNode.paper.id).map(paperNetworkEdgeKey)).size
     : 0, [selectedNetworkNode, selectedNetworkRelations]);
   const networkDiscoveryNodesByTab = useMemo(() => {
     const originIds = new Set(effectiveNetworkOriginIds);
-    const citationEdges = researchMap.paperEdges.filter((edge) => edge.kind === "citation");
+    const citationEdges = researchMap.paperEdges.filter(isDatabaseVerifiedCitationEdge);
     const similarityEvidenceEdges = [...researchMap.paperEdges, ...externalResearchNetworkEdges]
       .filter(isVerifiableSimilarityNeighborEdge);
     const strictJointIntent = paperNetworkScope === "multi-seed" && multiOriginIntent !== "union" && originIds.size >= 2;
@@ -5493,15 +5509,15 @@ export default function ResearchApp({ user }: { user: User }) {
                     </div>;
                   })()}
                   {paperNetworkMode === "similarity" && researchNetworkError && <div className="v2-paper-network-note" role="status"><span /><div><strong>{locale === "zh" ? "外部论文发现暂时不可用" : "External discovery is temporarily unavailable"}</strong><p>{researchNetworkError}</p></div><button type="button" onClick={() => setResearchNetworkError("")}>{locale === "zh" ? "关闭" : "Dismiss"}</button></div>}
-                  <div className={`v2-paper-network-stage ${paperNetworkMode === "similarity" ? "discovery-mode" : "analysis-mode"} ${selectedNetworkNode ? "has-drawer" : ""}`}>
+                  <div className={`v2-paper-network-stage ${paperNetworkMode === "similarity" ? "discovery-mode" : "analysis-mode"} ${showNetworkPaperDrawer ? "has-drawer" : ""}`}>
                     {paperNetworkMode === "similarity" && <aside className="v2-paper-discovery-list" aria-label={locale === "zh" ? "论文发现列表" : "Paper discovery list"}>
                       <div className="v2-paper-discovery-tabs" role="group" aria-label={locale === "zh" ? "发现类型" : "Discovery type"}>{(["similar", "prior", "derivative"] as PaperDiscoveryTab[]).map((tab) => <button type="button" key={tab} aria-pressed={paperDiscoveryTab === tab} className={paperDiscoveryTab === tab ? "active" : ""} onClick={() => setPaperDiscoveryTab(tab)}><span>{tab === "similar" ? (locale === "zh" ? "相似论文" : "Similar") : tab === "prior" ? (locale === "zh" ? "前置奠基" : "Prior") : (locale === "zh" ? "后续发展" : "Derivative")}</span><b>{networkDiscoveryNodesByTab[tab].length}</b></button>)}</div>
                       <div className="v2-paper-discovery-scroll">{networkDiscoveryNodes.length ? networkDiscoveryNodes.map((node) => { const candidate = node.external; const decision = candidate ? researchNetworkDecisions[candidate.canonicalId] : undefined; const origin = effectiveNetworkOriginIds.includes(node.paper.id); const evidenceCount = candidate ? currentOriginEvidenceCount(candidate, effectiveNetworkOriginCanonicalIds) : 0; return <article key={node.paper.id} className={`${selectedNetworkPaperId === node.paper.id ? "selected" : ""} ${candidate ? "ghost" : "saved"}`} onPointerEnter={() => setHoveredNetworkPaperId(node.paper.id)} onPointerLeave={() => setHoveredNetworkPaperId(null)}><button type="button" className="v2-paper-discovery-select" onClick={() => setSelectedNetworkPaperId(node.paper.id)}><span>{origin ? (locale === "zh" ? "起点" : "Origin") : candidate ? decision === "accepted" ? (locale === "zh" ? "已收录" : "Added") : (locale === "zh" ? "待收录" : "Candidate") : (locale === "zh" ? "地图内" : "In map")}</span><strong>{node.paper.title}</strong><small>{[node.paper.authors, researchPaperYear(node.paper), node.paper.venue].filter(Boolean).join(" · ")}</small>{candidate && <em>{networkCandidateFitLabel(candidate.score, locale)} · {locale === "zh" ? `${evidenceCount} 个当前起点有独立关系证据` : `${evidenceCount} active origin(s) with independent relation evidence`}</em>}</button>{candidate && decision !== "accepted" && <footer><button type="button" disabled={decision === "saving"} onClick={() => void decideResearchNetworkCandidate(candidate, "accept")}>{decision === "saving" ? "…" : (locale === "zh" ? "收录" : "Add")}</button><button type="button" disabled={decision === "saving"} onClick={() => void decideResearchNetworkCandidate(candidate, "dismiss")}>{locale === "zh" ? "忽略" : "Dismiss"}</button></footer>}</article>; }) : <div className="v2-paper-discovery-empty"><strong>{researchNetworkResponse && researchNetworkHasNoNewCandidates(researchNetworkResponse) ? (locale === "zh" ? "本轮没有新的可推荐论文" : "No new papers to recommend in this pass") : paperDiscoveryTab === "prior" ? (locale === "zh" ? "暂无共同前置工作" : "No common prior works yet") : paperDiscoveryTab === "derivative" ? (locale === "zh" ? "暂无共同后续工作" : "No common derivative works yet") : (locale === "zh" ? "尚未发现外部候选" : "No external candidates yet")}</strong><p>{researchNetworkResponse && researchNetworkHasNoNewCandidates(researchNetworkResponse) ? (locale === "zh" ? "Pi 已检查当前起点周边；现有图谱和历史论文不会因此丢失。" : "Pi checked the current neighborhood; saved map papers remain available.") : (locale === "zh" ? "可以从起始论文继续发现，现有论文不会丢失。" : "Discover from an origin; saved papers remain intact.")}</p></div>}</div>
                     </aside>}
                     <div className="v2-paper-network-main">
-                      {paperNetworkMode === "similarity" ? <><PaperNetworkGraph map={researchMap} mode="similarity" scope={paperNetworkScope} multiOriginIntent={multiOriginIntent} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} hoveredPaperId={hoveredNetworkPaperId} originPaperIds={effectiveNetworkOriginIds} externalNodes={externalNetworkPaperNodes} externalSimilarityEdges={researchNetworkSimilarityEdges} paperStates={paperStateByCanonicalId} onSelect={(paperId) => setSelectedNetworkPaperId(paperId)} onHover={setHoveredNetworkPaperId} /><footer className="v2-paper-network-legend"><span><i className="focus" />{locale === "zh" ? "深绿外环：当前聚焦" : "Dark-green outer ring: current focus"}</span><span><i className="origin" />{locale === "zh" ? "金环：起始论文" : "Gold ring: origin paper"}</span><span><i className="similarity" />{locale === "zh" ? "距离 / 线宽：文献耦合强度" : "Distance / line width: bibliographic coupling"}</span><span><i className="discovery-fallback" />{locale === "zh" ? "中性虚线：引用或推荐发现线索（非耦合）" : "Neutral dashed line: citation or recommendation lead (not coupling)"}</span><span><i className="node-size" />{locale === "zh" ? "节点大小：被引量" : "Node size: citations"}</span><span><i className="year" />{locale === "zh" ? "颜色：发表年份（旧 → 新）" : "Color: publication year (older → newer)"}</span><span><i className="ghost" />{locale === "zh" ? "虚边节点：尚未收录" : "Dashed node: not yet added"}</span>{paperNetworkScope === "multi-seed" && <span><i className="shared-neighbor" />{locale === "zh" ? "双环：多个种子的共同邻居" : "Double ring: neighbor shared by multiple origins"}</span>}</footer></> : paperNetworkMode === "citations" ? <CitationFlowWorkbench map={researchMap} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} onSelect={setSelectedNetworkPaperId} onExpandFocus={(node) => void generateResearchNetworkFrom(node)} expanding={researchNetworkLoading} /> : <ReadingOrderWorkbench map={researchMap} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} learningState={activeLearningState} learningLoading={activeLearningLoading} learningError={activeLearningError} learningAction={learningAction} onSelect={setSelectedNetworkPaperId} onToggleStep={(step) => void updateLearningStep(step)} onGenerate={(track) => void (track ? generateLearningPath(locale === "zh" ? track.titleZh : track.titleEn, track.id) : activeLearningState.path ? generateLearningPath(activeLearningState.path.target, activeLearningState.path.targetTrackId) : generateLearningPath(learningTarget))} onRetry={() => setLearningReloadNonce((current) => current + 1)} />}
+                      {paperNetworkMode === "similarity" ? <><PaperNetworkGraph map={researchMap} mode="similarity" scope={paperNetworkScope} multiOriginIntent={multiOriginIntent} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} hoveredPaperId={hoveredNetworkPaperId} originPaperIds={effectiveNetworkOriginIds} externalNodes={externalNetworkPaperNodes} externalSimilarityEdges={researchNetworkSimilarityEdges} paperStates={paperStateByCanonicalId} onSelect={(paperId) => setSelectedNetworkPaperId(paperId)} onHover={setHoveredNetworkPaperId} /><footer className="v2-paper-network-legend"><span><i className="focus" />{locale === "zh" ? "深绿外环：当前聚焦" : "Dark-green outer ring: current focus"}</span><span><i className="origin" />{locale === "zh" ? "金环：起始论文" : "Gold ring: origin paper"}</span><span><i className="similarity" />{locale === "zh" ? "距离 / 线宽：文献耦合强度" : "Distance / line width: bibliographic coupling"}</span><span><i className="discovery-fallback" />{locale === "zh" ? "中性虚线：引用或推荐发现线索（非耦合）" : "Neutral dashed line: citation or recommendation lead (not coupling)"}</span><span><i className="node-size" />{locale === "zh" ? "节点大小：被引量" : "Node size: citations"}</span><span><i className="year" />{locale === "zh" ? "颜色：发表年份（旧 → 新）" : "Color: publication year (older → newer)"}</span><span><i className="ghost" />{locale === "zh" ? "虚边节点：尚未收录" : "Dashed node: not yet added"}</span>{paperNetworkScope === "multi-seed" && <span><i className="shared-neighbor" />{locale === "zh" ? "双环：多个种子的共同邻居" : "Double ring: neighbor shared by multiple origins"}</span>}</footer></> : paperNetworkMode === "citations" ? <CitationFlowWorkbench map={researchMap} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} onSelect={setSelectedNetworkPaperId} onExpandFocus={(node) => void generateResearchNetworkFrom(node)} onOpenFocus={(node) => recordMapPaperOpen(node.track.id)} onAskFocus={askAboutNetworkPaper} expanding={researchNetworkLoading} /> : <ReadingOrderWorkbench map={researchMap} trackFilter={paperNetworkTrackId} locale={locale} selectedPaperId={selectedNetworkPaperId} learningState={activeLearningState} learningLoading={activeLearningLoading} learningError={activeLearningError} learningAction={learningAction} onSelect={setSelectedNetworkPaperId} onToggleStep={(step) => void updateLearningStep(step)} onGenerate={(track) => void (track ? generateLearningPath(locale === "zh" ? track.titleZh : track.titleEn, track.id) : activeLearningState.path ? generateLearningPath(activeLearningState.path.target, activeLearningState.path.targetTrackId) : generateLearningPath(learningTarget))} onRetry={() => setLearningReloadNonce((current) => current + 1)} />}
                     </div>
-                    {selectedNetworkNode && <aside className="v2-paper-network-drawer" aria-label={locale === "zh" ? "论文详情" : "Paper details"}>
+                    {showNetworkPaperDrawer && selectedNetworkNode && <aside className="v2-paper-network-drawer" aria-label={locale === "zh" ? "论文详情" : "Paper details"}>
                       <button className="v2-paper-drawer-close" type="button" onClick={() => setSelectedNetworkPaperId(null)} aria-label={t.close}>×</button>
                       <p className="v2-kicker">{selectedNetworkNode.external ? (locale === "zh" ? "外部候选 · 尚未收入地图" : "External candidate · not in map") : researchRoleLabel(selectedNetworkNode.paper.role, locale)} · {researchPaperYear(selectedNetworkNode.paper)}</p>
                       <div className="v2-paper-drawer-state"><span className="focused">{locale === "zh" ? "当前聚焦" : "Current focus"}</span>{effectiveNetworkOriginIds.includes(selectedNetworkNode.paper.id) && <span className="origin">{locale === "zh" ? "起始论文" : "Origin paper"}</span>}{paperNetworkScope === "one-hop" && <span>{selectedVerifiableOneHopCount} {locale === "zh" ? "条可核验一跳" : "verified one-hop"}</span>}</div>

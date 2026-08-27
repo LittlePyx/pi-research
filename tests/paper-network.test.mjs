@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  isDatabaseVerifiedCitationEdge,
   isVerifiableSimilarityNeighborEdge,
   paperNetworkEdgeKey,
   selectBalancedMultiSeedEdges,
@@ -47,6 +48,21 @@ test("focused one-hop keeps only independently verifiable similarity relations",
     ["coupled", "verified"],
   );
   assert.deepEqual(selectVerifiableOneHopEdges(candidates, "A", 1).map((item) => item.targetPaperId), ["coupled"]);
+});
+
+test("citation flow fails closed on inferred, weak, or unrecognized citation rows", () => {
+  const verified = {
+    ...edge("later", "prior", "citation", 100),
+    relationKind: "cites",
+    evidenceSource: "semantic-scholar",
+  };
+
+  assert.equal(isDatabaseVerifiedCitationEdge(verified), true);
+  assert.equal(isDatabaseVerifiedCitationEdge({ ...verified, evidenceSource: "openalex" }), true);
+  assert.equal(isDatabaseVerifiedCitationEdge({ ...verified, evidenceSource: "deepseek-v4-pro" }), false);
+  assert.equal(isDatabaseVerifiedCitationEdge({ ...verified, relationKind: "extends" }), false);
+  assert.equal(isDatabaseVerifiedCitationEdge({ ...verified, confidence: 82 }), false);
+  assert.equal(isDatabaseVerifiedCitationEdge({ ...verified, kind: "semantic" }), false);
 });
 
 test("a low-confidence neighbor shared by multiple origins is retained first", () => {

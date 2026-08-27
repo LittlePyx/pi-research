@@ -4,6 +4,7 @@ import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { fetchExternalSource } from "../../../lib/external-source-throttle";
 import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
+import { isDatabaseVerifiedCitationEdge } from "../../../lib/paper-network";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
 import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
@@ -1616,7 +1617,7 @@ async function rebuildPaperNetwork(
     await writePaperNetworkState(database, space.id, "ready", totalPaperCount, [], null, coverage);
     return;
   }
-  let scholarlyEdges = cachedEdges.filter((edge) => edge.kind === "citation" || edge.kind === "similarity");
+  let scholarlyEdges = cachedEdges.filter((edge) => edge.kind === "similarity" || isDatabaseVerifiedCitationEdge(edge));
   let curatedEdges = cachedEdges.filter((edge) => edge.kind === "semantic" || edge.kind === "path");
   let sources = [...previousSources];
   const errors: string[] = [];
@@ -1880,7 +1881,10 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   }));
   const activePaperIds = new Set(papersResult.results.filter((paper) => paper.curation_status !== "deactivated").map((paper) => paper.id));
   const activePaperRows = papersResult.results.filter((paper) => paper.curation_status !== "deactivated");
-  const paperEdges = paperEdgesResult.results.filter((edge) => activePaperIds.has(edge.source_paper_id) && activePaperIds.has(edge.target_paper_id)).map(toPaperEdge);
+  const paperEdges = paperEdgesResult.results
+    .filter((edge) => activePaperIds.has(edge.source_paper_id) && activePaperIds.has(edge.target_paper_id))
+    .map(toPaperEdge)
+    .filter((edge) => edge.kind !== "citation" || isDatabaseVerifiedCitationEdge(edge));
   const uniquePaperCount = new Set(activePaperRows.map((paper) => paper.canonical_id)).size;
   const storedNetworkState = paperNetworkState ? parseStoredPaperNetworkState(paperNetworkState.sources_json) : { sources: [], coverage: null };
   const currentPaperRevision = researchPaperSetRevision(activePaperRows.map(toCoverageCandidate));
@@ -1928,7 +1932,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       coverageCursor: storedCoverage?.nextCursor || 0,
       paperRevision: currentPaperRevision,
       builtPaperRevision: storedCoverage?.paperRevision || "",
-      citationEdgeCount: paperEdges.filter((edge) => edge.kind === "citation").length,
+      citationEdgeCount: paperEdges.filter(isDatabaseVerifiedCitationEdge).length,
       similarityEdgeCount: paperEdges.filter((edge) => edge.kind === "similarity").length,
       semanticEdgeCount: paperEdges.filter((edge) => edge.kind === "semantic").length,
       pathEdgeCount: paperEdges.filter((edge) => edge.kind === "path").length,
