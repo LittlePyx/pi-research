@@ -100,6 +100,19 @@ export const semanticScholarThrottles = sqliteTable(
   ],
 );
 
+export const externalSourceThrottles = sqliteTable(
+  "external_source_throttles",
+  {
+    sourceKey: text("source_key").primaryKey(),
+    failureCount: integer("failure_count").notNull().default(0),
+    nextAllowedAt: text("next_allowed_at"),
+    lastStatus: integer("last_status").notNull().default(0),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: text("lease_expires_at"),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+);
+
 export const monitorRuns = sqliteTable(
   "monitor_runs",
   {

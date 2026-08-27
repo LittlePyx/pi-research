@@ -35,6 +35,7 @@ import {
 import { researchNetworkDismissalReversalStatements, researchNetworkDismissalStatements } from "../../../lib/research-network-dismissal";
 import { confirmedExternalResearchMapEvidenceStatements, reconcileResearchMapEvidenceStatements, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { fetchSemanticScholar, SemanticScholarQuotaError, SemanticScholarRateLimitError } from "../../../lib/semantic-scholar";
+import { ExternalSourceCooldownError, fetchExternalSource } from "../../../lib/external-source-throttle";
 
 type SpaceRow = { id: string };
 type SeedRow = {
@@ -177,7 +178,7 @@ const CANDIDATE_STATUSES = new Set<ResearchNetworkCandidateStatus>(["ghost", "ac
 const TRACK_ROLES = new Set(["foundation", "milestone", "frontier"]);
 
 type ExternalCallBudget = { database: D1Database; spaceId: string };
-type OpenAlexCallBudget = { remaining: number };
+type OpenAlexCallBudget = { remaining: number; database: D1Database };
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -204,6 +205,9 @@ function reportNetworkSourceError(error: unknown, kind: "rate" | "seed" | "relat
 function reportOpenAlexSourceError(error: unknown) {
   const correlationId = crypto.randomUUID();
   console.error(`[research-network:${correlationId}] openalex`, error);
+  if (error instanceof ExternalSourceCooldownError) {
+    return `OpenAlex fallback is cooling down. Cached verified results remain available; retry in about ${error.retryAfterSeconds} seconds.`;
+  }
   return "OpenAlex fallback discovery could not be completed; any verified results already found remain available.";
 }
 
@@ -320,10 +324,10 @@ async function openAlexFetch(endpoint: URL, budget: OpenAlexCallBudget) {
   if (budget.remaining <= 0) throw new Error("OpenAlex request limit reached for this expansion");
   budget.remaining -= 1;
   endpoint.searchParams.set("mailto", "pi-research@users.noreply.github.com");
-  const response = await fetch(endpoint, {
+  const response = await fetchExternalSource(endpoint, {
     headers: { Accept: "application/json", "User-Agent": "Pi-Research/1.0 (mailto:pi-research@users.noreply.github.com)" },
     signal: AbortSignal.timeout(12_000),
-  });
+  }, { database: budget.database, sourceKey: "openalex" });
   if (!response.ok) throw new Error(`OpenAlex returned ${response.status}`);
   return response;
 }
@@ -402,6 +406,7 @@ async function fetchOpenAlexExpansion(
   const cursorUpdates = new Map<string, { neighborOffset: number; citationPage: number }>();
   const resolvedSeeds: Array<{ row: SeedRow; work: OpenAlexWork }> = [];
   let successfulDiscoveryCalls = 0;
+  let circuitOpen = false;
   const successfulNeighborSeedIds = new Set<string>();
   const successfulCitationSeedIds = new Set<string>();
   const rememberError = (row: SeedRow, message: string, streams: Array<"neighbor" | "citation">) => {
@@ -411,15 +416,18 @@ async function fetchOpenAlexExpansion(
     if (streams.includes("citation")) citationErrors.push(message);
   };
   for (const row of seedRows.slice(0, MAX_SEEDS)) {
+    if (circuitOpen) break;
     try {
       const work = await resolveOpenAlexSeed(row, budget);
       if (work && openAlexId(work.id)) resolvedSeeds.push({ row, work });
       else rememberError(row, "OpenAlex fallback could not match one selected seed paper.", ["neighbor", "citation"]);
     } catch (error) {
+      if (error instanceof ExternalSourceCooldownError) circuitOpen = true;
       rememberError(row, reportOpenAlexSourceError(error), ["neighbor", "citation"]);
     }
   }
   for (const { row, work } of resolvedSeeds) {
+    if (circuitOpen) break;
     const state = seedStates.get(row.id);
     const neighborOffset = Math.max(0, state?.openalex_neighbor_offset ?? 0);
     const citationPage = Math.max(1, state?.openalex_citation_page ?? 1);
@@ -443,8 +451,10 @@ async function fetchOpenAlexExpansion(
         rawResults.push({ candidate, relation: openAlexRelation(row, relationType.kind, relationType.direction, expansionKey) });
       }
     } catch (error) {
+      if (error instanceof ExternalSourceCooldownError) circuitOpen = true;
       rememberError(row, reportOpenAlexSourceError(error), ["neighbor"]);
     }
+    if (circuitOpen) break;
     try {
       const identifier = openAlexId(work.id);
       if (!identifier) continue;
@@ -465,6 +475,7 @@ async function fetchOpenAlexExpansion(
         rawResults.push({ candidate, relation: openAlexRelation(row, "citation", "candidate_cites_seed", expansionKey) });
       }
     } catch (error) {
+      if (error instanceof ExternalSourceCooldownError) circuitOpen = true;
       rememberError(row, reportOpenAlexSourceError(error), ["citation"]);
     }
     if (neighborSucceeded || citationSucceeded) {
@@ -1405,7 +1416,7 @@ export async function POST(request: Request) {
     const targetById = new Map((shouldExpandRecommendation ? seedRows : rowsToExpand).map((seed) => [seed.id, seed]));
     openAlexTargetRows = Array.from(targetById.values());
     if (openAlexTargetRows.length) {
-      openAlexResult = await fetchOpenAlexExpansion(openAlexTargetRows, expansionKey, seedStates, { remaining: OPENALEX_CALL_LIMIT });
+      openAlexResult = await fetchOpenAlexExpansion(openAlexTargetRows, expansionKey, seedStates, { remaining: OPENALEX_CALL_LIMIT, database });
     }
     errors.push(...openAlexResult.errors);
     await renewExpansionLock(database, spaceId, expansionKey, expansionLockToken);

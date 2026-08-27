@@ -32,6 +32,7 @@ import { passiveBranchBoost } from "../../../lib/passive-engagement.mjs";
 import { mergeDailyBriefHistory } from "../../../lib/daily-brief-history.mjs";
 import { readPreferenceSignals, upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { normalizedDeepSeekProbeError, resolveDeepSeekCredential, verifyDeepSeekCredential } from "../../../lib/model-credentials";
+import { fetchExternalSource } from "../../../lib/external-source-throttle";
 import {
   hasCompleteRecommendationDraft,
   isRetryableEmptyDraftDegradation,
@@ -1525,11 +1526,7 @@ async function fetchOpenAlexHorizon(database: D1Database, space: SpaceRow, horiz
     signal: AbortSignal.timeout(20_000),
   };
   try {
-    let response = await fetch(endpoint, options);
-    if (response.status === 429) {
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      response = await fetch(endpoint, options);
-    }
+    const response = await fetchExternalSource(endpoint, options, { database, sourceKey: "openalex" });
     if (!response.ok) throw new Error(`OpenAlex returned ${response.status}`);
     const data = await response.json() as OpenAlexResponse;
     const queryKey = await discoveryQueryKey(plan);
@@ -4172,7 +4169,7 @@ async function fetchSemanticScholarAbstracts(database: D1Database, spaceId: stri
   return abstracts;
 }
 
-async function fetchOpenAlexAbstracts(candidates: Candidate[]) {
+async function fetchOpenAlexAbstracts(database: D1Database, candidates: Candidate[]) {
   const byDoi = new Map(candidates.filter((candidate) => candidate.doi).map((candidate) => [candidate.doi!.toLocaleLowerCase(), candidate]));
   const abstracts = new Map<string, string>();
   const dois = Array.from(byDoi.keys());
@@ -4185,10 +4182,10 @@ async function fetchOpenAlexAbstracts(candidates: Candidate[]) {
       endpoint.searchParams.set("select", "doi,abstract_inverted_index");
       endpoint.searchParams.set("per-page", String(chunk.length));
       endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
-      const response = await fetch(endpoint, {
+      const response = await fetchExternalSource(endpoint, {
         headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
         signal: AbortSignal.timeout(15_000),
-      });
+      }, { database, sourceKey: "openalex" });
       if (!response.ok) return;
       const data = await response.json() as OpenAlexResponse;
       for (const item of data.results || []) {
@@ -4209,7 +4206,7 @@ async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, 
   if (!missing.length) return { requested: 0, enriched: 0 };
   const abstracts = await fetchSemanticScholarAbstracts(database, spaceId, missing);
   const unresolved = missing.filter((candidate) => !abstracts.has(candidate.canonicalId) && candidate.doi);
-  const openAlexAbstracts = await fetchOpenAlexAbstracts(unresolved);
+  const openAlexAbstracts = await fetchOpenAlexAbstracts(database, unresolved);
   for (const [canonicalId, abstractText] of openAlexAbstracts) abstracts.set(canonicalId, abstractText);
   const statements = Array.from(abstracts.entries()).map(([canonicalId, abstractText]) => database.prepare(
     `UPDATE paper_insights SET abstract_text = CASE WHEN length(?) > length(abstract_text) THEN ? ELSE abstract_text END,

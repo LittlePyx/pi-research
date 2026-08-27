@@ -1,6 +1,7 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { buildArxivSearchQuery, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { fetchExternalSource } from "../../../lib/external-source-throttle";
 import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
@@ -681,7 +682,7 @@ function openAlexAbstract(index: Record<string, number[]> | null | undefined) {
   return cleanText(words.sort((left, right) => left[0] - right[0]).map((entry) => entry[1]).join(" ")).slice(0, 1200);
 }
 
-async function fetchOpenAlex(query: string, role: ResearchTrackRole, offset: number, rows: number) {
+async function fetchOpenAlex(database: D1Database, query: string, role: ResearchTrackRole, offset: number, rows: number) {
   const dates = roleDates(role);
   const endpoint = new URL("https://api.openalex.org/works");
   endpoint.searchParams.set("search", cleanText(query).slice(0, 420));
@@ -695,11 +696,7 @@ async function fetchOpenAlex(query: string, role: ResearchTrackRole, offset: num
     headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
     signal: AbortSignal.timeout(20_000),
   };
-  let response = await fetch(endpoint, options);
-  if (response.status === 429) {
-    await new Promise((resolve) => setTimeout(resolve, 950));
-    response = await fetch(endpoint, options);
-  }
+  const response = await fetchExternalSource(endpoint, options, { database, sourceKey: "openalex" });
   if (!response.ok) throw new Error(`OpenAlex returned ${response.status}`);
   return (await response.json() as OpenAlexResponse).results || [];
 }
@@ -760,7 +757,7 @@ async function normalizeArxivItem(item: ReturnType<typeof parseArxivAtom>[number
   };
 }
 
-async function discoverCandidates(directions: DirectionDraft[], offset: number, rows: number, attemptCount: number) {
+async function discoverCandidates(database: D1Database, directions: DirectionDraft[], offset: number, rows: number, attemptCount: number) {
   const discovered: MapCandidate[] = [];
   const sources: ResearchTrackSourceReport[] = [];
   let topicalRejectedCount = 0;
@@ -771,7 +768,7 @@ async function discoverCandidates(directions: DirectionDraft[], offset: number, 
       const normalized = provider === "crossref"
         ? await Promise.all((await fetchCrossref(query, role, offset, rows)).map((item) => normalizeItem(item, direction.key, role)))
         : provider === "openalex"
-          ? await Promise.all((await fetchOpenAlex(query, role, offset, rows)).map((item) => normalizeOpenAlexItem(item, direction.key, role)))
+          ? await Promise.all((await fetchOpenAlex(database, query, role, offset, rows)).map((item) => normalizeOpenAlexItem(item, direction.key, role)))
           : await Promise.all((await fetchArxiv(query, role, offset, rows)).map((item) => normalizeArxivItem(item, direction.key, role)));
       const paperCandidates = normalized.filter((item): item is MapCandidate => Boolean(item));
       const accepted = paperCandidates.filter((item) => researchTrackTopicalFit(direction, item).accepted);
@@ -2113,7 +2110,7 @@ export async function POST(request: Request) {
       provenance: item.provenance,
     }));
     const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14 : ((track.expansion_count + 1) * 16) % 608;
-    const discovery = await discoverCandidates([direction], offset, hydrating ? 14 : 16, hydrating ? track.build_attempt_count : 0);
+    const discovery = await discoverCandidates(database, [direction], offset, hydrating ? 14 : 16, hydrating ? track.build_attempt_count : 0);
     const existingIds = new Set(allExistingIds.results.map((row) => row.canonical_id));
     let candidates = discovery.candidates.filter((item) => !existingIds.has(item.canonicalId));
     const sourceStatuses = [...discovery.sources];
