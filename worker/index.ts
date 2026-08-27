@@ -7,6 +7,7 @@ import {
   monitorSchedulerSecretMatches,
   shouldWakeMonitorScheduler,
 } from "../lib/monitor-scheduler.mjs";
+import { recordMonitorOperationalSentinel } from "../lib/monitor-operational-sentinel";
 import { recordResearchRouteSentinel } from "../lib/research-route-sentinel";
 
 interface Env {
@@ -233,9 +234,44 @@ async function runScheduledResearchRouteSentinel(env: Env, preferredSpaceId?: st
   ).first<{ id: string }>();
   if (!selected?.id) return null;
   try {
-    return await recordResearchRouteSentinel(env.DB, selected.id);
+    return { spaceId: selected.id, ...await recordResearchRouteSentinel(env.DB, selected.id) };
   } catch {
-    return { outcome: "failed" as const, issues: ["sentinel_query_failed"] };
+    return { spaceId: selected.id, outcome: "failed" as const, issues: ["sentinel_query_failed"] };
+  }
+}
+
+async function runScheduledMonitorOperationalSentinel(
+  env: Env,
+  spaceId: string | null | undefined,
+  routeSentinel: Awaited<ReturnType<typeof runScheduledResearchRouteSentinel>>,
+) {
+  if (!spaceId) return null;
+  try {
+    const result = await recordMonitorOperationalSentinel(env.DB, spaceId, routeSentinel);
+    if (result?.issues.length) {
+      console.warn("Pi monitor operational sentinel", JSON.stringify({
+        spaceId,
+        outcome: result.outcome,
+        issues: result.issues,
+        recoveredIssues: result.recoveredIssues,
+        emittedEventCount: result.emittedEventCount,
+      }));
+    } else if (result?.recoveredIssues.length) {
+      console.info("Pi monitor operational sentinel recovered", JSON.stringify({
+        spaceId,
+        recoveredIssues: result.recoveredIssues,
+        emittedEventCount: result.emittedEventCount,
+      }));
+    }
+    return result ? {
+      outcome: result.outcome,
+      issues: result.issues,
+      recoveredIssues: result.recoveredIssues,
+      emittedEventCount: result.emittedEventCount,
+    } : null;
+  } catch (error) {
+    console.error("Pi monitor operational sentinel failed", error);
+    return { outcome: "failed" as const, issues: ["operational_sentinel_failed"], recoveredIssues: [], emittedEventCount: 0 };
   }
 }
 
@@ -253,6 +289,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
   let recoveredJobCount = 0;
   let routeRetry: Awaited<ReturnType<typeof runScheduledResearchRouteRetry>> | null = null;
   let routeSentinel: Awaited<ReturnType<typeof runScheduledResearchRouteSentinel>> | null = null;
+  let operationalSentinel: Awaited<ReturnType<typeof runScheduledMonitorOperationalSentinel>> | null = null;
   let tickError = "";
 
   try {
@@ -332,6 +369,11 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     }
     routeRetry = await runScheduledResearchRouteRetry(env, ctx);
     routeSentinel = await runScheduledResearchRouteSentinel(env, routeRetry.spaceId || due.results[0]?.id || null);
+    operationalSentinel = await runScheduledMonitorOperationalSentinel(
+      env,
+      routeSentinel?.spaceId || routeRetry.spaceId || due.results[0]?.id || null,
+      routeSentinel,
+    );
   } catch (error) {
     tickError = error instanceof Error ? error.message.slice(0, 300) : "Scheduled monitor sweep failed";
     failedCount += 1;
@@ -343,7 +385,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     ).bind(new Date().toISOString(), dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount,
       failedCount, recoveredJobCount, tickError, tickId, leaseToken).run().catch(() => undefined);
   }
-  return { acquired: true, trigger, dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount, failedCount, recoveredJobCount, routeRetry, routeSentinel, tickError };
+  return { acquired: true, trigger, dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount, failedCount, recoveredJobCount, routeRetry, routeSentinel, operationalSentinel, tickError };
 }
 
 // Image security config. SVG sources with .svg extension auto-skip the
