@@ -3898,6 +3898,31 @@ main { min-width: 0; }
 .v2-route-build-progress { margin: 12px 0; padding: 12px 15px; border-radius: 10px; }
 .v2-route-build-progress > small { display: none; }
 
+.v2-route-portfolio { margin-top: 22px; border: 1px solid #cbd8cf; border-radius: 16px; background: linear-gradient(135deg,rgba(252,253,251,.92),rgba(241,246,242,.82)); overflow: hidden; }
+.v2-route-portfolio > header { padding: 20px 22px 16px; border-bottom: 1px solid #d8e2db; display: flex; align-items: flex-start; justify-content: space-between; gap: 26px; }
+.v2-route-portfolio > header h2 { margin: 5px 0 0; color: #30483a; font: 400 25px/1.25 Georgia,serif; }
+.v2-route-portfolio > header p:last-child { max-width: 650px; margin: 7px 0 0; color: #6b7770; font-size: 12px; line-height: 1.55; }
+.v2-route-portfolio > header > span { flex: none; padding: 6px 10px; border: 1px solid #cbd8cf; border-radius: 999px; background: #edf3ef; color: #496554; display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 780; }
+.v2-route-portfolio > header > span i { width: 6px; height: 6px; border-radius: 50%; background: #4e7b63; }
+.v2-route-portfolio > header > span.degraded { border-color: #decbb4; background: #faf4ea; color: #8b6145; }
+.v2-route-portfolio > header > span.degraded i { background: #a56f4d; }
+.v2-route-portfolio-flow { padding: 17px 20px; display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr); align-items: stretch; gap: 9px; }
+.v2-route-portfolio-flow > i { align-self: center; color: #93a49a; font-size: 13px; font-style: normal; }
+.v2-route-portfolio-flow article { min-width: 0; padding: 13px 14px; border: 1px solid #d9e2dc; border-radius: 10px; background: rgba(255,255,255,.7); }
+.v2-route-portfolio-flow article.active { border-color: #a9c0b1; background: #f1f7f3; box-shadow: inset 0 2px 0 #6d957d; }
+.v2-route-portfolio-flow article.formal { border-color: #b6c9bc; background: #eaf2ed; }
+.v2-route-portfolio-flow small { color: #6e8075; font-size: 8px; font-weight: 840; letter-spacing: .06em; }
+.v2-route-portfolio-flow strong { margin-top: 8px; color: #315d48; display: block; font: 400 27px/1 Georgia,serif; }
+.v2-route-portfolio-flow p { min-height: 16px; margin: 6px 0 0; color: #647169; font-size: 10px; line-height: 1.45; }
+.v2-route-portfolio-flow em { margin-top: 5px; color: #87928c; display: block; font-size: 8px; font-style: normal; }
+.v2-route-portfolio > aside { padding: 15px 20px; border-top: 1px solid #d8e2db; background: rgba(232,240,235,.66); display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.v2-route-portfolio > aside > div { min-width: 0; }
+.v2-route-portfolio > aside small { color: #6d7e73; font-size: 8px; font-weight: 850; letter-spacing: .09em; }
+.v2-route-portfolio > aside strong { margin-top: 4px; color: #365143; display: block; font: 400 16px/1.35 Georgia,serif; }
+.v2-route-portfolio > aside p { max-width: 760px; margin: 4px 0 0; color: #6d7972; font-size: 10px; line-height: 1.5; }
+.v2-route-portfolio > aside button { min-height: 37px; padding: 0 13px; border: 1px solid #315d48; border-radius: 8px; background: #315d48; color: #fff; flex: none; font-size: 10px; font-weight: 780; cursor: pointer; }
+.v2-route-portfolio > aside button:hover,.v2-route-portfolio > aside button:focus-visible { outline: 2px solid #91aa9b; outline-offset: 2px; background: #284d3c; }
+
 .v2-route-brief { margin-top: 22px; border: 1px solid #ced8d1; border-radius: 16px; background: rgba(255,255,255,.56); overflow: hidden; }
 .v2-route-brief > header { padding: 20px 22px 16px; border-bottom: 1px solid #dce3de; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .v2-route-brief > header h2 { margin: 5px 0 0; font: 400 25px/1.25 Georgia,serif; }
@@ -4125,6 +4150,8 @@ main { min-width: 0; }
 .v2-route-change-log p { margin: 4px 0 0; color: #748078; font-size: 10px; line-height: 1.5; }
 
 @media (max-width: 1080px) {
+  .v2-route-portfolio-flow { grid-template-columns: 1fr 1fr; }
+  .v2-route-portfolio-flow > i { display: none; }
   .v2-route-group > div,.v2-route-evidence-chain > section > div { grid-template-columns: 1fr; }
   .v2-route-assessment-layout,.v2-route-gap-layout { grid-template-columns: 1fr; }
   .v2-route-assessment-layout > aside,.v2-route-gap-layout > aside { border-top: 1px solid #dce3de; border-left: 0; }
@@ -4136,6 +4163,9 @@ main { min-width: 0; }
   .v2-route-page-head { align-items: flex-start; }
   .v2-route-page-head .v2-map-head-actions { width: 100%; align-items: stretch; }
   .v2-route-page-head .v2-map-total { margin-right: auto; }
+  .v2-route-portfolio > header,.v2-route-portfolio > aside { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .v2-route-portfolio > header > span { white-space: normal; }
+  .v2-route-portfolio > aside button { width: 100%; }
   .v2-route-brief > header,.v2-route-groups > header,.v2-route-workspace-panel > header { align-items: flex-start; flex-direction: column; }
   .v2-route-brief > div { grid-template-columns: 1fr; }
   .v2-route-brief article { min-height: 145px; border-right: 0; border-bottom: 1px solid #dde4df; }
@@ -4167,6 +4197,10 @@ main { min-width: 0; }
   .v2-route-agenda-grid article { min-height: 160px; }
   .v2-route-panel-empty { align-items: flex-start; flex-direction: column; }
   .v2-route-panel-empty button { margin-left: 0; }
+}
+
+@media (max-width: 430px) {
+  .v2-route-portfolio-flow { grid-template-columns: 1fr; }
 }
 
 /* Pi Research V59 — traceable route discovery and quality-review handoff */

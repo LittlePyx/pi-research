@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
-import type { ResearchDirectionRole, ResearchMapState, ResearchPaperEdge, ResearchTrack, ResearchTrackPaper, ResearchTrackRole } from "../lib/research-map";
+import { selectResearchRouteAttention, type ResearchDirectionRole, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
 import { learningResourceHref, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
 import { paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
@@ -1229,6 +1229,73 @@ function RouteQualityFlow({ track, locale }: { track: ResearchTrack; locale: Loc
     <i>→</i>
     <span className={pipeline.recommended > 0 ? "complete" : ""}><b>03</b><strong>{locale === "zh" ? "通过后才推荐" : "Recommend only after passing"}</strong><small>{pipeline.hasCounts ? (locale === "zh" ? `累计 ${pipeline.recommended} 篇已通过` : `${pipeline.recommended} passed in total`) : (locale === "zh" ? "未通过不会占用今日阅读队列" : "Failures never enter today's reading queue")}</small></span>
   </div>;
+}
+
+function RoutePortfolioOverview({
+  portfolio,
+  todayCount,
+  attentionKind,
+  attentionTrack,
+  locale,
+  onAction,
+}: {
+  portfolio: ResearchRoutePortfolio;
+  todayCount: number;
+  attentionKind: ResearchRouteAttentionKind;
+  attentionTrack: ResearchTrack;
+  locale: Locale;
+  onAction: () => void;
+}) {
+  const inReview = portfolio.queuedCount + portfolio.reviewingCount;
+  const status = portfolio.degradedRouteCount > 0
+    ? (locale === "zh" ? `${portfolio.degradedRouteCount} 条路线待补证据` : `${portfolio.degradedRouteCount} routes need evidence`)
+    : inReview > 0
+      ? (locale === "zh" ? `Pi 正在评估 ${inReview} 篇` : `Pi is reviewing ${inReview}`)
+      : todayCount > 0
+        ? (locale === "zh" ? `今日有 ${todayCount} 篇路线推荐` : `${todayCount} route papers in Today`)
+        : (locale === "zh" ? "路线闭环持续运行" : "Route loop is running");
+  const actionCopy: Record<ResearchRouteAttentionKind, { labelZh: string; labelEn: string; bodyZh: string; bodyEn: string }> = {
+    recover: {
+      labelZh: "重试补充", labelEn: "Retry evidence",
+      bodyZh: "这条路线证据不足或来源曾降级；现有节点和候选会保留，补齐前不会假装完成。",
+      bodyEn: "This route lacks enough evidence or had a degraded source. Existing nodes remain, and it will not appear complete before recovery.",
+    },
+    today: {
+      labelZh: "前往今日", labelEn: "Open Today",
+      bodyZh: "已有路线论文通过质量门槛，等待你的阅读与判断；确认后才回流正式路线证据。",
+      bodyEn: "Route papers passed the quality gate and await your judgment. Only confirmation feeds formal route evidence.",
+    },
+    quality_review: {
+      labelZh: "查看路线", labelEn: "Review route",
+      bodyZh: "候选正在共享质量队列中后台评估，不需要你逐篇确认；通过后才会出现在今日。",
+      bodyEn: "Candidates are being reviewed in the shared quality queue without requiring approval. Only passing papers reach Today.",
+    },
+    confirm_evidence: {
+      labelZh: "前往今日", labelEn: "Open Today",
+      bodyZh: "这条路线已有待确认论文；你的接受、保存或完成阅读会决定是否写入正式证据。",
+      bodyEn: "This route has papers awaiting confirmation. Accepting, saving, or completing them determines formal evidence updates.",
+    },
+    evidence_gap: {
+      labelZh: "查看证据缺口", labelEn: "Review evidence gap",
+      bodyZh: "当前最值得推进的是把 Pi 识别出的关键不确定性变成下一轮可核验检索。",
+      bodyEn: "The best next step is turning Pi's key uncertainty into the next verifiable search.",
+    },
+    maintain: {
+      labelZh: "继续深挖", labelEn: "Mine deeper",
+      bodyZh: "路线当前稳定，可继续轮换前沿、奠基文献、证据缺口和引用网络。",
+      bodyEn: "This route is stable and can continue rotating frontier, foundation, gap, and citation-network discovery.",
+    },
+  }[attentionKind];
+  return <section className="v2-route-portfolio" aria-label={locale === "zh" ? "研究路线证据闭环" : "Research route evidence loop"}>
+    <header><div><p className="v2-kicker">{locale === "zh" ? "线索 → 路线 → 今日" : "LEADS → ROUTES → TODAY"}</p><h2>{locale === "zh" ? "研究线索如何变成正式路线证据" : "How research leads become formal route evidence"}</h2><p>{locale === "zh" ? "发现不等于推荐，推荐也不等于正式路线证据；每一步都保留来源和历史。" : "Discovery is not recommendation, and recommendation is not formal route evidence. Provenance and history persist at every step."}</p></div><span className={portfolio.degradedRouteCount > 0 ? "degraded" : "healthy"}><i />{status}</span></header>
+    <div className="v2-route-portfolio-flow">
+      <article><small>01 · {locale === "zh" ? "路线发现" : "ROUTE DISCOVERY"}</small><strong>{portfolio.discoveredCount}</strong><p>{locale === "zh" ? "去重后的真实候选" : "unique real candidates"}</p><em>{portfolio.deepReviewedCount} {locale === "zh" ? "篇已深评" : "deep reviewed"}</em></article><i>→</i>
+      <article className={inReview > 0 ? "active" : ""}><small>02 · {locale === "zh" ? "共享质量队列" : "SHARED QUALITY QUEUE"}</small><strong>{inReview}</strong><p>{locale === "zh" ? `${portfolio.queuedCount} 排队 · ${portfolio.reviewingCount} 评估中` : `${portfolio.queuedCount} queued · ${portfolio.reviewingCount} reviewing`}</p><em>{locale === "zh" ? "后台完成，无需确认" : "background, no approval needed"}</em></article><i>→</i>
+      <article className={todayCount > 0 ? "active" : ""}><small>03 · {locale === "zh" ? "今日可见" : "VISIBLE IN TODAY"}</small><strong>{todayCount}</strong><p>{locale === "zh" ? "当前可处理的路线论文" : "route papers ready now"}</p><em>{portfolio.recommendedCount} {locale === "zh" ? "篇累计通过" : "passed in total"}</em></article><i>→</i>
+      <article className="formal"><small>04 · {locale === "zh" ? "正式路线论文" : "FORMAL ROUTE PAPERS"}</small><strong>{portfolio.formalEvidenceCount}</strong><p>{locale === "zh" ? "已进入路线的真实论文节点" : "real paper nodes on routes"}</p><em>{locale === "zh" ? `${portfolio.acceptedCount} 篇确认回流 · ${portfolio.pendingEvidenceCount} 篇待确认` : `${portfolio.acceptedCount} confirmed back · ${portfolio.pendingEvidenceCount} pending`}</em></article>
+    </div>
+    <aside><div><small>{locale === "zh" ? "现在最值得处理" : "BEST NEXT ACTION"}</small><strong>{locale === "zh" ? attentionTrack.titleZh : attentionTrack.titleEn}</strong><p>{actionCopy[locale === "zh" ? "bodyZh" : "bodyEn"]}</p></div><button type="button" onClick={onAction}>{actionCopy[locale === "zh" ? "labelZh" : "labelEn"]} →</button></aside>
+  </section>;
 }
 
 function RouteDiscoveryLoop({ track, locale }: { track: ResearchTrack; locale: Locale }) {
@@ -2794,6 +2861,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const researchProblemAutoAttemptRef = useRef(new Set<string>());
   const [researchMap, setResearchMap] = useState<ResearchMapState>({
     tracks: [], edges: [], paperEdges: [],
+    routePortfolio: { formalEvidenceCount: 0, discoveredCount: 0, queuedCount: 0, reviewingCount: 0, deepReviewedCount: 0, recommendedCount: 0, acceptedCount: 0, pendingEvidenceCount: 0, readyRouteCount: 0, degradedRouteCount: 0 },
     paperNetwork: { status: "idle", paperCount: 0, totalPaperCount: 0, builtPaperCount: 0, coveredPaperIds: [], coveredPaperHash: "", coverageRevision: 0, coverageCursor: 0, paperRevision: "", builtPaperRevision: "", citationEdgeCount: 0, similarityEdgeCount: 0, semanticEdgeCount: 0, pathEdgeCount: 0, model: "", sources: [], updatedAt: null, error: null },
     model: "deepseek-v4-pro", generated: false,
   });
@@ -3096,6 +3164,14 @@ export default function ResearchApp({ user }: { user: User }) {
     return rightHasGap - leftHasGap || roleRank[right.userRole] - roleRank[left.userRole]
       || confirmedRouteEvidenceCount(left) - confirmedRouteEvidenceCount(right) || left.depthScore - right.depthScore;
   })[0] || null, [researchMap.tracks]);
+  const routePortfolio = researchMap.routePortfolio;
+  const routeTodayPaperCount = useMemo(() => rankedMonitorPapers.filter((paper) => Boolean(
+    paper.discoveryOrigin || (paper.discoveryTrack && paper.discoveryType),
+  )).length, [rankedMonitorPapers]);
+  const routeAttention = useMemo(() => selectResearchRouteAttention(researchMap.tracks), [researchMap.tracks]);
+  const routeAttentionTrack = useMemo(() => routeAttention
+    ? researchMap.tracks.find((track) => track.id === routeAttention.trackId) || null
+    : null, [researchMap.tracks, routeAttention]);
   const latestRouteChange = monitor?.mapChanges?.[0] || null;
   const selectedThreadChanges = useMemo(() => {
     if (!selectedThread) return [];
@@ -5310,6 +5386,13 @@ export default function ResearchApp({ user }: { user: User }) {
                   {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress v2-route-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes await evidence`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成内容已经保存" : "Completed work is saved")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i></section> : null}
                   {((researchMap.intelligenceProgress && researchMap.intelligenceProgress.ready < researchMap.intelligenceProgress.total) || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress v2-route-build-progress" role="status"><div><span className={mapIntelligenceTrackId ? "working" : "paused"}><i>π</i></span><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "Pi 正在形成方向研判" : "Pi is forming a direction assessment") : (locale === "zh" ? "部分方向等待 Pi 刷新" : "Some direction assessments await refresh")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "旧研判和已有路线继续保留" : "Saved assessments and existing routes remain available")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i></section> : null}
                   {Boolean((researchMap.buildProgress?.partialTrackIds?.length || 0) + (researchMap.buildProgress?.emptyTrackIds?.length || 0) + (researchMap.buildProgress?.failedTrackIds?.length || 0)) && <section className="v2-map-build-progress v2-route-build-degraded" role="status"><div><span className="paused"><i>!</i></span><div><strong>{locale === "zh" ? "部分路线处于诚实降级状态" : "Some routes are honestly degraded"}</strong><p>{locale === "zh" ? "已有论文和候选均已保留；没有可见证据的路线不会标记为完成。" : "Existing papers and candidates are retained; routes without visible evidence are never marked complete."}</p></div></div></section>}
+
+                  {routeAttention && routeAttentionTrack && <RoutePortfolioOverview portfolio={routePortfolio} todayCount={routeTodayPaperCount} attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={() => {
+                    if (["today", "confirm_evidence"].includes(routeAttention.kind)) navigate("today");
+                    else if (routeAttention.kind === "evidence_gap") openThread(routeAttentionTrack, "gaps");
+                    else if (routeAttention.kind === "quality_review") openThread(routeAttentionTrack);
+                    else void expandResearchTrack(routeAttentionTrack);
+                  }} />}
 
                   <section className="v2-route-brief" aria-label={locale === "zh" ? "研究路线摘要" : "Research route summary"}>
                     <header><div><p className="v2-kicker">{locale === "zh" ? "路线总览" : "ROUTE OVERVIEW"}</p><h2>{locale === "zh" ? "先判断哪里变化，哪里还缺证据" : "See what changed and where evidence is still thin"}</h2></div><span>{researchMap.tracks.length} {locale === "zh" ? "条路线" : "routes"}</span></header>

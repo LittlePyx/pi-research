@@ -209,6 +209,51 @@ export type ResearchRouteDiscoveryEffect = {
   };
 };
 
+export type ResearchRoutePortfolio = {
+  formalEvidenceCount: number;
+  discoveredCount: number;
+  queuedCount: number;
+  reviewingCount: number;
+  deepReviewedCount: number;
+  recommendedCount: number;
+  acceptedCount: number;
+  pendingEvidenceCount: number;
+  readyRouteCount: number;
+  degradedRouteCount: number;
+};
+
+export type ResearchRouteAttentionKind = "recover" | "today" | "quality_review" | "confirm_evidence" | "evidence_gap" | "maintain";
+
+export type ResearchRouteAttention = {
+  trackId: string;
+  kind: ResearchRouteAttentionKind;
+  count: number;
+  priority: number;
+};
+
+export function researchRouteAttention(track: ResearchTrack): ResearchRouteAttention {
+  const visibleEvidence = track.papers.length;
+  const inQualityReview = Math.max(0, track.queuedForReviewCount) + Math.max(0, track.reviewingForReviewCount);
+  const unhandledRecommendations = Math.max(0, track.recommendedCandidateCount - track.discoveryEffect.acceptedCount);
+  if (!visibleEvidence || ["retryable", "empty", "failed"].includes(track.buildStatus)) {
+    return { trackId: track.id, kind: "recover", count: visibleEvidence, priority: 600 + Number(!visibleEvidence) * 50 };
+  }
+  if (track.buildStatus === "partial") return { trackId: track.id, kind: "recover", count: visibleEvidence, priority: 560 };
+  if (unhandledRecommendations > 0) return { trackId: track.id, kind: "today", count: unhandledRecommendations, priority: 500 };
+  if (inQualityReview > 0) return { trackId: track.id, kind: "quality_review", count: inQualityReview, priority: 440 };
+  if (track.pendingEvidenceCount > 0) return { trackId: track.id, kind: "confirm_evidence", count: track.pendingEvidenceCount, priority: 380 };
+  if (track.intelligence?.evidenceGapZh || track.intelligence?.evidenceGapEn) {
+    return { trackId: track.id, kind: "evidence_gap", count: 1, priority: 300 };
+  }
+  const staleBonus = track.discoveryEffect.staleDays !== null && track.discoveryEffect.staleDays >= 7 ? 80 : 0;
+  return { trackId: track.id, kind: "maintain", count: 0, priority: 100 + staleBonus };
+}
+
+export function selectResearchRouteAttention(tracks: ResearchTrack[]) {
+  return tracks.map(researchRouteAttention).sort((left, right) => right.priority - left.priority
+    || left.trackId.localeCompare(right.trackId))[0] || null;
+}
+
 export type ResearchTrack = {
   id: string;
   titleZh: string;
@@ -295,6 +340,7 @@ export type ResearchPaperNetworkState = {
 
 export type ResearchMapState = {
   tracks: ResearchTrack[];
+  routePortfolio: ResearchRoutePortfolio;
   edges: ResearchTrackEdge[];
   paperEdges: ResearchPaperEdge[];
   paperNetwork: ResearchPaperNetworkState;

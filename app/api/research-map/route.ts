@@ -2,7 +2,7 @@ import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { buildArxivSearchQuery, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { fetchExternalSource } from "../../../lib/external-source-throttle";
-import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
+import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
 import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
@@ -227,6 +227,15 @@ type TrackReviewQueueCountRow = {
   reviewing_count: number;
   recommended_count: number;
   last_queued_at: string | null;
+};
+type RoutePortfolioCountRow = {
+  discovered_count: number;
+  queued_count: number;
+  reviewing_count: number;
+  deep_reviewed_count: number;
+  recommended_count: number;
+  accepted_count: number;
+  pending_evidence_count: number;
 };
 type TrackDiscoveryEffectRow = {
   track_id: string;
@@ -1724,7 +1733,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 }
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult] = await Promise.all([
+  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult, routePortfolioCounts] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
@@ -1766,6 +1775,8 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       .bind(spaceId, spaceId).all<TrackReviewQueueCountRow>(),
     database.prepare(RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL)
       .bind(spaceId, spaceId).all<TrackDiscoveryEffectRow>(),
+    database.prepare(RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL)
+      .bind(spaceId, spaceId, spaceId).first<RoutePortfolioCountRow>(),
   ]);
   const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
   const reviewQueueCountsByTrack = new Map(reviewQueueCountsResult.results.map((row) => [row.track_id, row]));
@@ -1889,8 +1900,21 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const runningIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus === "running").map((track) => track.id);
   const staleIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus !== "ready" && track.intelligence).map((track) => track.id);
   const precisionAuditProgress = await researchRoutePrecisionAuditProgress(database, spaceId);
+  const routeCount = (value: unknown) => Math.max(0, Math.round(Number(value) || 0));
   return {
     tracks,
+    routePortfolio: {
+      formalEvidenceCount: uniquePaperCount,
+      discoveredCount: routeCount(routePortfolioCounts?.discovered_count),
+      queuedCount: routeCount(routePortfolioCounts?.queued_count),
+      reviewingCount: routeCount(routePortfolioCounts?.reviewing_count),
+      deepReviewedCount: routeCount(routePortfolioCounts?.deep_reviewed_count),
+      recommendedCount: routeCount(routePortfolioCounts?.recommended_count),
+      acceptedCount: routeCount(routePortfolioCounts?.accepted_count),
+      pendingEvidenceCount: routeCount(routePortfolioCounts?.pending_evidence_count),
+      readyRouteCount: tracks.filter((track) => track.buildStatus === "ready").length,
+      degradedRouteCount: tracks.filter((track) => ["partial", "retryable", "empty", "failed"].includes(track.buildStatus)).length,
+    },
     edges,
     paperEdges,
     paperNetwork: {

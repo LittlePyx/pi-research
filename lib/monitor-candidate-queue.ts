@@ -125,6 +125,63 @@ export const RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL = `WITH queue_counts AS (
  LEFT JOIN recommended_counts ON recommended_counts.track_id = track_ids.track_id`;
 
 /**
+ * Workspace-wide route funnel counts. Every paper is counted once even when
+ * the same discovery supports several routes; per-route attribution remains
+ * available through RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL.
+ */
+export const RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL = `WITH route_candidates AS (
+  SELECT DISTINCT cs.space_id, cs.paper_id, i.analysis_source, i.analysis_model
+  FROM monitor_candidate_sources cs
+  JOIN monitored_papers p ON p.id = cs.paper_id AND p.space_id = cs.space_id
+  JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+  JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id AND coverage.horizon = p.horizon
+   AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
+  WHERE cs.space_id = ? AND COALESCE(coverage.route_id, '') <> ''
+   AND NOT EXISTS (
+    SELECT 1 FROM research_track_papers inactive_route_paper
+    WHERE inactive_route_paper.space_id = cs.space_id
+     AND inactive_route_paper.track_id = coverage.route_id
+     AND inactive_route_paper.canonical_id = p.canonical_id
+     AND inactive_route_paper.curation_status = 'deactivated'
+   )
+   AND NOT EXISTS (
+    SELECT 1 FROM paper_feedback dismissed
+    WHERE dismissed.space_id = cs.space_id AND dismissed.paper_id = cs.paper_id
+     AND dismissed.feedback = 'not_relevant'
+   )
+ ), latest_audits AS (
+  SELECT * FROM (
+   SELECT audit.*,
+    ROW_NUMBER() OVER (PARTITION BY audit.space_id, audit.paper_id ORDER BY audit.reviewed_at DESC, audit.rowid DESC) AS audit_rank
+   FROM recommendation_audit_events audit WHERE audit.space_id = ?
+  ) WHERE audit_rank = 1
+ ), route_recommended AS (
+  SELECT DISTINCT audit.space_id, audit.paper_id
+  FROM latest_audits audit JOIN json_each(audit.provenance_json) origin
+  WHERE audit.recommended = 1 AND COALESCE(json_extract(origin.value, '$.routeId'), '') <> ''
+   AND json_extract(origin.value, '$.originKind') IN
+    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_synthesis', 'route_network', 'route_search')
+ )
+ SELECT
+  (SELECT COUNT(*) FROM route_candidates) AS discovered_count,
+  (SELECT COUNT(*) FROM route_candidates
+   WHERE analysis_source = 'metadata' OR analysis_model = '') AS queued_count,
+  (SELECT COUNT(*) FROM route_candidates
+   WHERE analysis_source = 'deepseek_screened') AS reviewing_count,
+  (SELECT COUNT(*) FROM route_candidates candidate WHERE EXISTS (
+   SELECT 1 FROM recommendation_audit_events review
+   WHERE review.space_id = candidate.space_id AND review.paper_id = candidate.paper_id AND review.is_paper = 1
+  )) AS deep_reviewed_count,
+  (SELECT COUNT(*) FROM route_recommended) AS recommended_count,
+  (SELECT COUNT(*) FROM route_recommended recommendation WHERE EXISTS (
+   SELECT 1 FROM paper_feedback feedback
+   WHERE feedback.space_id = recommendation.space_id AND feedback.paper_id = recommendation.paper_id
+    AND (feedback.feedback = 'relevant' OR feedback.saved = 1)
+  )) AS accepted_count,
+  (SELECT COUNT(DISTINCT proposal.paper_id) FROM research_map_evidence_proposals proposal
+   WHERE proposal.space_id = ? AND proposal.status = 'pending') AS pending_evidence_count`;
+
+/**
  * User-facing route health is derived from the durable discovery ledger and
  * formal recommendation history. It intentionally excludes token, failure,
  * and model-audit details: researchers need to know whether a route is

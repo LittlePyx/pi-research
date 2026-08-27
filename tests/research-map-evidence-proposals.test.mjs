@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { enqueueMonitorCandidates, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../lib/monitor-candidate-queue.ts";
+import {
+  enqueueMonitorCandidates,
+  RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL,
+  RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL,
+} from "../lib/monitor-candidate-queue.ts";
+import { researchRouteAttention, selectResearchRouteAttention } from "../lib/research-map.ts";
 import {
   confirmedExternalResearchMapEvidenceStatements,
   dismissResearchMapEvidence,
@@ -186,6 +191,7 @@ function createFixture() {
       id TEXT PRIMARY KEY NOT NULL,
       space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE,
       paper_id TEXT NOT NULL,
+      is_paper INTEGER NOT NULL DEFAULT 1,
       recommended INTEGER NOT NULL DEFAULT 0,
       provenance_json TEXT NOT NULL DEFAULT '[]',
       reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -421,6 +427,106 @@ test("route pipeline excludes dismissed live work while retaining cumulative rec
   } finally {
     sqlite.close();
   }
+});
+
+test("route portfolio deduplicates papers across routes and separates each quality stage", async () => {
+  const { sqlite, database } = createFixture();
+  try {
+    sqlite.prepare(`INSERT INTO research_tracks
+      (id, space_id, title_zh, title_en, intelligence_json, intelligence_model, intelligence_updated_at)
+      VALUES ('track-c', 'space-a', '统计学习', 'Statistical learning', '{}', 'deepseek-v4-pro', CURRENT_TIMESTAMP)`).run();
+
+    await enqueueMonitorCandidates(database, "space-a", [queueCandidate({
+      provenance: [
+        { sourceKey: "research-route:gap", channel: "topic", queryKey: "track-a:gap:1", routeId: "track-a" },
+        { sourceKey: "research-route:frontier", channel: "topic", queryKey: "track-c:frontier:1", routeId: "track-c" },
+      ],
+    })], { recordDiscoveryCoverage: true });
+    await enqueueMonitorCandidates(database, "space-a", [queueCandidate({
+      canonicalId: "doi:10.1000/queued",
+      doi: "10.1000/queued",
+      title: "A queued route candidate",
+      provenance: [{ sourceKey: "research-route:frontier", channel: "topic", queryKey: "track-a:frontier:1", routeId: "track-a" }],
+    })], { recordDiscoveryCoverage: true });
+    await enqueueMonitorCandidates(database, "space-a", [queueCandidate({
+      canonicalId: "doi:10.1000/dismissed",
+      doi: "10.1000/dismissed",
+      title: "A dismissed route candidate",
+      provenance: [{ sourceKey: "research-route:network", channel: "citation", queryKey: "track-a:network:1", routeId: "track-a" }],
+    })], { recordDiscoveryCoverage: true });
+    await enqueueMonitorCandidates(database, "space-a", [queueCandidate({
+      canonicalId: "doi:10.1000/deactivated",
+      doi: "10.1000/deactivated",
+      title: "A deactivated route candidate",
+      provenance: [{ sourceKey: "research-route:foundation", channel: "topic", queryKey: "track-a:foundation:1", routeId: "track-a" }],
+    })], { recordDiscoveryCoverage: true });
+
+    sqlite.prepare("UPDATE paper_insights SET analysis_source = 'deepseek_screened', analysis_model = 'deepseek-v4-pro' WHERE paper_id = 'paper-a'").run();
+    sqlite.prepare("INSERT INTO recommendation_audit_events (id, space_id, paper_id, is_paper, recommended, provenance_json) VALUES (?, ?, ?, 1, 1, ?)")
+      .run("audit-a", "space-a", "paper-a", JSON.stringify([
+        { routeId: "track-a", originKind: "route_gap" },
+        { routeId: "track-c", originKind: "route_frontier" },
+      ]));
+    sqlite.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback) VALUES ('feedback-a', 'space-a', 'paper-a', 0, 'relevant')").run();
+    sqlite.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, saved, feedback) SELECT 'feedback-dismissed', 'space-a', id, 0, 'not_relevant' FROM monitored_papers WHERE canonical_id = 'doi:10.1000/dismissed'").run();
+    sqlite.prepare(`INSERT INTO research_track_papers
+      (id, track_id, space_id, canonical_id, title, role, curation_status)
+      SELECT 'route-paper-deactivated', 'track-a', 'space-a', canonical_id, title, 'foundation', 'deactivated'
+      FROM monitored_papers WHERE canonical_id = 'doi:10.1000/deactivated'`).run();
+    sqlite.prepare(`INSERT INTO research_map_evidence_proposals
+      (id, space_id, track_id, paper_id, status)
+      VALUES ('proposal-route-a', 'space-a', 'track-a', 'paper-a', 'pending'),
+       ('proposal-route-c', 'space-a', 'track-c', 'paper-a', 'pending')`).run();
+
+    const counts = await database.prepare(RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL)
+      .bind("space-a", "space-a", "space-a").first();
+    assert.deepEqual({ ...counts }, {
+      discovered_count: 2,
+      queued_count: 1,
+      reviewing_count: 1,
+      deep_reviewed_count: 1,
+      recommended_count: 1,
+      accepted_count: 1,
+      pending_evidence_count: 1,
+    });
+  } finally {
+    sqlite.close();
+  }
+});
+
+function routeAttentionFixture(overrides = {}) {
+  return {
+    id: "track-stable",
+    papers: [{ id: "paper-visible" }],
+    buildStatus: "ready",
+    queuedForReviewCount: 0,
+    reviewingForReviewCount: 0,
+    recommendedCandidateCount: 0,
+    pendingEvidenceCount: 0,
+    discoveryEffect: { acceptedCount: 0, staleDays: 0 },
+    intelligence: null,
+    ...overrides,
+  };
+}
+
+test("route attention stays honest and prioritizes recovery before downstream actions", () => {
+  assert.deepEqual(researchRouteAttention(routeAttentionFixture({ id: "empty", papers: [] })), {
+    trackId: "empty", kind: "recover", count: 0, priority: 650,
+  });
+  assert.equal(researchRouteAttention(routeAttentionFixture({ id: "partial", buildStatus: "partial" })).kind, "recover");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ recommendedCandidateCount: 2 })).kind, "today");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ queuedForReviewCount: 2, reviewingForReviewCount: 1 })).kind, "quality_review");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ pendingEvidenceCount: 1 })).kind, "confirm_evidence");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ intelligence: { evidenceGapZh: "缺少反例" } })).kind, "evidence_gap");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ discoveryEffect: { acceptedCount: 0, staleDays: 9 } })).priority, 180);
+
+  const selected = selectResearchRouteAttention([
+    routeAttentionFixture({ id: "today", recommendedCandidateCount: 4 }),
+    routeAttentionFixture({ id: "degraded", buildStatus: "retryable" }),
+    routeAttentionFixture({ id: "review", reviewingForReviewCount: 3 }),
+  ]);
+  assert.equal(selected.trackId, "degraded");
+  assert.equal(selected.kind, "recover");
 });
 
 test("legacy reconcile never promotes a pending model proposal", async () => {
