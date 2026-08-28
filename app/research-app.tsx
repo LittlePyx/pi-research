@@ -7,6 +7,7 @@ import { emptyResearchMapState, selectResearchRouteAttention, type ResearchDirec
 import { learningResourceHref, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
 import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
+import { shouldReclaimMonitorLease } from "../lib/monitor-follower-control.mjs";
 
 type Locale = "zh" | "en";
 type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid";
@@ -340,6 +341,7 @@ type MonitorState = {
   alreadyAdvancing?: boolean;
   alreadyRunning?: boolean;
   leaseOwner?: boolean;
+  leaseExpiresAt?: string | null;
   idempotentReplay?: boolean;
   automationDeferred?: boolean;
   cadenceHours: number;
@@ -1617,6 +1619,7 @@ async function followMonitorPipeline(
   isCancelled: () => boolean = () => false,
 ) {
   let current = initialMonitor;
+  let lastReclaimAttemptAt = 0;
   for (let step = 0; step < 400 && !isCancelled() && !["ready", "error"].includes(current.status); step += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
     if (isCancelled()) break;
@@ -1629,6 +1632,29 @@ async function followMonitorPipeline(
       }
     } catch {
       // The elected owner remains authoritative; a later read can catch up.
+    }
+    const now = Date.now();
+    if (!isCancelled() && shouldReclaimMonitorLease(current, { now, lastAttemptAt: lastReclaimAttemptAt })) {
+      lastReclaimAttemptAt = now;
+      try {
+        const response = await fetch("/api/monitor", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spaceId, trigger: "visit", action: "start" }),
+        });
+        const data = await response.json().catch(() => ({})) as { monitor?: MonitorState };
+        if (data.monitor) {
+          current = data.monitor;
+          if (!isCancelled()) onUpdate(current);
+        }
+        if (response.ok && data.monitor && !data.monitor.throttled
+          && data.monitor.leaseOwner !== false && !data.monitor.alreadyRunning
+          && !["ready", "error"].includes(data.monitor.status)) {
+          return advanceMonitorPipeline(spaceId, data.monitor, onUpdate, isCancelled);
+        }
+      } catch {
+        // A later read will retry after the bounded reclaim interval.
+      }
     }
   }
   return current;
@@ -1656,7 +1682,7 @@ async function advanceMonitorPipeline(
     if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan stage unavailable");
     // Another tab or scheduler owns this checkpoint. Stop issuing POSTs and let
     // the read-only poll follow the authoritative job instead of creating a request storm.
-    if (data.monitor.alreadyAdvancing) {
+    if (data.monitor.alreadyAdvancing || data.monitor.leaseOwner === false) {
       return followMonitorPipeline(spaceId, current, onUpdate, isCancelled);
     }
   }

@@ -59,6 +59,7 @@ import { buildMonitorBudgetDecision } from "../../../lib/monitor-budget-policy.m
 import {
   MONITOR_NEW_RUN_CLAIM_SQL,
   MONITOR_RESUME_RUN_CLAIM_SQL,
+  durableMonitorCheckpoint,
   monitorRetryDecision,
   monitorStartRequestKey,
 } from "../../../lib/monitor-runtime-control.mjs";
@@ -174,6 +175,7 @@ type RunRow = {
   discovery_round: number;
   active_job_id: string | null;
   lease_generation: number;
+  lock_expires_at: string | null;
   last_trigger: string;
   last_user_activity_at: string | null;
   scheduled_runs_since_activity: number;
@@ -1355,8 +1357,8 @@ async function recordDiscoveryCoverage(
 
 async function setScanSource(database: D1Database, jobId: string, horizon: Horizon, source: string, progress: number, discoveredCount: number) {
   await database.prepare(
-    "UPDATE monitor_scan_jobs SET current_horizon = ?, current_source = ?, checkpoint = ?, progress = MAX(progress, ?), discovered_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-  ).bind(horizon, source, `${horizon}:${source}`, progress, discoveredCount, jobId).run();
+    "UPDATE monitor_scan_jobs SET current_horizon = ?, current_source = ?, progress = MAX(progress, ?), discovered_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+  ).bind(horizon, source, progress, discoveredCount, jobId).run();
 }
 
 async function fetchHorizon(
@@ -4419,7 +4421,7 @@ function toPaper(paper: PaperRow, now: number) {
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
   const preference = await ensurePreference(database, space);
   const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
-    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, active_job_id, lease_generation, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
+    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, active_job_id, lease_generation, lock_expires_at, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
       `SELECT p.id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.horizon,
@@ -5096,6 +5098,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       scannedCount: run?.scanned_count || 0,
       explorationRound: run?.discovery_round || 0,
       lastTrigger: run?.last_trigger || "visit",
+      leaseExpiresAt: run?.lock_expires_at || null,
       knownCount: known?.count || 0,
       error: run?.error || null,
       cadenceHours: 24,
@@ -6207,6 +6210,13 @@ export async function POST(request: Request) {
       const now = new Date();
       const lockExpiry = previous?.lock_expires_at ? Date.parse(previous.lock_expires_at) : 0;
       if (activeJob && previous) {
+        const durableCheckpoint = durableMonitorCheckpoint(activeJob.status, activeJob.checkpoint);
+        if (durableCheckpoint !== activeJob.checkpoint) {
+          await database.prepare(
+            "UPDATE monitor_scan_jobs SET checkpoint = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND checkpoint = ?",
+          ).bind(durableCheckpoint, activeJob.id, activeJob.checkpoint).run();
+          activeJob.checkpoint = durableCheckpoint;
+        }
         const quotaResponse = await enforceAnalysisBudget(minimumAnalysisCallsForCheckpoint(activeJob.checkpoint));
         if (quotaResponse) return quotaResponse;
         if (previous.lock_token && lockExpiry > now.getTime()) {
@@ -6446,6 +6456,13 @@ export async function POST(request: Request) {
           datetime(started_at) DESC, id DESC LIMIT 1`,
       ).bind(space.id, space.id).first<StagedJobRow>();
     if (!job) return Response.json({ error: "No scan job is available" }, { status: 404 });
+    const durableCheckpoint = durableMonitorCheckpoint(job.status, job.checkpoint);
+    if (durableCheckpoint !== job.checkpoint) {
+      await database.prepare(
+        "UPDATE monitor_scan_jobs SET checkpoint = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND checkpoint = ?",
+      ).bind(durableCheckpoint, job.id, job.checkpoint).run();
+      job.checkpoint = durableCheckpoint;
+    }
     const work = parseScanWorkQueue(job.work_queue_json);
     if (await pruneExplicitlyWithdrawnScanWork(database, space.id, work)) {
       await saveScanWorkQueue(database, job.id, work);

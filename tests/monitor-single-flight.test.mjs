@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   MONITOR_NEW_RUN_CLAIM_SQL,
   MONITOR_RESUME_RUN_CLAIM_SQL,
+  durableMonitorCheckpoint,
   monitorRetryDecision,
   monitorStartRequestKey,
 } from "../lib/monitor-runtime-control.mjs";
@@ -87,6 +88,15 @@ test("start request keys are stable per bucket and distinct for checkpoint resum
   );
 });
 
+test("source progress cannot replace the durable discovery checkpoint", () => {
+  assert.equal(
+    durableMonitorCheckpoint("discovering_days", "days:Semantic Scholar · OpenAlex · arXiv 并行检索"),
+    "discovering_days",
+  );
+  assert.equal(durableMonitorCheckpoint("discovering_months", "discovering_months"), "discovering_months");
+  assert.equal(durableMonitorCheckpoint("screening", "screening"), "screening");
+});
+
 test("retry policy classifies transient failures and stops credential retries", () => {
   const now = Date.parse("2026-08-27T00:00:00.000Z");
   assert.deepEqual(monitorRetryDecision(new Error("request timeout"), 0, now), {
@@ -119,10 +129,14 @@ test("route, worker, and browser driver all honor the elected owner", async () =
   assert.match(worker, /state\.monitor\.leaseOwner === false \|\| state\.monitor\.alreadyRunning/);
   assert.match(client, /async function followMonitorPipeline/);
   assert.match(client, /fetch\("\/api\/monitor\?spaceId=" \+ encodeURIComponent\(spaceId\), \{ cache: "no-store" \}\)/);
-  assert.match(client, /if \(data\.monitor\.alreadyAdvancing\) \{[\s\S]*return followMonitorPipeline/);
+  assert.match(client, /if \(data\.monitor\.alreadyAdvancing \|\| data\.monitor\.leaseOwner === false\) \{[\s\S]*return followMonitorPipeline/);
   assert.match(client, /stopPolling\(\);[\s\S]*await followMonitorPipeline/);
   assert.doesNotMatch(client, /if \(data\.monitor\.alreadyAdvancing\) return current/);
   assert.match(client, /data\.monitor\.leaseOwner !== false/);
+  assert.match(route, /durableMonitorCheckpoint\(activeJob\.status, activeJob\.checkpoint\)/);
+  assert.match(route, /durableMonitorCheckpoint\(job\.status, job\.checkpoint\)/);
+  assert.match(route, /UPDATE monitor_scan_jobs SET current_horizon = \?, current_source = \?, progress = MAX\(progress, \?\)/);
+  assert.doesNotMatch(route, /UPDATE monitor_scan_jobs SET current_horizon = \?, current_source = \?, checkpoint = \?/);
 });
 
 test("single-flight migration preserves jobs while fencing legacy duplicates", async () => {
