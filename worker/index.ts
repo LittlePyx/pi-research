@@ -324,7 +324,10 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
           status?: string;
           automationDeferred?: boolean;
           alreadyRunning?: boolean;
+          alreadyAdvancing?: boolean;
           leaseOwner?: boolean;
+          leaseToken?: string | null;
+          leaseGeneration?: number;
           automation?: { paused?: boolean };
           scanJob?: { id?: string; checkpoint?: string } | null;
         };
@@ -343,10 +346,19 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
         response = await handler.fetch(new Request("https://pi-research.internal/api/monitor", {
           method: "POST",
           headers,
-          body: JSON.stringify({ spaceId: space.id, action: "advance", jobId: state.monitor.scanJob?.id }),
+          body: JSON.stringify({
+            spaceId: space.id,
+            action: "advance",
+            jobId: state.monitor.scanJob?.id,
+            leaseToken: state.monitor.leaseToken,
+            leaseGeneration: state.monitor.leaseGeneration,
+          }),
         }), env, ctx);
         state = await response.json().catch(() => ({})) as typeof state;
         if (!response.ok || !state.monitor) throw new Error(`Scheduled monitor advance returned ${response.status}`);
+        if (state.monitor.leaseOwner === false || state.monitor.alreadyAdvancing) {
+          return { paused: false, deferred: false, advanced, completed: false, following: true };
+        }
         advanced += 1;
       }
       if (state.monitor?.status === "ready" && state.monitor.scanJob?.checkpoint === "main_complete") {

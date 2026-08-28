@@ -21,7 +21,7 @@ test("scheduled monitoring uses a durable single-run lock and retry lineage", as
   assert.match(monitor, /alreadyAdvancing: true/);
   assert.match(monitor, /advance_lock_token = NULL, advance_lock_expires_at = NULL/);
   assert.match(monitor, /MONITOR_NEW_RUN_CLAIM_SQL/);
-  assert.match(monitor, /active_job_id !== job\.id/);
+  assert.match(monitor, /monitorLeaseCredentialsMatch\(run, requestedLease\)/);
   assert.match(schema, /activeJobId: text\("active_job_id"\)/);
   assert.match(schema, /requestKey: text\("request_key"\)/);
 });

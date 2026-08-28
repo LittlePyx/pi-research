@@ -123,7 +123,7 @@ test("route, worker, and browser driver all honor the elected owner", async () =
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(route, /MONITOR_NEW_RUN_CLAIM_SQL/);
-  assert.match(route, /active_job_id !== job\.id/);
+  assert.match(route, /monitorLeaseCredentialsMatch\(run, requestedLease\)/);
   assert.match(route, /idempotentReplay: true/);
   assert.match(route, /leaseOwner: true/);
   assert.match(worker, /state\.monitor\.leaseOwner === false \|\| state\.monitor\.alreadyRunning/);

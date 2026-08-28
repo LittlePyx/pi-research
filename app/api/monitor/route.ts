@@ -57,9 +57,15 @@ import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
 import { buildMonitorBudgetDecision } from "../../../lib/monitor-budget-policy.mjs";
 import {
+  MONITOR_ADVANCE_HEARTBEAT_SQL,
+  MONITOR_ADVANCE_LEASE_MS,
+  MONITOR_LEASE_HEARTBEAT_MS,
   MONITOR_NEW_RUN_CLAIM_SQL,
   MONITOR_RESUME_RUN_CLAIM_SQL,
+  MONITOR_RUN_HEARTBEAT_SQL,
   durableMonitorCheckpoint,
+  monitorLeaseCredentialsMatch,
+  monitorLeaseExpiry,
   monitorRetryDecision,
   monitorStartRequestKey,
 } from "../../../lib/monitor-runtime-control.mjs";
@@ -569,7 +575,6 @@ const CADENCE_MS = 24 * 60 * 60 * 1000;
 const MANUAL_COOLDOWN_MS = 60 * 60 * 1000;
 const ERROR_RETRY_MS = 15 * 60 * 1000;
 const STALE_RUN_MS = 20 * 60 * 1000;
-const RUN_LOCK_LEASE_MS = 10 * 60 * 1000;
 const DISCOVERY_OFFSET_LIMIT = 3000;
 const DIRECTION_INTELLIGENCE_MAX_AGE_MS = 45 * 24 * 60 * 60 * 1000;
 const REVIEW_BATCH_SIZE = 14;
@@ -618,7 +623,6 @@ const VERIFICATION_BATCH_SIZE = 3;
 const INCOMPLETE_DRAFT_REGENERATION_LIMIT = 1;
 const VERIFICATION_CIRCUIT_FAILURE_LIMIT = 3;
 const BACKGROUND_VERIFICATION_RETRY_MS = 10 * 60 * 1000;
-const ADVANCE_LOCK_LEASE_MS = 45_000;
 const MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT = 600;
 const MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT = 120;
 const MONITOR_SPACE_DAILY_ANALYSIS_LIMIT = 64;
@@ -637,6 +641,70 @@ const GENERIC_TERMS = new Set([
 ]);
 const NON_PAPER_TITLES = /^(introduction|editorial|preface|foreword|contents|index)$/i;
 const NON_PAPER_PHRASES = /(publication information|information for authors|instructions for authors|author information|table of contents|editorial board|front matter|back matter|issue information|journal masthead)/i;
+
+class MonitorLeaseLostError extends Error {
+  constructor() {
+    super("monitor_lease_lost");
+    this.name = "MonitorLeaseLostError";
+  }
+}
+
+type MonitorLeaseHeartbeat = {
+  assertOwned: () => Promise<void>;
+  stop: () => void;
+};
+
+type MonitorLeaseRun = {
+  status: string;
+  discovery_round: number;
+  lock_token: string | null;
+  lock_expires_at: string | null;
+  active_job_id: string | null;
+  lease_generation: number;
+};
+
+function startMonitorLeaseHeartbeat(database: D1Database, input: {
+  spaceId: string;
+  jobId: string;
+  leaseToken: string;
+  leaseGeneration: number;
+  advanceLockToken?: string;
+}): MonitorLeaseHeartbeat {
+  let stopped = false;
+  let lost = false;
+  let pending: Promise<void> = Promise.resolve();
+  const renew = async () => {
+    if (stopped || lost) return;
+    const expiresAt = monitorLeaseExpiry();
+    const statements = [database.prepare(MONITOR_RUN_HEARTBEAT_SQL)
+      .bind(expiresAt, input.spaceId, input.jobId, input.leaseToken, input.leaseGeneration)];
+    if (input.advanceLockToken) statements.push(database.prepare(MONITOR_ADVANCE_HEARTBEAT_SQL)
+      .bind(monitorLeaseExpiry(Date.now(), MONITOR_ADVANCE_LEASE_MS), input.jobId, input.spaceId, input.advanceLockToken));
+    const results = await database.batch(statements);
+    if (!Number(results[0]?.meta?.changes || 0)
+      || (input.advanceLockToken && !Number(results[1]?.meta?.changes || 0))) lost = true;
+  };
+  const timer = setInterval(() => {
+    pending = pending.then(renew).catch(() => undefined);
+  }, MONITOR_LEASE_HEARTBEAT_MS);
+  return {
+    async assertOwned() {
+      await pending;
+      if (lost) throw new MonitorLeaseLostError();
+      const run = await database.prepare(
+        "SELECT active_job_id, lock_token, lock_expires_at, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
+      ).bind(input.spaceId).first<{ active_job_id: string | null; lock_token: string | null; lock_expires_at: string | null; lease_generation: number }>();
+      if (!monitorLeaseCredentialsMatch(run, input)) {
+        lost = true;
+        throw new MonitorLeaseLostError();
+      }
+    },
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+    },
+  };
+}
 const PRIORITY_JOURNAL_ISSNS = new Map<string, string>([
   ["ieee transactions on information theory", "0018-9448"],
   ["journal of machine learning research", "1532-4435"],
@@ -3274,7 +3342,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     const progressUpdates = [
       database.prepare(
         "UPDATE monitor_runs SET lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ? AND active_job_id = ?",
-      ).bind(new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken, jobId),
+      ).bind(monitorLeaseExpiry(), space.id, lockToken, jobId),
     ];
     if (manageJobProgress) progressUpdates.unshift(database.prepare(
       "UPDATE monitor_scan_jobs SET checkpoint = 'reviewing', reviewed_count = ?, recommended_count = ?, progress = MIN(87, 58 + CAST((? * 29.0) / MAX(1, ?) AS INTEGER)), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -4259,7 +4327,7 @@ async function updateRunPhase(database: D1Database, spaceId: string, jobId: stri
   await database.batch([
     database.prepare(
       "UPDATE monitor_runs SET status = ?, scanned_count = ?, new_count = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ? AND active_job_id = ?",
-    ).bind(status, scannedCount, newCount, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), spaceId, lockToken, jobId),
+    ).bind(status, scannedCount, newCount, monitorLeaseExpiry(), spaceId, lockToken, jobId),
     database.prepare(
       "UPDATE monitor_scan_jobs SET status = ?, checkpoint = ?, progress = MAX(progress, ?), discovered_count = ?, recommended_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     ).bind(status, status, progress, scannedCount, newCount, jobId),
@@ -5098,6 +5166,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       scannedCount: run?.scanned_count || 0,
       explorationRound: run?.discovery_round || 0,
       lastTrigger: run?.last_trigger || "visit",
+      leaseGeneration: run?.lease_generation || 0,
       leaseExpiresAt: run?.lock_expires_at || null,
       knownCount: known?.count || 0,
       error: run?.error || null,
@@ -5974,7 +6043,7 @@ async function runLegacyMonitor(request: Request) {
        lease_generation = lease_generation + 1, last_trigger = ?,
        error = NULL, new_count = 0, scanned_count = 0, updated_at = CURRENT_TIMESTAMP
        WHERE space_id = ? AND (lock_token IS NULL OR lock_expires_at IS NULL OR datetime(lock_expires_at) <= CURRENT_TIMESTAMP)`,
-    ).bind(lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), jobId, trigger, space.id).run();
+    ).bind(lockToken, monitorLeaseExpiry(now.getTime()), jobId, trigger, space.id).run();
     const acquired = await database.prepare("SELECT lock_token FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<{ lock_token: string | null }>();
     if (acquired?.lock_token !== lockToken) {
@@ -6073,7 +6142,7 @@ async function runLegacyMonitor(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let payload: { spaceId?: string; force?: boolean; trigger?: ScanTrigger; action?: "start" | "advance" | "enhance" | "legacy"; jobId?: string; idempotencyKey?: string };
+  let payload: { spaceId?: string; force?: boolean; trigger?: ScanTrigger; action?: "start" | "advance" | "enhance" | "legacy"; jobId?: string; idempotencyKey?: string; leaseToken?: string; leaseGeneration?: number };
   try {
     payload = await request.json();
   } catch {
@@ -6091,6 +6160,7 @@ export async function POST(request: Request) {
     ? payload.trigger : payload.force ? "manual" : "visit";
   let advanceLockJobId = "";
   let advanceLockToken = "";
+  let leaseHeartbeat: MonitorLeaseHeartbeat | null = null;
   const enforceAnalysisBudget = async (
     minimumCalls: number,
     existingBudget?: Awaited<ReturnType<typeof readMonitorAnalysisBudget>>,
@@ -6115,15 +6185,11 @@ export async function POST(request: Request) {
     work_queue_json: string;
     retry_count?: number;
     current_source?: string;
-  }, lease?: { lockToken: string; jobId: string }) => {
+  }, lease?: { lockToken: string; jobId: string; leaseGeneration: number }) => {
     const message = normalizedDeepSeekProbeError(error).slice(0, 300);
     const failedAt = new Date();
     const retry = monitorRetryDecision(message, job?.retry_count || 0, failedAt.getTime());
-    const leaseGuard = lease ? " AND lock_token = ? AND active_job_id = ?" : "";
-    const statements = [database.prepare(
-      `UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL,
-       active_job_id = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?${leaseGuard}`,
-    ).bind(retry.nextRetryAt, message, space.id, ...(lease ? [lease.lockToken, lease.jobId] : []))];
+    const statements: D1PreparedStatement[] = [];
     let resumableCheckpoint = "planning";
     if (job) {
       const work = parseScanWorkQueue(job.work_queue_json);
@@ -6134,11 +6200,28 @@ export async function POST(request: Request) {
         `UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending',
          current_source = '模型连接检查未通过，扫描尚未继续', work_queue_json = ?, error = ?, completed_at = ?,
          failure_kind = ?, failure_source = ?, retry_count = ?, next_retry_at = ?,
-         updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+         updated_at = CURRENT_TIMESTAMP WHERE id = ?${lease ? ` AND EXISTS (
+          SELECT 1 FROM monitor_runs r WHERE r.space_id = ? AND r.active_job_id = ?
+           AND r.lock_token = ? AND r.lease_generation = ? AND datetime(r.lock_expires_at) > CURRENT_TIMESTAMP
+         )` : ""}`,
       ).bind(JSON.stringify(work), message, failedAt.toISOString(), retry.errorCode,
-        job.current_source || "model-preflight", retry.retryCount, retry.nextRetryAt, job.id));
+        job.current_source || "model-preflight", retry.retryCount, retry.nextRetryAt, job.id,
+        ...(lease ? [space.id, lease.jobId, lease.lockToken, lease.leaseGeneration] : [])));
     }
-    await database.batch(statements);
+    const leaseGuard = lease
+      ? " AND lock_token = ? AND active_job_id = ? AND lease_generation = ? AND datetime(lock_expires_at) > CURRENT_TIMESTAMP"
+      : "";
+    statements.push(database.prepare(
+      `UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL,
+       active_job_id = NULL, error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?${leaseGuard}`,
+    ).bind(retry.nextRetryAt, message, space.id,
+      ...(lease ? [lease.lockToken, lease.jobId, lease.leaseGeneration] : [])));
+    const failureUpdates = await database.batch(statements);
+    if (lease && failureUpdates.some((result) => !Number(result.meta?.changes || 0))) {
+      return Response.json(await readState(database, space, {
+        cached: true, staleLease: true, leaseOwner: false,
+      }), { status: 202 });
+    }
     if (trigger === "scheduled") await pauseMonitorAutomation(database, space.id, "model_unavailable");
     await recordReliabilityEvent(database, {
       spaceId: space.id,
@@ -6169,13 +6252,28 @@ export async function POST(request: Request) {
     work_queue_json: string;
     retry_count?: number;
     current_source?: string;
-  }, lease?: { lockToken: string; jobId: string }) => {
+  }, lease?: { lockToken: string; jobId: string; leaseGeneration: number }) => {
     try {
       await verifyDeepSeekCredential(apiKey);
       return null;
     } catch (error) {
       return rejectUnavailableModel(error, job, lease);
     }
+  };
+  const protectClaimedRunLease = async (jobId: string, lockToken: string) => {
+    const claimedRun = await database.prepare(
+      "SELECT status, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
+    ).bind(space.id).first<MonitorLeaseRun>();
+    const leaseGeneration = Number(claimedRun?.lease_generation);
+    const lease = { jobId, leaseToken: lockToken, leaseGeneration };
+    if (!monitorLeaseCredentialsMatch(claimedRun, lease)) return null;
+    leaseHeartbeat = startMonitorLeaseHeartbeat(database, {
+      spaceId: space.id,
+      jobId,
+      leaseToken: lockToken,
+      leaseGeneration,
+    });
+    return leaseGeneration;
   };
 
   try {
@@ -6224,15 +6322,27 @@ export async function POST(request: Request) {
         }
         const resumedLock = crypto.randomUUID();
         const resumed = await database.prepare(MONITOR_RESUME_RUN_CLAIM_SQL)
-          .bind(resumedLock, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), activeJob.id, activeJob.id, space.id).run();
+          .bind(resumedLock, monitorLeaseExpiry(now.getTime()), activeJob.id, activeJob.id, space.id).run();
         if (!Number(resumed.meta?.changes || 0)) {
           return Response.json(await readState(database, space, { cached: true, alreadyRunning: true, leaseOwner: false }), { status: 202 });
         }
+        const resumedGeneration = await protectClaimedRunLease(activeJob.id, resumedLock);
+        if (resumedGeneration === null) {
+          return Response.json(await readState(database, space, {
+            cached: true, staleLease: true, leaseOwner: false,
+          }), { status: 202 });
+        }
         if (trigger !== "scheduled") {
-          const modelResponse = await preflightModel(activeJob, { lockToken: resumedLock, jobId: activeJob.id });
+          const modelResponse = await preflightModel(activeJob, {
+            lockToken: resumedLock, jobId: activeJob.id, leaseGeneration: resumedGeneration,
+          });
           if (modelResponse) return modelResponse;
         }
-        return Response.json(await readState(database, space, { cached: true, resumed: true, leaseOwner: true }), { status: 202 });
+        await leaseHeartbeat?.assertOwned();
+        return Response.json(await readState(database, space, {
+          cached: true, resumed: true, leaseOwner: true, leaseToken: resumedLock,
+          leaseGeneration: resumedGeneration,
+        }), { status: 202 });
       }
       if (trigger !== "manual") {
         const counters = await readAutomationCounters(database, space.id);
@@ -6371,7 +6481,7 @@ export async function POST(request: Request) {
       try {
         leaseResults = await database.batch([
           database.prepare(MONITOR_NEW_RUN_CLAIM_SQL).bind(
-            initialStatus, lockToken, new Date(now.getTime() + RUN_LOCK_LEASE_MS).toISOString(), jobId, trigger,
+            initialStatus, lockToken, monitorLeaseExpiry(now.getTime()), jobId, trigger,
             resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.discovered_count || 0 : 0,
             trigger === "scheduled" ? 1 : 0, space.id,
           ),
@@ -6409,6 +6519,12 @@ export async function POST(request: Request) {
           cached: true, alreadyRunning: true, leaseOwner: false,
         }), { status: 202 });
       }
+      const leaseGeneration = await protectClaimedRunLease(jobId, lockToken);
+      if (leaseGeneration === null) {
+        return Response.json(await readState(database, space, {
+          cached: true, staleLease: true, leaseOwner: false,
+        }), { status: 202 });
+      }
       if (trigger !== "scheduled") {
         const modelResponse = await preflightModel({
           id: jobId,
@@ -6416,9 +6532,10 @@ export async function POST(request: Request) {
           work_queue_json: JSON.stringify(initialWork),
           retry_count: retryLineageJobId ? previousJob?.retry_count || 0 : 0,
           current_source: initialSource,
-        }, { lockToken, jobId });
+        }, { lockToken, jobId, leaseGeneration });
         if (modelResponse) return modelResponse;
       }
+      await leaseHeartbeat?.assertOwned();
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: jobId,
@@ -6433,7 +6550,9 @@ export async function POST(request: Request) {
           requestKey,
         },
       });
-      return Response.json(await readState(database, space, { accepted: true, leaseOwner: true }), { status: 202 });
+      return Response.json(await readState(database, space, {
+        accepted: true, leaseOwner: true, leaseToken: lockToken, leaseGeneration,
+      }), { status: 202 });
     }
 
     const job = payload.jobId
@@ -6456,6 +6575,25 @@ export async function POST(request: Request) {
           datetime(started_at) DESC, id DESC LIMIT 1`,
       ).bind(space.id, space.id).first<StagedJobRow>();
     if (!job) return Response.json({ error: "No scan job is available" }, { status: 404 });
+    if (action === "advance" && ["ready", "error"].includes(job.status)) {
+      return Response.json(await readState(database, space, { cached: true }));
+    }
+    const requestedLease = {
+      jobId: job.id,
+      leaseToken: cleanText(payload.leaseToken || "").slice(0, 120),
+      leaseGeneration: Number(payload.leaseGeneration),
+    };
+    let validatedRun: MonitorLeaseRun | null = null;
+    if (action === "advance") {
+      validatedRun = await database.prepare(
+        "SELECT status, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
+      ).bind(space.id).first<MonitorLeaseRun>();
+      if (!monitorLeaseCredentialsMatch(validatedRun, requestedLease)) {
+        return Response.json(await readState(database, space, {
+          cached: true, staleLease: true, leaseOwner: false,
+        }), { status: 202 });
+      }
+    }
     const durableCheckpoint = durableMonitorCheckpoint(job.status, job.checkpoint);
     if (durableCheckpoint !== job.checkpoint) {
       await database.prepare(
@@ -6511,7 +6649,6 @@ export async function POST(request: Request) {
 
     if (action !== "advance") return Response.json({ error: "Unknown monitoring action" }, { status: 400 });
     if (!apiKey) return Response.json({ error: "请先在网页中连接 DeepSeek API Key" }, { status: 400 });
-    if (["ready", "error"].includes(job.status)) return Response.json(await readState(database, space, { cached: true }));
     if (job.trigger_source === "scheduled") {
       const quotaResponse = await enforceAnalysisBudget(
         minimumAnalysisCallsForCheckpoint(job.checkpoint),
@@ -6520,20 +6657,13 @@ export async function POST(request: Request) {
       );
       if (quotaResponse) return quotaResponse;
     }
-    let run = await database.prepare(
-      "SELECT status, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
-    ).bind(space.id).first<{ status: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; active_job_id: string | null; lease_generation: number }>();
-    if (run?.active_job_id !== job.id) {
-      return Response.json(await readState(database, space, {
-        cached: true, staleJob: true, leaseOwner: false,
-      }), { status: 202 });
-    }
+    let run = validatedRun;
     advanceLockToken = crypto.randomUUID();
     const advanceLock = await database.prepare(
       `UPDATE monitor_scan_jobs SET advance_lock_token = ?, advance_lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ? AND space_id = ? AND status NOT IN ('ready', 'error')
         AND (advance_lock_token IS NULL OR advance_lock_expires_at IS NULL OR datetime(advance_lock_expires_at) <= CURRENT_TIMESTAMP)`,
-    ).bind(advanceLockToken, new Date(Date.now() + ADVANCE_LOCK_LEASE_MS).toISOString(), job.id, space.id).run();
+    ).bind(advanceLockToken, monitorLeaseExpiry(Date.now(), MONITOR_ADVANCE_LEASE_MS), job.id, space.id).run();
     if (!Number(advanceLock.meta?.changes || 0)) {
       advanceLockToken = "";
       return Response.json(await readState(database, space, {
@@ -6543,39 +6673,64 @@ export async function POST(request: Request) {
     advanceLockJobId = job.id;
     run = await database.prepare(
       "SELECT status, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
-    ).bind(space.id).first<{ status: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; active_job_id: string | null; lease_generation: number }>();
-    if (run?.active_job_id !== job.id) {
+    ).bind(space.id).first<MonitorLeaseRun>();
+    if (!monitorLeaseCredentialsMatch(run, requestedLease)) {
       return Response.json(await readState(database, space, {
-        cached: true, staleJob: true, leaseOwner: false,
+        cached: true, staleLease: true, leaseOwner: false,
       }), { status: 202 });
     }
-    let lockToken = run?.lock_token || "";
-    if (!lockToken || !run?.lock_expires_at || Date.parse(run.lock_expires_at) <= Date.now()) lockToken = crypto.randomUUID();
+    const lockToken = requestedLease.leaseToken;
+    const leaseGeneration = requestedLease.leaseGeneration;
     const renewed = await database.prepare(
-      `UPDATE monitor_runs SET lock_token = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP
-       WHERE space_id = ? AND active_job_id = ?
-        AND (lock_token = ? OR lock_token IS NULL OR lock_expires_at IS NULL OR datetime(lock_expires_at) <= CURRENT_TIMESTAMP)`,
-    ).bind(lockToken, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, job.id, run.lock_token || "").run();
+      `UPDATE monitor_runs SET lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE space_id = ? AND active_job_id = ? AND lock_token = ? AND lease_generation = ?
+        AND datetime(lock_expires_at) > CURRENT_TIMESTAMP`,
+    ).bind(monitorLeaseExpiry(), space.id, job.id, lockToken, leaseGeneration).run();
     if (!Number(renewed.meta?.changes || 0)) {
       return Response.json(await readState(database, space, {
-        cached: true, staleJob: true, leaseOwner: false,
+        cached: true, staleLease: true, leaseOwner: false,
       }), { status: 202 });
     }
+    leaseHeartbeat = startMonitorLeaseHeartbeat(database, {
+      spaceId: space.id,
+      jobId: job.id,
+      leaseToken: lockToken,
+      leaseGeneration,
+      advanceLockToken,
+    });
+    const readOwnedState = async (extra: Record<string, unknown> = {}) => {
+      await leaseHeartbeat?.assertOwned();
+      return readState(database, space, {
+        ...extra,
+        leaseOwner: true,
+        leaseToken: lockToken,
+        leaseGeneration,
+      });
+    };
     const stageStartedAt = Date.now();
     let firstRecommendationAt = job.first_recommendation_at;
 
     const setStage = async (checkpoint: string, status: string, progress: number, source: string, horizon = "") => {
-      await database.batch([
+      await leaseHeartbeat?.assertOwned();
+      const updates = await database.batch([
         database.prepare(
-          "UPDATE monitor_runs SET status = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND lock_token = ? AND active_job_id = ?",
-        ).bind(status, new Date(Date.now() + RUN_LOCK_LEASE_MS).toISOString(), space.id, lockToken, job.id),
+          `UPDATE monitor_runs SET status = ?, lock_expires_at = ?, error = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE space_id = ? AND lock_token = ? AND active_job_id = ? AND lease_generation = ?`,
+        ).bind(status, monitorLeaseExpiry(), space.id, lockToken, job.id, leaseGeneration),
         database.prepare(
           `UPDATE monitor_scan_jobs SET status = ?, checkpoint = ?, current_horizon = ?, current_source = ?,
            progress = MAX(progress, ?), last_success_stage = ?, last_success_source = ?,
            failure_kind = '', failure_source = '', next_retry_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-        ).bind(status, checkpoint, horizon, source, progress, job.checkpoint, job.current_source, job.id),
+           WHERE id = ? AND EXISTS (
+            SELECT 1 FROM monitor_runs r WHERE r.space_id = ? AND r.active_job_id = ?
+             AND r.lock_token = ? AND r.lease_generation = ? AND datetime(r.lock_expires_at) > CURRENT_TIMESTAMP
+           )`,
+        ).bind(status, checkpoint, horizon, source, progress, job.checkpoint, job.current_source,
+          job.id, space.id, job.id, lockToken, leaseGeneration),
       ]);
+      if (!Number(updates[0]?.meta?.changes || 0) || !Number(updates[1]?.meta?.changes || 0)) {
+        throw new MonitorLeaseLostError();
+      }
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: job.id,
@@ -6642,7 +6797,7 @@ export async function POST(request: Request) {
           published
             ? `近 14 天已有 ${published} 篇通过严格判断；正在整理结果，半年与五年窗口将在额度刷新后继续`
             : "近 14 天严格判断已完成；正在整理结果，半年与五年窗口将在额度刷新后继续");
-        return Response.json(await readState(database, space, { compactScanComplete: true }), { status: 202 });
+        return Response.json(await readOwnedState({ compactScanComplete: true }), { status: 202 });
       }
       work.candidateIds = [...work.discoveredCandidateIds];
       work.screens = [];
@@ -6665,10 +6820,11 @@ export async function POST(request: Request) {
         published
           ? `近 14 天优先判断已产生 ${published} 篇可读结果；继续检索近 6 个月与核心补读`
           : "近 14 天优先判断已完成；继续检索近期优质论文与核心补读", "months");
-      return Response.json(await readState(database, space, { freshLaneComplete: true }), { status: 202 });
+      return Response.json(await readOwnedState({ freshLaneComplete: true }), { status: 202 });
     };
 
     const finalizeMain = async (candidates: Candidate[], reviews: PaperReview[]) => {
+      await leaseHeartbeat?.assertOwned();
       const completedAt = new Date();
       const reviewableIds = new Set(candidates.map((candidate) => candidate.canonicalId));
       const reviewableReviews = reviews.filter((review) => reviewableIds.has(review.canonicalId));
@@ -6877,19 +7033,18 @@ export async function POST(request: Request) {
           metadata: { qualityGateUnchanged: true, planDate, diagnosis: freshFunnel.diagnosis, freshFunnel },
         });
       }
-      await database.batch([
-        database.prepare(
-          `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,
-           discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL,
-           error = NULL, updated_at = CURRENT_TIMESTAMP
-           WHERE space_id = ? AND lock_token = ? AND active_job_id = ?`,
-        ).bind(completedAt.toISOString(), nextRunAt, recommended, job.discovered_count, space.id, lockToken, job.id),
+      await leaseHeartbeat?.assertOwned();
+      const completionUpdates = await database.batch([
         database.prepare(
           `UPDATE monitor_scan_jobs SET status = 'ready', checkpoint = 'main_complete', current_horizon = '',
            current_source = ?, progress = 100, new_candidate_count = ?,
            duplicate_count = ?, reviewed_count = ?, recommended_count = ?, rejected_count = ?, completed_at = ?,
            last_success_stage = 'finalizing', last_success_source = current_source,
-           failure_kind = '', failure_source = '', next_retry_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+           failure_kind = '', failure_source = '', next_retry_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND EXISTS (
+            SELECT 1 FROM monitor_runs r WHERE r.space_id = ? AND r.active_job_id = ?
+             AND r.lock_token = ? AND r.lease_generation = ? AND datetime(r.lock_expires_at) > CURRENT_TIMESTAMP
+           )`,
         ).bind(work.scanMode === "fresh_only" && !verificationPending
           ? recommended
             ? `近 14 天扫描已完成，${recommended} 篇推荐可阅读；半年与五年窗口将在额度刷新后继续`
@@ -6903,8 +7058,19 @@ export async function POST(request: Request) {
           : work.deepDeferredIds.length
             ? `本轮已完成；${work.deepDeferredIds.length} 篇响应较慢的论文已延后重试`
             : recommended ? "推荐已可阅读，Pi 正在后台整理今日简报" : "本轮严格评审已完成，暂无强推荐",
-        work.newCandidateCount, duplicateCount, work.screens.length, recommended, rejected, completedAt.toISOString(), job.id),
+        work.newCandidateCount, duplicateCount, work.screens.length, recommended, rejected, completedAt.toISOString(),
+        job.id, space.id, job.id, lockToken, leaseGeneration),
+        database.prepare(
+          `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,
+           discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL,
+           error = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE space_id = ? AND lock_token = ? AND active_job_id = ? AND lease_generation = ?`,
+        ).bind(completedAt.toISOString(), nextRunAt, recommended, job.discovered_count,
+          space.id, lockToken, job.id, leaseGeneration),
       ]);
+      if (!Number(completionUpdates[0]?.meta?.changes || 0) || !Number(completionUpdates[1]?.meta?.changes || 0)) {
+        throw new MonitorLeaseLostError();
+      }
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: job.id,
@@ -7130,7 +7296,7 @@ export async function POST(request: Request) {
             await saveScanWorkQueue(database, job.id, work);
             if (work.rescueScreenIds.length) {
               await setStage("rescue_screening", "screening", 72, `正在认真复审 ${work.rescueScreenIds.length} 篇临界论文，避免过早淘汰`);
-              return Response.json(await readState(database, space, { rescueScreening: true }), { status: 202 });
+              return Response.json(await readOwnedState({ rescueScreening: true }), { status: 202 });
             }
           }
           work.deepIds = chooseBudgetedDeepCandidateIds(
@@ -7381,7 +7547,7 @@ export async function POST(request: Request) {
           await saveScanWorkQueue(database, job.id, work);
           await setStage("verifying_recommendations", "deep_reviewing", work.freshLaneActive ? 44 : 94,
             `已有 ${newlyVerifiableIds.length} 篇高潜力解读，先完成推荐判断；其余论文稍后继续解读`);
-          return Response.json(await readState(database, space, { earlyVerification: true }), { status: 202 });
+          return Response.json(await readOwnedState({ earlyVerification: true }), { status: 202 });
         }
         if (processedDeepCount >= work.deepIds.length) {
           if (work.freshLaneActive) return continueAfterFreshLane();
@@ -7409,7 +7575,7 @@ export async function POST(request: Request) {
               await saveScanWorkQueue(database, job.id, work);
               await setStage("enriching_abstracts", "deep_reviewing", 76,
                 `目前形成 ${potentialRecommendations} 篇高潜力稿，正在追加 ${rescueIds.length} 篇第二批评审，目标补足到 ${HIGH_POTENTIAL_DRAFT_TARGET} 篇`);
-              return Response.json(await readState(database, space, { rescueReview: true }), { status: 202 });
+              return Response.json(await readOwnedState({ rescueReview: true }), { status: 202 });
             }
           }
           work.verificationIds = Array.from(new Set([
@@ -7424,7 +7590,7 @@ export async function POST(request: Request) {
           if (work.verificationIds.length) {
             await setStage("verifying_recommendations", "deep_reviewing", work.freshLaneActive ? 44 : 94,
               `已形成 ${work.verificationIds.length} 篇高潜力解读，正在逐篇核对书目与摘要证据`);
-            return Response.json(await readState(database, space, { verifyingRecommendations: true }), { status: 202 });
+            return Response.json(await readOwnedState({ verifyingRecommendations: true }), { status: 202 });
           }
           work.evidenceIds = [];
           work.evidenceCompletedIds = [];
@@ -7453,7 +7619,7 @@ export async function POST(request: Request) {
               await saveScanWorkQueue(database, job.id, work);
               await setStage("deep_reviewing", "deep_reviewing", work.freshLaneActive ? 40 : 86,
                 `发现 1 篇解读结构不完整，正在自动重新生成；已完成论文不会重做`);
-              return Response.json(await readState(database, space, { regeneratingIncompleteDraft: true }), { status: 202 });
+              return Response.json(await readOwnedState({ regeneratingIncompleteDraft: true }), { status: 202 });
             }
             const incompleteReport = evidenceVerificationReport({
               initial: sanitizeEvidenceVerificationDraft({
@@ -7629,7 +7795,7 @@ export async function POST(request: Request) {
             await saveScanWorkQueue(database, job.id, work);
             await setStage("deep_reviewing", "deep_reviewing", work.freshLaneActive ? 40 : 86,
               `已有 ${published} 篇正式入选；继续解读 ${remainingDeepIds.length} 篇已排队论文，争取达到 ${DAILY_RECOMMENDATION_MIN_TARGET} 篇`);
-            return Response.json(await readState(database, space, { resumedDeepReviewAfterVerification: true }), { status: 202 });
+            return Response.json(await readOwnedState({ resumedDeepReviewAfterVerification: true }), { status: 202 });
           }
           if (published >= DAILY_RECOMMENDATION_MIN_TARGET && remainingDeepIds.length) {
             await recordReliabilityEvent(database, {
@@ -7692,7 +7858,7 @@ export async function POST(request: Request) {
               });
               await setStage("enriching_abstracts", "deep_reviewing", 84,
                 `已有 ${published} 篇正式入选；正在追加 ${formalRescueIds.length} 篇候选评审，争取达到 ${DAILY_RECOMMENDATION_MIN_TARGET} 篇，质量门槛不变`);
-              return Response.json(await readState(database, space, { formalYieldRescue: true }), { status: 202 });
+              return Response.json(await readOwnedState({ formalYieldRescue: true }), { status: 202 });
             }
           }
           work.evidenceIds = [];
@@ -7711,26 +7877,39 @@ export async function POST(request: Request) {
         const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
         return finalizeMain(candidates, persistedReviews);
       }
-      return Response.json(await readState(database, space, { advanced: true }), { status: 202 });
+      return Response.json(await readOwnedState({ advanced: true }), { status: 202 });
     } catch (error) {
+      if (error instanceof MonitorLeaseLostError) {
+        return Response.json(await readState(database, space, {
+          cached: true, staleLease: true, leaseOwner: false,
+        }), { status: 202 });
+      }
       const message = normalizedMonitorError(error).slice(0, 300);
       const failedAt = new Date();
       const retry = monitorRetryDecision(message, job.retry_count || 0, failedAt.getTime());
       work.resumeCheckpoint = job.checkpoint;
-      await database.batch([
-        database.prepare(
-          `UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL,
-           active_job_id = NULL, error = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE space_id = ? AND lock_token = ? AND active_job_id = ?`,
-        ).bind(retry.nextRetryAt, message, space.id, lockToken, job.id),
+      const failureUpdates = await database.batch([
         database.prepare(
           `UPDATE monitor_scan_jobs SET status = 'error', checkpoint = 'retry_pending',
            current_source = '扫描已暂停，已保存当前进度', work_queue_json = ?, error = ?, completed_at = ?,
            failure_kind = ?, failure_source = ?, retry_count = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
+           WHERE id = ? AND EXISTS (
+            SELECT 1 FROM monitor_runs r WHERE r.space_id = ? AND r.active_job_id = ?
+             AND r.lock_token = ? AND r.lease_generation = ? AND datetime(r.lock_expires_at) > CURRENT_TIMESTAMP
+           )`,
         ).bind(JSON.stringify(work), message, failedAt.toISOString(), retry.errorCode, job.current_source,
-          retry.retryCount, retry.nextRetryAt, job.id),
+          retry.retryCount, retry.nextRetryAt, job.id, space.id, job.id, lockToken, leaseGeneration),
+        database.prepare(
+          `UPDATE monitor_runs SET status = 'error', next_run_at = ?, lock_token = NULL, lock_expires_at = NULL,
+           active_job_id = NULL, error = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE space_id = ? AND lock_token = ? AND active_job_id = ? AND lease_generation = ?`,
+        ).bind(retry.nextRetryAt, message, space.id, lockToken, job.id, leaseGeneration),
       ]);
+      if (!Number(failureUpdates[0]?.meta?.changes || 0) || !Number(failureUpdates[1]?.meta?.changes || 0)) {
+        return Response.json(await readState(database, space, {
+          cached: true, staleLease: true, leaseOwner: false,
+        }), { status: 202 });
+      }
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: job.id,
@@ -7754,8 +7933,14 @@ export async function POST(request: Request) {
       return Response.json(await readState(database, space), { status: 502 });
     }
   } catch (error) {
+    if (error instanceof MonitorLeaseLostError) {
+      return Response.json(await readState(database, space, {
+        cached: true, staleLease: true, leaseOwner: false,
+      }), { status: 202 });
+    }
     return Response.json({ error: error instanceof Error ? error.message : "Unable to run monitoring" }, { status: 500 });
   } finally {
+    leaseHeartbeat?.stop();
     if (advanceLockJobId && advanceLockToken) {
       await database.prepare(
         "UPDATE monitor_scan_jobs SET advance_lock_token = NULL, advance_lock_expires_at = NULL WHERE id = ? AND advance_lock_token = ?",

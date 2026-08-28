@@ -341,6 +341,8 @@ type MonitorState = {
   alreadyAdvancing?: boolean;
   alreadyRunning?: boolean;
   leaseOwner?: boolean;
+  leaseToken?: string | null;
+  leaseGeneration?: number;
   leaseExpiresAt?: string | null;
   idempotentReplay?: boolean;
   automationDeferred?: boolean;
@@ -1672,7 +1674,13 @@ async function advanceMonitorPipeline(
     const response = await fetch("/api/monitor", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spaceId, action: "advance", jobId: current.scanJob?.id }),
+      body: JSON.stringify({
+        spaceId,
+        action: "advance",
+        jobId: current.scanJob?.id,
+        leaseToken: current.leaseToken,
+        leaseGeneration: current.leaseGeneration,
+      }),
     });
     const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
     if (data.monitor) {
