@@ -3171,6 +3171,7 @@ export default function ResearchApp({ user }: { user: User }) {
     screened: 0,
   });
   const mustReadCount = rankedMonitorPapers.filter((paper) => paper.recommendationTier === "must_read").length;
+  const todayNavigationCount = rankedMonitorPapers.length;
   const activeReadingCount = (monitor?.historyCounts?.reading?.queued || 0) + (monitor?.historyCounts?.reading?.reading || 0);
   const dailyBriefPapers = useMemo(() => {
     const ids = new Set(monitor?.dailyBrief?.paperIds || []);
@@ -5308,7 +5309,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <p>{t.researchRadar}</p>
           {navItems.slice(0, 2).map((item) => (
             <button type="button" key={item.id} className={activeNav === item.id ? "active" : ""} aria-current={activeNav === item.id ? "page" : undefined} onClick={() => navigate(item.id)}>
-              <span>{item.mark}</span>{item.label}{item.id === "today" && Boolean(monitor?.newCount || rankedMonitorPapers.length) && <b>{Math.min(99, monitor?.newCount || rankedMonitorPapers.length)}</b>}
+              <span>{item.mark}</span>{item.label}{item.id === "today" && Boolean(todayNavigationCount) && <b>{Math.min(99, todayNavigationCount)}</b>}
             </button>
           ))}
           <p>{t.knowledge}</p>

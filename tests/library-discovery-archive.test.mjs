@@ -32,6 +32,9 @@ test("library overview counts the archive instead of repeating recommendation in
 
 test("the sidebar and archive ranking cannot make retained papers look missing or over-scored", () => {
   assert.match(app, /compactNavCount\(historyPapers\.length\)/);
+  assert.match(app, /const todayNavigationCount = rankedMonitorPapers\.length/);
+  assert.match(app, /item\.id === "today" && Boolean\(todayNavigationCount\)/);
+  assert.doesNotMatch(app, /item\.id === "today"[^\n]*monitor\?\.newCount/);
   assert.match(app, /qualityStageRank/);
   assert.match(app, /second\.relevanceScore - first\.relevanceScore/);
   assert.match(app, /paper\.qualityStage === "recommended" && <span>{t\.qualityScore}/);
