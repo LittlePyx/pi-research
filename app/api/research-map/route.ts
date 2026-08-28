@@ -237,6 +237,7 @@ type RoutePortfolioCountRow = {
   deep_reviewed_count: number;
   recommended_count: number;
   accepted_count: number;
+  confirmed_evidence_count: number;
   pending_evidence_count: number;
 };
 type TrackDiscoveryEffectRow = {
@@ -1785,7 +1786,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     database.prepare(RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL)
       .bind(spaceId, spaceId).all<TrackDiscoveryEffectRow>(),
     database.prepare(RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL)
-      .bind(spaceId, spaceId, spaceId).first<RoutePortfolioCountRow>(),
+      .bind(spaceId, spaceId, spaceId, spaceId).first<RoutePortfolioCountRow>(),
   ]);
   const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
   const reviewQueueCountsByTrack = new Map(reviewQueueCountsResult.results.map((row) => [row.track_id, row]));
@@ -1917,7 +1918,8 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   return {
     tracks,
     routePortfolio: {
-      formalEvidenceCount: uniquePaperCount,
+      formalEvidenceCount: routeCount(routePortfolioCounts?.confirmed_evidence_count),
+      structuralPaperCount: uniquePaperCount,
       discoveredCount: routeCount(routePortfolioCounts?.discovered_count),
       queuedCount: routeCount(routePortfolioCounts?.queued_count),
       reviewingCount: routeCount(routePortfolioCounts?.reviewing_count),

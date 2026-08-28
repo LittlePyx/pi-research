@@ -7,6 +7,7 @@ import {
   monitorAutomationPauseCopy,
   monitorAutomationPauseReason,
 } from "../lib/monitor-automation.mjs";
+import { shouldBlockManualMonitorStart } from "../lib/monitor-runtime-control.mjs";
 
 const now = Date.parse("2026-08-21T08:00:00.000Z");
 const healthy = {
@@ -25,6 +26,17 @@ test("automatic monitoring pauses before unattended research spending can accumu
   assert.equal(monitorAutomationPauseReason({ ...healthy, lastUserActivityAt: "2026-08-13T08:00:00.000Z" }), "inactive");
   assert.equal(monitorAutomationPauseReason({ ...healthy, dailyTokens: MONITOR_AUTOMATION_LIMITS.dailyTokens }), "daily_budget");
   assert.match(monitorAutomationPauseCopy("unattended_runs").zh, /3 轮扫描/);
+});
+
+test("background budget deferral never blocks an active user's manual scan", () => {
+  assert.equal(shouldBlockManualMonitorStart({ throttled: true, automationDeferred: true }), false);
+  assert.equal(shouldBlockManualMonitorStart({ throttled: true }), false);
+  assert.equal(shouldBlockManualMonitorStart({ throttled: true, retryAfterMinutes: 7 }), true);
+  assert.equal(shouldBlockManualMonitorStart({
+    throttled: true,
+    retryAfterMinutes: 7,
+    scanJob: { needsRefresh: true },
+  }), false);
 });
 
 test("scheduled monitoring persists heartbeats and advances only a bounded checkpoint slice", async () => {
@@ -60,4 +72,6 @@ test("scheduled monitoring persists heartbeats and advances only a bounded check
     "legacy audit verification columns must exist before recommendation history is backfilled",
   );
   assert.match(client, /等待你处理后恢复/);
+  assert.match(client, /shouldBlockManualMonitorStart\(monitor\)/);
+  assert.match(client, /无人操作的后台扫描已待机以控制费用/);
 });

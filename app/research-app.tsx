@@ -8,6 +8,7 @@ import { learningResourceHref, learningResourceTitleKey, type LearningPathState,
 import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
 import { shouldReclaimMonitorLease } from "../lib/monitor-follower-control.mjs";
+import { shouldBlockManualMonitorStart } from "../lib/monitor-runtime-control.mjs";
 
 type Locale = "zh" | "en";
 type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid";
@@ -1309,7 +1310,7 @@ function RoutePortfolioOverview({
       <article><small>01 · {locale === "zh" ? "路线发现" : "ROUTE DISCOVERY"}</small><strong>{portfolio.discoveredCount}</strong><p>{locale === "zh" ? "去重后的真实候选" : "unique real candidates"}</p><em>{portfolio.deepReviewedCount} {locale === "zh" ? "篇已深评" : "deep reviewed"}</em></article><i>→</i>
       <article className={inReview > 0 ? "active" : ""}><small>02 · {locale === "zh" ? "共享质量队列" : "SHARED QUALITY QUEUE"}</small><strong>{inReview}</strong><p>{locale === "zh" ? `${portfolio.queuedCount} 排队 · ${portfolio.reviewingCount} 评估中` : `${portfolio.queuedCount} queued · ${portfolio.reviewingCount} reviewing`}</p><em>{locale === "zh" ? "后台完成，无需确认" : "background, no approval needed"}</em></article><i>→</i>
       <article className={todayCount > 0 ? "active" : ""}><small>03 · {locale === "zh" ? "今日可见" : "VISIBLE IN TODAY"}</small><strong>{todayCount}</strong><p>{locale === "zh" ? "当前可处理的路线论文" : "route papers ready now"}</p><em>{portfolio.recommendedCount} {locale === "zh" ? "篇累计通过" : "passed in total"}</em></article><i>→</i>
-      <article className="formal"><small>04 · {locale === "zh" ? "正式路线论文" : "FORMAL ROUTE PAPERS"}</small><strong>{portfolio.formalEvidenceCount}</strong><p>{locale === "zh" ? "已进入路线的真实论文节点" : "real paper nodes on routes"}</p><em>{locale === "zh" ? `${portfolio.acceptedCount} 篇确认回流 · ${portfolio.pendingEvidenceCount} 篇待确认` : `${portfolio.acceptedCount} confirmed back · ${portfolio.pendingEvidenceCount} pending`}</em></article>
+      <article className="formal"><small>04 · {locale === "zh" ? "正式路线证据" : "FORMAL ROUTE EVIDENCE"}</small><strong>{portfolio.formalEvidenceCount}</strong><p>{locale === "zh" ? "仅统计用户确认纳入的论文" : "only user-confirmed papers"}</p><em>{locale === "zh" ? `${portfolio.structuralPaperCount} 个结构节点 · ${portfolio.pendingEvidenceCount} 篇待确认` : `${portfolio.structuralPaperCount} structural nodes · ${portfolio.pendingEvidenceCount} pending`}</em></article>
     </div>
     <aside><div><small>{locale === "zh" ? "现在最值得处理" : "BEST NEXT ACTION"}</small><strong>{locale === "zh" ? attentionTrack.titleZh : attentionTrack.titleEn}</strong><p>{actionCopy[locale === "zh" ? "bodyZh" : "bodyEn"]}</p></div><button type="button" onClick={onAction}>{actionCopy[locale === "zh" ? "labelZh" : "labelEn"]} →</button></aside>
   </section>;
@@ -3140,7 +3141,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const activeScanJob = monitor?.scanJob && !["ready", "error"].includes(monitor.scanJob.status) ? monitor.scanJob : null;
   const verificationInProgress = Boolean(scanIsActive && activeScanJob?.checkpoint === "verifying_recommendations");
   const analysisBudgetBlocked = monitor?.analysisBudget?.available === false;
-  const manualCooldownBlocked = Boolean(monitor?.throttled && !monitor?.scanJob?.needsRefresh);
+  const manualCooldownBlocked = shouldBlockManualMonitorStart(monitor);
+  const backgroundAutomationDeferred = Boolean(monitor?.automationDeferred && !scanIsActive);
   const failedScanJob = monitor?.status === "error" ? monitor.scanJob || null : null;
   const failedScanError = failedScanJob?.error || monitor?.error || "";
   const resumeAvailable = Boolean(failedScanJob && (failedScanJob.candidateCount || failedScanJob.reviewedCount || failedScanJob.checkpoint === "retry_pending"));
@@ -5397,6 +5399,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 </div>
               </div>
               {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><span>◷</span><p>{locale === "zh" ? "今天的完整扫描额度已用完；Pi 会在刷新后继续，现有论文、偏好与断点均已保留。" : "Today's full-scan budget is exhausted. Pi will continue after the reset; papers, preferences, and checkpoints are preserved."}</p></div>}
+              {backgroundAutomationDeferred && !analysisBudgetBlocked && <div className="v2-scan-budget-note" role="status"><span>◷</span><p>{locale === "zh" ? "无人操作的后台扫描已待机以控制费用；你现在仍可手动扫描，已有候选、论文与进度都会保留。" : "Unattended background scanning is on standby to control cost. You can still scan manually now, and existing candidates, papers, and progress are preserved."}</p></div>}
               {compactScanAvailable && !manualCooldownBlocked && <div className="v2-scan-budget-note" role="status"><span>↗</span><p>{locale === "zh" ? "今天适合先看最新变化：本轮只扫描近 14 天并完成最多 2 篇严格判断；半年和五年窗口会在额度刷新后自动继续，论文与偏好不会丢失。" : "Start with the newest changes today: this pass scans the latest 14 days and strictly evaluates up to two papers. Six-month and five-year horizons continue after the reset, with papers and preferences preserved."}</p></div>}
               {manualCooldownBlocked && !scanIsActive && <div className="v2-scan-cooldown-note" role="status"><span>◷</span><div><strong>{locale === "zh" ? "刚才没有启动重复扫描" : "A duplicate scan was not started"}</strong><p>{locale === "zh" ? `上次扫描仍在费用保护期，约 ${monitor?.retryAfterMinutes || 1} 分钟后可再次运行；现有推荐、论文库和进度都没有变化。` : `The previous scan is still inside its cost-protection window. Try again in about ${monitor?.retryAfterMinutes || 1} minutes; recommendations, library papers, and progress remain unchanged.`}</p></div></div>}
               {monitor?.scanJob?.needsRefresh && !scanIsActive && !compactScanAvailable && <div className="v2-scan-upgrade-note"><span>π</span><div><strong>{locale === "zh" ? "当前结果来自旧版筛选方法" : "These results use the previous screening method"}</strong><p>{locale === "zh" ? "新版会先完成近 14 天新论文的优先判断，再继续半年与五年补读；按研究方向保留名额，质量门槛不变。此次升级重扫不受本小时冷却限制。" : "The new method decides on papers from the latest 14 days first, then continues with six-month and five-year catch-up. Research directions keep protected slots and the quality gate is unchanged. This upgrade rescan bypasses the hourly cooldown."}</p></div></div>}

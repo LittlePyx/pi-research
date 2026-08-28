@@ -27,20 +27,32 @@ async function checkJson(name, url, validate, optional = false) {
 }
 
 async function checkArxiv() {
-  const endpoint = new URL("https://export.arxiv.org/api/query");
-  endpoint.searchParams.set("search_query", 'all:"information theory"');
-  endpoint.searchParams.set("start", "0");
-  endpoint.searchParams.set("max_results", "1");
-  endpoint.searchParams.set("sortBy", "submittedDate");
-  endpoint.searchParams.set("sortOrder", "descending");
-  const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(25_000) });
-  if (!response.ok) throw new Error(`arXiv: HTTP ${response.status}`);
-  const xml = await response.text();
-  assert.match(xml, /<feed\b/i);
-  const records = parseArxivAtom(xml);
-  assert.ok(records.length > 0);
-  assert.ok(records[0].title && records[0].url && records[0].publishedAt);
-  return { name: "arXiv", status: "healthy" };
+  try {
+    const endpoint = new URL("https://export.arxiv.org/api/query");
+    endpoint.searchParams.set("search_query", 'all:"information theory"');
+    endpoint.searchParams.set("start", "0");
+    endpoint.searchParams.set("max_results", "1");
+    endpoint.searchParams.set("sortBy", "submittedDate");
+    endpoint.searchParams.set("sortOrder", "descending");
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(25_000) });
+      if (response.ok) {
+        const xml = await response.text();
+        assert.match(xml, /<feed\b/i);
+        const records = parseArxivAtom(xml);
+        assert.ok(records.length > 0);
+        assert.ok(records[0].title && records[0].url && records[0].publishedAt);
+        return { name: "arXiv", status: "healthy" };
+      }
+      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 3) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));
+    }
+    throw new Error("No response after retries");
+  } catch (error) {
+    return { name: "arXiv", status: "degraded", reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 const results = await Promise.all([

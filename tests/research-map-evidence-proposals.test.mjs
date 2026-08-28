@@ -475,11 +475,11 @@ test("route portfolio deduplicates papers across routes and separates each quali
       FROM monitored_papers WHERE canonical_id = 'doi:10.1000/deactivated'`).run();
     sqlite.prepare(`INSERT INTO research_map_evidence_proposals
       (id, space_id, track_id, paper_id, status)
-      VALUES ('proposal-route-a', 'space-a', 'track-a', 'paper-a', 'pending'),
+      VALUES ('proposal-route-a', 'space-a', 'track-a', 'paper-a', 'confirmed'),
        ('proposal-route-c', 'space-a', 'track-c', 'paper-a', 'pending')`).run();
 
     const counts = await database.prepare(RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL)
-      .bind("space-a", "space-a", "space-a").first();
+      .bind("space-a", "space-a", "space-a", "space-a").first();
     assert.deepEqual({ ...counts }, {
       discovered_count: 2,
       queued_count: 1,
@@ -487,6 +487,7 @@ test("route portfolio deduplicates papers across routes and separates each quali
       deep_reviewed_count: 1,
       recommended_count: 1,
       accepted_count: 1,
+      confirmed_evidence_count: 1,
       pending_evidence_count: 1,
     });
   } finally {

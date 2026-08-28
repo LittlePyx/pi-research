@@ -211,6 +211,7 @@ export type ResearchRouteDiscoveryEffect = {
 
 export type ResearchRoutePortfolio = {
   formalEvidenceCount: number;
+  structuralPaperCount: number;
   discoveredCount: number;
   queuedCount: number;
   reviewingCount: number;
@@ -379,6 +380,7 @@ export function emptyResearchMapState(): ResearchMapState {
     paperEdges: [],
     routePortfolio: {
       formalEvidenceCount: 0,
+      structuralPaperCount: 0,
       discoveredCount: 0,
       queuedCount: 0,
       reviewingCount: 0,

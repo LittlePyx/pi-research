@@ -179,6 +179,8 @@ export const RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL = `WITH route_candidates AS (
     AND (feedback.feedback = 'relevant' OR feedback.saved = 1)
   )) AS accepted_count,
   (SELECT COUNT(DISTINCT proposal.paper_id) FROM research_map_evidence_proposals proposal
+   WHERE proposal.space_id = ? AND proposal.status = 'confirmed') AS confirmed_evidence_count,
+  (SELECT COUNT(DISTINCT proposal.paper_id) FROM research_map_evidence_proposals proposal
    WHERE proposal.space_id = ? AND proposal.status = 'pending') AS pending_evidence_count`;
 
 /**
