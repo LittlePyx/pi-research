@@ -1,4 +1,7 @@
+import { activeResearchRouteSupplyPredicate } from "./research-map-curation.ts";
+
 const ACTIVE_JOB_STALE_MS = 20 * 60 * 1000;
+export const MONITOR_QUALITY_QUEUE_STALL_GRACE_MS = 25 * 60 * 1000;
 export const MONITOR_OPERATIONAL_ALERT_BUCKET_MS = 60 * 60 * 1000;
 
 const TERMINAL_RUN_STATUSES = new Set(["idle", "ready", "error"]);
@@ -8,6 +11,7 @@ const CRITICAL_ISSUES = new Set([
   "active_run_without_job",
   "scheduler_heartbeat_gap",
   "retry_not_converging",
+  "quality_queue_stalled",
   "ready_without_visible_evidence",
   "retryable_past_attempt_cap",
   "shared_queue_feed_gap",
@@ -34,12 +38,25 @@ export type MonitorOperationalSnapshot = {
   recentSourceFailureCount: number;
   recentSourceCount: number;
   recentFailedSources: string[];
+  pendingQualityQueueCount: number;
+  oldestPendingQualityAt: string | null;
+  qualityNextRunAt: string | null;
+  automationPauseReason: string;
+};
+
+export type MonitorQualityQueueHealth = {
+  status: "empty" | "active" | "paused" | "scheduled" | "stalled";
+  pendingCount: number;
+  oldestAgeMinutes: number;
+  overdueMinutes: number;
+  stallReason: string;
 };
 
 export type MonitorOperationalEvaluation = {
   outcome: "success" | "degraded" | "failed";
   issues: string[];
   criticalIssues: string[];
+  qualityQueue: MonitorQualityQueueHealth;
 };
 
 type RouteSentinelSignal = {
@@ -62,6 +79,10 @@ type OperationalRow = {
   oldest_active_updated_at: string | null;
   retry_overdue_count: number;
   latest_retry_count: number;
+  pending_quality_queue_count: number;
+  oldest_pending_quality_at: string | null;
+  quality_next_run_at: string | null;
+  automation_pause_reason: string;
 };
 
 type FailureRow = {
@@ -109,6 +130,31 @@ export function monitorOperationalEventId(
   return `monitor-operational:${spaceId}:${issue}:${Math.floor(now / bucketMs)}`;
 }
 
+export function monitorQualityQueueHealth(
+  snapshot: MonitorOperationalSnapshot,
+  now = Date.now(),
+): MonitorQualityQueueHealth {
+  const pendingCount = count(snapshot.pendingQualityQueueCount);
+  const oldestAt = databaseTimestamp(snapshot.oldestPendingQualityAt);
+  const oldestAgeMinutes = Number.isFinite(oldestAt) ? Math.max(0, Math.floor((now - oldestAt) / 60_000)) : 0;
+  if (!pendingCount) return { status: "empty", pendingCount: 0, oldestAgeMinutes: 0, overdueMinutes: 0, stallReason: "" };
+  if (!TERMINAL_RUN_STATUSES.has(snapshot.runStatus)) {
+    return { status: "active", pendingCount, oldestAgeMinutes, overdueMinutes: 0, stallReason: "active_quality_run" };
+  }
+  if (snapshot.automationPauseReason) {
+    return { status: "paused", pendingCount, oldestAgeMinutes, overdueMinutes: 0, stallReason: snapshot.automationPauseReason };
+  }
+  const nextRunAt = databaseTimestamp(snapshot.qualityNextRunAt);
+  const fallbackDueAt = databaseTimestamp(snapshot.runUpdatedAt);
+  const dueAt = Number.isFinite(nextRunAt) ? nextRunAt : fallbackDueAt;
+  const overdueMs = Number.isFinite(dueAt) ? now - dueAt : MONITOR_QUALITY_QUEUE_STALL_GRACE_MS + 1;
+  const overdueMinutes = Math.max(0, Math.floor(overdueMs / 60_000));
+  if (overdueMs > MONITOR_QUALITY_QUEUE_STALL_GRACE_MS) {
+    return { status: "stalled", pendingCount, oldestAgeMinutes, overdueMinutes, stallReason: "scheduler_overdue" };
+  }
+  return { status: "scheduled", pendingCount, oldestAgeMinutes, overdueMinutes, stallReason: "awaiting_scheduler" };
+}
+
 export function evaluateMonitorOperationalSentinel(
   snapshot: MonitorOperationalSnapshot,
   routeIssues: string[] = [],
@@ -118,6 +164,7 @@ export function evaluateMonitorOperationalSentinel(
   const runIsActive = !TERMINAL_RUN_STATUSES.has(snapshot.runStatus);
   const lockExpiresAt = databaseTimestamp(snapshot.lockExpiresAt);
   const oldestActiveUpdatedAt = databaseTimestamp(snapshot.oldestActiveUpdatedAt);
+  const qualityQueue = monitorQualityQueueHealth(snapshot, now);
 
   if (snapshot.schedulerGapMinutes > 25 || snapshot.schedulerHealthStatus.startsWith("recovered_")) {
     issues.push("scheduler_heartbeat_gap");
@@ -137,6 +184,7 @@ export function evaluateMonitorOperationalSentinel(
     issues.push("retry_not_converging");
   }
   if (snapshot.recentSourceFailureCount >= 2) issues.push("source_health_degraded");
+  if (qualityQueue.status === "stalled") issues.push("quality_queue_stalled");
   issues.push(...routeIssues);
 
   const deduplicated = uniqueIssues(issues);
@@ -145,6 +193,7 @@ export function evaluateMonitorOperationalSentinel(
     outcome: criticalIssues.length ? "failed" : deduplicated.length ? "degraded" : "success",
     issues: deduplicated,
     criticalIssues,
+    qualityQueue,
   };
 }
 
@@ -166,10 +215,34 @@ export async function recordMonitorOperationalSentinel(
   routeSentinel: RouteSentinelSignal | null,
   now = new Date(),
 ) {
+  const activeQualitySupply = activeResearchRouteSupplyPredicate("quality_paper");
   const [row, recentFailures, sourceHealth, previous] = await Promise.all([
     database.prepare(
-      `SELECT run.status AS run_status, run.active_job_id, run.lock_expires_at,
+      `WITH pending_quality AS (
+       SELECT quality_paper.space_id, COUNT(*) AS pending_count,
+        MIN(quality_paper.discovered_at) AS oldest_pending_at
+       FROM monitored_papers quality_paper
+       JOIN paper_insights quality_insight ON quality_insight.paper_id = quality_paper.id
+       WHERE quality_paper.space_id = ? AND COALESCE(quality_insight.ever_recommended, 0) = 0
+        AND (quality_insight.analysis_model = ''
+         OR quality_insight.analysis_source IN ('deepseek_screened', 'deepseek_verification_pending')
+         OR (quality_insight.analysis_source = 'deepseek_rejected' AND quality_insight.verification_status = 'degraded'
+          AND (lower(quality_insight.screening_reason) LIKE '%timeout%'
+           OR lower(quality_insight.screening_reason) LIKE '%aborted%'
+           OR lower(quality_insight.screening_reason) LIKE '%temporarily unavailable%')))
+        AND NOT EXISTS (
+         SELECT 1 FROM paper_feedback suppressed
+         WHERE suppressed.space_id = quality_paper.space_id AND suppressed.paper_id = quality_paper.id
+          AND suppressed.feedback = 'not_relevant'
+        )
+        AND ${activeQualitySupply}
+       GROUP BY quality_paper.space_id
+      )
+       SELECT run.status AS run_status, run.active_job_id, run.lock_expires_at,
        run.updated_at AS run_updated_at,
+       run.next_run_at AS quality_next_run_at, run.automation_pause_reason,
+       COALESCE(pending_quality.pending_count, 0) AS pending_quality_queue_count,
+       pending_quality.oldest_pending_at AS oldest_pending_quality_at,
        (SELECT tick.gap_minutes FROM monitor_scheduler_ticks tick
         ORDER BY datetime(tick.started_at) DESC, rowid DESC LIMIT 1) AS scheduler_gap_minutes,
        (SELECT tick.health_status FROM monitor_scheduler_ticks tick
@@ -189,8 +262,9 @@ export async function recordMonitorOperationalSentinel(
         AND job.status = 'error' AND job.checkpoint = 'retry_pending'
         AND datetime(job.updated_at) >= datetime('now', '-24 hours')
         ORDER BY datetime(job.updated_at) DESC, job.id DESC LIMIT 1), 0) AS latest_retry_count
-       FROM monitor_runs run WHERE run.space_id = ? LIMIT 1`,
-    ).bind(spaceId).first<OperationalRow>(),
+       FROM monitor_runs run LEFT JOIN pending_quality ON pending_quality.space_id = run.space_id
+       WHERE run.space_id = ? LIMIT 1`,
+    ).bind(spaceId, spaceId).first<OperationalRow>(),
     database.prepare(
       `SELECT failure_kind, failure_source, retry_count FROM monitor_scan_jobs
        WHERE space_id = ? AND status = 'error' AND checkpoint = 'retry_pending' AND failure_kind <> ''
@@ -232,6 +306,10 @@ export async function recordMonitorOperationalSentinel(
     recentSourceFailureCount: count(sourceHealth?.failure_count),
     recentSourceCount: count(sourceHealth?.source_count),
     recentFailedSources: (sourceHealth?.failed_sources || "").split(",").filter(Boolean),
+    pendingQualityQueueCount: count(row.pending_quality_queue_count),
+    oldestPendingQualityAt: row.oldest_pending_quality_at || null,
+    qualityNextRunAt: row.quality_next_run_at || null,
+    automationPauseReason: row.automation_pause_reason || "",
   };
   const routeIssues = routeSentinel?.issues || [];
   const evaluation = evaluateMonitorOperationalSentinel(snapshot, routeIssues, now.getTime());

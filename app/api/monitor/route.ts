@@ -53,6 +53,7 @@ import {
   MONITOR_AUTOMATION_LIMITS,
   monitorAutomationPauseCopy,
   monitorAutomationPauseReason,
+  recordMonitorVisitActivity,
 } from "../../../lib/monitor-automation.mjs";
 import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
@@ -313,6 +314,7 @@ type PaperRow = {
   priority_venue: number;
   analysis_source: string;
   analysis_model: string;
+  screening_reason: string;
   llm_recommended: number;
   llm_relevance_score: number;
   show_count: number;
@@ -361,7 +363,7 @@ type PaperRow = {
   discovery_track_title_en: string;
   discovery_route_impact_zh: string;
   discovery_route_impact_en: string;
-  quality_stage: "discovered" | "reviewed" | "reviewing" | "recommended";
+  quality_stage: "queued" | "discovered" | "reviewed" | "reviewing" | "recommended";
 };
 type Candidate = {
   canonicalId: string;
@@ -4503,6 +4505,7 @@ function toPaper(paper: PaperRow, now: number) {
     qualityScore: paper.quality_score,
     priorityVenue: Boolean(paper.priority_venue),
     analysisSource: paper.analysis_source,
+    screeningReason: paper.screening_reason,
     discoverySources: monitorDiscoverySources(paper.discovery_provider, paper.discovery_channels),
     userState: paperUserState(paper, now),
     showCount: paper.show_count,
@@ -4579,6 +4582,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        COALESCE(i.why_read_zh, '') AS why_read_zh, COALESCE(i.why_read_en, '') AS why_read_en,
        COALESCE(i.quality_score, 0) AS quality_score, COALESCE(i.priority_venue, 0) AS priority_venue,
        COALESCE(i.analysis_source, 'metadata') AS analysis_source, COALESCE(i.analysis_model, '') AS analysis_model,
+       COALESCE(i.screening_reason, '') AS screening_reason,
        COALESCE(i.llm_recommended, 0) AS llm_recommended,
        MAX(COALESCE(i.llm_relevance_score, 0), COALESCE((
          SELECT MAX(history.relevance_score) FROM recommendation_audit_events history
@@ -4672,6 +4676,12 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
               OR lower(history.screening_reason) LIKE '%draft incomplete%'
             )))
         ) THEN 'reviewing'
+        WHEN i.analysis_source = 'deepseek_verification_pending' THEN 'reviewing'
+        WHEN i.analysis_source = 'deepseek_screened'
+          OR (i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded' AND (
+            lower(i.screening_reason) LIKE '%timeout%' OR lower(i.screening_reason) LIKE '%aborted%'
+            OR lower(i.screening_reason) LIKE '%temporarily unavailable%'
+          )) THEN 'queued'
         WHEN i.analysis_source LIKE 'deepseek%' OR EXISTS (
           SELECT 1 FROM recommendation_audit_events review
           WHERE review.space_id = p.space_id AND review.paper_id = p.id AND review.is_paper = 1
@@ -5072,6 +5082,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   }));
   const dailyBrief = dailyBriefRow ? {
     date: dailyBriefRow.brief_date,
+    isCurrent: dailyBriefRow.brief_date === shanghaiDateKey(new Date(now)),
     status: dailyBriefRow.status,
     headlineZh: sanitizeRetiredFulltextCopy(dailyBriefRow.headline_zh),
     headlineEn: sanitizeRetiredFulltextCopy(dailyBriefRow.headline_en),
@@ -5461,6 +5472,7 @@ export async function GET(request: Request) {
   try {
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
+    await recordMonitorVisitActivity(context.database, context.space.id);
     return Response.json(await readState(context.database, context.space));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to load monitoring state" }, { status: 500 });

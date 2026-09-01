@@ -5,8 +5,10 @@ import test from "node:test";
 
 import {
   MONITOR_OPERATIONAL_ALERT_BUCKET_MS,
+  MONITOR_QUALITY_QUEUE_STALL_GRACE_MS,
   consecutiveMonitorFailureCount,
   evaluateMonitorOperationalSentinel,
+  monitorQualityQueueHealth,
   monitorOperationalEventId,
   recordMonitorOperationalSentinel,
 } from "../lib/monitor-operational-sentinel.ts";
@@ -33,6 +35,10 @@ function snapshot(overrides = {}) {
     recentSourceFailureCount: 0,
     recentSourceCount: 0,
     recentFailedSources: [],
+    pendingQualityQueueCount: 0,
+    oldestPendingQualityAt: null,
+    qualityNextRunAt: "2026-08-27T08:10:00.000Z",
+    automationPauseReason: "",
     ...overrides,
   };
 }
@@ -115,6 +121,57 @@ test("operational sentinel distinguishes source degradation from a legitimate ze
   assert.deepEqual(degraded.issues, ["source_health_degraded"]);
 });
 
+test("quality queue health exposes age and distinguishes scheduling, intentional pause, and a real stall", () => {
+  assert.equal(MONITOR_QUALITY_QUEUE_STALL_GRACE_MS, 25 * 60 * 1000);
+  const scheduled = monitorQualityQueueHealth(snapshot({
+    pendingQualityQueueCount: 152,
+    oldestPendingQualityAt: "2026-08-27T05:00:00.000Z",
+    qualityNextRunAt: "2026-08-27T08:10:00.000Z",
+  }), NOW);
+  assert.deepEqual(scheduled, {
+    status: "scheduled",
+    pendingCount: 152,
+    oldestAgeMinutes: 180,
+    overdueMinutes: 0,
+    stallReason: "awaiting_scheduler",
+  });
+
+  const paused = monitorQualityQueueHealth(snapshot({
+    pendingQualityQueueCount: 152,
+    oldestPendingQualityAt: "2026-08-27T05:00:00.000Z",
+    automationPauseReason: "inactive",
+  }), NOW);
+  assert.equal(paused.status, "paused");
+  assert.equal(paused.stallReason, "inactive");
+
+  const stalledEvaluation = evaluateMonitorOperationalSentinel(snapshot({
+    pendingQualityQueueCount: 152,
+    oldestPendingQualityAt: "2026-08-27T05:00:00.000Z",
+    qualityNextRunAt: "2026-08-27T07:30:00.000Z",
+  }), [], NOW);
+  assert.equal(stalledEvaluation.qualityQueue.oldestAgeMinutes, 180);
+  assert.equal(stalledEvaluation.qualityQueue.overdueMinutes, 30);
+  assert.equal(stalledEvaluation.qualityQueue.stallReason, "scheduler_overdue");
+  assert.ok(stalledEvaluation.criticalIssues.includes("quality_queue_stalled"));
+});
+
+test("an active quality run is not stalled or capped by a large backlog", () => {
+  const result = evaluateMonitorOperationalSentinel(snapshot({
+    runStatus: "reviewing",
+    runActiveJobId: "job-quality",
+    activeJobCount: 1,
+    activeJobIds: ["job-quality"],
+    boundActiveJobCount: 1,
+    oldestActiveUpdatedAt: "2026-08-27T07:59:00.000Z",
+    pendingQualityQueueCount: 240,
+    oldestPendingQualityAt: "2026-08-25T08:00:00.000Z",
+    qualityNextRunAt: "2026-08-27T07:00:00.000Z",
+  }), [], NOW);
+  assert.equal(result.qualityQueue.status, "active");
+  assert.equal(result.qualityQueue.pendingCount, 240);
+  assert.doesNotMatch(result.issues.join(","), /quality_queue_stalled/);
+});
+
 test("operational sentinel escalates non-converging retry, queue gaps, and history regressions", () => {
   const result = evaluateMonitorOperationalSentinel(snapshot({
     runStatus: "error",
@@ -153,7 +210,8 @@ test("D1 sentinel persistence deduplicates active alerts and records later recov
     sqlite.exec(`
       CREATE TABLE monitor_runs (
         space_id TEXT PRIMARY KEY, status TEXT NOT NULL, active_job_id TEXT,
-        lock_expires_at TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        lock_expires_at TEXT, next_run_at TEXT, automation_pause_reason TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE monitor_scheduler_ticks (
         id TEXT PRIMARY KEY, started_at TEXT NOT NULL,
@@ -171,6 +229,29 @@ test("D1 sentinel persistence deduplicates active alerts and records later recov
         outcome TEXT NOT NULL DEFAULT 'info', duration_ms INTEGER NOT NULL DEFAULT 0,
         error_code TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '',
         metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE monitored_papers (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, canonical_id TEXT NOT NULL,
+        horizon TEXT NOT NULL, discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE paper_insights (
+        paper_id TEXT PRIMARY KEY, ever_recommended INTEGER NOT NULL DEFAULT 0,
+        analysis_model TEXT NOT NULL DEFAULT '', analysis_source TEXT NOT NULL DEFAULT 'metadata',
+        verification_status TEXT NOT NULL DEFAULT 'not_required', screening_reason TEXT NOT NULL DEFAULT ''
+      );
+      CREATE TABLE paper_feedback (
+        space_id TEXT NOT NULL, paper_id TEXT NOT NULL, feedback TEXT
+      );
+      CREATE TABLE monitor_candidate_sources (
+        space_id TEXT NOT NULL, paper_id TEXT NOT NULL, source_key TEXT NOT NULL, query_key TEXT NOT NULL
+      );
+      CREATE TABLE monitor_discovery_coverage (
+        space_id TEXT NOT NULL, horizon TEXT NOT NULL, source_key TEXT NOT NULL,
+        query_key TEXT NOT NULL, route_id TEXT
+      );
+      CREATE TABLE research_track_papers (
+        space_id TEXT NOT NULL, canonical_id TEXT NOT NULL, track_id TEXT NOT NULL,
+        curation_status TEXT NOT NULL DEFAULT 'active'
       );
       INSERT INTO monitor_runs (space_id, status) VALUES ('space-a', 'ready');
       INSERT INTO monitor_scheduler_ticks (id, started_at) VALUES ('tick-a', CURRENT_TIMESTAMP);

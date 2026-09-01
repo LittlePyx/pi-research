@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import {
+  archiveQualityStagePresentation,
+  isRecommendationQualityStage,
+  routeDiscoveryPresentation,
+} from "../lib/discovery-archive-semantics.mjs";
 
 const monitor = readFileSync(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app/research-app.tsx", import.meta.url), "utf8");
@@ -15,10 +20,37 @@ test("the paper library keeps the discovery archive separate from the recommenda
 test("archived discoveries are visible without being mislabeled as recommendations", () => {
   assert.match(app, /useState<LibraryFilter>\("all"\)/);
   assert.match(app, /"全部发现"/);
-  assert.match(app, /"发现归档"/);
-  assert.match(app, /"已评审归档"/);
-  assert.match(app, /不等同于推荐/);
+  assert.match(app, /archiveQualityStagePresentation/);
+  assert.match(app, /screeningReason/);
+  assert.match(app, /isRecommendationQualityStage/);
   assert.match(app, /if \(libraryFilter === "inbox" && !belongsToRecommendationInbox\) return false/);
+});
+
+test("rejected route discoveries remain traceable without being presented as recommendations or route evidence", () => {
+  assert.equal(isRecommendationQualityStage("reviewed"), false);
+  assert.equal(isRecommendationQualityStage("reviewing"), true);
+  assert.deepEqual(archiveQualityStagePresentation("reviewed", "zh"), {
+    label: "评审未入选",
+    kicker: "质量评审结果",
+    note: "Pi 已完成质量评审，但这篇论文没有通过最终推荐门槛；它仅保留在探索账本中供检索，不构成路线证据或正式推荐。",
+  });
+  assert.equal(routeDiscoveryPresentation("reviewed", "zh").label, "发现线索");
+  assert.match(routeDiscoveryPresentation("reviewed", "zh").fallbackTitle, /未入选推荐.*不是路线证据/);
+  assert.equal(routeDiscoveryPresentation("reviewing", "en").label, "Candidate source");
+  assert.equal(routeDiscoveryPresentation("recommended", "en").label, "Recommendation source");
+  assert.match(monitor, /if \(!isPublishedRecommendation\(review\).*return \[\]/);
+  assert.match(monitor, /await upsertPendingResearchMapEvidence\(database, proposals\)/);
+});
+
+test("quick-screened and retryable degraded candidates remain queued instead of looking rejected", () => {
+  assert.deepEqual(archiveQualityStagePresentation("queued", "en"), {
+    label: "Awaiting quality review",
+    kicker: "SHARED QUALITY QUEUE",
+    note: "This paper is in the shared quality queue, but deep quality review is not complete. It is currently only a candidate lead and is neither route evidence nor a formal recommendation.",
+  });
+  assert.equal(routeDiscoveryPresentation("queued", "zh").label, "候选线索");
+  assert.match(monitor, /WHEN i\.analysis_source = 'deepseek_screened'[\s\S]*THEN 'queued'/);
+  assert.ok(monitor.indexOf("THEN 'queued'") < monitor.indexOf("WHEN i.analysis_source LIKE 'deepseek%'"));
 });
 
 test("library overview counts the archive instead of repeating recommendation inbox metrics", () => {

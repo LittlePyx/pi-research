@@ -193,10 +193,11 @@ test("screening refreshes stale fallback plans and enriches evidence before deep
 });
 
 test("today and its daily brief are capped at six and reranked across directions", async () => {
-  const [monitor, client, styles] = await Promise.all([
+  const [monitor, client, styles, archiveSemantics] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../lib/discovery-archive-semantics.mjs", import.meta.url), "utf8"),
   ]);
 
   assert.match(monitor, /function selectDiverseItems/);
@@ -209,7 +210,9 @@ test("today and its daily brief are capped at six and reranked across directions
   assert.match(client, /v2-daily-paper-authors/);
   assert.match(client, /v2-daily-paper-publication/);
   assert.match(client, /PaperDiscoverySourceBadge/);
-  assert.match(client, /推荐来源/);
+  assert.match(client, /routeDiscoveryPresentation/);
+  assert.match(archiveSemantics, /推荐来源/);
+  assert.match(archiveSemantics, /发现线索/);
   assert.match(monitor, /论文引用网络扩展/);
   assert.match(client, /PaperFreshnessBadge/);
   assert.match(client, /近 14 天新论文/);
