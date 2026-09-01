@@ -544,6 +544,7 @@ test("route portfolio deduplicates papers across routes and separates each quali
 function routeAttentionFixture(overrides = {}) {
   return {
     id: "track-stable",
+    monitoringStatus: "active",
     papers: [{ id: "paper-visible" }],
     buildStatus: "ready",
     queuedForReviewCount: 0,
@@ -574,6 +575,14 @@ test("route attention stays honest and prioritizes recovery before downstream ac
   ]);
   assert.equal(selected.trackId, "degraded");
   assert.equal(selected.kind, "recover");
+
+  assert.equal(selectResearchRouteAttention([
+    routeAttentionFixture({ id: "paused-empty", monitoringStatus: "paused", papers: [] }),
+    routeAttentionFixture({ id: "active-stable" }),
+  ]).trackId, "active-stable");
+  assert.equal(selectResearchRouteAttention([
+    routeAttentionFixture({ id: "paused-only", monitoringStatus: "paused" }),
+  ]), null);
 });
 
 test("legacy reconcile never promotes a pending model proposal", async () => {

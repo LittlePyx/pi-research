@@ -39,6 +39,7 @@ export async function requestResearchTrackIntelligenceRefresh(
       intelligence_lock_token = NULL, intelligence_lock_expires_at = NULL,
       intelligence_refresh_requested_at = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND space_id = ?
+      AND COALESCE(monitoring_status, 'active') = 'active'
       AND (intelligence_status <> 'running' OR intelligence_lock_expires_at IS NULL OR intelligence_lock_expires_at <= ?)
       AND EXISTS (
        SELECT 1 FROM research_track_papers tp
@@ -63,6 +64,7 @@ export async function claimResearchTrackIntelligence(
       `SELECT rt.id, rt.intelligence_attempt_count
        FROM research_tracks rt
        WHERE rt.space_id = ? AND rt.build_status IN ('ready', 'partial')
+        AND COALESCE(rt.monitoring_status, 'active') = 'active'
         AND (? IS NULL OR rt.id = ?)
         AND EXISTS (
          SELECT 1 FROM research_track_papers tp

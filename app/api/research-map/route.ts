@@ -29,6 +29,7 @@ type TrackRow = {
   build_error: string | null;
   build_retry_at: string | null;
   user_role: ResearchDirectionRole;
+  monitoring_status: string;
   depth_score: number;
   support_score: number;
   interaction_score: number;
@@ -1176,7 +1177,7 @@ async function advanceDirectionIntelligence(
   if (!claim) return { status: "idle" as const };
 
   const track = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
   ).bind(claim.trackId, space.id).first<TrackRow>();
   if (!track) {
     const deferred = await deferResearchTrackIntelligence(database, {
@@ -1704,7 +1705,7 @@ function heatLevel(score: number, recentPaperCount: number): ResearchHeatLevel {
 
 async function structureExistingTracks(database: D1Database, workspaceId: string, space: SpaceRow, memory: string, apiKey: string) {
   const tracks = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
+    "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position",
   ).bind(space.id).all<TrackRow>();
   if (tracks.results.length < 2) return;
   const parsed = await callDeepSeek<{
@@ -1744,7 +1745,7 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
   const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult, routePortfolioCounts] = await Promise.all([
-    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
+    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
       `SELECT tp.id, tp.track_id, tp.canonical_id, tp.doi, tp.title, tp.authors, tp.venue, tp.url,
@@ -1808,6 +1809,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     summaryEn: row.summary_en,
     expansionCount: row.expansion_count,
     userRole: DIRECTION_ROLES.has(row.user_role) ? row.user_role : "explore",
+    monitoringStatus: row.monitoring_status === "paused" ? "paused" : "active",
     depthScore: Math.min(100, row.depth_score + row.interaction_score),
     supportScore: row.support_score,
     interactionScore: row.interaction_score,
@@ -1900,12 +1902,13 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const currentPaperRevision = researchPaperSetRevision(activePaperRows.map(toCoverageCandidate));
   const storedCoverage = storedNetworkState.coverage;
   const needsStructure = tracks.length > 1 && !edges.length;
-  const retryableTrackIds = tracks.filter((track) => track.buildStatus === "retryable" && track.buildAttemptCount < MAX_RESEARCH_TRACK_BUILD_ATTEMPTS).map((track) => track.id);
-  const pendingTrackIds = tracks.filter((track) => track.buildStatus === "queued").map((track) => track.id).concat(retryableTrackIds);
-  const partialTrackIds = tracks.filter((track) => track.buildStatus === "partial").map((track) => track.id);
-  const emptyTrackIds = tracks.filter((track) => track.buildStatus === "empty").map((track) => track.id);
-  const failedTrackIds = tracks.filter((track) => track.buildStatus === "failed").map((track) => track.id);
-  const intelligenceEligibleTracks = tracks.filter((track) => ["ready", "partial"].includes(track.buildStatus) && track.papers.length > 0);
+  const activeTracks = tracks.filter((track) => track.monitoringStatus === "active");
+  const retryableTrackIds = activeTracks.filter((track) => track.buildStatus === "retryable" && track.buildAttemptCount < MAX_RESEARCH_TRACK_BUILD_ATTEMPTS).map((track) => track.id);
+  const pendingTrackIds = activeTracks.filter((track) => track.buildStatus === "queued").map((track) => track.id).concat(retryableTrackIds);
+  const partialTrackIds = activeTracks.filter((track) => track.buildStatus === "partial").map((track) => track.id);
+  const emptyTrackIds = activeTracks.filter((track) => track.buildStatus === "empty").map((track) => track.id);
+  const failedTrackIds = activeTracks.filter((track) => track.buildStatus === "failed").map((track) => track.id);
+  const intelligenceEligibleTracks = activeTracks.filter((track) => ["ready", "partial"].includes(track.buildStatus) && track.papers.length > 0);
   const intelligenceNow = new Date().toISOString();
   const readyIntelligenceTracks = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus === "ready" && track.intelligence);
   const pendingIntelligenceTrackIds = intelligenceEligibleTracks.filter((track) => track.intelligenceStatus === "pending"
@@ -1927,8 +1930,9 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       recommendedCount: routeCount(routePortfolioCounts?.recommended_count),
       acceptedCount: routeCount(routePortfolioCounts?.accepted_count),
       pendingEvidenceCount: routeCount(routePortfolioCounts?.pending_evidence_count),
-      readyRouteCount: tracks.filter((track) => track.buildStatus === "ready").length,
-      degradedRouteCount: tracks.filter((track) => ["partial", "retryable", "empty", "failed"].includes(track.buildStatus)).length,
+      readyRouteCount: activeTracks.filter((track) => track.buildStatus === "ready").length,
+      degradedRouteCount: activeTracks.filter((track) => ["partial", "retryable", "empty", "failed"].includes(track.buildStatus)).length,
+      pausedRouteCount: tracks.filter((track) => track.monitoringStatus === "paused").length,
     },
     edges,
     paperEdges,
@@ -1956,8 +1960,8 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     generated: tracks.length > 0,
     needsStructure,
     buildProgress: {
-      ready: tracks.filter((track) => track.papers.length > 0).length,
-      total: tracks.length,
+      ready: activeTracks.filter((track) => track.papers.length > 0).length,
+      total: activeTracks.length,
       pendingTrackIds,
       retryableTrackIds,
       partialTrackIds,
@@ -2094,9 +2098,12 @@ export async function POST(request: Request) {
     const targetedExpanding = gapExpanding || problemExpanding || actionExpanding;
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
-      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+      "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
     ).bind(trackId, space.id).first<TrackRow>();
     if (!track) return Response.json({ error: "Research direction not found" }, { status: 404 });
+    if (track.monitoring_status === "paused" && ["hydrate", "expand", "expand-gap", "expand-problem", "expand-action"].includes(payload.action || "")) {
+      return Response.json({ error: "This research direction is paused. Resume it before starting new discovery." }, { status: 409 });
+    }
     if (hydrating && track.build_status === "ready") return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
     if (hydrating && track.build_attempt_count >= MAX_RESEARCH_TRACK_BUILD_ATTEMPTS && payload.force !== true) {
       return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0, retryLimitReached: true }));
@@ -2352,16 +2359,24 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; trackId?: string; userRole?: ResearchDirectionRole };
+    const payload = await request.json() as { spaceId?: string; trackId?: string; userRole?: ResearchDirectionRole; monitoringStatus?: "active" | "paused" };
     const spaceId = payload.spaceId?.trim() || "";
     const trackId = payload.trackId?.trim() || "";
-    if (!spaceId || !trackId || !DIRECTION_ROLES.has(payload.userRole as ResearchDirectionRole)) {
-      return Response.json({ error: "spaceId, trackId, and a valid userRole are required" }, { status: 400 });
+    const hasUserRole = DIRECTION_ROLES.has(payload.userRole as ResearchDirectionRole);
+    const hasMonitoringStatus = payload.monitoringStatus === "active" || payload.monitoringStatus === "paused";
+    if (!spaceId || !trackId || (!hasUserRole && !hasMonitoringStatus)) {
+      return Response.json({ error: "spaceId, trackId, and a valid userRole or monitoringStatus are required" }, { status: 400 });
     }
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
-    await context.database.prepare("UPDATE research_tracks SET user_role = ?, interaction_score = MIN(35, interaction_score + 3), intelligence_status = 'pending', intelligence_attempt_count = 0, intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL, intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
-      .bind(payload.userRole, trackId, context.space.id).run();
+    if (hasUserRole) {
+      await context.database.prepare("UPDATE research_tracks SET user_role = ?, interaction_score = MIN(35, interaction_score + 3), intelligence_status = 'pending', intelligence_attempt_count = 0, intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL, intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+        .bind(payload.userRole, trackId, context.space.id).run();
+    }
+    if (hasMonitoringStatus) {
+      await context.database.prepare("UPDATE research_tracks SET monitoring_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+        .bind(payload.monitoringStatus, trackId, context.space.id).run();
+    }
     return Response.json(await readMap(context.database, context.space.id));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to update the research direction" }, { status: 500 });

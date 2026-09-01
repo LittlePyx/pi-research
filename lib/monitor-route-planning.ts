@@ -54,7 +54,7 @@ export type ReviewableScanWork<TScreen extends { canonicalId: string }> = {
 export type MonitorWriteResult = { meta?: { changes?: number } };
 
 export const RESEARCH_GUIDANCE_TRACKS_SQL =
-  "SELECT id, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY id";
+  "SELECT id, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? AND COALESCE(monitoring_status, 'active') = 'active' ORDER BY id";
 
 export const RESEARCH_GUIDANCE_REVISIONS_SQL = `SELECT
  COALESCE((SELECT MAX(updated_at) FROM research_preference_signals WHERE space_id = ? AND active = 1), '') AS preference_revision,
@@ -69,7 +69,8 @@ export const RESEARCH_GUIDANCE_REVISIONS_SQL = `SELECT
 export const RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL = `SELECT ep.track_id, p.canonical_id, p.title, ep.map_role, ep.confidence, ep.updated_at
  FROM research_map_evidence_proposals ep
  JOIN monitored_papers p ON p.id = ep.paper_id AND p.space_id = ep.space_id
- WHERE ep.space_id = ? AND ep.status = 'confirmed'
+ JOIN research_tracks track ON track.id = ep.track_id AND track.space_id = ep.space_id
+ WHERE ep.space_id = ? AND ep.status = 'confirmed' AND COALESCE(track.monitoring_status, 'active') = 'active'
  ORDER BY ep.updated_at DESC, ep.rowid DESC LIMIT 24`;
 
 export const LATEST_AUDIT_ROUTE_ORIGIN_SUBQUERY = `(SELECT space_id, paper_id, source_key, route_id FROM (

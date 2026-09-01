@@ -221,7 +221,12 @@ export type ResearchRoutePortfolio = {
   pendingEvidenceCount: number;
   readyRouteCount: number;
   degradedRouteCount: number;
+  pausedRouteCount: number;
 };
+
+export type ResearchRouteMonitoringStatus = "active" | "paused";
+export type ResearchRouteOperationalStatus = "paused" | "retryable" | "degraded" | "learning" | "healthy" | "scheduled";
+export type ResearchRouteLearningSignal = "paused" | "reinforcing" | "awaiting_feedback" | "rebalancing" | "observing" | "neutral";
 
 export type ResearchRouteAttentionKind = "recover" | "today" | "quality_review" | "confirm_evidence" | "evidence_gap" | "maintain";
 
@@ -233,6 +238,7 @@ export type ResearchRouteAttention = {
 };
 
 export function researchRouteAttention(track: ResearchTrack): ResearchRouteAttention {
+  if (track.monitoringStatus === "paused") return { trackId: track.id, kind: "maintain", count: 0, priority: -1 };
   const visibleEvidence = track.papers.length;
   const inQualityReview = Math.max(0, track.queuedForReviewCount) + Math.max(0, track.reviewingForReviewCount);
   const unhandledRecommendations = Math.max(0, track.recommendedCandidateCount - track.discoveryEffect.acceptedCount);
@@ -251,8 +257,29 @@ export function researchRouteAttention(track: ResearchTrack): ResearchRouteAtten
 }
 
 export function selectResearchRouteAttention(tracks: ResearchTrack[]) {
-  return tracks.map(researchRouteAttention).sort((left, right) => right.priority - left.priority
+  return tracks.filter((track) => track.monitoringStatus !== "paused").map(researchRouteAttention).sort((left, right) => right.priority - left.priority
     || left.trackId.localeCompare(right.trackId))[0] || null;
+}
+
+export function researchRouteOperationalStatus(track: ResearchTrack): ResearchRouteOperationalStatus {
+  if (track.monitoringStatus === "paused") return "paused";
+  const visibleEvidence = track.papers?.length || 0;
+  if (["retryable", "empty", "failed"].includes(track.buildStatus) || (track.buildStatus === "ready" && !visibleEvidence)) return "retryable";
+  if (track.buildStatus === "partial" || track.intelligenceStatus === "retryable") return "degraded";
+  if ((track.queuedForReviewCount || 0) + (track.reviewingForReviewCount || 0) > 0
+    || track.intelligenceStatus === "pending" || track.intelligenceStatus === "running") return "learning";
+  if (track.buildStatus === "ready") return "healthy";
+  return "scheduled";
+}
+
+export function researchRouteLearningSignal(track: ResearchTrack): ResearchRouteLearningSignal {
+  if (track.monitoringStatus === "paused") return "paused";
+  const effect = track.discoveryEffect;
+  if ((effect?.acceptedCount || 0) > 0) return "reinforcing";
+  if ((effect?.recommendedCount || 0) > (effect?.acceptedCount || 0)) return "awaiting_feedback";
+  if ((effect?.deepReviewedCount || 0) >= 3 && !(effect?.recommendedCount || 0)) return "rebalancing";
+  if ((effect?.discoveredCount || 0) > 0 || (track.queuedForReviewCount || 0) + (track.reviewingForReviewCount || 0) > 0) return "observing";
+  return "neutral";
 }
 
 export type ResearchTrack = {
@@ -263,6 +290,7 @@ export type ResearchTrack = {
   summaryEn: string;
   expansionCount: number;
   userRole: ResearchDirectionRole;
+  monitoringStatus: ResearchRouteMonitoringStatus;
   depthScore: number;
   supportScore: number;
   interactionScore: number;
@@ -390,6 +418,7 @@ export function emptyResearchMapState(): ResearchMapState {
       pendingEvidenceCount: 0,
       readyRouteCount: 0,
       degradedRouteCount: 0,
+      pausedRouteCount: 0,
     },
     paperNetwork: {
       status: "idle",

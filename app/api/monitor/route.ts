@@ -1285,7 +1285,8 @@ async function routeDiscoveryQueries(
         )
        GROUP BY event.space_id, event.route_id
      ) behavior ON behavior.space_id = t.space_id AND behavior.route_id = t.id
-      WHERE t.space_id = ? GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score,
+      WHERE t.space_id = ? AND COALESCE(t.monitoring_status, 'active') = 'active'
+      GROUP BY t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score,
       t.interaction_score, behavior.passive_engagement, t.intelligence_json, t.intelligence_updated_at,
       synthesis.overview_en, synthesis.next_search_query, synthesis.confidence, synthesis.input_revision,
       problem.id, problem.status, problem.question, problem.updated_at
@@ -1804,9 +1805,11 @@ async function fetchCitationFrontier(
   relations: Array<"references" | "citations">,
 ) {
   const seeds = await database.prepare(
-    `SELECT track_id, doi, url, title FROM research_track_papers
-     WHERE space_id = ? AND curation_status = 'active' AND (doi IS NOT NULL OR url LIKE '%arxiv.org/%')
-     ORDER BY CASE role WHEN 'milestone' THEN 0 ELSE 1 END, citation_count DESC, created_at ASC LIMIT 24`,
+    `SELECT paper.track_id, paper.doi, paper.url, paper.title FROM research_track_papers paper
+     JOIN research_tracks track ON track.id = paper.track_id AND track.space_id = paper.space_id
+     WHERE paper.space_id = ? AND paper.curation_status = 'active'
+      AND COALESCE(track.monitoring_status, 'active') = 'active' AND (paper.doi IS NOT NULL OR paper.url LIKE '%arxiv.org/%')
+     ORDER BY CASE paper.role WHEN 'milestone' THEN 0 ELSE 1 END, paper.citation_count DESC, paper.created_at ASC LIMIT 24`,
   ).bind(space.id).all<{ track_id: string; doi: string | null; url: string; title: string }>();
   if (!seeds.results.length) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
   const seed = selectCitationRouteSeed(seeds.results, horizon.key, round);
@@ -2170,7 +2173,8 @@ async function ensureDailyQueryPlan(
        COALESCE(synthesis.confidence, 0) AS synthesis_confidence
        FROM research_tracks track LEFT JOIN research_syntheses synthesis
         ON synthesis.space_id = track.space_id AND synthesis.track_id = track.id AND synthesis.status IN ('ready', 'partial')
-       WHERE track.space_id = ? ORDER BY CASE track.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END,
+       WHERE track.space_id = ? AND COALESCE(track.monitoring_status, 'active') = 'active'
+       ORDER BY CASE track.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END,
        track.interaction_score DESC, track.depth_score DESC LIMIT 10`,
     ).bind(space.id).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; support_score: number; interaction_score: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number }>(),
     database.prepare(
@@ -2192,7 +2196,10 @@ async function ensureDailyQueryPlan(
           WHERE run.problem_id = problem.id AND run.status = 'ready' AND run.verification_status IN ('verified', 'revised') ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS latest_action_decision_en
         ,COALESCE((SELECT run.search_query FROM research_action_runs run
           WHERE run.problem_id = problem.id AND run.status = 'ready' AND run.verification_status IN ('verified', 'revised') AND run.search_query != '' ORDER BY run.completed_at DESC, run.rowid DESC LIMIT 1), '') AS latest_action_search_query
-       FROM research_problems problem WHERE problem.space_id = ? AND problem.status = 'active'
+       FROM research_problems problem
+       JOIN research_tracks problem_track ON problem_track.id = problem.track_id AND problem_track.space_id = problem.space_id
+       WHERE problem.space_id = ? AND problem.status = 'active'
+        AND COALESCE(problem_track.monitoring_status, 'active') = 'active'
        ORDER BY problem.updated_at DESC LIMIT 8`,
     ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; next_search_query: string; latest_action_result_en: string; latest_action_decision_en: string; latest_action_search_query: string }>(),
     database.prepare(
@@ -2314,7 +2321,7 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
       "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 6",
     ).bind(space.id).all<{ analysis_json: string }>(),
     database.prepare(
-      "SELECT title_en, summary_en, search_queries FROM research_tracks WHERE space_id = ? ORDER BY interaction_score DESC, depth_score DESC, position LIMIT 8",
+      "SELECT title_en, summary_en, search_queries FROM research_tracks WHERE space_id = ? AND COALESCE(monitoring_status, 'active') = 'active' ORDER BY interaction_score DESC, depth_score DESC, position LIMIT 8",
     ).bind(space.id).all<{ title_en: string; summary_en: string; search_queries: string }>(),
     database.prepare(
       `SELECT p.title, p.venue, f.feedback, f.saved, f.reason_code FROM paper_feedback f

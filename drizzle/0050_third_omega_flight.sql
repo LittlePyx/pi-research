@@ -1,0 +1,1 @@
+ALTER TABLE `research_tracks` ADD `monitoring_status` text DEFAULT 'active' NOT NULL;

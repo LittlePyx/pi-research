@@ -33,7 +33,7 @@ function fixture() {
   sqlite.exec(`
     CREATE TABLE research_tracks (
       id TEXT PRIMARY KEY, space_id TEXT NOT NULL, build_status TEXT NOT NULL DEFAULT 'ready',
-      user_role TEXT NOT NULL DEFAULT 'explore', position INTEGER NOT NULL DEFAULT 0,
+      user_role TEXT NOT NULL DEFAULT 'explore', monitoring_status TEXT NOT NULL DEFAULT 'active', position INTEGER NOT NULL DEFAULT 0,
       intelligence_json TEXT NOT NULL DEFAULT '{}', intelligence_model TEXT NOT NULL DEFAULT '',
       intelligence_updated_at TEXT, intelligence_status TEXT NOT NULL DEFAULT 'pending',
       intelligence_attempt_count INTEGER NOT NULL DEFAULT 0, intelligence_error TEXT,
@@ -129,6 +129,33 @@ test("requesting a refresh keeps old intelligence visible and makes the route cl
     assert.ok(await claimResearchTrackIntelligence(database, "space-a", {
       preferredTrackId: "track-a", now: new Date("2026-08-27T01:00:01.000Z"),
     }));
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("pausing a route blocks automatic intelligence work without clearing the saved assessment", async () => {
+  const { sqlite, database } = fixture();
+  try {
+    sqlite.prepare("UPDATE research_tracks SET monitoring_status = 'paused', intelligence_status = 'ready' WHERE id = 'track-a'").run();
+    assert.equal(await requestResearchTrackIntelligenceRefresh(
+      database, "space-a", "track-a", new Date("2026-08-27T02:00:00.000Z"),
+    ), 0);
+    assert.equal(await claimResearchTrackIntelligence(database, "space-a", {
+      preferredTrackId: "track-a", now: new Date("2026-08-27T02:00:01.000Z"),
+    }), null);
+    assert.deepEqual({ ...sqlite.prepare(
+      "SELECT monitoring_status, intelligence_json, intelligence_status FROM research_tracks WHERE id = 'track-a'",
+    ).get() }, {
+      monitoring_status: "paused",
+      intelligence_json: '{"assessmentZh":"旧研判"}',
+      intelligence_status: "ready",
+    });
+
+    sqlite.prepare("UPDATE research_tracks SET monitoring_status = 'active' WHERE id = 'track-a'").run();
+    assert.equal(await requestResearchTrackIntelligenceRefresh(
+      database, "space-a", "track-a", new Date("2026-08-27T02:01:00.000Z"),
+    ), 1);
   } finally {
     sqlite.close();
   }

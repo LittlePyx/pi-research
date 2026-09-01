@@ -1069,6 +1069,7 @@ export const researchTracks = sqliteTable(
     buildError: text("build_error"),
     buildRetryAt: text("build_retry_at"),
     userRole: text("user_role").notNull().default("explore"),
+    monitoringStatus: text("monitoring_status").notNull().default("active"),
     depthScore: integer("depth_score").notNull().default(0),
     supportScore: integer("support_score").notNull().default(0),
     interactionScore: integer("interaction_score").notNull().default(0),

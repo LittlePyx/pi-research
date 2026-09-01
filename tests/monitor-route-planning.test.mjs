@@ -233,7 +233,8 @@ test("interaction and confirmed route evidence change the durable guidance ident
     sqlite.exec(`
       CREATE TABLE research_tracks (
         id TEXT PRIMARY KEY, space_id TEXT, user_role TEXT, depth_score INTEGER, support_score INTEGER,
-        interaction_score INTEGER, intelligence_json TEXT, intelligence_updated_at TEXT
+        interaction_score INTEGER, intelligence_json TEXT, intelligence_updated_at TEXT,
+        monitoring_status TEXT NOT NULL DEFAULT 'active'
       );
       CREATE TABLE research_preference_signals (space_id TEXT, active INTEGER, updated_at TEXT);
       CREATE TABLE paper_feedback (space_id TEXT, updated_at TEXT);
@@ -247,7 +248,7 @@ test("interaction and confirmed route evidence change the durable guidance ident
       CREATE TABLE research_problems (space_id TEXT, status TEXT, updated_at TEXT);
       CREATE TABLE research_problem_assessments (space_id TEXT, created_at TEXT);
       CREATE TABLE research_action_runs (space_id TEXT, status TEXT, updated_at TEXT);
-      INSERT INTO research_tracks VALUES
+      INSERT INTO research_tracks (id, space_id, user_role, depth_score, support_score, interaction_score, intelligence_json, intelligence_updated_at) VALUES
         ('track-a', 'space-a', 'core', 70, 25, 1, '{}', NULL);
       INSERT INTO monitored_papers VALUES
         ('paper-a', 'space-a', 'doi:10.1/a', 'A newly confirmed route theorem'),

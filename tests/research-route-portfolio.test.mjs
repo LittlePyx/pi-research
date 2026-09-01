@@ -15,7 +15,7 @@ test("an unavailable target workspace starts from an isolated empty research sta
   assert.deepEqual(second.routePortfolio, {
     formalEvidenceCount: 0, structuralPaperCount: 0, discoveredCount: 0, queuedCount: 0, reviewingCount: 0,
     deepReviewedCount: 0, recommendedCount: 0, acceptedCount: 0,
-    pendingEvidenceCount: 0, readyRouteCount: 0, degradedRouteCount: 0,
+    pendingEvidenceCount: 0, readyRouteCount: 0, degradedRouteCount: 0, pausedRouteCount: 0,
   });
 
   const client = await readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8");
@@ -34,7 +34,8 @@ test("research-map API exposes one deduplicated route portfolio contract", async
   assert.match(route, /\.bind\(spaceId, spaceId, spaceId, spaceId\)\.first<RoutePortfolioCountRow>\(\)/);
   assert.match(route, /formalEvidenceCount:\s*routeCount\(routePortfolioCounts\?\.confirmed_evidence_count\)/);
   assert.match(route, /structuralPaperCount:\s*uniquePaperCount/);
-  assert.match(route, /degradedRouteCount:\s*tracks\.filter\(\(track\) => \["partial", "retryable", "empty", "failed"\]/);
+  assert.match(route, /degradedRouteCount:\s*activeTracks\.filter\(\(track\) => \["partial", "retryable", "empty", "failed"\]/);
+  assert.match(route, /pausedRouteCount:\s*tracks\.filter\(\(track\) => track\.monitoringStatus === "paused"\)/);
 });
 
 test("route funnel uses the same count model on desktop and narrow screens", async () => {
