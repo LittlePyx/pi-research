@@ -1233,6 +1233,54 @@ export const researchMapEvidenceProposalBootstrapSql = [
   "CREATE INDEX IF NOT EXISTS idx_research_map_evidence_proposals_paper_status ON research_map_evidence_proposals(paper_id, status)",
 ] as const;
 
+export const researchRouteRevisions = sqliteTable(
+  "research_route_revisions",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    status: text("status").notNull().default("proposed"),
+    inputRevision: text("input_revision").notNull(),
+    titleZh: text("title_zh").notNull(),
+    titleEn: text("title_en").notNull(),
+    summaryZh: text("summary_zh").notNull().default(""),
+    summaryEn: text("summary_en").notNull().default(""),
+    rationaleZh: text("rationale_zh").notNull().default(""),
+    rationaleEn: text("rationale_en").notNull().default(""),
+    previousTitleZh: text("previous_title_zh").notNull(),
+    previousTitleEn: text("previous_title_en").notNull(),
+    previousSummaryZh: text("previous_summary_zh").notNull().default(""),
+    previousSummaryEn: text("previous_summary_en").notNull().default(""),
+    previousSearchQueriesJson: text("previous_search_queries_json").notNull().default("[]"),
+    searchQueriesJson: text("search_queries_json").notNull().default("[]"),
+    sourcePaperIdsJson: text("source_paper_ids_json").notNull().default("[]"),
+    sourceStatementIdsJson: text("source_statement_ids_json").notNull().default("[]"),
+    sourcePapersJson: text("source_papers_json").notNull().default("[]"),
+    sourceStatementsJson: text("source_statements_json").notNull().default("[]"),
+    confidence: integer("confidence").notNull().default(0),
+    model: text("model").notNull().default(""),
+    decidedAt: text("decided_at"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_route_revisions_track_version").on(table.trackId, table.version),
+    uniqueIndex("idx_research_route_revisions_track_input").on(table.trackId, table.inputRevision),
+    index("idx_research_route_revisions_space_status").on(table.spaceId, table.status, table.updatedAt),
+    index("idx_research_route_revisions_track_created").on(table.trackId, table.createdAt),
+    check("research_route_revisions_status_check", sql`${table.status} in ('proposed', 'confirmed', 'dismissed', 'superseded')`),
+  ],
+);
+
+export const researchRouteRevisionBootstrapSql = [
+  "CREATE TABLE IF NOT EXISTS research_route_revisions (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, version INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'dismissed', 'superseded')), input_revision TEXT NOT NULL, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, summary_zh TEXT NOT NULL DEFAULT '', summary_en TEXT NOT NULL DEFAULT '', rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', previous_title_zh TEXT NOT NULL, previous_title_en TEXT NOT NULL, previous_summary_zh TEXT NOT NULL DEFAULT '', previous_summary_en TEXT NOT NULL DEFAULT '', previous_search_queries_json TEXT NOT NULL DEFAULT '[]', search_queries_json TEXT NOT NULL DEFAULT '[]', source_paper_ids_json TEXT NOT NULL DEFAULT '[]', source_statement_ids_json TEXT NOT NULL DEFAULT '[]', source_papers_json TEXT NOT NULL DEFAULT '[]', source_statements_json TEXT NOT NULL DEFAULT '[]', confidence INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', decided_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_route_revisions_track_version ON research_route_revisions(track_id, version)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_route_revisions_track_input ON research_route_revisions(track_id, input_revision)",
+  "CREATE INDEX IF NOT EXISTS idx_research_route_revisions_space_status ON research_route_revisions(space_id, status, updated_at)",
+  "CREATE INDEX IF NOT EXISTS idx_research_route_revisions_track_created ON research_route_revisions(track_id, created_at)",
+] as const;
+
 export const researchPaperEdges = sqliteTable(
   "research_paper_edges",
   {

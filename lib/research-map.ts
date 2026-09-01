@@ -185,6 +185,34 @@ export type ResearchTrackLatestChange = {
   createdAt: string;
 };
 
+export type ResearchRouteRevision = {
+  id: string;
+  version: number;
+  status: "proposed" | "confirmed" | "dismissed" | "superseded";
+  inputRevision: string;
+  titleZh: string;
+  titleEn: string;
+  summaryZh: string;
+  summaryEn: string;
+  rationaleZh: string;
+  rationaleEn: string;
+  previousTitleZh: string;
+  previousTitleEn: string;
+  previousSummaryZh: string;
+  previousSummaryEn: string;
+  previousSearchQueries: string[];
+  searchQueries: string[];
+  sourcePaperIds: string[];
+  sourceStatementIds: string[];
+  sourcePapers: Array<{ paperId: string; title: string; authors: string; venue: string; publishedAt: string | null }>;
+  sourceStatements: Array<{ statementId: string; kind: string; titleZh: string; titleEn: string; textZh: string; textEn: string; confidence: number; sourcePaperIds: string[] }>;
+  confidence: number;
+  model: string;
+  decidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ResearchRouteDiscoveryTask = {
   attempts: number;
   status: "planned" | "active";
@@ -305,6 +333,7 @@ export type ResearchTrack = {
   lastQueuedAt: string | null;
   discoveryEffect: ResearchRouteDiscoveryEffect;
   latestChange: ResearchTrackLatestChange | null;
+  routeRevisions?: ResearchRouteRevision[];
   buildStatus: ResearchTrackBuildStatus;
   buildAttemptCount: number;
   buildSourceStatuses: Array<{

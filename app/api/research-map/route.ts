@@ -5,13 +5,14 @@ import { fetchExternalSource } from "../../../lib/external-source-throttle";
 import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { isDatabaseVerifiedCitationEdge } from "../../../lib/paper-network";
-import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
+import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchRouteRevision, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
 import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, nextResearchTrackBuildAttemptCount, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTitleTopicalFit, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSelectionContradiction, type ResearchTrackPaperCurationReasonCode, type ResearchTrackPaperCurationStatus } from "../../../lib/research-map-curation";
 import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defensiveResearchTrackIntelligenceStatus, deferResearchTrackIntelligence, requestResearchTrackIntelligenceRefresh } from "../../../lib/research-map-intelligence";
 import { applyStoredResearchRoutePrecisionAudits, RESEARCH_ROUTE_PRECISION_GATE_VERSION, researchRoutePrecisionAuditProgress, routePrecisionAcceptedForActiveNode, routePrecisionAutoDeactivates, routePrecisionJudgmentIdentity, sanitizeResearchRoutePrecisionJudgments } from "../../../lib/research-map-precision";
 import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
+import { researchRouteEvolutionDecisionAllowed, researchRouteEvolutionInputRevision, sanitizeResearchRouteEvolution, type ResearchRouteEvolutionBasis, type ResearchRouteEvolutionDraft, type ResearchRouteEvolutionStatus } from "../../../lib/research-route-evolution";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -263,6 +264,74 @@ type TrackLatestChangeRow = {
   summary_en: string;
   confidence: number;
   created_at: string;
+};
+type RouteEvolutionEvidenceRow = {
+  paper_id: string;
+  title: string;
+  authors: string;
+  venue: string;
+  url: string;
+  published_at: string | null;
+  summary_zh: string;
+  summary_en: string;
+  rationale_zh: string;
+  rationale_en: string;
+  reading_status: string;
+  reading_note: string;
+  takeaway_zh: string;
+  takeaway_en: string;
+  decided_at: string | null;
+  updated_at: string | null;
+  reading_updated_at: string | null;
+  memory_updated_at: string | null;
+};
+type RouteEvolutionSynthesisRow = {
+  id: string;
+  input_revision: string;
+  overview_zh: string;
+  overview_en: string;
+  change_summary_zh: string;
+  change_summary_en: string;
+  next_search_query: string;
+  confidence: number;
+};
+type RouteEvolutionStatementRow = {
+  id: string;
+  kind: string;
+  title_zh: string;
+  title_en: string;
+  text_zh: string;
+  text_en: string;
+  confidence: number;
+  source_paper_ids: string;
+};
+type RouteEvolutionRevisionRow = {
+  id: string;
+  track_id: string;
+  version: number;
+  status: ResearchRouteEvolutionStatus;
+  input_revision: string;
+  title_zh: string;
+  title_en: string;
+  summary_zh: string;
+  summary_en: string;
+  rationale_zh: string;
+  rationale_en: string;
+  previous_title_zh: string;
+  previous_title_en: string;
+  previous_summary_zh: string;
+  previous_summary_en: string;
+  previous_search_queries_json: string;
+  search_queries_json: string;
+  source_paper_ids_json: string;
+  source_statement_ids_json: string;
+  source_papers_json: string;
+  source_statements_json: string;
+  confidence: number;
+  model: string;
+  decided_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 type DirectionIntelligenceDraft = {
   directionKey: string;
@@ -1743,8 +1812,221 @@ async function structureExistingTracks(database: D1Database, workspaceId: string
   }
 }
 
+async function routeEvolutionBasis(database: D1Database, spaceId: string, track: TrackRow) {
+  const [evidenceResult, synthesis] = await Promise.all([
+    database.prepare(
+      `SELECT proposal.paper_id, paper.title, paper.authors, paper.venue, paper.url, paper.published_at,
+       insight.summary_zh, insight.summary_en, proposal.rationale_zh, proposal.rationale_en,
+       COALESCE(reading.status, 'unread') AS reading_status, COALESCE(reading.note, '') AS reading_note,
+       COALESCE(memory.takeaway_zh, '') AS takeaway_zh, COALESCE(memory.takeaway_en, '') AS takeaway_en,
+       proposal.decided_at, proposal.updated_at, reading.updated_at AS reading_updated_at,
+       memory.updated_at AS memory_updated_at
+       FROM research_map_evidence_proposals proposal
+       JOIN monitored_papers paper ON paper.id = proposal.paper_id AND paper.space_id = proposal.space_id
+       JOIN paper_insights insight ON insight.paper_id = proposal.paper_id AND insight.space_id = proposal.space_id
+       LEFT JOIN paper_reading_progress reading ON reading.paper_id = proposal.paper_id AND reading.space_id = proposal.space_id
+       LEFT JOIN paper_reading_memories memory ON memory.paper_id = proposal.paper_id AND memory.space_id = proposal.space_id
+       WHERE proposal.space_id = ? AND proposal.track_id = ? AND proposal.status = 'confirmed'
+        AND insight.ever_recommended = 1 AND insight.verification_status IN ('verified', 'revised')
+        AND insight.verification_coverage_score >= 70
+       ORDER BY COALESCE(proposal.decided_at, proposal.updated_at) DESC, proposal.rowid DESC LIMIT 12`,
+    ).bind(spaceId, track.id).all<RouteEvolutionEvidenceRow>(),
+    database.prepare(
+      `SELECT id, input_revision, overview_zh, overview_en, change_summary_zh, change_summary_en,
+       next_search_query, confidence FROM research_syntheses
+       WHERE space_id = ? AND track_id = ? AND status IN ('ready', 'partial') LIMIT 1`,
+    ).bind(spaceId, track.id).first<RouteEvolutionSynthesisRow>(),
+  ]);
+  const allowedPaperIds = new Set(evidenceResult.results.map((row) => row.paper_id));
+  const statementResult = synthesis ? await database.prepare(
+    `SELECT id, kind, title_zh, title_en, text_zh, text_en, confidence, source_paper_ids
+     FROM research_synthesis_statements WHERE synthesis_id = ? ORDER BY position LIMIT 16`,
+  ).bind(synthesis.id).all<RouteEvolutionStatementRow>() : { results: [] as RouteEvolutionStatementRow[] };
+  const statements = statementResult.results.filter((statement) => parseJsonArray(statement.source_paper_ids).some((paperId) => allowedPaperIds.has(paperId)));
+  const basis: ResearchRouteEvolutionBasis = {
+    trackId: track.id,
+    titleZh: track.title_zh,
+    titleEn: track.title_en,
+    summaryZh: track.summary_zh,
+    summaryEn: track.summary_en,
+    searchQueries: parseJsonArray(track.search_queries),
+    evidence: evidenceResult.results.map((row) => ({
+      paperId: row.paper_id,
+      decidedAt: row.decided_at,
+      updatedAt: row.updated_at,
+      readingStatus: row.reading_status,
+      readingUpdatedAt: row.reading_updated_at,
+      memoryUpdatedAt: row.memory_updated_at,
+    })),
+    synthesisRevision: synthesis?.input_revision || "",
+    statementIds: statements.map((statement) => statement.id),
+  };
+  return {
+    basis,
+    inputRevision: researchRouteEvolutionInputRevision(basis),
+    evidence: evidenceResult.results,
+    synthesis,
+    statements,
+  };
+}
+
+async function proposeResearchRouteEvolution(
+  database: D1Database,
+  workspaceId: string,
+  space: SpaceRow,
+  track: TrackRow,
+  memory: string,
+  apiKey: string,
+) {
+  const source = await routeEvolutionBasis(database, space.id, track);
+  if (!source.evidence.length) return { error: "Confirm at least one independently verified recommendation before evolving this route", status: 422 as const };
+  const existing = await database.prepare(
+    "SELECT id, status FROM research_route_revisions WHERE space_id = ? AND track_id = ? AND input_revision = ? LIMIT 1",
+  ).bind(space.id, track.id, source.inputRevision).first<{ id: string; status: ResearchRouteEvolutionStatus }>();
+  if (existing?.status === "proposed") return { revisionId: existing.id, cached: true };
+  if (existing) return { error: "No new confirmed evidence, reading outcome, or synthesis revision is available for another route version", status: 422 as const };
+  const evidence = source.evidence.map((row) => ({
+    paperId: row.paper_id,
+    title: row.title,
+    authors: row.authors,
+    venue: row.venue,
+    publishedAt: row.published_at,
+    summaryZh: row.summary_zh,
+    summaryEn: row.summary_en,
+    routeRationaleZh: row.rationale_zh,
+    routeRationaleEn: row.rationale_en,
+    readingStatus: row.reading_status,
+    readingNote: cleanText(row.reading_note).slice(0, 500),
+    takeawayZh: cleanText(row.takeaway_zh).slice(0, 500),
+    takeawayEn: cleanText(row.takeaway_en).slice(0, 700),
+  }));
+  const statements = source.statements.map((row) => ({
+    statementId: row.id,
+    kind: row.kind,
+    titleZh: row.title_zh,
+    titleEn: row.title_en,
+    textZh: row.text_zh,
+    textEn: row.text_en,
+    confidence: row.confidence,
+    sourcePaperIds: parseJsonArray(row.source_paper_ids).filter((paperId) => source.basis.evidence.some((item) => item.paperId === paperId)),
+  }));
+  const parsed = await callDeepSeek<{ routeEvolution?: ResearchRouteEvolutionDraft }>(
+    database,
+    workspaceId,
+    "You are Pi Research's evidence-disciplined research-route editor. Return strict JSON without chain-of-thought.",
+    [
+      "Return {\"routeEvolution\":{titleZh,titleEn,summaryZh,summaryEn,rationaleZh,rationaleEn,searchQueries,confidence,sourcePaperIds,sourceStatementIds}}.",
+      "Propose one conservative next version of the route. Preserve its identity unless the supplied confirmed evidence clearly supports a narrower or shifted formulation.",
+      "Explain what changed and why in rationaleZh/En. Use 2-4 concise English scholarly queries that operationalize the proposed route for future discovery.",
+      "Use only exact supplied paperId and statementId values. Confirmed papers passed the independent recommendation evidence gate; synthesis statements remain Pi's cross-paper interpretation and must not be described as database-confirmed facts.",
+      "If evidence is limited or mixed, make a smaller change and lower confidence. Do not invent findings, papers, citations, or full-text evidence.",
+      `Research space: ${space.name} — ${space.description}`,
+      `Current route: ${JSON.stringify({ titleZh: track.title_zh, titleEn: track.title_en, summaryZh: track.summary_zh, summaryEn: track.summary_en, searchQueries: source.basis.searchQueries })}`,
+      `Confirmed recommendation evidence: ${JSON.stringify(evidence)}`,
+      `Current route synthesis: ${JSON.stringify(source.synthesis || null)}`,
+      `Traceable synthesis statements: ${JSON.stringify(statements)}`,
+      `Research memory: ${memory || "none"}`,
+    ].join("\n"),
+    3600,
+    apiKey,
+    { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 45_000 },
+  );
+  const draft = sanitizeResearchRouteEvolution(
+    parsed.routeEvolution || {},
+    source.basis,
+    new Set(source.evidence.map((row) => row.paper_id)),
+    new Set(source.statements.map((row) => row.id)),
+  );
+  if (!draft) return { error: "Pi could not form a traceable material route change from the current confirmed evidence", status: 422 as const };
+  const revisionId = crypto.randomUUID();
+  const sourcePapers = evidence.filter((row) => draft.sourcePaperIds.includes(row.paperId));
+  const sourceStatements = statements.filter((row) => draft.sourceStatementIds.includes(row.statementId));
+  await database.batch([
+    database.prepare(
+      `INSERT INTO research_route_revisions
+       (id, space_id, track_id, version, status, input_revision, title_zh, title_en, summary_zh, summary_en,
+        rationale_zh, rationale_en, previous_title_zh, previous_title_en, previous_summary_zh, previous_summary_en,
+        previous_search_queries_json, search_queries_json, source_paper_ids_json, source_statement_ids_json,
+        source_papers_json, source_statements_json, confidence, model)
+       SELECT ?, ?, ?, COALESCE(MAX(version), 0) + 1, 'proposed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       FROM research_route_revisions WHERE track_id = ?`,
+    ).bind(
+      revisionId, space.id, track.id, source.inputRevision, draft.titleZh, draft.titleEn, draft.summaryZh, draft.summaryEn,
+      draft.rationaleZh, draft.rationaleEn, track.title_zh, track.title_en, track.summary_zh, track.summary_en,
+      JSON.stringify(source.basis.searchQueries), JSON.stringify(draft.searchQueries), JSON.stringify(draft.sourcePaperIds),
+      JSON.stringify(draft.sourceStatementIds), JSON.stringify(sourcePapers), JSON.stringify(sourceStatements), draft.confidence, MODEL, track.id,
+    ),
+    database.prepare(
+      `UPDATE research_route_revisions SET status = 'superseded', decided_at = COALESCE(decided_at, CURRENT_TIMESTAMP),
+       updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND track_id = ? AND status = 'proposed' AND id <> ?`,
+    ).bind(space.id, track.id, revisionId),
+  ]);
+  return { revisionId, cached: false };
+}
+
+async function decideResearchRouteEvolution(
+  database: D1Database,
+  spaceId: string,
+  revisionId: string,
+  decision: "confirm" | "dismiss",
+) {
+  const revision = await database.prepare(
+    `SELECT revision.*, track.title_zh AS current_title_zh, track.title_en AS current_title_en,
+     track.summary_zh AS current_summary_zh, track.summary_en AS current_summary_en,
+     track.search_queries AS current_search_queries, track.monitoring_status
+     FROM research_route_revisions revision JOIN research_tracks track
+      ON track.id = revision.track_id AND track.space_id = revision.space_id
+     WHERE revision.id = ? AND revision.space_id = ? LIMIT 1`,
+  ).bind(revisionId, spaceId).first<RouteEvolutionRevisionRow & {
+    current_title_zh: string; current_title_en: string; current_summary_zh: string; current_summary_en: string;
+    current_search_queries: string; monitoring_status: string;
+  }>();
+  if (!revision) return { error: "Route revision not found", status: 404 as const };
+  if (decision === "dismiss") {
+    if (revision.status === "proposed") await database.prepare(
+      "UPDATE research_route_revisions SET status = 'dismissed', decided_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND status = 'proposed'",
+    ).bind(revisionId, spaceId).run();
+    return { changed: revision.status === "proposed" ? 1 : 0 };
+  }
+  const currentSource = await routeEvolutionBasis(database, spaceId, {
+    id: revision.track_id,
+    title_zh: revision.current_title_zh,
+    title_en: revision.current_title_en,
+    summary_zh: revision.current_summary_zh,
+    summary_en: revision.current_summary_en,
+    search_queries: revision.current_search_queries,
+  } as TrackRow);
+  if (!researchRouteEvolutionDecisionAllowed(revision.status, revision.input_revision, currentSource.inputRevision)) {
+    return { error: "This proposal is stale because the route evidence changed. Generate a new proposal before confirming.", status: 409 as const };
+  }
+  await database.batch([
+    database.prepare(
+      `UPDATE research_route_revisions SET status = 'superseded', decided_at = COALESCE(decided_at, CURRENT_TIMESTAMP),
+       updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND track_id = ? AND status = 'confirmed' AND id <> ?`,
+    ).bind(spaceId, revision.track_id, revision.id),
+    database.prepare(
+      `UPDATE research_route_revisions SET status = 'confirmed', decided_at = CURRENT_TIMESTAMP,
+       updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND status = 'proposed'`,
+    ).bind(revision.id, spaceId),
+    database.prepare(
+      `UPDATE research_tracks SET title_zh = ?, title_en = ?, summary_zh = ?, summary_en = ?, search_queries = ?,
+       interaction_score = MIN(35, interaction_score + 4), intelligence_status = 'pending', intelligence_attempt_count = 0,
+       intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL,
+       intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP,
+       updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?`,
+    ).bind(revision.title_zh, revision.title_en, revision.summary_zh, revision.summary_en, revision.search_queries_json, revision.track_id, spaceId),
+    database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date >= date('now')").bind(spaceId),
+    database.prepare(
+      `INSERT INTO research_paper_network_states (space_id, status, built_paper_count, model, sources_json, error, updated_at)
+       VALUES (?, 'idle', 0, '', '[]', NULL, CURRENT_TIMESTAMP)
+       ON CONFLICT(space_id) DO UPDATE SET status = 'idle', error = NULL, updated_at = CURRENT_TIMESTAMP`,
+    ).bind(spaceId),
+  ]);
+  return { changed: 1 };
+}
+
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult, routePortfolioCounts] = await Promise.all([
+  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult, routePortfolioCounts, routeRevisionsResult] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
@@ -1788,11 +2070,75 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       .bind(spaceId, spaceId).all<TrackDiscoveryEffectRow>(),
     database.prepare(RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL)
       .bind(spaceId, spaceId, spaceId, spaceId).first<RoutePortfolioCountRow>(),
+    database.prepare(
+      `SELECT id, track_id, version, status, input_revision, title_zh, title_en, summary_zh, summary_en,
+       rationale_zh, rationale_en, previous_title_zh, previous_title_en, previous_summary_zh, previous_summary_en,
+       previous_search_queries_json, search_queries_json, source_paper_ids_json, source_statement_ids_json,
+       source_papers_json, source_statements_json, confidence, model, decided_at, created_at, updated_at
+       FROM (
+        SELECT revision.*, ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY version DESC, rowid DESC) AS revision_rank
+        FROM research_route_revisions revision WHERE space_id = ?
+       ) WHERE revision_rank <= 8 ORDER BY track_id, version DESC`,
+    ).bind(spaceId).all<RouteEvolutionRevisionRow>(),
   ]);
   const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
   const reviewQueueCountsByTrack = new Map(reviewQueueCountsResult.results.map((row) => [row.track_id, row]));
   const discoveryEffectsByTrack = new Map(discoveryEffectsResult.results.map((row) => [row.track_id, row]));
   const latestChangeByTrack = new Map(latestChangesResult.results.map((row) => [row.track_id, row]));
+  const routeRevisionsByTrack = new Map<string, ResearchRouteRevision[]>();
+  for (const row of routeRevisionsResult.results) {
+    const revision: ResearchRouteRevision = {
+      id: row.id,
+      version: row.version,
+      status: row.status,
+      inputRevision: row.input_revision,
+      titleZh: row.title_zh,
+      titleEn: row.title_en,
+      summaryZh: row.summary_zh,
+      summaryEn: row.summary_en,
+      rationaleZh: row.rationale_zh,
+      rationaleEn: row.rationale_en,
+      previousTitleZh: row.previous_title_zh,
+      previousTitleEn: row.previous_title_en,
+      previousSummaryZh: row.previous_summary_zh,
+      previousSummaryEn: row.previous_summary_en,
+      previousSearchQueries: parseJsonArray(row.previous_search_queries_json),
+      searchQueries: parseJsonArray(row.search_queries_json),
+      sourcePaperIds: parseJsonArray(row.source_paper_ids_json),
+      sourceStatementIds: parseJsonArray(row.source_statement_ids_json),
+      sourcePapers: parseJsonRecords(row.source_papers_json).flatMap((item) => {
+        const paperId = cleanText(String(item.paperId || ""));
+        const title = cleanText(String(item.title || ""));
+        return paperId && title ? [{
+          paperId,
+          title,
+          authors: cleanText(String(item.authors || "")),
+          venue: cleanText(String(item.venue || "")),
+          publishedAt: typeof item.publishedAt === "string" ? item.publishedAt : null,
+        }] : [];
+      }),
+      sourceStatements: parseJsonRecords(row.source_statements_json).flatMap((item) => {
+        const statementId = cleanText(String(item.statementId || ""));
+        if (!statementId) return [];
+        return [{
+          statementId,
+          kind: cleanText(String(item.kind || "")),
+          titleZh: cleanText(String(item.titleZh || "")),
+          titleEn: cleanText(String(item.titleEn || "")),
+          textZh: cleanText(String(item.textZh || "")),
+          textEn: cleanText(String(item.textEn || "")),
+          confidence: boundedScore(item.confidence),
+          sourcePaperIds: Array.isArray(item.sourcePaperIds) ? item.sourcePaperIds.filter((value): value is string => typeof value === "string") : [],
+        }];
+      }),
+      confidence: row.confidence,
+      model: row.model,
+      decidedAt: row.decided_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+    routeRevisionsByTrack.set(row.track_id, [...(routeRevisionsByTrack.get(row.track_id) || []), revision]);
+  }
   const papersByTrack = new Map<string, ResearchTrackPaper[]>();
   const deactivatedPapersByTrack = new Map<string, ResearchTrackPaper[]>();
   for (const row of papersResult.results) {
@@ -1868,6 +2214,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
         createdAt: change.created_at,
       } : null;
     })(),
+    routeRevisions: routeRevisionsByTrack.get(row.id) || [],
     buildStatus: defensiveResearchTrackBuildStatus(row.build_status, row.expansion_count, papersByTrack.get(row.id)?.length || 0),
     buildAttemptCount: Math.max(0, row.build_attempt_count || 0),
     buildSourceStatuses: parseTrackSourceStatuses(row.build_source_status_json),
@@ -1995,7 +2342,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-problem" | "expand-action" | "interpret" | "advance-intelligence" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-problem" | "expand-action" | "interpret" | "advance-intelligence" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision" | "propose-evolution"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -2021,6 +2368,22 @@ export async function POST(request: Request) {
     const apiKey = resolveDeepSeekCredential(request).apiKey;
     const scheduledRetry = request.headers.get("x-pi-scheduled-route-retry") === "1";
     const memory = await importedMemory(database, space.id);
+
+    if (payload.action === "propose-evolution") {
+      const trackId = payload.trackId?.trim() || "";
+      if (!trackId) return Response.json({ error: "trackId is required" }, { status: 400 });
+      const track = await database.prepare(
+        "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+      ).bind(trackId, space.id).first<TrackRow>();
+      if (!track) return Response.json({ error: "Research direction not found" }, { status: 404 });
+      const proposal = await proposeResearchRouteEvolution(database, workspaceId, space, track, memory, apiKey);
+      if ("error" in proposal) return Response.json({ error: proposal.error }, { status: proposal.status });
+      return Response.json(await readMap(database, space.id, {
+        routeEvolutionProposed: true,
+        routeEvolutionRevisionId: proposal.revisionId,
+        cached: proposal.cached,
+      }));
+    }
 
     if (payload.action === "audit-precision") {
       const audit = await auditExistingResearchRoutePrecision(database, workspaceId, space, apiKey);
@@ -2359,16 +2722,30 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; trackId?: string; userRole?: ResearchDirectionRole; monitoringStatus?: "active" | "paused" };
+    const payload = await request.json() as { spaceId?: string; trackId?: string; userRole?: ResearchDirectionRole; monitoringStatus?: "active" | "paused"; action?: "confirm-evolution" | "dismiss-evolution"; revisionId?: string };
     const spaceId = payload.spaceId?.trim() || "";
     const trackId = payload.trackId?.trim() || "";
     const hasUserRole = DIRECTION_ROLES.has(payload.userRole as ResearchDirectionRole);
     const hasMonitoringStatus = payload.monitoringStatus === "active" || payload.monitoringStatus === "paused";
-    if (!spaceId || !trackId || (!hasUserRole && !hasMonitoringStatus)) {
-      return Response.json({ error: "spaceId, trackId, and a valid userRole or monitoringStatus are required" }, { status: 400 });
+    const hasEvolutionDecision = payload.action === "confirm-evolution" || payload.action === "dismiss-evolution";
+    if (!spaceId || (!hasEvolutionDecision && (!trackId || (!hasUserRole && !hasMonitoringStatus))) || (hasEvolutionDecision && !payload.revisionId?.trim())) {
+      return Response.json({ error: "A valid route update or evolution decision is required" }, { status: 400 });
     }
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
+    if (hasEvolutionDecision) {
+      const decision = await decideResearchRouteEvolution(
+        context.database,
+        context.space.id,
+        payload.revisionId?.trim() || "",
+        payload.action === "confirm-evolution" ? "confirm" : "dismiss",
+      );
+      if ("error" in decision) return Response.json({ error: decision.error }, { status: decision.status });
+      return Response.json(await readMap(context.database, context.space.id, {
+        routeEvolutionDecision: payload.action,
+        routeEvolutionChanged: decision.changed,
+      }));
+    }
     if (hasUserRole) {
       await context.database.prepare("UPDATE research_tracks SET user_role = ?, interaction_score = MIN(35, interaction_score + 3), intelligence_status = 'pending', intelligence_attempt_count = 0, intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL, intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
         .bind(payload.userRole, trackId, context.space.id).run();

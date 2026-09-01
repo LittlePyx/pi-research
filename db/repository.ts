@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { researchMapEvidenceProposalBootstrapSql, researchProblemBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
+import { researchMapEvidenceProposalBootstrapSql, researchProblemBootstrapSql, researchRouteRevisionBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
 
 export type ApiUser = {
   userId: string;
@@ -325,6 +325,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE INDEX IF NOT EXISTS idx_track_paper_precision_audits_paper_created ON research_track_paper_precision_audits(track_paper_id, created_at)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_track_paper_precision_audits_space_status ON research_track_paper_precision_audits(space_id, status, created_at)"),
     ...researchMapEvidenceProposalBootstrapSql.map((statement) => database.prepare(statement)),
+    ...researchRouteRevisionBootstrapSql.map((statement) => database.prepare(statement)),
     ...researchSynthesisBootstrapSql.map((statement) => database.prepare(statement)),
     ...researchProblemBootstrapSql.map((statement) => database.prepare(statement)),
     database.prepare("CREATE TABLE IF NOT EXISTS research_paper_edges (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, source_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, target_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, kind TEXT NOT NULL, relation_kind TEXT NOT NULL DEFAULT 'related', relationship_zh TEXT NOT NULL DEFAULT '', relationship_en TEXT NOT NULL DEFAULT '', confidence INTEGER NOT NULL DEFAULT 0, evidence_source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),

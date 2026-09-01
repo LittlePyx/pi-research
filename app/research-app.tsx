@@ -1370,6 +1370,47 @@ function RouteDiscoveryLoop({ track, locale }: { track: ResearchTrack; locale: L
   </section>;
 }
 
+function RouteEvolutionWorkbench({
+  track,
+  locale,
+  action,
+  onPropose,
+  onDecision,
+}: {
+  track: ResearchTrack;
+  locale: Locale;
+  action: string | null;
+  onPropose: () => void;
+  onDecision: (revisionId: string, decision: "confirm" | "dismiss") => void;
+}) {
+  const revisions = track.routeRevisions || [];
+  const proposed = revisions.find((revision) => revision.status === "proposed") || null;
+  const history = revisions.filter((revision) => revision.status !== "proposed");
+  const busy = Boolean(action?.startsWith("evolution-"));
+  const statusLabel = (status: (typeof revisions)[number]["status"]) => status === "confirmed"
+    ? (locale === "zh" ? "当前正式版本" : "Current formal version")
+    : status === "dismissed"
+      ? (locale === "zh" ? "已驳回" : "Dismissed")
+      : status === "superseded"
+        ? (locale === "zh" ? "历史版本" : "Historical version")
+        : (locale === "zh" ? "待确认" : "Awaiting confirmation");
+  return <section className="v2-route-evolution">
+    <header><div><p className="v2-kicker">{locale === "zh" ? "证据驱动的路线版本" : "EVIDENCE-DRIVEN ROUTE VERSIONS"}</p><h2>{locale === "zh" ? "先看变化依据，再决定是否更新正式路线" : "Review the evidence before changing the formal route"}</h2><p>{locale === "zh" ? "Pi 只使用已确认且通过独立核对的推荐论文，并明确区分论文证据与 Pi 的跨论文综合。" : "Pi uses only confirmed recommendations that passed independent verification, while keeping paper evidence distinct from Pi's cross-paper synthesis."}</p></div><button type="button" onClick={onPropose} disabled={busy || track.confirmedEvidenceCount < 1}>{action === `evolution-propose:${track.id}` ? (locale === "zh" ? "正在形成提案…" : "Drafting proposal…") : proposed ? (locale === "zh" ? "依据变化后重新生成" : "Regenerate after evidence changes") : (locale === "zh" ? "根据当前证据形成提案" : "Propose from current evidence")}</button></header>
+    {proposed ? <article className="v2-route-evolution-proposal">
+      <div className="v2-route-evolution-status"><span>v{proposed.version}</span><strong>{locale === "zh" ? "待你确认" : "Awaiting your confirmation"}</strong><small>{proposed.confidence}% {locale === "zh" ? "提案置信度" : "proposal confidence"}</small></div>
+      <div className="v2-route-evolution-diff">
+        <section><small>{locale === "zh" ? "当前正式路线" : "CURRENT FORMAL ROUTE"}</small><h3>{locale === "zh" ? proposed.previousTitleZh : proposed.previousTitleEn}</h3><p>{locale === "zh" ? proposed.previousSummaryZh : proposed.previousSummaryEn}</p><div>{proposed.previousSearchQueries.map((query) => <code key={query}>{query}</code>)}</div></section>
+        <i>→</i>
+        <section className="next"><small>{locale === "zh" ? "提议的新版本" : "PROPOSED NEXT VERSION"}</small><h3>{locale === "zh" ? proposed.titleZh : proposed.titleEn}</h3><p>{locale === "zh" ? proposed.summaryZh : proposed.summaryEn}</p><div>{proposed.searchQueries.map((query) => <code key={query}>{query}</code>)}</div></section>
+      </div>
+      <div className="v2-route-evolution-reason"><small>{locale === "zh" ? "为什么建议变化" : "WHY THIS CHANGE IS PROPOSED"}</small><p>{locale === "zh" ? proposed.rationaleZh : proposed.rationaleEn}</p></div>
+      <div className="v2-route-evolution-sources"><section><header><strong>{locale === "zh" ? "已确认论文证据" : "Confirmed paper evidence"}</strong><span>{proposed.sourcePapers.length}</span></header>{proposed.sourcePapers.map((paper) => <div key={paper.paperId}><b>✓</b><span><strong>{paper.title}</strong><small>{[paper.authors, paper.venue, paper.publishedAt?.slice(0, 4)].filter(Boolean).join(" · ")}</small></span></div>)}</section><section className="pi-synthesis"><header><strong>{locale === "zh" ? "Pi 跨论文综合（推断）" : "Pi cross-paper synthesis (inferred)"}</strong><span>{proposed.sourceStatements.length}</span></header>{proposed.sourceStatements.map((statement) => <div key={statement.statementId}><b>π</b><span><strong>{locale === "zh" ? statement.titleZh : statement.titleEn}</strong><small>{locale === "zh" ? statement.textZh : statement.textEn}</small></span></div>)}{!proposed.sourceStatements.length && <p>{locale === "zh" ? "本提案只使用论文证据，没有引用额外综合结论。" : "This proposal relies on paper evidence without additional synthesis statements."}</p>}</section></div>
+      <footer><p>{locale === "zh" ? "确认后才会替换正式路线描述和下一轮检索词；驳回不会删除证据或历史。" : "Only confirmation replaces the formal route definition and future queries. Dismissal removes no evidence or history."}</p><div><button type="button" className="secondary" onClick={() => onDecision(proposed.id, "dismiss")} disabled={busy}>{action === `evolution-dismiss:${proposed.id}` ? "…" : (locale === "zh" ? "驳回并保留记录" : "Dismiss and retain")}</button><button type="button" onClick={() => onDecision(proposed.id, "confirm")} disabled={busy}>{action === `evolution-confirm:${proposed.id}` ? "…" : (locale === "zh" ? "确认更新正式路线" : "Confirm formal route update")}</button></div></footer>
+    </article> : <div className="v2-route-evolution-empty"><span>△</span><div><strong>{track.confirmedEvidenceCount > 0 ? (locale === "zh" ? "正式证据已有变化时，可以形成下一版路线提案" : "A new route proposal can be formed when formal evidence changes") : (locale === "zh" ? "还没有足够的正式证据" : "Not enough formal evidence yet")}</strong><p>{track.confirmedEvidenceCount > 0 ? (locale === "zh" ? "提案生成后仍需你确认，不会自动改写路线。" : "The proposal still requires your confirmation and never rewrites the route automatically.") : (locale === "zh" ? "论文先通过共享质量队列和证据核对，再由你的接受或完成阅读确认进入路线。" : "A paper must pass shared quality review and evidence verification, then be confirmed by your acceptance or completed reading.")}</p></div></div>}
+    {history.length > 0 && <details className="v2-route-evolution-history"><summary><span><strong>{locale === "zh" ? "路线版本历史" : "Route version history"}</strong><small>{locale === "zh" ? "所有确认、驳回和旧版本均保留" : "Confirmed, dismissed, and prior versions are retained"}</small></span><b>{history.length}</b></summary><div>{history.map((revision) => <article className={revision.status} key={revision.id}><header><span>v{revision.version}</span><strong>{statusLabel(revision.status)}</strong><time>{formatNotificationTime(revision.decidedAt || revision.updatedAt, locale)}</time></header><h3>{locale === "zh" ? revision.titleZh : revision.titleEn}</h3><p>{locale === "zh" ? revision.rationaleZh : revision.rationaleEn}</p><small>{revision.sourcePaperIds.length} {locale === "zh" ? "篇论文证据" : "paper sources"} · {revision.sourceStatementIds.length} {locale === "zh" ? "条 Pi 综合" : "Pi synthesis statements"}</small></article>)}</div></details>}
+  </section>;
+}
+
 function directionRelationshipLabel(kind: ResearchMapState["edges"][number]["kind"], locale: Locale) {
   const labels: Record<ResearchMapState["edges"][number]["kind"], Localized> = {
     builds_on: { zh: "发展承接", en: "Builds on" },
@@ -4910,6 +4951,55 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
+  const proposeResearchRouteEvolution = async (thread: ResearchTrack) => {
+    if (mapAction || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    setMapAction(`evolution-propose:${thread.id}`);
+    try {
+      const response = await fetch("/api/research-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spaceId: activeSpace.id, trackId: thread.id, action: "propose-evolution" }),
+      });
+      const data = await response.json() as ResearchMapState & { error?: string };
+      if (!response.ok) throw new Error(data.error || "route evolution proposal failed");
+      setResearchMap(data);
+      setSelectedThread(data.tracks.find((item) => item.id === thread.id) || null);
+      setToast(locale === "zh" ? "路线演化提案已生成；确认前不会改变正式路线" : "Route evolution proposal created; the formal route is unchanged until confirmation");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : (locale === "zh" ? "当前证据还无法形成可靠的路线变化" : "The current evidence cannot support a reliable route change yet"));
+    } finally {
+      setMapAction(null);
+    }
+  };
+
+  const decideResearchRouteEvolution = async (thread: ResearchTrack, revisionId: string, decision: "confirm" | "dismiss") => {
+    if (mapAction || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    setMapAction(`evolution-${decision}:${revisionId}`);
+    try {
+      const response = await fetch("/api/research-map", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spaceId: activeSpace.id,
+          trackId: thread.id,
+          revisionId,
+          action: decision === "confirm" ? "confirm-evolution" : "dismiss-evolution",
+        }),
+      });
+      const data = await response.json() as ResearchMapState & { error?: string };
+      if (!response.ok) throw new Error(data.error || "route evolution decision failed");
+      setResearchMap(data);
+      setSelectedThread(data.tracks.find((item) => item.id === thread.id) || null);
+      setToast(decision === "confirm"
+        ? (locale === "zh" ? "正式路线已更新为新版本；下一轮发现将使用新的路线定义" : "The formal route is now on the new version; future discovery will use it")
+        : (locale === "zh" ? "提案已驳回并保留在版本历史中" : "Proposal dismissed and retained in version history"));
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : (locale === "zh" ? "路线版本决策暂时无法保存" : "Could not save the route version decision"));
+    } finally {
+      setMapAction(null);
+    }
+  };
+
   const curateResearchTrackPaperNode = async (thread: ResearchTrack, paper: ResearchTrackPaper, status: "active" | "deactivated") => {
     if (mapAction || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     setMapAction(`curate:${paper.id}`);
@@ -5707,6 +5797,8 @@ export default function ResearchApp({ user }: { user: User }) {
               <section className={`v2-route-role-strip ${selectedThread.userRole} ${selectedThread.monitoringStatus}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级；暂停只停止新发现，不清除任何历史。" : "This role changes future discovery budget and priority; pausing only stops new discovery and clears no history."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}<button type="button" className={`monitor-toggle ${selectedThread.monitoringStatus}`} onClick={() => void setResearchDirectionMonitoring(selectedThread, selectedThread.monitoringStatus === "paused" ? "active" : "paused")} disabled={Boolean(mapAction)}>{mapAction === `monitoring:${selectedThread.id}` ? "…" : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复路线" : "Resume route") : (locale === "zh" ? "暂停路线" : "Pause route")}</button></div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
 
               <RouteDiscoveryLoop track={selectedThread} locale={locale} />
+
+              <RouteEvolutionWorkbench track={selectedThread} locale={locale} action={mapAction} onPropose={() => void proposeResearchRouteEvolution(selectedThread)} onDecision={(revisionId, decision) => void decideResearchRouteEvolution(selectedThread, revisionId, decision)} />
 
               <div className="v2-route-workspace-tabs" role="group" aria-label={locale === "zh" ? "方向工作区" : "Route workspace"}>{(["problem", "assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab, tabIndex) => <button type="button" aria-pressed={researchRouteTab === tab} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><span>{String(tabIndex + 1).padStart(2, "0")}</span><strong>{tab === "problem" ? (locale === "zh" ? "研究问题" : "Research problem") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "证据链" : "Evidence chain") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究议程" : "Research agenda")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</div>
 
