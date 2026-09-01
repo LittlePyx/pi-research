@@ -23,6 +23,7 @@ import {
   type ResearchRouteExperimentRow,
 } from "../../../lib/research-route-effectiveness";
 import { researchRouteEvolutionDecisionAllowed, researchRouteEvolutionInputRevision, sanitizeResearchRouteEvolution, type ResearchRouteEvolutionBasis, type ResearchRouteEvolutionDraft, type ResearchRouteEvolutionStatus } from "../../../lib/research-route-evolution";
+import { ensureResearchRouteBaselines } from "../../../lib/research-route-baseline";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -1888,6 +1889,7 @@ async function proposeResearchRouteEvolution(
   memory: string,
   apiKey: string,
 ) {
+  await ensureResearchRouteBaselines(database, space.id);
   const source = await routeEvolutionBasis(database, space.id, track);
   if (!source.evidence.length) return { error: "Confirm at least one independently verified recommendation before evolving this route", status: 422 as const };
   const existing = await database.prepare(
@@ -2036,6 +2038,7 @@ async function decideResearchRouteEvolution(
 }
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
+  await ensureResearchRouteBaselines(database, spaceId);
   const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult, routePortfolioCounts, routeRevisionsResult, routeEffectivenessResult, routeExperimentResult] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),

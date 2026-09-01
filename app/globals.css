@@ -4879,6 +4879,33 @@ button:disabled { cursor: not-allowed; }
 /* V73 — evidence-first recommendation ranking */
 .v2-evidence-promotion { display:inline-flex;align-items:center;padding:5px 9px;border:1px solid #d8d6cd;border-radius:999px;background:#f8f7f2;color:#746f60;font-size:10px;font-weight:700;line-height:1;white-space:nowrap; }
 
+/* Pi Research V146 — route baseline and research-lead decision entry */
+.v2-research-decision-panel { margin: 14px 0; border: 1px solid #bfcfc5; border-radius: 15px; background: #f7faf7; overflow: hidden; box-shadow: 0 12px 30px rgba(50,78,62,.06); }
+.v2-research-decision-panel > header { padding: 18px 20px; border-bottom: 1px solid #d6e1da; background: linear-gradient(125deg,#eaf3ed 0%,#f7faf7 58%,#f5f1e8 100%); display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.v2-research-decision-panel > header h2 { margin: 5px 0 0; color: #294b39; font: 20px/1.3 Georgia,serif; }
+.v2-research-decision-version { display: flex; align-items: center; gap: 8px; flex: none; }
+.v2-research-decision-version span { width: 36px; height: 36px; border-radius: 50%; background: #315d48; color: #fff; display: grid; place-items: center; font: 11px Georgia,serif; }
+.v2-research-decision-version strong { max-width: 105px; color: #557064; font-size: 9px; line-height: 1.35; }
+.v2-research-decision-grid { display: grid; grid-template-columns: 1.12fr 1fr 1fr; }
+.v2-research-decision-grid article { min-width: 0; padding: 17px 18px; border-right: 1px solid #dde5e0; }
+.v2-research-decision-grid article:last-child { border-right: 0; }
+.v2-research-decision-grid article > small { color: #718078; font-size: 8px; font-weight: 840; letter-spacing: .07em; }
+.v2-research-decision-grid article h3 { margin: 7px 0 0; color: #3c5447; font: 14px/1.48 Georgia,serif; }
+.v2-research-decision-grid article p { margin: 9px 0 0; color: #758079; font-size: 8px; line-height: 1.55; }
+.v2-research-decision-grid article p b { margin-bottom: 3px; color: #53675c; font-size: 8px; display: block; }
+.v2-research-decision-grid article time { margin-top: 7px; color: #8b958f; font-size: 8px; display: block; }
+.v2-research-decision-grid article.decision { background: rgba(232,243,236,.45); }
+.v2-research-decision-panel > footer { padding: 14px 18px 16px; border-top: 1px solid #dce5df; background: #fff; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 11px 20px; align-items: center; }
+.v2-research-decision-funnel { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.v2-research-decision-funnel > span { min-width: 56px; display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 8px; position: relative; }
+.v2-research-decision-funnel small { color: #7b8780; font-size: 7px; grid-column: 1; }
+.v2-research-decision-funnel strong { color: #315d48; font: 17px/1 Georgia,serif; grid-column: 1; }
+.v2-research-decision-funnel i { position: absolute; right: -8px; top: 12px; color: #96a49b; font-size: 8px; font-style: normal; }
+.v2-research-decision-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.v2-research-decision-actions button { min-height: 34px; padding: 7px 10px; border: 1px solid #bdcbc2; border-radius: 7px; background: #fff; color: #4e685a; cursor: pointer; font-size: 8px; font-weight: 780; }
+.v2-research-decision-actions button.primary { border-color: #315d48; background: #315d48; color: #fff; }
+.v2-research-decision-panel > footer > p { grid-column: 1 / -1; margin: 0; color: #7c8780; font-size: 8px; line-height: 1.5; }
+
 /* Pi Research V143 — evidence-confirmed route evolution */
 .v2-route-evolution { margin: 14px 0; border: 1px solid #cfdcd4; border-radius: 14px; background: #fbfcfa; overflow: hidden; }
 .v2-route-evolution > header { padding: 16px 18px; border-bottom: 1px solid #dce5df; background: linear-gradient(135deg,#f0f6f2,#fafbf8); display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
@@ -4928,6 +4955,7 @@ button:disabled { cursor: not-allowed; }
 .v2-route-evolution-history > div { padding: 0 18px 14px; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
 .v2-route-evolution-history article { padding: 10px; border: 1px solid #e0e5e2; border-radius: 8px; background: #f8f9f7; }
 .v2-route-evolution-history article.confirmed { border-color: #bdd3c5; background: #eef6f1; }
+.v2-route-evolution-history article.baseline { border-style: dashed; background: #f7f7f2; }
 .v2-route-evolution-history article.dismissed { opacity: .72; }
 .v2-route-evolution-history article > header { display: flex; align-items: center; gap: 7px; font-size: 8px; }
 .v2-route-evolution-history article > header span { color: #315d48; font: 10px Georgia,serif; }
@@ -4979,6 +5007,15 @@ button:disabled { cursor: not-allowed; }
 .v2-route-effectiveness > footer small { margin-top: 4px; color: #818c85; font-size: 7px; line-height: 1.45; display: block; }
 
 @media (max-width: 720px) {
+  .v2-research-decision-panel > header { align-items: flex-start; flex-direction: column; }
+  .v2-research-decision-grid { grid-template-columns: 1fr; }
+  .v2-research-decision-grid article { border-right: 0; border-bottom: 1px solid #dde5e0; }
+  .v2-research-decision-grid article:last-child { border-bottom: 0; }
+  .v2-research-decision-panel > footer { grid-template-columns: 1fr; }
+  .v2-research-decision-funnel { justify-content: space-between; gap: 5px; }
+  .v2-research-decision-funnel > span { min-width: 0; flex: 1; }
+  .v2-research-decision-actions { flex-direction: column; }
+  .v2-research-decision-actions button { width: 100%; }
   .v2-route-evolution > header,.v2-route-evolution-proposal > footer { align-items: stretch; flex-direction: column; }
   .v2-route-evolution > header button,.v2-route-evolution-proposal > footer button { width: 100%; }
   .v2-route-evolution-diff { grid-template-columns: 1fr; }

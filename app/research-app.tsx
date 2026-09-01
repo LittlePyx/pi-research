@@ -1371,6 +1371,91 @@ function RouteDiscoveryLoop({ track, locale }: { track: ResearchTrack; locale: L
   </section>;
 }
 
+function ResearchLeadDecisionPanel({
+  track,
+  problemState,
+  synthesis,
+  locale,
+  onOpenWorkspace,
+  onOpenToday,
+  onOpenLearning,
+}: {
+  track: ResearchTrack;
+  problemState: ResearchProblemState | null;
+  synthesis: ResearchSynthesis | null;
+  locale: Locale;
+  onOpenWorkspace: (tab: ResearchRouteTab) => void;
+  onOpenToday: () => void;
+  onOpenLearning: () => void;
+}) {
+  const currentFormal = (track.routeRevisions || []).find((revision) => revision.status === "confirmed") || null;
+  const baseline = currentFormal?.model === "system-baseline";
+  const problem = problemState?.problem || null;
+  const assessment = problemState?.assessment || null;
+  const activeAction = problemState?.actions.find((item) => item.status === "accepted")
+    || problemState?.actions.find((item) => item.status === "proposed") || null;
+  const synthesisGap = synthesis?.statements.find((statement) => statement.kind === "evidence_gap") || null;
+  const unresolvedToday = Math.max(0, track.discoveryEffect.recommendedCount - track.discoveryEffect.acceptedCount);
+  const visibleEvidence = track.papers.length;
+  const decision = assessment
+    ? (locale === "zh" ? assessment.nextDecisionZh : assessment.nextDecisionEn)
+    : problem?.status === "active"
+      ? problem.question
+      : !visibleEvidence
+        ? (locale === "zh" ? "先恢复真实论文供给，再形成研究判断" : "Restore real-paper supply before forming a research judgment")
+        : (locale === "zh" ? "把当前路线收敛成一个可证伪、可推进的研究问题" : "Turn this route into a falsifiable, actionable research problem");
+  const evidenceChange = track.latestChange
+    ? (locale === "zh" ? track.latestChange.summaryZh : track.latestChange.summaryEn)
+    : baseline
+      ? (locale === "zh" ? "v1 只记录原有正式路线，没有改写描述、检索词或历史证据。" : "v1 records the existing formal route without rewriting its definition, queries, or history.")
+      : track.confirmedEvidenceCount > 0
+        ? (locale === "zh" ? `当前已有 ${track.confirmedEvidenceCount} 篇经确认的正式路线证据。` : `${track.confirmedEvidenceCount} confirmed papers currently support the formal route.`)
+        : (locale === "zh" ? "还没有经用户确认的正式证据变化。" : "No user-confirmed formal evidence change yet.");
+  const uncertainty = assessment
+    ? (locale === "zh" ? assessment.uncertaintyZh : assessment.uncertaintyEn)
+    : synthesisGap
+      ? (locale === "zh" ? synthesisGap.textZh : synthesisGap.textEn)
+      : track.intelligence
+        ? (locale === "zh" ? track.intelligence.evidenceGapZh : track.intelligence.evidenceGapEn)
+        : !visibleEvidence
+          ? (locale === "zh" ? "外部来源或模型阶段尚未提供可见论文证据，当前状态不能视为路线完成。" : "External sources or the model stage have not supplied visible paper evidence, so this route is not complete.")
+          : (locale === "zh" ? "还需要综合现有论文，才能定位最关键的不确定性。" : "The existing papers still need synthesis before the key uncertainty can be located.");
+  const nextAction = activeAction
+    ? (locale === "zh" ? activeAction.titleZh : activeAction.titleEn)
+    : problem?.status === "active"
+      ? assessment?.stale
+        ? (locale === "zh" ? "依据新增证据更新研究问题评估" : "Refresh the problem assessment from new evidence")
+        : (locale === "zh" ? "推进研究问题并记录下一次判断" : "Advance the research problem and record the next decision")
+      : track.confirmedEvidenceCount > 0
+        ? (locale === "zh" ? "形成并确认研究问题" : "Form and confirm a research problem")
+        : visibleEvidence
+          ? (locale === "zh" ? "先做跨论文综合，识别可执行缺口" : "Synthesize the papers and identify an actionable gap")
+          : (locale === "zh" ? "从健康来源或受保护基线补齐真实证据" : "Recover real evidence from healthy sources or the protected baseline");
+  const primaryTab: ResearchRouteTab = problem?.status === "active" || problemState?.evidence.canDraft
+    ? "problem"
+    : visibleEvidence ? "assessment" : "gaps";
+  const primaryLabel = primaryTab === "problem"
+    ? (locale === "zh" ? "推进研究问题" : "Advance research problem")
+    : primaryTab === "assessment"
+      ? (locale === "zh" ? "形成综合研判" : "Build synthesis")
+      : (locale === "zh" ? "恢复证据供给" : "Recover evidence supply");
+  const funnel = [
+    { labelZh: "候选", labelEn: "Candidates", value: track.discoveryEffect.discoveredCount },
+    { labelZh: "深评", labelEn: "Deep reviewed", value: track.discoveryEffect.deepReviewedCount },
+    { labelZh: "正式推荐", labelEn: "Recommended", value: track.discoveryEffect.recommendedCount },
+    { labelZh: "已确认", labelEn: "Accepted", value: track.discoveryEffect.acceptedCount },
+  ];
+  return <section className="v2-research-decision-panel" aria-labelledby={`research-decision-${track.id}`}>
+    <header><div><p className="v2-kicker">{locale === "zh" ? "研究线索决策入口" : "RESEARCH LEAD DECISION"}</p><h2 id={`research-decision-${track.id}`}>{locale === "zh" ? "把路线证据变成下一步研究判断" : "Turn route evidence into the next research decision"}</h2></div><div className="v2-research-decision-version"><span>{currentFormal ? `v${currentFormal.version}` : "—"}</span><strong>{baseline ? (locale === "zh" ? "正式路线基线" : "Formal route baseline") : currentFormal ? (locale === "zh" ? "当前正式路线" : "Current formal route") : (locale === "zh" ? "等待基线" : "Awaiting baseline")}</strong></div></header>
+    <div className="v2-research-decision-grid">
+      <article className="decision"><small>{locale === "zh" ? "当前要决定" : "DECISION NOW"}</small><h3>{decision}</h3><p><b>{locale === "zh" ? "关键不确定性" : "Key uncertainty"}</b>{uncertainty}</p></article>
+      <article className="evidence"><small>{locale === "zh" ? "证据发生了什么变化" : "WHAT CHANGED IN THE EVIDENCE"}</small><h3>{evidenceChange}</h3>{track.latestChange && <time>{formatNotificationTime(track.latestChange.createdAt, locale)}</time>}<p>{locale === "zh" ? "数据库确认事实、Pi 综合推断和用户确认仍分别记录。" : "Database-confirmed facts, Pi synthesis, and user confirmation remain separately recorded."}</p></article>
+      <article className="action"><small>{locale === "zh" ? "下一步行动" : "NEXT ACTION"}</small><h3>{nextAction}</h3><p>{activeAction ? (locale === "zh" ? "来自当前研究问题的已保存行动项。" : "Saved from the current research problem.") : (locale === "zh" ? "进入对应工作区继续，不会自动改写正式路线。" : "Continue in the relevant workspace; the formal route is never rewritten automatically.")}</p></article>
+    </div>
+    <footer><div className="v2-research-decision-funnel" aria-label={locale === "zh" ? "路线质量漏斗" : "Route quality funnel"}>{funnel.map((item, index) => <span key={item.labelEn}><small>{locale === "zh" ? item.labelZh : item.labelEn}</small><strong>{item.value}</strong>{index < funnel.length - 1 && <i>→</i>}</span>)}</div><div className="v2-research-decision-actions"><button type="button" className="primary" onClick={() => onOpenWorkspace(primaryTab)}>{primaryLabel} →</button>{(unresolvedToday > 0 || track.pendingEvidenceCount > 0) && <button type="button" onClick={onOpenToday}>{locale === "zh" ? `处理今日待决 ${Math.max(unresolvedToday, track.pendingEvidenceCount)}` : `Review ${Math.max(unresolvedToday, track.pendingEvidenceCount)} in Today`}</button>}<button type="button" onClick={onOpenLearning}>{locale === "zh" ? "生成学习路径" : "Build learning path"}</button></div><p>{locale === "zh" ? "只有通过共享质量评估的论文才会进入今日；确认或完成阅读后，才会成为正式路线证据。" : "Only papers that pass shared quality review enter Today; confirmation or completed reading is required before they become formal route evidence."}</p></footer>
+  </section>;
+}
+
 function RouteEvolutionWorkbench({
   track,
   locale,
@@ -1391,11 +1476,13 @@ function RouteEvolutionWorkbench({
   const effectiveness = currentFormal?.effectiveness || null;
   const shadowExperiment = effectiveness?.shadowExperiment || null;
   const busy = Boolean(action?.startsWith("evolution-"));
-  const statusLabel = (status: (typeof revisions)[number]["status"]) => status === "confirmed"
-    ? (locale === "zh" ? "当前正式版本" : "Current formal version")
-    : status === "dismissed"
+  const statusLabel = (revision: (typeof revisions)[number]) => revision.model === "system-baseline"
+    ? (locale === "zh" ? "初始正式基线" : "Initial formal baseline")
+    : revision.status === "confirmed"
+      ? (locale === "zh" ? "当前正式版本" : "Current formal version")
+      : revision.status === "dismissed"
       ? (locale === "zh" ? "已驳回" : "Dismissed")
-      : status === "superseded"
+      : revision.status === "superseded"
         ? (locale === "zh" ? "历史版本" : "Historical version")
         : (locale === "zh" ? "待确认" : "Awaiting confirmation");
   return <section className="v2-route-evolution">
@@ -1433,7 +1520,7 @@ function RouteEvolutionWorkbench({
       {effectiveness.sourceFailureCount > 0 && <aside><b>!</b><p>{locale === "zh" ? `窗口内记录到 ${effectiveness.sourceFailureCount} 次路线来源降级；Pi 不会把低产出误判成路线质量下降。` : `${effectiveness.sourceFailureCount} route-source degradations occurred in this window. Pi will not mistake low yield for lower route quality.`}</p></aside>}
       <footer><p>{locale === "zh" ? effectiveness.summaryZh : effectiveness.summaryEn}</p><small>{locale === "zh" ? "建议只依据真实候选、质量审计、反馈、阅读和正式证据；不会自动回退，也不会降低质量门槛。" : "The recommendation uses real candidates, quality audits, feedback, reading and formal evidence only. It never rolls back automatically or lowers the quality gate."}</small></footer>
     </section>}
-    {history.length > 0 && <details className="v2-route-evolution-history"><summary><span><strong>{locale === "zh" ? "路线版本历史" : "Route version history"}</strong><small>{locale === "zh" ? "所有确认、驳回和旧版本均保留" : "Confirmed, dismissed, and prior versions are retained"}</small></span><b>{history.length}</b></summary><div>{history.map((revision) => <article className={revision.status} key={revision.id}><header><span>v{revision.version}</span><strong>{statusLabel(revision.status)}</strong><time>{formatNotificationTime(revision.decidedAt || revision.updatedAt, locale)}</time></header><h3>{locale === "zh" ? revision.titleZh : revision.titleEn}</h3><p>{locale === "zh" ? revision.rationaleZh : revision.rationaleEn}</p><small>{revision.sourcePaperIds.length} {locale === "zh" ? "篇论文证据" : "paper sources"} · {revision.sourceStatementIds.length} {locale === "zh" ? "条 Pi 综合" : "Pi synthesis statements"}{revision.effectiveness ? ` · ${revision.effectiveness.recommendedCount} ${locale === "zh" ? "篇正式推荐" : "recommended"}` : ""}</small></article>)}</div></details>}
+    {history.length > 0 && <details className="v2-route-evolution-history"><summary><span><strong>{locale === "zh" ? "路线版本历史" : "Route version history"}</strong><small>{locale === "zh" ? "所有确认、驳回和旧版本均保留" : "Confirmed, dismissed, and prior versions are retained"}</small></span><b>{history.length}</b></summary><div>{history.map((revision) => <article className={`${revision.status} ${revision.model === "system-baseline" ? "baseline" : ""}`} key={revision.id}><header><span>v{revision.version}</span><strong>{statusLabel(revision)}</strong><time>{formatNotificationTime(revision.decidedAt || revision.updatedAt, locale)}</time></header><h3>{locale === "zh" ? revision.titleZh : revision.titleEn}</h3><p>{locale === "zh" ? revision.rationaleZh : revision.rationaleEn}</p><small>{revision.model === "system-baseline" ? (locale === "zh" ? "原样快照 · 未改写路线" : "Exact snapshot · route unchanged") : <>{revision.sourcePaperIds.length} {locale === "zh" ? "篇论文证据" : "paper sources"} · {revision.sourceStatementIds.length} {locale === "zh" ? "条 Pi 综合" : "Pi synthesis statements"}{revision.effectiveness ? ` · ${revision.effectiveness.recommendedCount} ${locale === "zh" ? "篇正式推荐" : "recommended"}` : ""}</>}</small></article>)}</div></details>}
   </section>;
 }
 
@@ -5819,6 +5906,8 @@ export default function ResearchApp({ user }: { user: User }) {
             <button className="v2-back" type="button" onClick={() => navigate("threads")}>← {locale === "zh" ? "返回路线总览" : "Back to route overview"}</button>
             {selectedThread ? <>
               <section className="v2-route-workspace-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {directionRoleLabel(selectedThread.userRole, locale)}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p><div className="v2-route-workspace-meta"><span className={`v2-direction-heat ${selectedThread.heatLevel}`} title={directionHeatTitle(selectedThread, locale)}><i />{directionHeatLabel(selectedThread.heatLevel, locale)}</span><RouteOperationalBadge track={selectedThread} locale={locale} />{selectedThread.buildStatus !== "ready" && <span>{selectedThread.buildStatus === "partial" ? (locale === "zh" ? "部分可用" : "Partially available") : researchTrackBuildSummary(selectedThread, locale)}</span>}<span>{confirmedRouteEvidenceCount(selectedThread)} {locale === "zh" ? "篇已确认纳入" : "confirmed in route"}</span><span>{selectedThread.papers.length} {locale === "zh" ? "篇路线代表作" : "route representatives"}</span>{pendingRouteEvidenceCount(selectedThread) > 0 && <span>{pendingRouteEvidenceCount(selectedThread)} {locale === "zh" ? "篇待确认" : "pending"}</span>}<span>{locale === "zh" ? "研究深度" : "Depth"} {selectedThread.depthScore}</span></div></div><div className="v2-route-workspace-actions"><button type="button" onClick={() => askAboutResearchRoute(selectedThread)}>{locale === "zh" ? "让 Pi 解释这条路线" : "Ask Pi about this route"}</button><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || selectedThread.monitoringStatus === "paused")}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在补充…" : "Filling…") : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "已暂停自动发现" : "Automatic discovery paused") : ["queued", "retryable", "empty", "failed"].includes(selectedThread.buildStatus) ? (locale === "zh" ? "重试补充这条路线" : "Retry this route") : selectedThread.buildStatus === "partial" ? (locale === "zh" ? "补全这条路线" : "Complete this route") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></div></section>
+
+              <ResearchLeadDecisionPanel track={selectedThread} problemState={researchProblemState} synthesis={researchSynthesis} locale={locale} onOpenWorkspace={setResearchRouteTab} onOpenToday={() => navigate("today")} onOpenLearning={() => openRouteLearningPath(selectedThread)} />
 
               <section className={`v2-route-role-strip ${selectedThread.userRole} ${selectedThread.monitoringStatus}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级；暂停只停止新发现，不清除任何历史。" : "This role changes future discovery budget and priority; pausing only stops new discovery and clears no history."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}<button type="button" className={`monitor-toggle ${selectedThread.monitoringStatus}`} onClick={() => void setResearchDirectionMonitoring(selectedThread, selectedThread.monitoringStatus === "paused" ? "active" : "paused")} disabled={Boolean(mapAction)}>{mapAction === `monitoring:${selectedThread.id}` ? "…" : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复路线" : "Resume route") : (locale === "zh" ? "暂停路线" : "Pause route")}</button></div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
 
