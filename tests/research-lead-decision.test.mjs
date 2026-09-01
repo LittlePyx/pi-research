@@ -5,6 +5,7 @@ import test from "node:test";
 import { RESEARCH_ROUTE_BASELINE_MODEL, RESEARCH_ROUTE_BASELINE_SQL } from "../lib/research-route-baseline.ts";
 
 const migrationUrl = new URL("../drizzle/0051_tricky_wither.sql", import.meta.url);
+const baselineMigrationUrl = new URL("../drizzle/0052_route_version_baselines.sql", import.meta.url);
 const apiUrl = new URL("../app/api/research-map/route.ts", import.meta.url);
 const uiUrl = new URL("../app/research-app.tsx", import.meta.url);
 const cssUrl = new URL("../app/globals.css", import.meta.url);
@@ -58,6 +59,45 @@ test("existing formal routes receive one exact, non-destructive v1 baseline", as
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_route_revisions WHERE track_id = 'track-b'").get().count, 1);
     assert.equal(sqlite.prepare("SELECT title_zh FROM research_tracks WHERE id = 'track-a'").get().title_zh, "信息瓶颈");
     assert.equal(sqlite.prepare("SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM research_route_revisions WHERE track_id = 'track-a'").get().next_version, 2);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("the deployment migration backfills every untouched route without rewriting history", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    sqlite.exec(`
+      CREATE TABLE research_spaces (id TEXT PRIMARY KEY);
+      CREATE TABLE research_tracks (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE,
+        title_zh TEXT NOT NULL,
+        title_en TEXT NOT NULL,
+        summary_zh TEXT NOT NULL,
+        summary_en TEXT NOT NULL,
+        search_queries TEXT NOT NULL
+      );
+      INSERT INTO research_spaces VALUES ('space-a');
+      INSERT INTO research_tracks VALUES
+       ('track-a', 'space-a', '现有路线', 'Existing route', '原摘要', 'Original summary', '["original query"]'),
+       ('track-b', 'space-a', '已有版本', 'Versioned route', '保留', 'Retained', '["retained query"]');
+    `);
+    sqlite.exec((await readFile(migrationUrl, "utf8")).replaceAll("--> statement-breakpoint", ""));
+    sqlite.prepare(
+      `INSERT INTO research_route_revisions
+       (id, space_id, track_id, version, status, input_revision, title_zh, title_en, previous_title_zh, previous_title_en)
+       VALUES ('existing-b', 'space-a', 'track-b', 1, 'confirmed', 'existing-input', '已有版本', 'Versioned route', '已有版本', 'Versioned route')`,
+    ).run();
+    const migration = await readFile(baselineMigrationUrl, "utf8");
+    sqlite.exec(migration);
+    sqlite.exec(migration);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_route_revisions").get().count, 2);
+    assert.equal(sqlite.prepare("SELECT model FROM research_route_revisions WHERE track_id = 'track-a'").get().model, RESEARCH_ROUTE_BASELINE_MODEL);
+    assert.equal(sqlite.prepare("SELECT id FROM research_route_revisions WHERE track_id = 'track-b'").get().id, "existing-b");
+    assert.equal(sqlite.prepare("SELECT summary_zh FROM research_tracks WHERE id = 'track-a'").get().summary_zh, "原摘要");
+    assert.doesNotMatch(migration, /\b(?:UPDATE|DELETE)\b/i);
   } finally {
     sqlite.close();
   }
