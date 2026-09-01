@@ -127,3 +127,22 @@ test("research lead detail exposes one responsive decision panel backed by the s
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-research-decision-grid \{ grid-template-columns: 1fr; \}/);
   assert.doesNotMatch(css, /\.v2-research-decision-(?:panel|funnel)[^\n]*display:\s*none/);
 });
+
+test("route workspace puts decisions and active research before low-frequency management", async () => {
+  const [ui, css] = await Promise.all([readFile(uiUrl, "utf8"), readFile(cssUrl, "utf8")]);
+  const detail = ui.slice(ui.indexOf('{view === "thread-detail"'), ui.indexOf('{view === "learn"'));
+  const decisionIndex = detail.indexOf("<ResearchLeadDecisionPanel");
+  const tabsIndex = detail.indexOf('className="v2-route-workspace-tabs"');
+  const activeWorkIndex = detail.indexOf('<ResearchProblemWorkbench');
+  const managementIndex = detail.indexOf("<RouteManagementDrawer");
+
+  assert.ok(decisionIndex >= 0);
+  assert.ok(decisionIndex < tabsIndex);
+  assert.ok(tabsIndex < activeWorkIndex);
+  assert.ok(activeWorkIndex < managementIndex);
+  assert.match(detail, /<RouteManagementDrawer key=\{`\$\{selectedThread\.id\}:\$\{routeManagementNeedsAttention\(selectedThread\)[\s\S]*v2-route-management-actions[\s\S]*<RouteDiscoveryLoop[\s\S]*<RouteEvolutionWorkbench[\s\S]*<\/RouteManagementDrawer>/);
+  assert.match(ui, /function routeManagementNeedsAttention[\s\S]*\["retryable", "degraded"\]\.includes\(operational\)/);
+  assert.match(css, /\.v2-route-management > summary[\s\S]*\.v2-route-management-body/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-route-management > summary \{ align-items: flex-start; flex-direction: column;/);
+  assert.doesNotMatch(css, /\.v2-route-management(?:-body)?\s*\{[^}]*display:\s*none/);
+});
