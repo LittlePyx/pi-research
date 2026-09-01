@@ -6,7 +6,7 @@ import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { isDatabaseVerifiedCitationEdge } from "../../../lib/paper-network";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
-import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
+import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, nextResearchTrackBuildAttemptCount, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTitleTopicalFit, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSelectionContradiction, type ResearchTrackPaperCurationReasonCode, type ResearchTrackPaperCurationStatus } from "../../../lib/research-map-curation";
 import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defensiveResearchTrackIntelligenceStatus, deferResearchTrackIntelligence, requestResearchTrackIntelligenceRefresh } from "../../../lib/research-map-intelligence";
@@ -868,7 +868,7 @@ async function protectedBaselineCandidates(
       COALESCE(i.quality_score, 0) DESC, p.last_seen_at DESC LIMIT 240`,
   ).bind(direction.key, spaceId).all<ProtectedBaselineRow>();
   return rows.results.map((row) => {
-    const fit = researchTrackTopicalFit(direction, { title: row.title, abstractText: row.abstract_text, venue: row.venue });
+    const fit = researchTrackTitleTopicalFit(direction.titleEn, { title: row.title, abstractText: row.abstract_text, venue: row.venue });
     return { row, fit };
   }).filter(({ row, fit }) => !excludedCanonicalIds.has(row.canonical_id) && fit.accepted)
     .sort((left, right) => right.row.route_candidate - left.row.route_candidate
@@ -2260,9 +2260,12 @@ export async function POST(request: Request) {
     let resolvedBuildStatus: string | null = null;
     if (!targetedExpanding) {
       const deferredForCredential = scheduledRetry && candidates.length > 0 && !apiKey;
-      const nextAttemptCount = deferredForCredential ? Math.max(0, track.build_attempt_count)
-        : payload.force === true && ["empty", "failed"].includes(track.build_status)
-        ? 1 : Math.max(0, track.build_attempt_count) + 1;
+      const nextAttemptCount = nextResearchTrackBuildAttemptCount({
+        currentAttemptCount: track.build_attempt_count,
+        deferredForCredential,
+        force: payload.force === true,
+        storedStatus: track.build_status,
+      });
       const buildStatus = resolveResearchTrackBuildStatus({
         existingPaperCount: existing.results.length,
         selectedPaperCount: addedCount,

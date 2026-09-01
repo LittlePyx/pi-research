@@ -97,6 +97,7 @@ import {
 } from "../../../lib/monitor-route-planning";
 import { formalResearchMapEvidencePredicate, promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { activeResearchRouteSupplyPredicate } from "../../../lib/research-map-curation";
+import { researchTrackTitleTopicalFit } from "../../../lib/research-map-reliability";
 import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
@@ -424,6 +425,7 @@ type DiscoveryQuery = {
   explorationRole?: "core" | "adjacent";
   adaptiveScore?: number;
   routeUrgency?: number;
+  routeTitleEn?: string;
 };
 type DiscoveryBranchScore = {
   sourceKey: string;
@@ -1273,6 +1275,7 @@ async function routeDiscoveryQueries(
         rotating: true,
         channel: "topic" as const,
         routeId: row.id,
+        routeTitleEn: row.title_en,
         explorationRole: role,
         routeUrgency: Math.min(22, Math.round(row.passive_engagement / 2) + (row.research_problem_id ? 12 : 0)),
       };
@@ -1478,11 +1481,17 @@ async function fetchHorizon(
       const queryKey = await discoveryQueryKey(plan);
       const normalizedItems = await Promise.all((data.message?.items || []).map(async (item) => {
         const candidate = await normalizeItem(item, horizon.key);
-        return candidate ? {
+        if (!candidate) return null;
+        if (plan.routeTitleEn && !researchTrackTitleTopicalFit(plan.routeTitleEn, {
+          title: candidate.title,
+          abstractText: candidate.abstractText,
+          venue: candidate.venue,
+        }).accepted) return null;
+        return {
           ...candidate,
           discoveryChannel: plan.channel,
           provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, queryText: cleanText(plan.query).slice(0, 500), routeId: plan.routeId }],
-        } : null;
+        };
       }));
       const normalized = normalizedItems.filter((candidate): candidate is Exclude<(typeof normalizedItems)[number], null> => candidate !== null);
       const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, rows);

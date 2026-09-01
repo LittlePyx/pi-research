@@ -10,6 +10,7 @@ import {
 import { recordMonitorOperationalSentinel } from "../lib/monitor-operational-sentinel";
 import { readMonitorReliabilityHealth } from "../lib/monitor-reliability-health";
 import { recordResearchRouteSentinel } from "../lib/research-route-sentinel";
+import { SCHEDULED_RESEARCH_ROUTE_RETRY_SQL } from "../lib/research-map-reliability";
 
 interface Env {
   ASSETS: Fetcher;
@@ -157,6 +158,7 @@ type ScheduledRouteRetryRow = {
   space_id: string;
   owner_user_id: string;
   build_attempt_count: number;
+  recovery_from_shared_queue: number;
 };
 
 async function recordScheduledRouteRetryEvent(env: Env, row: ScheduledRouteRetryRow, outcome: "success" | "degraded" | "failed", metadata: Record<string, unknown>) {
@@ -175,22 +177,8 @@ async function recordScheduledRouteRetryEvent(env: Env, row: ScheduledRouteRetry
 }
 
 async function runScheduledResearchRouteRetry(env: Env, ctx: ExecutionContext) {
-  const due = await env.DB.prepare(
-    `SELECT track.id AS track_id, track.space_id, track.build_attempt_count, space.owner_user_id
-     FROM research_tracks track
-     JOIN research_spaces space ON space.id = track.space_id
-     JOIN monitor_runs run ON run.space_id = track.space_id
-     WHERE track.build_status = 'retryable'
-      AND track.build_attempt_count < 3
-      AND (track.build_retry_at IS NULL OR datetime(track.build_retry_at) <= CURRENT_TIMESTAMP)
-      AND space.owner_user_id LIKE 'anonymous:%'
-      AND run.automation_paused_at IS NULL
-      AND run.scheduled_runs_since_activity < 3
-      AND run.last_user_activity_at IS NOT NULL
-      AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
-     ORDER BY datetime(run.last_user_activity_at) DESC, datetime(track.build_retry_at) ASC, datetime(track.updated_at) ASC
-     LIMIT ?`,
-  ).bind(SCHEDULED_ROUTE_RETRY_BATCH_SIZE).first<ScheduledRouteRetryRow>();
+  const due = await env.DB.prepare(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL)
+    .bind(SCHEDULED_ROUTE_RETRY_BATCH_SIZE).first<ScheduledRouteRetryRow>();
   if (!due) return { attempted: false as const, spaceId: null as string | null };
 
   const workspaceId = due.owner_user_id.startsWith("anonymous:") ? due.owner_user_id.slice("anonymous:".length) : "";
@@ -202,7 +190,12 @@ async function runScheduledResearchRouteRetry(env: Env, ctx: ExecutionContext) {
       Cookie: `pi_anonymous_workspace=${workspaceId}`,
       "x-pi-scheduled-route-retry": "1",
     },
-    body: JSON.stringify({ spaceId: due.space_id, action: "hydrate", trackId: due.track_id }),
+    body: JSON.stringify({
+      spaceId: due.space_id,
+      action: "hydrate",
+      trackId: due.track_id,
+      force: due.recovery_from_shared_queue === 1,
+    }),
   }), env, ctx);
   const state = await response.json().catch(() => ({})) as {
     routeBuildStatus?: string | null;
@@ -220,6 +213,7 @@ async function runScheduledResearchRouteRetry(env: Env, ctx: ExecutionContext) {
     visiblePaperCount: track?.papers?.length || 0,
     discoveredCandidateCount: state.discoveredRouteCandidateCount || 0,
     queuedForReviewCount: state.reviewQueuedCount || 0,
+    recoveryFromSharedQueue: due.recovery_from_shared_queue === 1,
   });
   return { attempted: true as const, spaceId: due.space_id, trackId: due.track_id, outcome, buildStatus };
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
@@ -8,6 +9,7 @@ import {
   monitorSchedulerSecretMatches,
   shouldWakeMonitorScheduler,
 } from "../lib/monitor-scheduler.mjs";
+import { SCHEDULED_RESEARCH_ROUTE_RETRY_SQL } from "../lib/research-map-reliability.ts";
 
 test("scheduler buckets deduplicate cron, watchdog, and visit wakeups", () => {
   assert.equal(MONITOR_SCHEDULER_BUCKET_MS, 10 * 60 * 1000);
@@ -45,10 +47,9 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /datetime\('now', '-20 minutes'\)/);
   assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 1/);
   assert.match(worker, /SCHEDULED_ROUTE_RETRY_BATCH_SIZE = 1/);
-  assert.match(worker, /track\.build_status = 'retryable'/);
-  assert.match(worker, /track\.build_attempt_count < 3/);
-  assert.match(worker, /datetime\(track\.build_retry_at\) <= CURRENT_TIMESTAMP/);
-  assert.match(worker, /datetime\(run\.last_user_activity_at\) > datetime\('now', '-7 days'\)/);
+  assert.match(worker, /SCHEDULED_RESEARCH_ROUTE_RETRY_SQL/);
+  assert.match(worker, /recovery_from_shared_queue === 1/);
+  assert.match(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL, /datetime\(run\.last_user_activity_at\) > datetime\('now', '-7 days'\)/);
   assert.match(worker, /x-pi-scheduled-route-retry/);
   assert.match(worker, /recordResearchRouteSentinel/);
   assert.match(worker, /recordMonitorOperationalSentinel/);
@@ -78,4 +79,50 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(workflow, /api\/internal\/reliability/);
   assert.match(workflow, /persistentCriticalCount/);
   assert.match(workflow, /jq -e '\.healthy == true'/);
+});
+
+test("scheduler reopens an exhausted route only after genuinely new route-attributed candidates arrive", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec(`
+      CREATE TABLE research_spaces (id TEXT PRIMARY KEY, owner_user_id TEXT);
+      CREATE TABLE research_tracks (
+        id TEXT PRIMARY KEY, space_id TEXT, build_status TEXT, build_attempt_count INTEGER,
+        build_retry_at TEXT, updated_at TEXT
+      );
+      CREATE TABLE monitor_runs (
+        space_id TEXT, automation_paused_at TEXT, scheduled_runs_since_activity INTEGER,
+        last_user_activity_at TEXT
+      );
+      CREATE TABLE monitor_discovery_coverage (
+        space_id TEXT, horizon TEXT, source_key TEXT, query_key TEXT, route_id TEXT
+      );
+      CREATE TABLE monitor_candidate_sources (
+        space_id TEXT, paper_id TEXT, source_key TEXT, query_key TEXT, first_seen_at TEXT
+      );
+      CREATE TABLE monitored_papers (id TEXT PRIMARY KEY, space_id TEXT, horizon TEXT);
+      INSERT INTO research_spaces VALUES ('space-a', 'anonymous:workspace-a');
+      INSERT INTO monitor_runs VALUES ('space-a', NULL, 0, datetime('now'));
+      INSERT INTO research_tracks VALUES ('track-a', 'space-a', 'failed', 3, NULL, '2026-08-28 10:00:00');
+      INSERT INTO monitor_discovery_coverage VALUES ('space-a', 'years', 'research-route:foundation', 'query-a', 'track-a');
+      INSERT INTO monitored_papers VALUES ('old-paper', 'space-a', 'years');
+      INSERT INTO monitor_candidate_sources VALUES ('space-a', 'old-paper', 'research-route:foundation', 'query-a', '2026-08-28 09:00:00');
+    `);
+    sqlite.exec(await readFile(new URL("../drizzle/0049_amusing_psynapse.sql", import.meta.url), "utf8"));
+    assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL).get(1), undefined);
+
+    sqlite.exec(`
+      INSERT INTO monitored_papers VALUES ('new-paper', 'space-a', 'years');
+      INSERT INTO monitor_candidate_sources VALUES ('space-a', 'new-paper', 'research-route:foundation', 'query-a', '2026-08-28 11:00:00');
+    `);
+    const due = sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL).get(1);
+    assert.equal(due.track_id, 'track-a');
+    assert.equal(due.recovery_from_shared_queue, 1);
+    assert.match(
+      sqlite.prepare(`EXPLAIN QUERY PLAN ${SCHEDULED_RESEARCH_ROUTE_RETRY_SQL}`).all(1).map((row) => row.detail).join("\n"),
+      /idx_monitor_candidate_sources_route_recovery/,
+    );
+  } finally {
+    sqlite.close();
+  }
 });

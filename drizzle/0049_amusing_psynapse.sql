@@ -1,0 +1,1 @@
+CREATE INDEX `idx_monitor_candidate_sources_route_recovery` ON `monitor_candidate_sources` (`space_id`,`source_key`,`query_key`,`first_seen_at`);

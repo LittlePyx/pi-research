@@ -973,6 +973,7 @@ export const monitorCandidateSources = sqliteTable(
   (table) => [
     uniqueIndex("idx_monitor_candidate_source_identity").on(table.paperId, table.sourceKey, table.queryKey),
     index("idx_monitor_candidate_sources_space").on(table.spaceId, table.lastSeenAt),
+    index("idx_monitor_candidate_sources_route_recovery").on(table.spaceId, table.sourceKey, table.queryKey, table.firstSeenAt),
   ],
 );
 

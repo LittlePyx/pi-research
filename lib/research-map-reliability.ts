@@ -95,9 +95,20 @@ function topicTerms(topic: ResearchTrackTopic) {
   ])).slice(0, 32);
 }
 
+function topicTermRoot(value: string) {
+  if (value.length >= 7 && value.endsWith("ies")) return `${value.slice(0, -3)}y`;
+  if (value.length >= 6 && value.endsWith("s") && !value.endsWith("ss") && !value.endsWith("sis")) return value.slice(0, -1);
+  return value;
+}
+
 function topicTermAppears(term: string, words: string[]) {
-  return words.some((word) => word === term
-    || (term.length >= 6 && word.length >= 6 && (word.startsWith(term) || term.startsWith(word))));
+  const rootedTerm = topicTermRoot(term);
+  return words.some((word) => {
+    const rootedWord = topicTermRoot(word);
+    return rootedWord === rootedTerm
+      || (rootedTerm.length >= 6 && rootedWord.length >= 6
+        && (rootedWord.startsWith(rootedTerm) || rootedTerm.startsWith(rootedWord)));
+  });
 }
 
 /**
@@ -122,6 +133,83 @@ export function researchTrackTopicalFit(topic: ResearchTrackTopic, candidate: Re
     totalMatchCount: bodyMatches.length,
     matchedTerms: bodyMatches,
   };
+}
+
+/**
+ * Monitor route searches are model-generated and can occasionally contain a
+ * broad polysemous token (for example, "power").  Shared-queue admission uses
+ * the stable route title as its minimum lexical contract so an exploratory
+ * query cannot redefine the route before the independent model review runs.
+ */
+export function researchTrackTitleTopicalFit(
+  titleEn: string,
+  candidate: ResearchTrackTopicCandidate,
+) {
+  const titleAnchorGenericTerms = new Set([
+    ...GENERIC_ROUTE_TERMS,
+    "bounds", "identity", "mechanisms", "problems", "relationship",
+  ]);
+  const concepts = titleEn.split(/\b(?:and|or)\b|[&/]/i).map((clause) =>
+    normalizedTopicWords(clause).filter((term) => term.length >= 4 && !titleAnchorGenericTerms.has(term)),
+  ).filter((concept) => concept.length > 0);
+  const titleWords = normalizedTopicWords(candidate.title);
+  const matchedTerms = Array.from(new Set(concepts.flat().filter((term) => topicTermAppears(term, titleWords))));
+  const accepted = concepts.some((concept) => {
+    const positions = concept.map((term) => titleWords.findIndex((word) => topicTermAppears(term, [word])));
+    if (positions.some((position) => position < 0)) return false;
+    if (positions.length === 1) return true;
+    return Math.max(...positions) - Math.min(...positions) <= concept.length + 1;
+  });
+  return {
+    accepted,
+    titleMatchCount: matchedTerms.length,
+    totalMatchCount: matchedTerms.length,
+    matchedTerms,
+  };
+}
+
+export const SCHEDULED_RESEARCH_ROUTE_RETRY_SQL = `SELECT
+ track.id AS track_id, track.space_id, track.build_attempt_count, space.owner_user_id,
+ CASE WHEN track.build_status IN ('empty', 'failed') OR track.build_attempt_count >= 3 THEN 1 ELSE 0 END AS recovery_from_shared_queue
+ FROM research_tracks track
+ JOIN research_spaces space ON space.id = track.space_id
+ JOIN monitor_runs run ON run.space_id = track.space_id
+ WHERE (
+   (track.build_status = 'retryable'
+    AND track.build_attempt_count < 3
+    AND (track.build_retry_at IS NULL OR datetime(track.build_retry_at) <= CURRENT_TIMESTAMP))
+   OR (
+    track.build_status IN ('retryable', 'empty', 'failed')
+    AND EXISTS (
+     SELECT 1 FROM monitor_discovery_coverage coverage
+     JOIN monitor_candidate_sources candidate ON candidate.space_id = coverage.space_id
+      AND candidate.source_key = coverage.source_key AND candidate.query_key = coverage.query_key
+     JOIN monitored_papers paper ON paper.id = candidate.paper_id AND paper.space_id = candidate.space_id
+      AND paper.horizon = coverage.horizon
+     WHERE coverage.space_id = track.space_id AND coverage.route_id = track.id
+      AND datetime(candidate.first_seen_at) > datetime(track.updated_at)
+    )
+   )
+  )
+  AND space.owner_user_id LIKE 'anonymous:%'
+  AND run.automation_paused_at IS NULL
+  AND run.scheduled_runs_since_activity < 3
+  AND run.last_user_activity_at IS NOT NULL
+  AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
+ ORDER BY recovery_from_shared_queue ASC, datetime(run.last_user_activity_at) DESC,
+  datetime(track.build_retry_at) ASC, datetime(track.updated_at) ASC
+ LIMIT ?`;
+
+export function nextResearchTrackBuildAttemptCount(input: {
+  currentAttemptCount: number;
+  deferredForCredential: boolean;
+  force: boolean;
+  storedStatus: string;
+}) {
+  const current = Math.max(0, Math.floor(input.currentAttemptCount));
+  if (input.deferredForCredential) return current;
+  if (input.force && ["retryable", "empty", "failed"].includes(input.storedStatus)) return 1;
+  return current + 1;
 }
 
 /**

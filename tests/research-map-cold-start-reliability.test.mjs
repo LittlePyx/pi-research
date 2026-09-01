@@ -7,7 +7,9 @@ import {
   defensiveResearchTrackBuildStatus,
   MAX_RESEARCH_TRACK_BUILD_ATTEMPTS,
   mergeResearchTrackSourceBatches,
+  nextResearchTrackBuildAttemptCount,
   researchTrackSourcePlan,
+  researchTrackTitleTopicalFit,
   researchTrackTopicalFit,
   resolveResearchTrackBuildStatus,
 } from "../lib/research-map-reliability.ts";
@@ -94,6 +96,43 @@ test("route-specific precision gate keeps direct work and rejects adjacent-field
   }).accepted, true);
 });
 
+test("shared route queue admission uses stable route-title anchors instead of a drifting generated query", () => {
+  const routeTitle = "Entropy Power Inequality and Transport Inequalities";
+  assert.equal(researchTrackTitleTopicalFit(routeTitle, {
+    title: "A Quantitative Entropy Power Inequality for Dependent Random Vectors",
+    abstractText: "We establish quantitative stability bounds for the EPI.",
+  }).accepted, true);
+  assert.equal(researchTrackTitleTopicalFit(routeTitle, {
+    title: "Hydrogen Production, Distribution, Storage and Power Conversion in a Hydrogen Economy",
+    abstractText: "A technology review of power conversion and transport infrastructure.",
+  }).accepted, false);
+  assert.equal(researchTrackTitleTopicalFit(routeTitle, {
+    title: "Pembrolizumab with Gemcitabine for Advanced Biliary Tract Cancer",
+    abstractText: "A randomized phase 3 clinical trial.",
+  }).accepted, false);
+  assert.equal(researchTrackTitleTopicalFit(routeTitle, {
+    title: "High Figure-of-Merit and Power Generation in High-Entropy Thermoelectrics",
+  }).accepted, false);
+  assert.equal(researchTrackTitleTopicalFit(routeTitle, {
+    title: "Nonlinear Causal Asymmetries in Income Inequality, Market Power, and Transfer Entropy",
+  }).accepted, false);
+  assert.equal(researchTrackTitleTopicalFit(routeTitle, {
+    title: "A Note on Talagrand's Transportation Inequality",
+  }).accepted, true);
+});
+
+test("a new shared-queue recovery pass resets the bounded attempt window without hiding credential deferral", () => {
+  assert.equal(nextResearchTrackBuildAttemptCount({
+    currentAttemptCount: 3, deferredForCredential: false, force: true, storedStatus: "failed",
+  }), 1);
+  assert.equal(nextResearchTrackBuildAttemptCount({
+    currentAttemptCount: 3, deferredForCredential: false, force: true, storedStatus: "retryable",
+  }), 1);
+  assert.equal(nextResearchTrackBuildAttemptCount({
+    currentAttemptCount: 2, deferredForCredential: true, force: true, storedStatus: "failed",
+  }), 2);
+});
+
 test("the D1 migration repairs legacy ready routes with zero nodes without touching populated history", async () => {
   const sqlite = new DatabaseSync(":memory:");
   try {
@@ -142,8 +181,9 @@ test("the due-retry migration adds the bounded scheduler index", async () => {
 });
 
 test("cold-start API code persists degraded state and queues retrieved candidates before route selection", async () => {
-  const [route, repository] = await Promise.all([
+  const [route, monitor, repository] = await Promise.all([
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
   ]);
   assert.match(route, /Promise\.allSettled/);
@@ -156,6 +196,8 @@ test("cold-start API code persists degraded state and queues retrieved candidate
   assert.match(route, /\.slice\(0, 24\)\.map\(\(candidate\) =>/);
   assert.match(route, /build_status = \?, build_attempt_count = \?, build_source_status_json = \?, build_error = \?, build_retry_at = \?/);
   assert.match(route, /resolveResearchTrackBuildStatus/);
+  assert.match(monitor, /routeTitleEn:\s*row\.title_en/);
+  assert.match(monitor, /researchTrackTitleTopicalFit\(plan\.routeTitleEn/);
   assert.doesNotMatch(route, /UPDATE research_tracks SET expansion_count = 0, updated_at/);
   assert.ok(repository.indexOf("ALTER TABLE research_tracks ADD COLUMN build_retry_at")
     < repository.indexOf("CREATE INDEX IF NOT EXISTS idx_research_tracks_retry_due"));
