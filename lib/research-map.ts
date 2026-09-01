@@ -1,3 +1,5 @@
+import type { ResearchRouteEffectiveness } from "./research-route-effectiveness";
+
 export type ResearchTrackRole = "foundation" | "milestone" | "frontier";
 export type ResearchDirectionRole = "core" | "support" | "explore";
 export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
@@ -211,6 +213,7 @@ export type ResearchRouteRevision = {
   decidedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  effectiveness?: ResearchRouteEffectiveness;
 };
 
 export type ResearchRouteDiscoveryTask = {
