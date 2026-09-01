@@ -27,6 +27,46 @@ export type ResearchRouteEffectiveness = ResearchRouteEffectivenessMetrics & {
   recommendationRateDelta: number | null;
   summaryZh: string;
   summaryEn: string;
+  shadowExperiment?: ResearchRouteShadowExperiment;
+};
+
+export type ResearchRouteExperimentArmMetrics = {
+  experimentArm: "current" | "shadow";
+  revisionId: string;
+  version: number;
+  attemptCount: number;
+  candidateCount: number;
+  deepReviewedCount: number;
+  recommendedCount: number;
+  acceptedCount: number;
+  readingCompletedCount: number;
+  sourceFailureCount: number;
+};
+
+export type ResearchRouteShadowExperiment = {
+  status: "not_started" | "collecting" | "comparable" | "degraded";
+  verdict: "observing" | "retain_current" | "consider_previous";
+  current: ResearchRouteExperimentArmMetrics;
+  shadow: ResearchRouteExperimentArmMetrics;
+  recommendationRateDelta: number | null;
+  maxShadowAttempts: 2;
+  maxResultsPerAttempt: 8;
+  summaryZh: string;
+  summaryEn: string;
+};
+
+export type ResearchRouteExperimentRow = {
+  track_id: string;
+  experiment_arm: "current" | "shadow";
+  revision_id: string;
+  version: number;
+  attempt_count: number;
+  candidate_count: number;
+  deep_reviewed_count: number;
+  recommended_count: number;
+  accepted_count: number;
+  reading_completed_count: number;
+  source_failure_count: number;
 };
 
 export type ResearchRouteEffectivenessRow = {
@@ -137,6 +177,82 @@ export const RESEARCH_ROUTE_VERSION_EFFECT_SQL = `WITH formal_versions AS (
     AND (version.window_ended_at IS NULL OR datetime(failure.created_at) < datetime(version.window_ended_at))) AS source_failure_count
  FROM version_windows version ORDER BY version.track_id, version.version DESC`;
 
+/**
+ * Controlled measurements only include version-keyed discovery branches.
+ * The shadow arm uses the same candidate, audit, recommendation, feedback and
+ * reading tables as the current arm; no alternate quality gate exists.
+ */
+export const RESEARCH_ROUTE_SHADOW_EXPERIMENT_SQL = `WITH version_pairs AS (
+ SELECT current.space_id, current.track_id,
+  current.id AS current_revision_id, current.version AS current_version,
+  (SELECT previous.id FROM research_route_revisions previous
+   WHERE previous.space_id = current.space_id AND previous.track_id = current.track_id
+    AND previous.status = 'superseded' AND previous.version < current.version
+   ORDER BY previous.version DESC, previous.rowid DESC LIMIT 1) AS previous_revision_id,
+  (SELECT previous.version FROM research_route_revisions previous
+   WHERE previous.space_id = current.space_id AND previous.track_id = current.track_id
+    AND previous.status = 'superseded' AND previous.version < current.version
+   ORDER BY previous.version DESC, previous.rowid DESC LIMIT 1) AS previous_version
+ FROM research_route_revisions current
+ WHERE current.space_id = ? AND current.status = 'confirmed'
+), experiment_arms AS (
+ SELECT space_id, track_id, 'current' AS experiment_arm,
+  current_revision_id AS revision_id, current_version AS version FROM version_pairs
+ WHERE previous_revision_id IS NOT NULL
+ UNION ALL
+ SELECT space_id, track_id, 'shadow' AS experiment_arm,
+  previous_revision_id AS revision_id, previous_version AS version FROM version_pairs
+ WHERE previous_revision_id IS NOT NULL
+), arm_coverage AS (
+ SELECT arm.space_id, arm.track_id, arm.experiment_arm, arm.revision_id, arm.version,
+  coverage.source_key, coverage.query_key, COALESCE(coverage.attempt_count, 0) AS attempt_count
+ FROM experiment_arms arm
+ LEFT JOIN monitor_discovery_coverage coverage ON coverage.space_id = arm.space_id
+  AND substr(coverage.query_key, 1, length('research-route-version~' || arm.experiment_arm || '~' || arm.revision_id || '~' || arm.version || '~'))
+   = 'research-route-version~' || arm.experiment_arm || '~' || arm.revision_id || '~' || arm.version || '~'
+), arm_candidates AS (
+ SELECT DISTINCT coverage.track_id, coverage.experiment_arm, coverage.revision_id, candidate.paper_id
+ FROM arm_coverage coverage
+ JOIN monitor_candidate_sources candidate ON candidate.space_id = coverage.space_id
+  AND candidate.source_key = coverage.source_key AND candidate.query_key = coverage.query_key
+), arm_audits AS (
+ SELECT DISTINCT arm.track_id, arm.experiment_arm, arm.revision_id, audit.paper_id,
+  audit.recommended, audit.is_paper
+ FROM experiment_arms arm
+ JOIN recommendation_audit_events audit ON audit.space_id = arm.space_id
+ JOIN json_each(audit.provenance_json) origin
+ WHERE json_extract(origin.value, '$.routeRevisionId') = arm.revision_id
+  AND json_extract(origin.value, '$.experimentArm') = arm.experiment_arm
+), recommended_papers AS (
+ SELECT DISTINCT track_id, experiment_arm, revision_id, paper_id FROM arm_audits
+ WHERE recommended = 1 AND is_paper = 1
+)
+SELECT arm.track_id, arm.experiment_arm, arm.revision_id, arm.version,
+ (SELECT COALESCE(SUM(coverage.attempt_count), 0) FROM arm_coverage coverage
+  WHERE coverage.revision_id = arm.revision_id AND coverage.experiment_arm = arm.experiment_arm) AS attempt_count,
+ (SELECT COUNT(*) FROM arm_candidates candidate
+  WHERE candidate.revision_id = arm.revision_id AND candidate.experiment_arm = arm.experiment_arm) AS candidate_count,
+ (SELECT COUNT(DISTINCT audit.paper_id) FROM arm_audits audit
+  WHERE audit.revision_id = arm.revision_id AND audit.experiment_arm = arm.experiment_arm AND audit.is_paper = 1) AS deep_reviewed_count,
+ (SELECT COUNT(*) FROM recommended_papers recommendation
+  WHERE recommendation.revision_id = arm.revision_id AND recommendation.experiment_arm = arm.experiment_arm) AS recommended_count,
+ (SELECT COUNT(*) FROM recommended_papers recommendation
+  WHERE recommendation.revision_id = arm.revision_id AND recommendation.experiment_arm = arm.experiment_arm AND EXISTS (
+   SELECT 1 FROM paper_feedback feedback WHERE feedback.space_id = arm.space_id
+    AND feedback.paper_id = recommendation.paper_id AND (feedback.feedback = 'relevant' OR feedback.saved = 1)
+  )) AS accepted_count,
+ (SELECT COUNT(*) FROM recommended_papers recommendation
+  WHERE recommendation.revision_id = arm.revision_id AND recommendation.experiment_arm = arm.experiment_arm AND EXISTS (
+   SELECT 1 FROM paper_reading_progress reading WHERE reading.space_id = arm.space_id
+    AND reading.paper_id = recommendation.paper_id
+    AND (reading.completed_at IS NOT NULL OR reading.status IN ('read', 'mastered', 'cited'))
+  )) AS reading_completed_count,
+ (SELECT COUNT(*) FROM monitor_reliability_events failure
+  WHERE failure.space_id = arm.space_id AND failure.kind = 'source_degraded'
+   AND json_extract(failure.metadata_json, '$.routeRevisionId') = arm.revision_id
+   AND json_extract(failure.metadata_json, '$.experimentArm') = arm.experiment_arm) AS source_failure_count
+FROM experiment_arms arm ORDER BY arm.track_id, arm.experiment_arm`;
+
 function count(value: unknown) {
   return Math.max(0, Math.round(Number(value) || 0));
 }
@@ -162,6 +278,74 @@ export function researchRouteEffectivenessMetrics(row: ResearchRouteEffectivenes
     synthesisUpdateCount: count(row.synthesis_update_count),
     problemAssessmentCount: count(row.problem_assessment_count),
     sourceFailureCount: count(row.source_failure_count),
+  };
+}
+
+export function researchRouteExperimentMetrics(row: ResearchRouteExperimentRow): ResearchRouteExperimentArmMetrics {
+  return {
+    experimentArm: row.experiment_arm,
+    revisionId: row.revision_id,
+    version: count(row.version),
+    attemptCount: count(row.attempt_count),
+    candidateCount: count(row.candidate_count),
+    deepReviewedCount: count(row.deep_reviewed_count),
+    recommendedCount: count(row.recommended_count),
+    acceptedCount: count(row.accepted_count),
+    readingCompletedCount: count(row.reading_completed_count),
+    sourceFailureCount: count(row.source_failure_count),
+  };
+}
+
+export function evaluateResearchRouteShadowExperiment(
+  current: ResearchRouteExperimentArmMetrics,
+  shadow: ResearchRouteExperimentArmMetrics,
+): ResearchRouteShadowExperiment {
+  const started = current.attemptCount > 0 || shadow.attemptCount > 0;
+  const degraded = current.sourceFailureCount > 0 || shadow.sourceFailureCount > 0;
+  const comparable = current.deepReviewedCount >= 4 && shadow.deepReviewedCount >= 4;
+  const currentRate = rate(current.recommendedCount, current.deepReviewedCount);
+  const shadowRate = rate(shadow.recommendedCount, shadow.deepReviewedCount);
+  const recommendationRateDelta = comparable && !degraded ? shadowRate - currentRate : null;
+  const currentPositive = current.acceptedCount > 0 || current.readingCompletedCount > 0;
+
+  let status: ResearchRouteShadowExperiment["status"] = !started ? "not_started" : "collecting";
+  let verdict: ResearchRouteShadowExperiment["verdict"] = "observing";
+  let summaryZh = started
+    ? "两组样本仍在积累；上一版只做受控供稿，不改变正式路线。"
+    : "对照尚未开始；下一次月度窗口会在固定上限内抽取上一版检索词。";
+  let summaryEn = started
+    ? "Both samples are still accumulating. The prior version only supplies a bounded control and cannot change the formal route."
+    : "The control has not started. A future monthly window will sample the prior query within fixed limits.";
+  if (degraded) {
+    status = "degraded";
+    summaryZh = "对照窗口包含来源降级，当前差异不可归因于路线版本，也不会触发回退建议。";
+    summaryEn = "The control window includes source degradation, so differences cannot be attributed to route versions and cannot trigger rollback advice.";
+  } else if (comparable) {
+    status = "comparable";
+    if (currentPositive || shadowRate <= currentRate) {
+      verdict = "retain_current";
+      summaryZh = currentPositive
+        ? "当前版已产生接受或完读结果，受控对照建议继续保留当前正式路线。"
+        : "可比较样本中上一版未优于当前版，建议保留当前正式路线。";
+      summaryEn = currentPositive
+        ? "The current version has produced acceptance or completed reading, so the control supports retaining the formal route."
+        : "The prior version did not outperform the current version in comparable samples. Retain the formal route.";
+    } else if (recommendationRateDelta !== null && recommendationRateDelta >= 20) {
+      verdict = "consider_previous";
+      summaryZh = "上一版在可比较深评样本中的正式推荐率至少高 20 个百分点；仅建议人工复核，不会自动回退。";
+      summaryEn = "The prior version's formal recommendation rate is at least 20 percentage points higher in comparable reviews. This only suggests manual review and never rolls back automatically.";
+    }
+  }
+  return {
+    status,
+    verdict,
+    current,
+    shadow,
+    recommendationRateDelta,
+    maxShadowAttempts: 2,
+    maxResultsPerAttempt: 8,
+    summaryZh,
+    summaryEn,
   };
 }
 

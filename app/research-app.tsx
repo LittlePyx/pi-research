@@ -36,7 +36,7 @@ type Space = {
 };
 type User = { userId: string; displayName: string; email: string; fullName: string | null };
 type Localized = { zh: string; en: string };
-type RouteDiscoveryKind = "route_foundation" | "route_milestone" | "route_frontier" | "route_gap" | "route_synthesis" | "route_network" | "route_search";
+type RouteDiscoveryKind = "route_foundation" | "route_milestone" | "route_frontier" | "route_gap" | "route_synthesis" | "route_network" | "route_version_shadow" | "route_search";
 type RouteDiscoveryType = "route_search" | "gap" | "synthesis" | "citation_network";
 type MonitorPaper = {
   id: string;
@@ -1139,6 +1139,7 @@ function routeDiscoveryKindLabel(paper: MonitorPaper, locale: Locale) {
     route_gap: { zh: "证据缺口", en: "Evidence gap" },
     route_synthesis: { zh: "研究综合", en: "Research synthesis" },
     route_network: { zh: "引用网络", en: "Citation network" },
+    route_version_shadow: { zh: "上一版路线对照", en: "Prior-version control" },
     route_search: { zh: "路线定向检索", en: "Route search" },
     gap: { zh: "证据缺口", en: "Evidence gap" },
     synthesis: { zh: "研究综合", en: "Research synthesis" },
@@ -1388,6 +1389,7 @@ function RouteEvolutionWorkbench({
   const history = revisions.filter((revision) => revision.status !== "proposed");
   const currentFormal = revisions.find((revision) => revision.status === "confirmed") || null;
   const effectiveness = currentFormal?.effectiveness || null;
+  const shadowExperiment = effectiveness?.shadowExperiment || null;
   const busy = Boolean(action?.startsWith("evolution-"));
   const statusLabel = (status: (typeof revisions)[number]["status"]) => status === "confirmed"
     ? (locale === "zh" ? "当前正式版本" : "Current formal version")
@@ -1420,6 +1422,14 @@ function RouteEvolutionWorkbench({
         <div><dt>{locale === "zh" ? "正式路线证据" : "Formal evidence"}</dt><dd>{effectiveness.formalEvidenceCount}</dd><small>{effectiveness.readingStartedCount} {locale === "zh" ? "篇开始阅读" : "started reading"}</small></div>
         <div><dt>{locale === "zh" ? "研究判断变化" : "Research changes"}</dt><dd>{effectiveness.problemAssessmentCount + effectiveness.synthesisUpdateCount}</dd><small>{locale === "zh" ? `${effectiveness.problemAssessmentCount} 次问题评估 · ${effectiveness.synthesisUpdateCount} 次综合` : `${effectiveness.problemAssessmentCount} problem · ${effectiveness.synthesisUpdateCount} synthesis`}</small></div>
       </dl>
+      {shadowExperiment && <section className={`v2-route-shadow-experiment ${shadowExperiment.status}`}>
+        <header><div><small>{locale === "zh" ? "上一版受控对照" : "PRIOR-VERSION CONTROL"}</small><strong>{shadowExperiment.verdict === "retain_current" ? (locale === "zh" ? "对照支持保留当前版" : "Control supports the current version") : shadowExperiment.verdict === "consider_previous" ? (locale === "zh" ? "建议人工复核上一版" : "Manually review the prior version") : (locale === "zh" ? "样本积累中，不下结论" : "Collecting evidence; no conclusion")}</strong></div><span>{locale === "zh" ? `上限 ${shadowExperiment.maxShadowAttempts} 轮 × ${shadowExperiment.maxResultsPerAttempt} 条` : `Cap ${shadowExperiment.maxShadowAttempts} runs × ${shadowExperiment.maxResultsPerAttempt}`}</span></header>
+        <div className="v2-route-shadow-arms">{[
+          { key: "current", label: locale === "zh" ? `当前正式版 v${shadowExperiment.current.version}` : `Current formal v${shadowExperiment.current.version}`, arm: shadowExperiment.current },
+          { key: "shadow", label: locale === "zh" ? `上一版对照 v${shadowExperiment.shadow.version}` : `Prior control v${shadowExperiment.shadow.version}`, arm: shadowExperiment.shadow },
+        ].map(({ key, label, arm }) => <article className={key} key={key}><header><strong>{label}</strong><small>{arm.attemptCount} {locale === "zh" ? "轮发现" : "discovery runs"}</small></header><dl><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{arm.candidateCount}</dd></div><div><dt>{locale === "zh" ? "深评" : "Reviewed"}</dt><dd>{arm.deepReviewedCount}</dd></div><div><dt>{locale === "zh" ? "推荐" : "Recommended"}</dt><dd>{arm.recommendedCount}</dd></div><div><dt>{locale === "zh" ? "接受 / 完读" : "Accepted / read"}</dt><dd>{arm.acceptedCount} / {arm.readingCompletedCount}</dd></div></dl></article>)}</div>
+        <footer><p>{locale === "zh" ? shadowExperiment.summaryZh : shadowExperiment.summaryEn}</p>{shadowExperiment.recommendationRateDelta !== null && <small>{locale === "zh" ? `上一版相对当前版推荐率：${shadowExperiment.recommendationRateDelta > 0 ? "+" : ""}${shadowExperiment.recommendationRateDelta}pp` : `Prior-versus-current recommendation rate: ${shadowExperiment.recommendationRateDelta > 0 ? "+" : ""}${shadowExperiment.recommendationRateDelta}pp`}</small>}</footer>
+      </section>}
       {effectiveness.sourceFailureCount > 0 && <aside><b>!</b><p>{locale === "zh" ? `窗口内记录到 ${effectiveness.sourceFailureCount} 次路线来源降级；Pi 不会把低产出误判成路线质量下降。` : `${effectiveness.sourceFailureCount} route-source degradations occurred in this window. Pi will not mistake low yield for lower route quality.`}</p></aside>}
       <footer><p>{locale === "zh" ? effectiveness.summaryZh : effectiveness.summaryEn}</p><small>{locale === "zh" ? "建议只依据真实候选、质量审计、反馈、阅读和正式证据；不会自动回退，也不会降低质量门槛。" : "The recommendation uses real candidates, quality audits, feedback, reading and formal evidence only. It never rolls back automatically or lowers the quality gate."}</small></footer>
     </section>}

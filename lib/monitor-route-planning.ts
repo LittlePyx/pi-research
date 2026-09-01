@@ -4,7 +4,7 @@ export type PrioritizableDiscoveryPlan = {
   key: string;
   sourceKey: string;
   routeId?: string;
-  explorationRole?: "core" | "adjacent";
+  explorationRole?: "core" | "adjacent" | "shadow";
   adaptiveScore?: number;
 };
 
@@ -34,6 +34,7 @@ export type MonitorRouteOriginKind =
   | "route_gap"
   | "route_synthesis"
   | "route_network"
+  | "route_version_shadow"
   | "route_search";
 
 export type MonitorRouteTaskKind = "foundation" | "frontier" | "gap" | "network";
@@ -130,6 +131,7 @@ export function monitorRouteOriginKind(sourceKey: string, routeId?: string | nul
   if (sourceKey === "research-route:gap" || sourceKey.startsWith("crossref:route-gap:")) return "route_gap";
   if (sourceKey === "research-route:synthesis") return "route_synthesis";
   if (sourceKey === "research-route:network") return "route_network";
+  if (sourceKey === "research-route:version-shadow") return "route_version_shadow";
   if (sourceKey.startsWith("research-route:") || sourceKey.startsWith("crossref:route:")) return "route_search";
   if (routeId?.trim()) return "route_search";
   return null;
@@ -267,8 +269,9 @@ export function selectPrioritizedDiscoveryPlans<T extends PrioritizableDiscovery
 ) {
   const maxPlans = mode === "focused" ? 8 : mode === "open" ? 12 : 10;
   const adjacentSlots = mode === "focused" ? 0 : Math.max(1, Math.round(maxPlans * 0.18));
-  const corePlans = stableRank(plans.filter((plan) => plan.explorationRole !== "adjacent"));
+  const corePlans = stableRank(plans.filter((plan) => plan.explorationRole !== "adjacent" && plan.explorationRole !== "shadow"));
   const adjacentPlans = stableRank(plans.filter((plan) => plan.explorationRole === "adjacent"));
+  const shadowPlans = stableRank(plans.filter((plan) => plan.explorationRole === "shadow"));
   const selected: T[] = [];
   const selectedKeys = new Set<string>();
   const add = (plan: T | undefined) => {
@@ -298,16 +301,21 @@ export function selectPrioritizedDiscoveryPlans<T extends PrioritizableDiscovery
   }
   for (const plan of selectedAdjacent) add(plan);
 
-  const coreCapacity = maxPlans - selectedAdjacent.length;
+  // A prior-version control is deliberately small: at most one plan after
+  // the current route reservations, never a second shadow branch.
+  const selectedShadow = shadowPlans[0];
+  add(selectedShadow);
+
+  const coreCapacity = maxPlans - selectedAdjacent.length - (selectedShadow ? 1 : 0);
   for (const plan of corePlans) {
-    if (selected.filter((item) => item.explorationRole !== "adjacent").length >= coreCapacity) break;
+    if (selected.filter((item) => item.explorationRole !== "adjacent" && item.explorationRole !== "shadow").length >= coreCapacity) break;
     add(plan);
   }
 
   // If one side has fewer available plans, use the spare capacity without
   // weakening the route reservations already made above.
   if (selected.length < maxPlans) {
-    const fillPool = mode === "focused" ? corePlans : stableRank(plans);
+    const fillPool = mode === "focused" ? corePlans : stableRank(plans.filter((plan) => plan.explorationRole !== "shadow"));
     for (const plan of fillPool) {
       if (selected.length >= maxPlans) break;
       add(plan);

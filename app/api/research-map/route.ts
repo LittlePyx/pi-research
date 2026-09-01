@@ -12,7 +12,16 @@ import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSe
 import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defensiveResearchTrackIntelligenceStatus, deferResearchTrackIntelligence, requestResearchTrackIntelligenceRefresh } from "../../../lib/research-map-intelligence";
 import { applyStoredResearchRoutePrecisionAudits, RESEARCH_ROUTE_PRECISION_GATE_VERSION, researchRoutePrecisionAuditProgress, routePrecisionAcceptedForActiveNode, routePrecisionAutoDeactivates, routePrecisionJudgmentIdentity, sanitizeResearchRoutePrecisionJudgments } from "../../../lib/research-map-precision";
 import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
-import { evaluateResearchRouteEffectiveness, researchRouteEffectivenessMetrics, RESEARCH_ROUTE_VERSION_EFFECT_SQL, type ResearchRouteEffectivenessRow } from "../../../lib/research-route-effectiveness";
+import {
+  evaluateResearchRouteEffectiveness,
+  evaluateResearchRouteShadowExperiment,
+  researchRouteEffectivenessMetrics,
+  researchRouteExperimentMetrics,
+  RESEARCH_ROUTE_SHADOW_EXPERIMENT_SQL,
+  RESEARCH_ROUTE_VERSION_EFFECT_SQL,
+  type ResearchRouteEffectivenessRow,
+  type ResearchRouteExperimentRow,
+} from "../../../lib/research-route-effectiveness";
 import { researchRouteEvolutionDecisionAllowed, researchRouteEvolutionInputRevision, sanitizeResearchRouteEvolution, type ResearchRouteEvolutionBasis, type ResearchRouteEvolutionDraft, type ResearchRouteEvolutionStatus } from "../../../lib/research-route-evolution";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
@@ -2027,7 +2036,7 @@ async function decideResearchRouteEvolution(
 }
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult, routePortfolioCounts, routeRevisionsResult, routeEffectivenessResult] = await Promise.all([
+  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult, routePortfolioCounts, routeRevisionsResult, routeEffectivenessResult, routeExperimentResult] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
@@ -2082,6 +2091,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
        ) WHERE revision_rank <= 8 ORDER BY track_id, version DESC`,
     ).bind(spaceId).all<RouteEvolutionRevisionRow>(),
     database.prepare(RESEARCH_ROUTE_VERSION_EFFECT_SQL).bind(spaceId).all<ResearchRouteEffectivenessRow>(),
+    database.prepare(RESEARCH_ROUTE_SHADOW_EXPERIMENT_SQL).bind(spaceId).all<ResearchRouteExperimentRow>(),
   ]);
   const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
   const reviewQueueCountsByTrack = new Map(reviewQueueCountsResult.results.map((row) => [row.track_id, row]));
@@ -2092,13 +2102,31 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     const metrics = researchRouteEffectivenessMetrics(row);
     effectivenessMetricsByTrack.set(row.track_id, [...(effectivenessMetricsByTrack.get(row.track_id) || []), metrics]);
   }
+  const routeExperimentArmsByTrack = new Map<string, ReturnType<typeof researchRouteExperimentMetrics>[]>()
+  for (const row of routeExperimentResult.results) {
+    routeExperimentArmsByTrack.set(row.track_id, [
+      ...(routeExperimentArmsByTrack.get(row.track_id) || []),
+      researchRouteExperimentMetrics(row),
+    ]);
+  }
+  const routeExperimentByCurrentRevision = new Map<string, ReturnType<typeof evaluateResearchRouteShadowExperiment>>();
+  for (const arms of routeExperimentArmsByTrack.values()) {
+    const current = arms.find((arm) => arm.experimentArm === "current");
+    const shadow = arms.find((arm) => arm.experimentArm === "shadow");
+    if (current && shadow) routeExperimentByCurrentRevision.set(
+      current.revisionId,
+      evaluateResearchRouteShadowExperiment(current, shadow),
+    );
+  }
   const routeEffectivenessByRevision = new Map<string, ReturnType<typeof evaluateResearchRouteEffectiveness>>();
   for (const metrics of effectivenessMetricsByTrack.values()) {
     const ordered = [...metrics].sort((left, right) => left.version - right.version);
-    ordered.forEach((item, index) => routeEffectivenessByRevision.set(
-      item.revisionId,
-      evaluateResearchRouteEffectiveness(item, index > 0 ? ordered[index - 1] : null),
-    ));
+    ordered.forEach((item, index) => routeEffectivenessByRevision.set(item.revisionId, {
+      ...evaluateResearchRouteEffectiveness(item, index > 0 ? ordered[index - 1] : null),
+      ...(routeExperimentByCurrentRevision.has(item.revisionId)
+        ? { shadowExperiment: routeExperimentByCurrentRevision.get(item.revisionId) }
+        : {}),
+    }));
   }
   const routeRevisionsByTrack = new Map<string, ResearchRouteRevision[]>();
   for (const row of routeRevisionsResult.results) {

@@ -102,6 +102,13 @@ import {
   type ConfirmedRouteEvidenceSnapshot,
   type ResearchGuidanceTrackSnapshot,
 } from "../../../lib/monitor-route-planning";
+import {
+  RESEARCH_ROUTE_SHADOW_MAX_ATTEMPTS,
+  RESEARCH_ROUTE_SHADOW_RESULT_LIMIT,
+  parseResearchRouteExperimentQueryKey,
+  researchRouteExperimentPlanKey,
+  type ResearchRouteExperimentArm,
+} from "../../../lib/research-route-experiment";
 import { formalResearchMapEvidencePredicate, promoteAlreadyAcceptedResearchMapEvidence, SYSTEM_CURATED_RESEARCH_MAP_REVIEW_ID_PREFIX, upsertPendingResearchMapEvidence } from "../../../lib/research-map-evidence";
 import { activeResearchRouteSupplyPredicate } from "../../../lib/research-map-curation";
 import { researchTrackTitleTopicalFit } from "../../../lib/research-map-reliability";
@@ -390,6 +397,9 @@ type CandidateProvenance = {
   queryKey: string;
   queryText?: string;
   routeId?: string;
+  routeRevisionId?: string;
+  routeVersion?: number;
+  experimentArm?: ResearchRouteExperimentArm;
   appearances?: number;
 };
 
@@ -430,7 +440,12 @@ type DiscoveryQuery = {
   issn?: string;
   author?: string;
   routeId?: string;
-  explorationRole?: "core" | "adjacent";
+  routeRevisionId?: string;
+  routeVersion?: number;
+  experimentArm?: ResearchRouteExperimentArm;
+  explorationRole?: "core" | "adjacent" | "shadow";
+  maxAttempts?: number;
+  resultLimit?: number;
   adaptiveScore?: number;
   routeUrgency?: number;
   routeTitleEn?: string;
@@ -612,7 +627,7 @@ const HORIZONS = [
 ] as const;
 const MONITOR_REVIEW_PIPELINE_RELEASED_AT = "2026-08-19T11:36:00.000Z";
 const MONITOR_LLM_REVIEW_RELEASED_AT = Date.parse(MONITOR_REVIEW_PIPELINE_RELEASED_AT);
-const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-08-23T12:00:00.000Z");
+const MONITOR_QUERY_PLAN_RELEASED_AT = Date.parse("2026-09-01T08:20:00.000Z");
 const MONITOR_PIPELINE_VERSION = "continuous-recommendation-v17-core-evidence";
 const COMPATIBLE_MONITOR_PIPELINE_VERSIONS = new Set([
   MONITOR_PIPELINE_VERSION,
@@ -1247,6 +1262,27 @@ async function routeDiscoveryQueries(
 ) {
   const rows = await database.prepare(
     `SELECT t.id, t.title_en, t.summary_en, t.search_queries, t.user_role, t.depth_score, t.interaction_score,
+     COALESCE((SELECT revision.id FROM research_route_revisions revision
+       WHERE revision.space_id = t.space_id AND revision.track_id = t.id AND revision.status = 'confirmed'
+       ORDER BY revision.version DESC, revision.rowid DESC LIMIT 1), '') AS current_revision_id,
+     COALESCE((SELECT revision.version FROM research_route_revisions revision
+       WHERE revision.space_id = t.space_id AND revision.track_id = t.id AND revision.status = 'confirmed'
+       ORDER BY revision.version DESC, revision.rowid DESC LIMIT 1), 0) AS current_route_version,
+     COALESCE((SELECT revision.search_queries_json FROM research_route_revisions revision
+       WHERE revision.space_id = t.space_id AND revision.track_id = t.id AND revision.status = 'confirmed'
+       ORDER BY revision.version DESC, revision.rowid DESC LIMIT 1), t.search_queries) AS current_search_queries,
+     COALESCE((SELECT revision.id FROM research_route_revisions revision
+       WHERE revision.space_id = t.space_id AND revision.track_id = t.id AND revision.status = 'superseded'
+       ORDER BY revision.version DESC, revision.rowid DESC LIMIT 1), '') AS previous_revision_id,
+     COALESCE((SELECT revision.version FROM research_route_revisions revision
+       WHERE revision.space_id = t.space_id AND revision.track_id = t.id AND revision.status = 'superseded'
+       ORDER BY revision.version DESC, revision.rowid DESC LIMIT 1), 0) AS previous_route_version,
+     COALESCE((SELECT revision.search_queries_json FROM research_route_revisions revision
+       WHERE revision.space_id = t.space_id AND revision.track_id = t.id AND revision.status = 'superseded'
+       ORDER BY revision.version DESC, revision.rowid DESC LIMIT 1), '[]') AS previous_search_queries,
+     COALESCE((SELECT revision.title_en FROM research_route_revisions revision
+       WHERE revision.space_id = t.space_id AND revision.track_id = t.id AND revision.status = 'superseded'
+       ORDER BY revision.version DESC, revision.rowid DESC LIMIT 1), '') AS previous_title_en,
      COALESCE(behavior.passive_engagement, 0) AS passive_engagement,
      t.intelligence_json, t.intelligence_updated_at,
      COALESCE(synthesis.overview_en, '') AS synthesis_overview_en,
@@ -1292,7 +1328,7 @@ async function routeDiscoveryQueries(
       problem.id, problem.status, problem.question, problem.updated_at
      ORDER BY CASE WHEN MAX(c.last_scanned_at) IS NULL THEN 0 ELSE 1 END, MAX(c.last_scanned_at),
      CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, t.interaction_score DESC, t.depth_score DESC`,
-  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; synthesis_input_revision: string; research_problem_id: string; research_problem_status: string; research_problem_question: string; research_problem_updated_at: string; problem_assessment_input_revision: string; problem_next_search_query: string; research_problem_hypotheses_json: string; action_next_search_query: string; last_scanned_at: string | null }>();
+  ).bind(horizon.key, spaceId).all<{ id: string; title_en: string; summary_en: string; search_queries: string; user_role: string; depth_score: number; interaction_score: number; passive_engagement: number; intelligence_json: string; intelligence_updated_at: string | null; synthesis_overview_en: string; synthesis_next_search_query: string; synthesis_confidence: number; synthesis_input_revision: string; research_problem_id: string; research_problem_status: string; research_problem_question: string; research_problem_updated_at: string; problem_assessment_input_revision: string; problem_next_search_query: string; research_problem_hypotheses_json: string; action_next_search_query: string; last_scanned_at: string | null; current_revision_id: string; current_route_version: number; current_search_queries: string; previous_revision_id: string; previous_route_version: number; previous_search_queries: string; previous_title_en: string }>();
   const routeRows = await Promise.all(rows.results.map(async (row) => ({
     ...row,
     problem_next_search_query: await researchProblemDiscoveryQuery({
@@ -1322,21 +1358,65 @@ async function routeDiscoveryQueries(
   const selectedRows = [...coreRows.map((row) => ({ row, role: "core" as const })), ...adjacentRows.map((row) => ({ row, role: "adjacent" as const }))];
   const horizonTask = monitorRouteTaskForHorizon(horizon.key);
   const basePlans = selectedRows.map(({ row, role }) => {
-      const queries = parseVenues(row.search_queries).filter(asciiOnly);
+      const queries = parseVenues(row.current_search_queries || row.search_queries).filter(asciiOnly);
       const routeQuery = queries.length ? queries[round % queries.length] : `${row.title_en} ${row.summary_en}`;
+      // The control and production arm share the same monthly horizon. Daily
+      // frontier and multi-year foundation service continue unchanged and are
+      // excluded from the controlled rate comparison.
+      const experimentIdentity = horizon.key === "months" && row.current_revision_id && row.current_route_version > 0 ? {
+        routeRevisionId: row.current_revision_id,
+        routeVersion: row.current_route_version,
+        experimentArm: "current" as const,
+      } : null;
       return {
-        key: `research-route-${horizonTask}-${row.id}`,
+        key: experimentIdentity
+          ? researchRouteExperimentPlanKey(experimentIdentity, `${horizonTask}-${row.id}`)
+          : `research-route-${horizonTask}-${row.id}`,
         sourceKey: `research-route:${horizonTask}`,
         query: cleanText(routeQuery).slice(0, 480),
         sort: horizon.key === "days" ? "published" as const : horizon.sort,
         rotating: true,
         channel: "topic" as const,
         routeId: row.id,
+        routeRevisionId: experimentIdentity?.routeRevisionId,
+        routeVersion: experimentIdentity?.routeVersion,
+        experimentArm: experimentIdentity?.experimentArm,
         routeTitleEn: row.title_en,
         explorationRole: role,
         routeUrgency: Math.min(22, Math.round(row.passive_engagement / 2) + (row.research_problem_id ? 12 : 0)),
       };
     }).filter((plan) => plan.query.length >= 4);
+  const shadowCandidates = horizon.key === "months" ? selectedRows.flatMap(({ row }) => {
+    if (!row.current_revision_id || !row.previous_revision_id || row.previous_route_version < 1) return [];
+    const currentQueries = new Set(parseVenues(row.current_search_queries || row.search_queries)
+      .filter(asciiOnly).map((query) => cleanText(query).toLocaleLowerCase()));
+    const previousQuery = parseVenues(row.previous_search_queries).filter(asciiOnly)
+      .map((query) => cleanText(query)).find((query) => query.length >= 4 && !currentQueries.has(query.toLocaleLowerCase()));
+    if (!previousQuery) return [];
+    return [{ row, previousQuery }];
+  }) : [];
+  const shadow = shadowCandidates.length ? shadowCandidates[Math.max(0, Math.floor(round)) % shadowCandidates.length] : null;
+  const shadowPlans: DiscoveryQuery[] = shadow ? [{
+    key: researchRouteExperimentPlanKey({
+      routeRevisionId: shadow.row.previous_revision_id,
+      routeVersion: shadow.row.previous_route_version,
+      experimentArm: "shadow",
+    }, `months-${shadow.row.id}`),
+    sourceKey: "research-route:version-shadow",
+    query: shadow.previousQuery.slice(0, 480),
+    sort: horizon.sort,
+    rotating: true,
+    channel: "topic",
+    routeId: shadow.row.id,
+    routeRevisionId: shadow.row.previous_revision_id,
+    routeVersion: shadow.row.previous_route_version,
+    experimentArm: "shadow",
+    explorationRole: "shadow",
+    routeTitleEn: shadow.row.previous_title_en || shadow.row.title_en,
+    maxAttempts: RESEARCH_ROUTE_SHADOW_MAX_ATTEMPTS,
+    resultLimit: RESEARCH_ROUTE_SHADOW_RESULT_LIMIT,
+    adaptiveScore: 50,
+  }] : [];
   const gapRows = selectedRows.flatMap(({ row, role }) => {
     const intelligence = directionDiscoverySignal(row.intelligence_json, row.intelligence_updated_at);
     const actionQuery = cleanText(row.action_next_search_query || "");
@@ -1363,8 +1443,8 @@ async function routeDiscoveryQueries(
     explorationRole: gap.role,
     routeUrgency: Math.min(24, 10 + Math.round(gap.intelligence.confidence / 10) + Math.round(gap.row.passive_engagement / 3)),
   }] : [];
-  return [...basePlans, ...gapPlan].filter((plan, index, plans) => plan.query.length >= 4
-    && plans.findIndex((candidate) => candidate.routeId === plan.routeId && candidate.query === plan.query) === index);
+  return [...basePlans, ...gapPlan].concat(shadowPlans).filter((plan, index, plans) => plan.query.length >= 4
+    && plans.findIndex((candidate) => candidate.sourceKey === plan.sourceKey && candidate.routeId === plan.routeId && candidate.query === plan.query) === index);
 }
 
 async function prioritizeDiscoveryPlans(database: D1Database, spaceId: string, plans: DiscoveryQuery[], mode: ExplorationMode) {
@@ -1423,8 +1503,9 @@ async function shouldRunDiscoveryQuery(database: D1Database, spaceId: string, ho
   if (!plan.rotating) return true;
   const queryKey = await discoveryQueryKey(plan);
   const row = await database.prepare(
-    "SELECT cooldown_until FROM monitor_discovery_coverage WHERE space_id = ? AND horizon = ? AND source_key = ? AND query_key = ? LIMIT 1",
-  ).bind(spaceId, horizon, plan.sourceKey, queryKey).first<{ cooldown_until: string | null }>();
+    "SELECT cooldown_until, attempt_count FROM monitor_discovery_coverage WHERE space_id = ? AND horizon = ? AND source_key = ? AND query_key = ? LIMIT 1",
+  ).bind(spaceId, horizon, plan.sourceKey, queryKey).first<{ cooldown_until: string | null; attempt_count: number }>();
+  if (plan.maxAttempts && Number(row?.attempt_count || 0) >= plan.maxAttempts) return false;
   return !row?.cooldown_until || Date.parse(row.cooldown_until) <= Date.now();
 }
 
@@ -1479,7 +1560,15 @@ async function recordDiscoveryCoverage(
       outcome: "degraded",
       errorCode: monitorErrorCode(error),
       message: error,
-      metadata: { horizon, channel: plan.channel, queryKey, routeId: plan.routeId || null },
+      metadata: {
+        horizon,
+        channel: plan.channel,
+        queryKey,
+        routeId: plan.routeId || null,
+        routeRevisionId: plan.routeRevisionId || null,
+        routeVersion: plan.routeVersion || null,
+        experimentArm: plan.experimentArm || null,
+      },
     });
   }
 }
@@ -1515,6 +1604,7 @@ async function fetchHorizon(
   };
   await setScanSource(database, jobId, horizon.key, "Crossref · priority journals", horizon.key === "days" ? 8 : horizon.key === "months" ? 24 : 40, discoveredBefore);
   const normalizedCrossref = (await Promise.all(eligiblePlans.map(async (plan) => {
+    const planRows = Math.min(rows, Math.max(1, Math.floor(plan.resultLimit || rows)));
     const offset = await discoveryOffset(database, space.id, horizon.key, plan);
     const endpoint = new URL(plan.channel === "journal" && plan.issn
       ? `https://api.crossref.org/journals/${encodeURIComponent(plan.issn)}/works`
@@ -1523,7 +1613,7 @@ async function fetchHorizon(
     if (plan.channel === "author" && plan.author) endpoint.searchParams.set("query.author", plan.author);
     if (!(plan.channel === "journal" && horizon.key === "days") && plan.channel !== "author") endpoint.searchParams.set("query.bibliographic", plan.query);
     endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
-    endpoint.searchParams.set("rows", String(rows));
+    endpoint.searchParams.set("rows", String(planRows));
     endpoint.searchParams.set("offset", String(offset));
     endpoint.searchParams.set("sort", plan.sort);
     endpoint.searchParams.set("order", "desc");
@@ -1548,11 +1638,20 @@ async function fetchHorizon(
         return {
           ...candidate,
           discoveryChannel: plan.channel,
-          provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, queryText: cleanText(plan.query).slice(0, 500), routeId: plan.routeId }],
+          provenance: [{
+            sourceKey: plan.sourceKey,
+            channel: plan.channel,
+            queryKey,
+            queryText: cleanText(plan.query).slice(0, 500),
+            routeId: plan.routeId,
+            routeRevisionId: plan.routeRevisionId,
+            routeVersion: plan.routeVersion,
+            experimentArm: plan.experimentArm,
+          }],
         };
       }));
       const normalized = normalizedItems.filter((candidate): candidate is Exclude<(typeof normalizedItems)[number], null> => candidate !== null);
-      const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, rows);
+      const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, planRows);
       await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
       return normalized;
     } catch (error) {
@@ -3120,6 +3219,9 @@ async function persistRecommendationAuditBatch(
       queryText: cleanText(entry.queryText || "").slice(0, 500),
       routeId: entry.routeId || null,
       originKind: monitorRouteOriginKind(entry.sourceKey, entry.routeId),
+      routeRevisionId: entry.routeRevisionId || null,
+      routeVersion: entry.routeVersion || null,
+      experimentArm: entry.experimentArm || null,
       appearances: Math.max(1, entry.appearances || 1),
     }));
     const appearanceCount = provenance.reduce((sum, entry) => sum + entry.appearances, 0) || 1;
@@ -4193,12 +4295,16 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
     for (const source of sources.results) {
       const current = provenanceByPaper.get(source.paper_id) || [];
       if (current.some((entry) => entry.sourceKey === source.source_key && entry.queryKey === source.query_key)) continue;
+      const experiment = parseResearchRouteExperimentQueryKey(source.query_key);
       current.push({
         sourceKey: source.source_key,
         channel: source.channel as Candidate["discoveryChannel"],
         queryKey: source.query_key,
         queryText: source.query_text,
         routeId: source.route_id || undefined,
+        routeRevisionId: experiment?.routeRevisionId,
+        routeVersion: experiment?.routeVersion,
+        experimentArm: experiment?.experimentArm,
         appearances: source.appearances,
       });
       provenanceByPaper.set(source.paper_id, current);
@@ -4282,6 +4388,7 @@ function researchLeadLane(candidate: Candidate) {
   const kinds = new Set(candidate.provenance.map((entry) => monitorRouteOriginKind(entry.sourceKey, entry.routeId)).filter(Boolean));
   if (kinds.has("route_gap") || kinds.has("route_network")) return "open-question-or-network";
   if (kinds.has("route_foundation") || kinds.has("route_milestone") || kinds.has("route_frontier")) return "route-structure";
+  if (kinds.has("route_version_shadow")) return "prior-version-control";
   return "route-directed-search";
 }
 
@@ -4506,8 +4613,10 @@ function toPaper(paper: PaperRow, now: number) {
     ? { zh: "研究路线缺口深挖", en: "Research-route gap discovery" }
     : originKind === "route_synthesis"
       ? { zh: "研究综合后续发现", en: "Research-synthesis follow-up" }
-    : originKind === "route_network"
+      : originKind === "route_network"
       ? { zh: "论文引用网络扩展", en: "Citation-network expansion" }
+      : originKind === "route_version_shadow"
+        ? { zh: "上一版路线受控对照", en: "Prior-version route control" }
       : originKind === "route_foundation"
         ? { zh: "研究路线奠基补读", en: "Research-route foundation catch-up" }
         : originKind === "route_frontier"

@@ -19,6 +19,12 @@ import {
   selectCitationRouteSeed,
   selectPrioritizedDiscoveryPlans,
 } from "../lib/monitor-route-planning.ts";
+import {
+  RESEARCH_ROUTE_SHADOW_MAX_ATTEMPTS,
+  RESEARCH_ROUTE_SHADOW_RESULT_LIMIT,
+  parseResearchRouteExperimentQueryKey,
+  researchRouteExperimentPlanKey,
+} from "../lib/research-route-experiment.ts";
 
 function plan(key, score, overrides = {}) {
   return {
@@ -66,11 +72,40 @@ test("focused mode protects core route and gap plans without admitting adjacent 
   assert.equal(selected.some((item) => item.explorationRole === "adjacent"), false);
 });
 
+test("a prior-version control is stable, recoverable, and limited to one selected plan", () => {
+  const key = researchRouteExperimentPlanKey({
+    experimentArm: "shadow",
+    routeRevisionId: "revision-1",
+    routeVersion: 1,
+  }, "months-track-a");
+  assert.deepEqual(parseResearchRouteExperimentQueryKey(`${key}:abcdef`), {
+    experimentArm: "shadow",
+    routeRevisionId: "revision-1",
+    routeVersion: 1,
+  });
+  assert.equal(RESEARCH_ROUTE_SHADOW_MAX_ATTEMPTS, 2);
+  assert.equal(RESEARCH_ROUTE_SHADOW_RESULT_LIMIT, 8);
+  const selected = selectPrioritizedDiscoveryPlans([
+    ...Array.from({ length: 12 }, (_, index) => plan(`generic-${index}`, 100 - index)),
+    plan("research-route-track-a", 4, { sourceKey: "research-route:frontier", routeId: "track-a" }),
+    plan("research-route-track-b", 3, { sourceKey: "research-route:frontier", routeId: "track-b" }),
+    plan("research-route-gap-track-a", 2, { sourceKey: "research-route:gap", routeId: "track-a" }),
+    plan(key, 99, { sourceKey: "research-route:version-shadow", routeId: "track-a", explorationRole: "shadow" }),
+    plan("second-shadow", 98, { sourceKey: "research-route:version-shadow", routeId: "track-b", explorationRole: "shadow" }),
+  ], "balanced");
+  assert.equal(selected.length, 10);
+  assert.equal(selected.filter((item) => item.explorationRole === "shadow").length, 1);
+  assert.ok(selected.some((item) => item.key === "research-route-track-a"));
+  assert.ok(selected.some((item) => item.key === "research-route-track-b"));
+  assert.ok(selected.some((item) => item.key === "research-route-gap-track-a"));
+});
+
 test("route provenance keeps provider-specific route and gap semantics", () => {
   assert.equal(monitorRouteOriginKind("research-route:foundation", "track-a"), "route_foundation");
   assert.equal(monitorRouteOriginKind("research-route:frontier", "track-a"), "route_frontier");
   assert.equal(monitorRouteOriginKind("research-route:synthesis", "track-a"), "route_synthesis");
   assert.equal(monitorRouteOriginKind("research-route:network", "track-a"), "route_network");
+  assert.equal(monitorRouteOriginKind("research-route:version-shadow", "track-a"), "route_version_shadow");
   assert.equal(monitorRouteOriginKind("crossref:route:track-a"), "route_search");
   assert.equal(monitorRouteOriginKind("crossref:route-gap:track-a"), "route_gap");
   assert.equal(monitorRouteOriginKind("semantic_scholar:citations", "track-a"), "route_search");

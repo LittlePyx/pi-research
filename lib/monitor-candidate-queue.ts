@@ -111,7 +111,7 @@ export const RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL = `WITH queue_counts AS (
   JOIN json_each(audit.provenance_json) origin
   WHERE json_extract(origin.value, '$.routeId') IS NOT NULL
    AND json_extract(origin.value, '$.originKind') IN
-    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_synthesis', 'route_network', 'route_search')
+    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_synthesis', 'route_network', 'route_version_shadow', 'route_search')
   GROUP BY json_extract(origin.value, '$.routeId')
  ), track_ids AS (
   SELECT track_id FROM queue_counts UNION SELECT track_id FROM recommended_counts
@@ -161,7 +161,7 @@ export const RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL = `WITH route_candidates AS (
   FROM latest_audits audit JOIN json_each(audit.provenance_json) origin
   WHERE audit.recommended = 1 AND COALESCE(json_extract(origin.value, '$.routeId'), '') <> ''
    AND json_extract(origin.value, '$.originKind') IN
-    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_synthesis', 'route_network', 'route_search')
+    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_synthesis', 'route_network', 'route_version_shadow', 'route_search')
  )
  SELECT
   (SELECT COUNT(*) FROM route_candidates) AS discovered_count,
@@ -237,7 +237,7 @@ export const RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL = `WITH route_coverage AS (
   FROM latest_audits audit JOIN json_each(audit.provenance_json) origin
   WHERE audit.recommended = 1 AND COALESCE(json_extract(origin.value, '$.routeId'), '') <> ''
    AND json_extract(origin.value, '$.originKind') IN
-    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_synthesis', 'route_network', 'route_search')
+    ('route_foundation', 'route_milestone', 'route_frontier', 'route_gap', 'route_synthesis', 'route_network', 'route_version_shadow', 'route_search')
  ), route_outcomes AS (
   SELECT recommendation.track_id,
    COUNT(DISTINCT recommendation.paper_id) AS recommended_count,
