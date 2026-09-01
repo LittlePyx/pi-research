@@ -50,6 +50,7 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /SCHEDULED_RESEARCH_ROUTE_RETRY_SQL/);
   assert.match(worker, /recovery_from_shared_queue === 1/);
   assert.match(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL, /datetime\(run\.last_user_activity_at\) > datetime\('now', '-7 days'\)/);
+  assert.doesNotMatch(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL, /scheduled_runs_since_activity < 3/);
   assert.match(worker, /x-pi-scheduled-route-retry/);
   assert.match(worker, /recordResearchRouteSentinel/);
   assert.match(worker, /recordMonitorOperationalSentinel/);

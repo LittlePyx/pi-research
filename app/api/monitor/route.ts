@@ -1,5 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
+import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
 import {
   benchmarkCalibrationPrompt,
   discoveryCalibrationSignals,
@@ -56,6 +57,10 @@ import {
 import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
 import { buildMonitorBudgetDecision } from "../../../lib/monitor-budget-policy.mjs";
+import {
+  nextMonitorRunAt,
+  shouldStartMonitorQualityQueueContinuation,
+} from "../../../lib/monitor-quality-queue.mjs";
 import {
   MONITOR_ADVANCE_HEARTBEAT_SQL,
   MONITOR_ADVANCE_LEASE_MS,
@@ -372,7 +377,7 @@ type Candidate = {
   relevanceScore: number;
   qualityScore: number;
   priorityVenue: boolean;
-  source: "crossref" | "semantic_scholar" | "openalex" | "arxiv" | "research-route" | "research-synthesis" | "research-network";
+  source: "crossref" | "semantic_scholar" | "openalex" | "arxiv" | "datacite" | "research-route" | "research-synthesis" | "research-network";
   discoveryChannel: "topic" | "journal" | "author" | "semantic" | "preprint" | "citation";
   provenance: CandidateProvenance[];
 };
@@ -516,7 +521,7 @@ type HorizonScanStats = {
   completed: boolean;
 };
 type ScanWorkQueue = {
-  scanMode: "full" | "fresh_only";
+  scanMode: "full" | "fresh_only" | "quality_queue";
   discoveredCandidateIds: string[];
   candidateIds: string[];
   currentCandidateIds: string[];
@@ -991,6 +996,28 @@ async function normalizeArxivItem(item: ReturnType<typeof parseArxivAtom>[number
     citationCount: 0,
     relevanceScore: 0,
     source: "arxiv",
+    discoveryChannel: "preprint",
+    provenance: [],
+  };
+}
+
+async function normalizeDataCiteArxivItem(item: ReturnType<typeof parseDataCiteArxivRecords>[number], horizon: Horizon): Promise<Omit<Candidate, "qualityScore" | "priorityVenue"> | null> {
+  const title = cleanText(item.title);
+  if (!title || !isResearchPaper(title) || !item.abstract.trim()) return null;
+  const doi = item.publishedDoi?.trim().toLocaleLowerCase() || null;
+  return {
+    canonicalId: doi ? "doi:" + doi : "arxiv:" + item.arxivId.toLocaleLowerCase(),
+    doi,
+    title,
+    authors: item.authors.slice(0, 8).map(cleanText).filter(Boolean).join(", "),
+    venue: item.primaryCategory ? `arXiv · ${item.primaryCategory}` : "arXiv",
+    url: item.url || `https://arxiv.org/abs/${item.arxivId}`,
+    publishedAt: item.publishedAt,
+    abstractText: cleanText(item.abstract).slice(0, 2200),
+    horizon,
+    citationCount: item.citationCount,
+    relevanceScore: 0,
+    source: "datacite",
     discoveryChannel: "preprint",
     provenance: [],
   };
@@ -1502,18 +1529,19 @@ async function fetchHorizon(
       return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
     }
   }))).flat();
-  await setScanSource(database, jobId, horizon.key, "Semantic Scholar · OpenAlex · arXiv 并行检索", horizon.key === "days" ? 12 : horizon.key === "months" ? 28 : 44, discoveredBefore + normalizedCrossref.length);
-  const [semantic, openAlex, arxiv] = await Promise.all([
+  await setScanSource(database, jobId, horizon.key, "Semantic Scholar · OpenAlex · arXiv · DataCite 并行检索", horizon.key === "days" ? 12 : horizon.key === "months" ? 28 : 44, discoveredBefore + normalizedCrossref.length);
+  const [semantic, openAlex, arxiv, dataCite] = await Promise.all([
     fetchSemanticScholarHorizon(database, space, horizon, now, round, queryPlan),
     fetchOpenAlexHorizon(database, space, horizon, now, round, queryPlan),
     fetchArxivHorizon(database, space, horizon, now, round, queryPlan),
+    fetchDataCiteArxivHorizon(database, space, horizon, now, round, queryPlan),
   ]);
   const citationFrontier = await fetchCitationFrontier(
     database, space, horizon, now, round, jobId,
-    discoveredBefore + normalizedCrossref.length + semantic.length + openAlex.length + arxiv.length,
+    discoveredBefore + normalizedCrossref.length + semantic.length + openAlex.length + arxiv.length + dataCite.length,
     horizon.key === "years" ? ["references"] : ["citations"],
   );
-  const normalized = [...normalizedCrossref, ...semantic, ...openAlex, ...arxiv, ...citationFrontier];
+  const normalized = [...normalizedCrossref, ...semantic, ...openAlex, ...dataCite, ...arxiv, ...citationFrontier];
   const unique = new Map<string, Candidate>();
   for (const item of normalized
     .filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item))
@@ -1686,6 +1714,45 @@ async function fetchArxivHorizon(database: D1Database, space: SpaceRow, horizon:
     return normalized;
   } catch (error) {
     await recordDiscoveryCoverage(database, space.id, horizon.key, plan, offset, [], error instanceof Error ? error.message.slice(0, 180) : "arXiv request failed");
+    return [];
+  }
+}
+
+async function fetchDataCiteArxivHorizon(database: D1Database, space: SpaceRow, horizon: typeof HORIZONS[number], now: Date, round: number, queryPlan?: QueryPlan) {
+  const profileQuery = sourceFocusQuery(space, round, horizon.key, queryPlan);
+  if (profileQuery.length < 4) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
+  const plan: DiscoveryQuery = { key: "datacite-arxiv-topic", sourceKey: "datacite:arxiv", query: profileQuery, sort: "relevance", rotating: horizon.key !== "days", channel: "preprint" };
+  if (!(await shouldRunDiscoveryQuery(database, space.id, horizon.key, plan))) return [];
+  const limit = horizon.key === "years" ? 32 : 40;
+  const offset = await discoveryOffset(database, space.id, horizon.key, plan);
+  const endpoint = new URL("https://api.datacite.org/dois");
+  endpoint.searchParams.set("query", buildDataCiteArxivQuery(profileQuery, dateBefore(now, horizon.daysFrom), dateBefore(now, horizon.daysUntil)));
+  endpoint.searchParams.set("prefix", "10.48550");
+  endpoint.searchParams.set("page[size]", String(limit));
+  endpoint.searchParams.set("page[number]", String(Math.floor(offset / limit) + 1));
+  // DataCite's year-level publication filter is broader than Pi's exact horizon.
+  // Rank by topical relevance, then enforce the precise submitted-date window
+  // locally so a fallback cannot flood the quality queue with merely recent work.
+  endpoint.searchParams.set("sort", "relevance");
+  try {
+    const response = await fetchExternalSource(endpoint, {
+      headers: { Accept: "application/vnd.api+json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+      signal: AbortSignal.timeout(20_000),
+    }, { database, sourceKey: "datacite" });
+    if (!response.ok) throw new Error(`DataCite returned ${response.status}`);
+    const records = parseDataCiteArxivRecords(await response.json());
+    const queryKey = await discoveryQueryKey(plan);
+    const normalized = (await Promise.all(records.map(async (item) => {
+      const candidate = await normalizeDataCiteArxivItem(item, horizon.key);
+      return candidate && candidateWithinHorizon(candidate, horizon, now)
+        ? { ...candidate, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey }] }
+        : null;
+    }))).filter((item): item is Omit<Candidate, "qualityScore" | "priorityVenue"> => Boolean(item));
+    const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
+    await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
+    return normalized;
+  } catch (error) {
+    await recordDiscoveryCoverage(database, space.id, horizon.key, plan, offset, [], error instanceof Error ? error.message.slice(0, 180) : "DataCite request failed");
     return [];
   }
 }
@@ -4117,14 +4184,15 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
     source: row.source === "semantic_scholar" ? "semantic_scholar" as const
       : row.source === "openalex" ? "openalex" as const
         : row.source === "arxiv" ? "arxiv" as const
-          : row.source === "research-route" ? "research-route" as const
-            : row.source === "research-synthesis" ? "research-synthesis" as const
-              : row.source === "research-network" ? "research-network" as const
-              : "crossref" as const,
-    discoveryChannel: row.source === "arxiv" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
+          : row.source === "datacite" ? "datacite" as const
+            : row.source === "research-route" ? "research-route" as const
+              : row.source === "research-synthesis" ? "research-synthesis" as const
+                : row.source === "research-network" ? "research-network" as const
+                : "crossref" as const,
+    discoveryChannel: row.source === "arxiv" || row.source === "datacite" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
     provenance: provenanceByPaper.get(row.paper_id)?.length ? provenanceByPaper.get(row.paper_id)! : [{
       sourceKey: `${row.source}:stored`,
-      channel: row.source === "arxiv" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
+      channel: row.source === "arxiv" || row.source === "datacite" ? "preprint" as const : row.source === "semantic_scholar" || row.source === "openalex" ? "semantic" as const : row.priority_venue ? "journal" as const : "topic" as const,
       queryKey: "stored-candidate",
       queryText: "",
       appearances: 1,
@@ -4373,7 +4441,8 @@ function monitorDiscoverySources(provider: string, channels: string) {
   if (sourceKinds.has("citation")) add("citation", "核心论文引用追踪", "Citation tracking");
   if (sourceKinds.has("journal")) add("journal", "重点期刊前向扫描", "Priority-journal scan");
   if (sourceKinds.has("author")) add("author", "作者与团队追踪", "Author and team tracking");
-  if (sourceKinds.has("preprint") || provider === "arxiv") add("preprint", "arXiv 预印本扫描", "arXiv preprint scan");
+  if (provider === "datacite") add("datacite-arxiv", "DataCite 核验的 arXiv 元数据", "DataCite-verified arXiv metadata");
+  else if (sourceKinds.has("preprint") || provider === "arxiv") add("preprint", "arXiv 预印本扫描", "arXiv preprint scan");
   if (sourceKinds.has("semantic") || provider === "openalex" || provider === "semantic_scholar") add("database", "学术数据库检索", "Scholarly database search");
   if (sourceKinds.has("topic") || provider === "crossref") add("topic", "主题与关键词检索", "Topic and keyword search");
   return sources.slice(0, 3);
@@ -5494,7 +5563,7 @@ function parseScanWorkQueue(value: string | null | undefined): ScanWorkQueue {
       };
     }
     return {
-      scanMode: parsed.scanMode === "fresh_only" ? "fresh_only" : "full",
+      scanMode: parsed.scanMode === "fresh_only" || parsed.scanMode === "quality_queue" ? parsed.scanMode : "full",
       discoveredCandidateIds: Array.isArray(parsed.discoveredCandidateIds)
         ? parsed.discoveredCandidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT)
         : Array.isArray(parsed.candidateIds) ? parsed.candidateIds.filter((id): id is string => typeof id === "string").slice(0, CANDIDATE_WORK_QUEUE_LIMIT) : [],
@@ -5616,6 +5685,22 @@ function monitorProgressByCheckpoint(checkpoint: string) {
 async function saveScanWorkQueue(database: D1Database, jobId: string, work: ScanWorkQueue) {
   await database.prepare("UPDATE monitor_scan_jobs SET work_queue_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .bind(JSON.stringify(work), jobId).run();
+}
+
+async function finalizeEvidenceExcludedCandidates(database: D1Database, spaceId: string, canonicalIds: string[]) {
+  const uniqueIds = Array.from(new Set(canonicalIds)).filter(Boolean).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
+  for (let start = 0; start < uniqueIds.length; start += 70) {
+    const chunk = uniqueIds.slice(start, start + 70);
+    await database.prepare(
+      `UPDATE paper_insights SET analysis_source = 'deepseek_rejected', llm_recommended = 0,
+       screening_reason = CASE WHEN trim(screening_reason) = ''
+        THEN 'Abstract evidence unavailable after bounded enrichment'
+        ELSE screening_reason || ' · Abstract evidence unavailable after bounded enrichment' END,
+       updated_at = CURRENT_TIMESTAMP
+       WHERE space_id = ? AND analysis_source = 'deepseek_screened'
+        AND paper_id IN (SELECT id FROM monitored_papers WHERE space_id = ? AND canonical_id IN (${chunk.map(() => "?").join(", ")}))`,
+    ).bind(spaceId, spaceId, ...chunk).run();
+  }
 }
 
 async function pruneExplicitlyWithdrawnScanWork(database: D1Database, spaceId: string, work: ScanWorkQueue) {
@@ -6307,8 +6392,8 @@ export async function POST(request: Request) {
       }
       await ensurePreference(database, space);
       const previous = await database.prepare(
-        "SELECT status, last_run_at, next_run_at, updated_at, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation, last_user_activity_at, scheduled_runs_since_activity FROM monitor_runs WHERE space_id = ? LIMIT 1",
-      ).bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; active_job_id: string | null; lease_generation: number; last_user_activity_at: string | null; scheduled_runs_since_activity: number }>();
+        "SELECT status, last_run_at, next_run_at, new_count, scanned_count, updated_at, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation, last_user_activity_at, scheduled_runs_since_activity FROM monitor_runs WHERE space_id = ? LIMIT 1",
+      ).bind(space.id).first<{ status: string; last_run_at: string | null; next_run_at: string | null; new_count: number; scanned_count: number; updated_at: string; discovery_round: number; lock_token: string | null; lock_expires_at: string | null; active_job_id: string | null; lease_generation: number; last_user_activity_at: string | null; scheduled_runs_since_activity: number }>();
       const activeJob = await database.prepare(
         `SELECT id, status, checkpoint, work_queue_json, retry_count, current_source
          FROM monitor_scan_jobs WHERE space_id = ? AND status NOT IN ('ready', 'error')
@@ -6399,12 +6484,25 @@ export async function POST(request: Request) {
       const incompleteDraftCarryover = Boolean(incompleteDraftCarryoverIds.length);
       const qualityCarryover = verificationCarryover || incompleteDraftCarryover;
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
+      const pendingQualityCandidates = !pipelineOutdated && previousJob?.status === "ready" && !qualityCarryover
+        ? await pendingCandidateQueue(database, space.id)
+        : [];
+      const qualityQueueContinuation = shouldStartMonitorQualityQueueContinuation({
+        trigger,
+        previousJobStatus: previousJob?.status || "",
+        pipelineOutdated,
+        qualityCarryover,
+        pendingQueueCount: pendingQualityCandidates.length,
+        lastSourceScanAt: previous?.last_run_at || null,
+        now: now.getTime(),
+        cadenceMs: CADENCE_MS,
+      });
       const compactResetEligible = trigger !== "manual"
         && previousWork.scanMode === "fresh_only"
         && Boolean(previousJob?.status === "ready" && previousTime)
         && shanghaiDateKey(now) !== shanghaiDateKey(new Date(previousTime));
       const minimumAge = compactResetEligible ? 0 : payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
-      if (!qualityCarryover && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
+      if (!qualityCarryover && !qualityQueueContinuation && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
         return Response.json(await readState(database, space, {
           cached: true,
           throttled: Boolean(payload.force),
@@ -6422,7 +6520,7 @@ export async function POST(request: Request) {
       const retryLineageJobId = previousJob?.status === "error" && !pipelineOutdated
         ? previousJob.id : resumable ? previousJob?.id || "" : "";
       const nextAttempt = retryLineageJobId ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1;
-      const startMinimum = resumable
+      const startMinimum = qualityQueueContinuation ? minimumAnalysisCallsForCheckpoint("deduplicating") : resumable
         ? minimumAnalysisCallsForCheckpoint(resumeCheckpoint)
         : MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS;
       const startBudget = await readMonitorAnalysisBudget(database, user.userId, space.id, startMinimum);
@@ -6449,15 +6547,23 @@ export async function POST(request: Request) {
           for (const id of retryIds) delete previousWork.verificationAttempts[id];
         }
       }
-      const initialCheckpoint = resumable ? resumeCheckpoint : "planning";
+      const initialCheckpoint = qualityQueueContinuation ? "deduplicating" : resumable ? resumeCheckpoint : "planning";
       const initialWork = resumable ? previousWork : newScanWorkQueue();
-      if (!resumable) initialWork.scanMode = compactStart ? "fresh_only" : "full";
+      if (!resumable) initialWork.scanMode = qualityQueueContinuation ? "quality_queue" : compactStart ? "fresh_only" : "full";
+      if (qualityQueueContinuation) {
+        initialWork.discoveredCandidateIds = pendingQualityCandidates.map((candidate) => candidate.canonicalId);
+        initialWork.rawCandidateCount = 0;
+        initialWork.newCandidateCount = 0;
+      }
       if (!resumable && previousJob?.status === "ready" && previousWork.deepDeferredIds.length) {
         initialWork.retryDeepIds = previousWork.deepDeferredIds.slice(0, DEEP_REVIEW_CARRYOVER_LIMIT);
       }
       const initialStatus = statusForCheckpoint(initialCheckpoint);
-      const initialProgress = resumable ? Math.max(previousJob?.progress || 3, monitorProgressByCheckpoint(initialCheckpoint)) : 3;
-      const initialSource = resumable
+      const initialProgress = qualityQueueContinuation ? monitorProgressByCheckpoint("deduplicating")
+        : resumable ? Math.max(previousJob?.progress || 3, monitorProgressByCheckpoint(initialCheckpoint)) : 3;
+      const initialSource = qualityQueueContinuation
+        ? `正在接续共享质量队列 · ${pendingQualityCandidates.length} 篇候选等待有界评估`
+        : resumable
         ? initialCheckpoint === "screening"
           ? `从已保存进度继续 · ${previousWork.screens.length} / ${previousWork.candidateIds.length} 篇已筛选`
           : initialCheckpoint === "evidence_deepening"
@@ -6491,7 +6597,8 @@ export async function POST(request: Request) {
         leaseResults = await database.batch([
           database.prepare(MONITOR_NEW_RUN_CLAIM_SQL).bind(
             initialStatus, lockToken, monitorLeaseExpiry(now.getTime()), jobId, trigger,
-            resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.discovered_count || 0 : 0,
+            resumable ? previousJob?.recommended_count || 0 : qualityQueueContinuation ? previous?.new_count || 0 : 0,
+            resumable ? previousJob?.discovered_count || 0 : qualityQueueContinuation ? previous?.scanned_count || 0 : 0,
             trigger === "scheduled" ? 1 : 0, space.id,
           ),
           database.prepare(
@@ -6504,7 +6611,8 @@ export async function POST(request: Request) {
             SELECT 1 FROM monitor_runs WHERE space_id = ? AND lock_token = ? AND active_job_id = ?
            )`,
           ).bind(jobId, space.id, initialStatus, resumable ? previousJob?.current_horizon || "" : "", initialSource, initialProgress,
-            resumable ? previousJob?.discovered_count || 0 : 0, resumable ? previousJob?.new_candidate_count || 0 : 0,
+            resumable ? previousJob?.discovered_count || 0 : qualityQueueContinuation ? pendingQualityCandidates.length : 0,
+            resumable ? previousJob?.new_candidate_count || 0 : 0,
             resumable ? previousJob?.duplicate_count || 0 : 0, resumable ? previousJob?.reviewed_count || 0 : 0,
             resumable ? previousJob?.recommended_count || 0 : 0, resumable ? previousJob?.rejected_count || 0 : 0,
             nextAttempt, trigger, retryLineageJobId || null,
@@ -6841,6 +6949,7 @@ export async function POST(request: Request) {
       // Re-run the guarded persistence even when route reconciliation made no
       // change: a user may have withdrawn a paper while that LLM call was in flight.
       const finalizedReviews = await persistReviewBatch(database, space.id, job.id, candidates, reconciledReviews);
+      await finalizeEvidenceExcludedCandidates(database, space.id, work.evidenceExcludedIds);
       const recommended = finalizedReviews.filter(isPublishedRecommendation).length;
       const verificationPending = finalizedReviews.filter((review) => review.verificationRetryable).length;
       const verificationFailed = finalizedReviews.filter((review) => review.verificationStatus === "degraded").length;
@@ -6853,9 +6962,19 @@ export async function POST(request: Request) {
       const rejected = Math.max(0, work.screens.length - recommended);
       const duplicateCount = Math.max(0, work.rawCandidateCount - work.newCandidateCount);
       const compactResetAt = new Date(`${shanghaiDateKey(new Date(completedAt.getTime() + CADENCE_MS))}T00:00:00+08:00`).toISOString();
-      const nextRunAt = verificationPending
-        ? new Date(completedAt.getTime() + BACKGROUND_VERIFICATION_RETRY_MS).toISOString()
-        : work.scanMode === "fresh_only" ? compactResetAt : new Date(completedAt.getTime() + CADENCE_MS).toISOString();
+      const remainingQualityCandidates = await pendingCandidateQueue(database, space.id);
+      const remainingQualityQueueCount = remainingQualityCandidates.length;
+      const lastSourceScanAt = work.scanMode === "quality_queue" ? previous?.last_run_at || null : completedAt.toISOString();
+      const nextRunAt = nextMonitorRunAt({
+        now: completedAt.getTime(),
+        lastSourceScanAt,
+        verificationPending,
+        pendingQueueCount: remainingQualityQueueCount,
+        scanMode: work.scanMode,
+        compactResetAt,
+        cadenceMs: CADENCE_MS,
+        continuationMs: BACKGROUND_VERIFICATION_RETRY_MS,
+      });
       if (recommended && !firstRecommendationAt) {
         firstRecommendationAt = completedAt.toISOString();
         await database.prepare(
@@ -6979,7 +7098,7 @@ export async function POST(request: Request) {
           };
         }),
       });
-      const acceptanceTarget = work.scanMode === "fresh_only" ? 1 : DAILY_RECOMMENDATION_MIN_TARGET;
+      const acceptanceTarget = work.scanMode === "full" ? DAILY_RECOMMENDATION_MIN_TARGET : 1;
       const acceptanceGate = evaluateRecommendationAcceptanceGate({
         ...qualitySnapshot,
         target: acceptanceTarget,
@@ -7043,6 +7162,20 @@ export async function POST(request: Request) {
         });
       }
       await leaseHeartbeat?.assertOwned();
+      const runCompletionStatement = work.scanMode === "quality_queue"
+        ? database.prepare(
+          `UPDATE monitor_runs SET status = 'ready', next_run_at = ?, new_count = ?,
+           lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL,
+           error = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE space_id = ? AND lock_token = ? AND active_job_id = ? AND lease_generation = ?`,
+        ).bind(nextRunAt, recommended, space.id, lockToken, job.id, leaseGeneration)
+        : database.prepare(
+          `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,
+           discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL,
+           error = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE space_id = ? AND lock_token = ? AND active_job_id = ? AND lease_generation = ?`,
+        ).bind(completedAt.toISOString(), nextRunAt, recommended, job.discovered_count,
+          space.id, lockToken, job.id, leaseGeneration);
       const completionUpdates = await database.batch([
         database.prepare(
           `UPDATE monitor_scan_jobs SET status = 'ready', checkpoint = 'main_complete', current_horizon = '',
@@ -7054,7 +7187,13 @@ export async function POST(request: Request) {
             SELECT 1 FROM monitor_runs r WHERE r.space_id = ? AND r.active_job_id = ?
              AND r.lock_token = ? AND r.lease_generation = ? AND datetime(r.lock_expires_at) > CURRENT_TIMESTAMP
            )`,
-        ).bind(work.scanMode === "fresh_only" && !verificationPending
+        ).bind(work.scanMode === "quality_queue"
+          ? remainingQualityQueueCount
+            ? `本轮共享队列续评已完成；仍有 ${remainingQualityQueueCount} 篇候选，将在后台继续处理`
+            : recommended
+              ? `共享质量队列本轮已处理完，${recommended} 篇通过严格判断并进入今日`
+              : "共享质量队列本轮已处理完，没有候选通过严格判断"
+          : work.scanMode === "fresh_only" && !verificationPending
           ? recommended
             ? `近 14 天扫描已完成，${recommended} 篇推荐可阅读；半年与五年窗口将在额度刷新后继续`
             : "近 14 天严格筛选已完成，暂无强推荐；半年与五年窗口将在额度刷新后继续"
@@ -7069,13 +7208,7 @@ export async function POST(request: Request) {
             : recommended ? "推荐已可阅读，Pi 正在后台整理今日简报" : "本轮严格评审已完成，暂无强推荐",
         work.newCandidateCount, duplicateCount, work.screens.length, recommended, rejected, completedAt.toISOString(),
         job.id, space.id, job.id, lockToken, leaseGeneration),
-        database.prepare(
-          `UPDATE monitor_runs SET status = 'ready', last_run_at = ?, next_run_at = ?, new_count = ?, scanned_count = ?,
-           discovery_round = discovery_round + 1, lock_token = NULL, lock_expires_at = NULL, active_job_id = NULL,
-           error = NULL, updated_at = CURRENT_TIMESTAMP
-           WHERE space_id = ? AND lock_token = ? AND active_job_id = ? AND lease_generation = ?`,
-        ).bind(completedAt.toISOString(), nextRunAt, recommended, job.discovered_count,
-          space.id, lockToken, job.id, leaseGeneration),
+        runCompletionStatement,
       ]);
       if (!Number(completionUpdates[0]?.meta?.changes || 0) || !Number(completionUpdates[1]?.meta?.changes || 0)) {
         throw new MonitorLeaseLostError();
@@ -7099,6 +7232,7 @@ export async function POST(request: Request) {
           recommended,
           duplicates: duplicateCount,
           scanMode: work.scanMode,
+          remainingQualityQueue: remainingQualityQueueCount,
         },
       });
       return Response.json(await readState(database, space, { mainComplete: true }));

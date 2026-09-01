@@ -149,6 +149,7 @@ test("every production OpenAlex path uses the shared D1 source circuit", async (
   ]);
   assert.match(monitor, /fetchExternalSource\(endpoint, options, \{ database, sourceKey: "openalex" \}\)/);
   assert.match(monitor, /fetchOpenAlexAbstracts\(database: D1Database/);
+  assert.match(monitor, /\{ database, sourceKey: "datacite" \}/);
   assert.match(researchMap, /fetchOpenAlex\(database: D1Database/);
   assert.match(researchMap, /discoverCandidates\(database, \[direction\]/);
   assert.match(researchNetwork, /database: budget\.database, sourceKey: "openalex"/);

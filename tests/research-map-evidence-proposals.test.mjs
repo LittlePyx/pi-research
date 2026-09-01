@@ -89,6 +89,16 @@ function createFixture() {
       id TEXT PRIMARY KEY NOT NULL,
       space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE
     );
+    CREATE TABLE monitor_runs (
+      id TEXT PRIMARY KEY NOT NULL,
+      space_id TEXT NOT NULL UNIQUE REFERENCES research_spaces(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'idle',
+      next_run_at TEXT,
+      last_trigger TEXT NOT NULL DEFAULT 'visit',
+      last_user_activity_at TEXT,
+      automation_paused_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE monitored_papers (
       id TEXT PRIMARY KEY NOT NULL,
       space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE,
@@ -295,6 +305,9 @@ function createFixture() {
 
   sqlite.exec(`
     INSERT INTO research_spaces (id) VALUES ('space-a'), ('space-b');
+    INSERT INTO monitor_runs (id, space_id, status, next_run_at) VALUES
+      ('run-a', 'space-a', 'ready', datetime('now', '+1 day')),
+      ('run-b', 'space-b', 'ready', datetime('now', '+1 day'));
     INSERT INTO monitor_scan_jobs (id, space_id) VALUES ('job-a-1', 'space-a'), ('job-a-2', 'space-a');
     INSERT INTO research_tracks
       (id, space_id, title_zh, title_en, intelligence_json, intelligence_model, intelligence_updated_at)
@@ -363,6 +376,7 @@ test("explicit negative feedback removes a paper from shared-queue stage counts 
   try {
     const queued = await enqueueMonitorCandidates(database, "space-a", [queueCandidate()]);
     assert.equal(queued.queuedForReviewCount, 1);
+    assert.equal(sqlite.prepare("SELECT datetime(next_run_at) <= CURRENT_TIMESTAMP AS due FROM monitor_runs WHERE space_id = 'space-a'").get().due, 1);
 
     sqlite.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, feedback, reason_code) VALUES (?, ?, ?, 'not_relevant', 'network_dismissed')")
       .run("feedback-a", "space-a", "paper-a");
@@ -380,6 +394,9 @@ test("explicit negative feedback removes a paper from shared-queue stage counts 
     sqlite.prepare("DELETE FROM paper_feedback WHERE paper_id = 'paper-a'").run();
     sqlite.prepare("UPDATE paper_insights SET analysis_source = 'deepseek_screened', analysis_model = 'deepseek-v4-pro' WHERE paper_id = 'paper-a'").run();
     assert.equal((await enqueueMonitorCandidates(database, "space-a", [queueCandidate()])).reviewingCount, 1);
+    sqlite.prepare("UPDATE paper_insights SET analysis_source = 'deepseek_verification_pending' WHERE paper_id = 'paper-a'").run();
+    assert.equal((await enqueueMonitorCandidates(database, "space-a", [queueCandidate()])).reviewingCount, 1);
+    sqlite.prepare("UPDATE paper_insights SET analysis_source = 'deepseek_screened' WHERE paper_id = 'paper-a'").run();
     sqlite.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, feedback, reason_code) VALUES (?, ?, ?, 'not_relevant', 'network_dismissed')")
       .run("feedback-a", "space-a", "paper-a");
     assert.equal((await enqueueMonitorCandidates(database, "space-a", [queueCandidate()])).reviewingCount, 0);
@@ -397,6 +414,35 @@ test("explicit negative feedback removes a paper from shared-queue stage counts 
     assert.deepEqual(
       { ...sqlite.prepare("SELECT analysis_source, analysis_model, llm_recommended FROM paper_insights WHERE paper_id = 'paper-a'").get() },
       { analysis_source: "deepseek", analysis_model: "deepseek-v4-pro", llm_recommended: 1 },
+    );
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("shared queue admission wakes a terminal run but respects an inactive-workspace pause", async () => {
+  const { sqlite, database } = createFixture();
+  try {
+    sqlite.prepare("DELETE FROM monitor_runs WHERE space_id = 'space-b'").run();
+    await enqueueMonitorCandidates(database, "space-b", [queueCandidate({
+      canonicalId: "doi:10.1000/wake-a",
+      doi: "10.1000/wake-a",
+      title: "Wake a new shared quality queue",
+    })]);
+    assert.deepEqual(
+      { ...sqlite.prepare("SELECT status, datetime(next_run_at) <= CURRENT_TIMESTAMP AS due, last_user_activity_at IS NOT NULL AS active FROM monitor_runs WHERE space_id = 'space-b'").get() },
+      { status: "idle", due: 1, active: 1 },
+    );
+
+    sqlite.prepare("UPDATE monitor_runs SET automation_paused_at = CURRENT_TIMESTAMP, next_run_at = datetime('now', '+1 day') WHERE space_id = 'space-b'").run();
+    await enqueueMonitorCandidates(database, "space-b", [queueCandidate({
+      canonicalId: "doi:10.1000/wake-b",
+      doi: "10.1000/wake-b",
+      title: "Preserve a paused shared quality queue",
+    })]);
+    assert.equal(
+      sqlite.prepare("SELECT datetime(next_run_at) > CURRENT_TIMESTAMP AS stayed_paused FROM monitor_runs WHERE space_id = 'space-b'").get().stayed_paused,
+      1,
     );
   } finally {
     sqlite.close();

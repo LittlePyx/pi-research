@@ -19,10 +19,15 @@ const healthy = {
   dailyTokens: 24_000,
 };
 
-test("automatic monitoring pauses before unattended research spending can accumulate", () => {
+test("active workspaces keep draining backlog while only inactive automation is capped", () => {
   assert.equal(monitorAutomationPauseReason(healthy), null);
   assert.equal(monitorAutomationPauseReason({ ...healthy, pendingRecommendations: 120 }), null);
-  assert.equal(monitorAutomationPauseReason({ ...healthy, scheduledRunsSinceActivity: MONITOR_AUTOMATION_LIMITS.scheduledRunsWithoutActivity }), "unattended_runs");
+  assert.equal(monitorAutomationPauseReason({ ...healthy, scheduledRunsSinceActivity: 120 }), null);
+  assert.equal(monitorAutomationPauseReason({
+    ...healthy,
+    lastUserActivityAt: null,
+    scheduledRunsSinceActivity: MONITOR_AUTOMATION_LIMITS.scheduledRunsWithoutActivity,
+  }), "unattended_runs");
   assert.equal(monitorAutomationPauseReason({ ...healthy, lastUserActivityAt: "2026-08-13T08:00:00.000Z" }), "inactive");
   assert.equal(monitorAutomationPauseReason({ ...healthy, dailyTokens: MONITOR_AUTOMATION_LIMITS.dailyTokens }), "daily_budget");
   assert.match(monitorAutomationPauseCopy("unattended_runs").zh, /3 轮扫描/);

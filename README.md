@@ -5,7 +5,7 @@ Pi Research is a bilingual AI research companion for continuous paper discovery,
 ## What it does
 
 - Scans three horizons: the latest 14 days, 6 months, and 5 years.
-- Discovers papers through priority journals, Crossref, arXiv, OpenAlex, Semantic Scholar, and citation frontiers.
+- Discovers papers through priority journals, Crossref, arXiv, DataCite's arXiv DOI metadata, OpenAlex, Semantic Scholar, and citation frontiers.
 - Uses persistent coverage ledgers so recurring scans explore new queries, venues, pages, and graph branches.
 - Uses DeepSeek Pro to reject non-papers, judge user-specific relevance, and write bilingual paper briefs and reading rationales.
 - Uses one cached DeepSeek Pro query plan per research space and day, with focused, balanced, and open exploration modes.
@@ -35,7 +35,7 @@ npm test
 npm run test:live
 ```
 
-`npm test` runs the production build and deterministic product tests. `npm run test:live` checks the public contracts of Crossref, OpenAlex, arXiv, and Semantic Scholar; Semantic Scholar is treated as a graceful-degradation source when its public endpoint rate-limits anonymous requests.
+`npm test` runs the production build and deterministic product tests. `npm run test:live` checks the public contracts of Crossref, OpenAlex, DataCite, arXiv, and Semantic Scholar; the shared quality pipeline keeps healthy-source evidence when any optional public endpoint rate-limits anonymous requests.
 
 ## Data model
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import { parseArxivAtom } from "../lib/discovery/arxiv.ts";
+import { parseDataCiteArxivRecords } from "../lib/discovery/datacite.ts";
 
 const headers = { Accept: "*/*", "User-Agent": "PiResearch/1.0 (live source contract check)" };
 
@@ -65,6 +66,12 @@ const results = await Promise.all([
     "OpenAlex",
     "https://api.openalex.org/works?search=information%20theory&filter=is_paratext:false&per-page=1&select=id,doi,display_name,publication_date",
     (data) => assert.ok(Array.isArray(data?.results) && data.results.length > 0),
+    true,
+  ),
+  checkJson(
+    "DataCite arXiv metadata",
+    "https://api.datacite.org/dois?query=information%20theory&prefix=10.48550&page%5Bsize%5D=1&sort=-published",
+    (data) => assert.ok(parseDataCiteArxivRecords(data).length > 0),
     true,
   ),
   checkJson(

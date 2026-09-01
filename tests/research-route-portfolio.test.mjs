@@ -48,6 +48,8 @@ test("route funnel uses the same count model on desktop and narrow screens", asy
   assert.match(client, /统一优先事项/);
   assert.match(client, /onClick=\{handleRouteAttention\}/);
   assert.match(client, /const routePortfolio = researchMap\.routePortfolio;/);
+  assert.match(client, /const routeQualityBacklogCount = routePortfolio\.queuedCount \+ routePortfolio\.reviewingCount;/);
+  assert.equal(client.match(/monitorReadyLabel/g)?.length, 3);
   assert.doesNotMatch(client, /researchMap\.routePortfolio\s*\|\|/);
   assert.match(client, /portfolio\.discoveredCount/);
   assert.match(client, /portfolio\.queuedCount \+ portfolio\.reviewingCount/);

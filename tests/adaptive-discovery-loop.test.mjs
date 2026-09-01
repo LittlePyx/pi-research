@@ -120,6 +120,8 @@ test("monitoring starts immediately and advances through resumable two-pass AI s
   assert.match(client, /刚才没有启动重复扫描/);
   assert.match(client, /manualCooldownBlocked/);
   assert.match(liveChecks, /name: "arXiv", status: "degraded"/);
+  assert.match(liveChecks, /DataCite arXiv metadata/);
+  assert.match(liveChecks, /parseDataCiteArxivRecords/);
   assert.match(liveChecks, /\[429, 500, 502, 503, 504\]/);
   assert.match(monitor, /DEEP_REVIEW_BATCH_SIZE = 1/);
   assert.match(monitor, /DEEP_REVIEW_CONCURRENCY = 2/);
@@ -231,8 +233,10 @@ test("today and its daily brief are capped at six and reranked across directions
 test("discovery and evidence expansion run independent upstream calls concurrently", async () => {
   const monitor = await readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
 
-  assert.match(monitor, /Semantic Scholar · OpenAlex · arXiv 并行检索/);
-  assert.match(monitor, /const \[semantic, openAlex, arxiv\] = await Promise\.all/);
+  assert.match(monitor, /Semantic Scholar · OpenAlex · arXiv · DataCite 并行检索/);
+  assert.match(monitor, /const \[semantic, openAlex, arxiv, dataCite\] = await Promise\.all/);
+  assert.match(monitor, /fetchDataCiteArxivHorizon/);
+  assert.match(monitor, /candidateWithinHorizon\(candidate, horizon, now\)/);
   assert.match(monitor, /const relationResults = await Promise\.all/);
 });
 

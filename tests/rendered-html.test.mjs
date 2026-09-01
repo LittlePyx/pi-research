@@ -124,6 +124,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(monitor, /api\.semanticscholar\.org\/graph\/v1\/paper\/search/);
   assert.match(monitor, /api\.openalex\.org\/works/);
   assert.match(monitor, /export\.arxiv\.org\/api\/query/);
+  assert.match(monitor, /api\.datacite\.org\/dois/);
+  assert.match(monitor, /sourceKey: "datacite:arxiv"/);
   assert.match(monitor, /fetchCitationFrontier/);
   assert.match(monitor, /sourceKey: "research-route:network"/);
   assert.match(monitor, /persistReviewBatch/);

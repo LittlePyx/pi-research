@@ -193,7 +193,6 @@ export const SCHEDULED_RESEARCH_ROUTE_RETRY_SQL = `SELECT
   )
   AND space.owner_user_id LIKE 'anonymous:%'
   AND run.automation_paused_at IS NULL
-  AND run.scheduled_runs_since_activity < 3
   AND run.last_user_activity_at IS NOT NULL
   AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
  ORDER BY recovery_from_shared_queue ASC, datetime(run.last_user_activity_at) DESC,

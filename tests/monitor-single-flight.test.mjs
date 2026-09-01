@@ -90,7 +90,7 @@ test("start request keys are stable per bucket and distinct for checkpoint resum
 
 test("source progress cannot replace the durable discovery checkpoint", () => {
   assert.equal(
-    durableMonitorCheckpoint("discovering_days", "days:Semantic Scholar · OpenAlex · arXiv 并行检索"),
+    durableMonitorCheckpoint("discovering_days", "days:Semantic Scholar · OpenAlex · arXiv · DataCite 并行检索"),
     "discovering_days",
   );
   assert.equal(durableMonitorCheckpoint("discovering_months", "discovering_months"), "discovering_months");

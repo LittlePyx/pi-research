@@ -419,7 +419,7 @@ type MonitorState = {
       screened: number;
     }>;
     pipelineVersion?: string;
-    scanMode?: "full" | "fresh_only";
+    scanMode?: "full" | "fresh_only" | "quality_queue";
     needsRefresh?: boolean;
     attempt?: number;
     triggerSource?: string;
@@ -1268,7 +1268,7 @@ function RoutePortfolioOverview({
   const status = portfolio.degradedRouteCount > 0
     ? (locale === "zh" ? `${portfolio.degradedRouteCount} 条路线待补证据` : `${portfolio.degradedRouteCount} routes need evidence`)
     : inReview > 0
-      ? (locale === "zh" ? `Pi 正在评估 ${inReview} 篇` : `Pi is reviewing ${inReview}`)
+      ? (locale === "zh" ? `${inReview} 篇等待或正在质量评估` : `${inReview} awaiting or in quality review`)
       : todayCount > 0
         ? (locale === "zh" ? `今日有 ${todayCount} 篇路线推荐` : `${todayCount} route papers in Today`)
         : (locale === "zh" ? "路线闭环持续运行" : "Route loop is running");
@@ -3255,6 +3255,12 @@ export default function ResearchApp({ user }: { user: User }) {
       || confirmedRouteEvidenceCount(left) - confirmedRouteEvidenceCount(right) || left.depthScore - right.depthScore;
   })[0] || null, [researchMap.tracks]);
   const routePortfolio = researchMap.routePortfolio;
+  const routeQualityBacklogCount = routePortfolio.queuedCount + routePortfolio.reviewingCount;
+  const monitorReadyLabel = routeQualityBacklogCount > 0
+    ? (locale === "zh"
+      ? `来源扫描已完成 · ${routeQualityBacklogCount} 篇路线候选等待或正在质量评估`
+      : `Source scan complete · ${routeQualityBacklogCount} route candidates awaiting or in quality review`)
+    : (locale === "zh" ? "今日扫描与当前质量队列已完成" : "Today's scan and current quality queue are complete");
   const routeTodayPaperCount = useMemo(() => rankedMonitorPapers.filter((paper) => Boolean(
     paper.discoveryOrigin || (paper.discoveryTrack && paper.discoveryType),
   )).length, [rankedMonitorPapers]);
@@ -5343,7 +5349,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <main className="v2-page v2-today">
             <section className="v2-today-hero">
               <div className="v2-today-hero-copy"><p className="v2-kicker">{formatTodayDate(locale)}</p><h1>{locale === "zh" ? `${activeSpace.memberName}，先看今天最重要的变化。` : `${activeSpace.memberName}, start with today's most important changes.`}</h1><p>{locale === "zh" ? `Pi 已为“${defaultSpaceName(activeSpace.name, locale)}”整理阅读优先级；先做判断，再决定是否深读。` : `Pi has prioritized today's reading for “${defaultSpaceName(activeSpace.name, locale)}” so you can decide before reading deeply.`}</p></div>
-              <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "ready" ? (locale === "zh" ? "今日扫描已完成" : "Today's scan is ready") : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
+              <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "ready" ? monitorReadyLabel : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
               <section className="v2-today-briefing" aria-label={locale === "zh" ? "今日科研简报" : "Today's research briefing"}>
                 <button type="button" onClick={() => rankedMonitorPapers[0] && openMonitorPaper(rankedMonitorPapers[0])} disabled={!rankedMonitorPapers.length}><span>01</span><strong>{mustReadCount}</strong><div><b>{locale === "zh" ? "今日必读" : "Must read"}</b><small>{locale === "zh" ? "最值得优先投入时间" : "Highest priority for your time"}</small></div><i>→</i></button>
                 <button type="button" onClick={() => navigate("threads")}><span>02</span><strong>{monitor ? monitor.mapChanges?.length || 0 : "—"}</strong><div><b>{locale === "zh" ? "近 7 天路线变化" : "7-day route changes"}</b><small>{locale === "zh" ? "结构更新与通过推荐证据核对的变化分开记录" : "Structural updates and recommendation evidence checks are tracked separately"}</small></div><i>→</i></button>
@@ -5393,7 +5399,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-monitor-head">
                 <div className="v2-monitor-intro"><p className="v2-kicker">{locale === "zh" ? "论文发现" : "PAPER DISCOVERY"}</p><h2>{locale === "zh" ? "三个时间窗，持续向前挖掘" : "Three horizons, continuously explored"}</h2><p>{locale === "zh" ? "14 天看新变化，6 个月看新且优质，5 年补核心成果。" : "14 days for change, 6 months for recent quality, and 5 years for durable core work."}</p></div>
                 <div className="v2-monitor-actions">
-                  <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? t.scanReady : t.neverScanned}</span>
+                  <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? monitorReadyLabel : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
                   <button type="button" onClick={runManualMonitor} disabled={scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
                 </div>

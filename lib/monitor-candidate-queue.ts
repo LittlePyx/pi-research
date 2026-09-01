@@ -74,8 +74,9 @@ const TITLE_IDENTITY_LOOKUP_TOKENS_PER_TITLE = 2;
  */
 export const RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL = `WITH queue_counts AS (
   SELECT coverage.route_id AS track_id,
-   COUNT(DISTINCT CASE WHEN i.analysis_source = 'metadata' OR i.analysis_model = '' THEN cs.paper_id END) AS queued_count,
-   COUNT(DISTINCT CASE WHEN i.analysis_source = 'deepseek_screened' THEN cs.paper_id END) AS reviewing_count,
+   COUNT(DISTINCT CASE WHEN (i.analysis_source = 'metadata' OR i.analysis_model = '')
+    AND i.analysis_source NOT IN ('deepseek_screened', 'deepseek_verification_pending') THEN cs.paper_id END) AS queued_count,
+   COUNT(DISTINCT CASE WHEN i.analysis_source IN ('deepseek_screened', 'deepseek_verification_pending') THEN cs.paper_id END) AS reviewing_count,
    MAX(cs.last_seen_at) AS last_queued_at
   FROM monitor_candidate_sources cs
   JOIN monitored_papers p ON p.id = cs.paper_id AND p.space_id = cs.space_id
@@ -165,9 +166,10 @@ export const RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL = `WITH route_candidates AS (
  SELECT
   (SELECT COUNT(*) FROM route_candidates) AS discovered_count,
   (SELECT COUNT(*) FROM route_candidates
-   WHERE analysis_source = 'metadata' OR analysis_model = '') AS queued_count,
+   WHERE (analysis_source = 'metadata' OR analysis_model = '')
+    AND analysis_source NOT IN ('deepseek_screened', 'deepseek_verification_pending')) AS queued_count,
   (SELECT COUNT(*) FROM route_candidates
-   WHERE analysis_source = 'deepseek_screened') AS reviewing_count,
+   WHERE analysis_source IN ('deepseek_screened', 'deepseek_verification_pending')) AS reviewing_count,
   (SELECT COUNT(*) FROM route_candidates candidate WHERE EXISTS (
    SELECT 1 FROM recommendation_audit_events review
    WHERE review.space_id = candidate.space_id AND review.paper_id = candidate.paper_id AND review.is_paper = 1
@@ -604,10 +606,30 @@ export async function enqueueMonitorCandidates(
     ).bind(spaceId, ...chunk).all<InsightStageRow>();
     stageRows.push(...rows.results);
   }
-  const queuedForReviewCount = stageRows.filter((row) => row.analysis_source === "metadata" || !row.analysis_model).length;
-  const reviewingCount = stageRows.filter((row) => row.analysis_source === "deepseek_screened").length;
+  const queuedForReviewCount = stageRows.filter((row) => (row.analysis_source === "metadata" || !row.analysis_model)
+    && !["deepseek_screened", "deepseek_verification_pending"].includes(row.analysis_source)).length;
+  const reviewingCount = stageRows.filter((row) => ["deepseek_screened", "deepseek_verification_pending"].includes(row.analysis_source)).length;
   const recommendedCount = stageRows.filter((row) => row.analysis_source === "deepseek" && Boolean(row.llm_recommended)).length;
   const alreadyReviewedCount = stageRows.filter((row) => row.analysis_source === "deepseek" || row.analysis_source === "deepseek_rejected").length;
+  if (queuedForReviewCount + reviewingCount > 0) {
+    // Route, gap, network, and synthesis discoveries can arrive after the
+    // daily source scan. Wake a terminal monitor run without disturbing an
+    // in-flight lease or a deliberately paused inactive workspace.
+    await database.batch([
+      database.prepare(
+        `INSERT OR IGNORE INTO monitor_runs
+         (id, space_id, status, next_run_at, last_trigger, last_user_activity_at, updated_at)
+         VALUES (?, ?, 'idle', CURRENT_TIMESTAMP, 'visit', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ).bind(crypto.randomUUID(), spaceId),
+      database.prepare(
+        `UPDATE monitor_runs SET next_run_at = CASE
+          WHEN next_run_at IS NULL OR datetime(next_run_at) > CURRENT_TIMESTAMP THEN CURRENT_TIMESTAMP
+          ELSE next_run_at END,
+         updated_at = CURRENT_TIMESTAMP
+         WHERE space_id = ? AND status IN ('idle', 'ready', 'error') AND automation_paused_at IS NULL`,
+      ).bind(spaceId),
+    ]);
+  }
   return {
     candidateCount: candidates.length,
     newCandidateCount: canonicalIds.filter((id) => !existingIds.has(id)).length,
