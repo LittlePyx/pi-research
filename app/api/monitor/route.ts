@@ -24,6 +24,7 @@ import {
   formalYieldBranchAdjustment,
   shouldRefreshFreshYieldPlan,
 } from "../../../lib/discovery/fresh-yield.mjs";
+import { ROUTE_BRANCH_OUTCOMES_SQL, aggregateRouteBranchScores } from "../../../lib/discovery/route-branch-learning.mjs";
 import {
   buildRecommendationQualitySnapshot,
   evaluateRecommendationAcceptanceGate,
@@ -1123,7 +1124,7 @@ function adaptiveBranchScore(input: Omit<DiscoveryBranchScore, "score">) {
 }
 
 async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) {
-  const [feedbackRows, engagementRows, coverageRows, reviewRows] = await Promise.all([
+  const [feedbackRows, engagementRows, coverageRows, reviewRows, routeOutcomeRows] = await Promise.all([
     database.prepare(
       `SELECT cs.source_key, cs.query_key, COUNT(DISTINCT cs.paper_id) AS papers,
        SUM(CASE WHEN f.saved = 1 OR f.feedback = 'relevant' OR r.status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS accepted,
@@ -1169,6 +1170,10 @@ async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) 
        WHERE cs.space_id = ? AND audit.reviewed_at >= datetime('now', '-90 days')
        GROUP BY cs.source_key, cs.query_key`,
     ).bind(spaceId).all<{ source_key: string; query_key: string; deep_reviewed: number; formal_recommended: number; evidence_rejected: number }>(),
+    database.prepare(ROUTE_BRANCH_OUTCOMES_SQL).bind(spaceId).all<{
+      route_id: string; papers: number; accepted: number; dismissed: number; wrong_type: number; known: number;
+      deep_reviewed: number; formal_recommended: number; evidence_rejected: number;
+    }>(),
   ]);
   const rows = new Map<string, Omit<DiscoveryBranchScore, "score">>();
   const ensure = (sourceKey: string, queryKey: string) => {
@@ -1207,8 +1212,30 @@ async function loadDiscoveryBranchScores(database: D1Database, spaceId: string) 
     const weight = bucket.reduce((sum, item) => sum + item.weight, 0);
     sources.set(sourceKey, Math.round(bucket.reduce((sum, item) => sum + item.score * item.weight, 0) / Math.max(1, weight)));
   }
+  const routes = new Map(aggregateRouteBranchScores(routeOutcomeRows.results.map((row) => ({
+    routeId: row.route_id,
+    score: adaptiveBranchScore({
+      sourceKey: `research-route:${row.route_id}`,
+      queryKey: row.route_id,
+      papers: Number(row.papers || 0),
+      accepted: Number(row.accepted || 0),
+      dismissed: Number(row.dismissed || 0),
+      known: Number(row.known || 0),
+      wrongType: Number(row.wrong_type || 0),
+      engagedPapers: 0,
+      engagementWeight: 0,
+      attempts: 0,
+      candidates: 0,
+      newCandidates: 0,
+      deepReviewed: Number(row.deep_reviewed || 0),
+      formalRecommended: Number(row.formal_recommended || 0),
+      evidenceRejected: Number(row.evidence_rejected || 0),
+    }),
+    explicitDecisions: Number(row.accepted || 0) + Number(row.dismissed || 0),
+    deepReviewed: Number(row.deep_reviewed || 0),
+  }))).map((route) => [route.routeId, route.score]));
   const ranked = [...exact.values()].sort((left, right) => right.score - left.score);
-  return { exact, sources, ranked };
+  return { exact, routes, sources, ranked };
 }
 
 async function routeDiscoveryQueries(
@@ -1344,8 +1371,9 @@ async function prioritizeDiscoveryPlans(database: D1Database, spaceId: string, p
   const enriched = await Promise.all(plans.map(async (plan) => {
     const queryKey = await discoveryQueryKey(plan);
     const exact = performance.exact.get(`${plan.sourceKey}|${queryKey}`)?.score;
+    const route = plan.routeId ? performance.routes.get(plan.routeId) : undefined;
     const source = performance.sources.get(plan.sourceKey);
-    const score = Math.max(5, Math.min(100, (exact ?? source ?? 55) + (plan.key === "topic-anchor" ? 8 : 0) + (plan.routeUrgency || 0)));
+    const score = Math.max(5, Math.min(100, (exact ?? route ?? source ?? 55) + (plan.key === "topic-anchor" ? 8 : 0) + (plan.routeUrgency || 0)));
     return { ...plan, explorationRole: plan.explorationRole || "core", adaptiveScore: score };
   }));
   return selectPrioritizedDiscoveryPlans(enriched, mode);
