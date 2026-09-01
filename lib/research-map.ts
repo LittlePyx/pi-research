@@ -303,6 +303,23 @@ export function researchRouteOperationalStatus(track: ResearchTrack): ResearchRo
   return "scheduled";
 }
 
+export type ResearchLeadGapOrigin = "problem" | "gap";
+
+export function researchLeadActionableGap(input: {
+  hasAssessment: boolean;
+  assessmentStale: boolean;
+  assessmentQuery?: string | null;
+  synthesisQuery?: string | null;
+  routeQuery?: string | null;
+}): { origin: ResearchLeadGapOrigin; query: string } | null {
+  if (input.hasAssessment) {
+    const query = input.assessmentStale ? "" : input.assessmentQuery?.trim() || "";
+    return query ? { origin: "problem", query } : null;
+  }
+  const query = input.synthesisQuery?.trim() || input.routeQuery?.trim() || "";
+  return query ? { origin: "gap", query } : null;
+}
+
 export function researchRouteLearningSignal(track: ResearchTrack): ResearchRouteLearningSignal {
   if (track.monitoringStatus === "paused") return "paused";
   const effect = track.discoveryEffect;

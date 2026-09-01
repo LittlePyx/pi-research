@@ -2574,8 +2574,17 @@ export async function POST(request: Request) {
     const existingIds = new Set(allExistingIds.results.map((row) => row.canonical_id));
     let candidates = discovery.candidates.filter((item) => !existingIds.has(item.canonicalId));
     const sourceStatuses = [...discovery.sources];
-    if (hydrating && (candidates.length < 8 || discovery.errors.length > 0)) {
-      const baseline = await protectedBaselineCandidates(database, space.id, direction, new Set([...existingIds, ...candidates.map((item) => item.canonicalId)]));
+    const needsProtectedBaseline = hydrating
+      ? candidates.length < 8 || discovery.errors.length > 0
+      : targetedExpanding && (candidates.length < 4 || discovery.errors.length > 0);
+    if (needsProtectedBaseline) {
+      const baseline = await protectedBaselineCandidates(
+        database,
+        space.id,
+        direction,
+        new Set([...existingIds, ...candidates.map((item) => item.canonicalId)]),
+        hydrating ? 12 : 6,
+      );
       candidates = [...candidates, ...baseline];
       sourceStatuses.push({ source: "shared-monitor-baseline", role: "baseline", status: baseline.length ? "cached" : "empty", candidateCount: baseline.length });
     }

@@ -5058,3 +5058,29 @@ button:disabled { cursor: not-allowed; }
   .v2-route-management-actions { align-items: stretch; flex-direction: column; }
   .v2-route-management-actions button { width: 100%; }
 }
+
+/* Pi Research V149 — evidence-gap action and layered research workbenches */
+.v2-research-decision-grid article.actionable { background: #f5f1e7; }
+.v2-research-decision-grid article.actionable h3 { color: #6b5535; }
+.v2-research-decision-actions button:disabled { border-color: #cfd7d2; background: #e8ece9; color: #8b958f; }
+.v2-synthesis-overview { padding: 18px 22px; display: block; }
+.v2-synthesis-next { border-top: 0; border-bottom: 1px solid #dbe3dd; }
+.v2-synthesis-evidence-detail { background: rgba(250,251,249,.72); }
+.v2-synthesis-evidence-detail > summary,.v2-problem-context > summary { min-height: 62px; padding: 12px 22px; cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.v2-synthesis-evidence-detail > summary::-webkit-details-marker,.v2-problem-context > summary::-webkit-details-marker { display: none; }
+.v2-synthesis-evidence-detail > summary small,.v2-problem-context > summary small { color: #6d7d74; display: block; font-size: 8px; font-weight: 830; letter-spacing: .07em; }
+.v2-synthesis-evidence-detail > summary strong,.v2-problem-context > summary strong { margin-top: 4px; color: #43584c; display: block; font: 12px/1.4 Georgia,serif; }
+.v2-synthesis-evidence-detail > summary > b,.v2-problem-context > summary > b { color: #416451; flex: none; font-size: 9px; }
+.v2-synthesis-evidence-detail[open] > summary,.v2-problem-context[open] > summary { border-bottom: 1px solid #dce4de; background: #f4f7f4; }
+.v2-synthesis-evidence-detail .v2-synthesis-statement-list { padding-top: 5px; }
+.v2-problem-actions { border-bottom: 1px solid #dce3de; }
+.v2-problem-context { background: rgba(250,251,249,.66); }
+.v2-problem-context .v2-problem-definition { border-bottom: 0; }
+.v2-problem-context .v2-problem-confirmed-hypotheses { border-top: 1px solid #e0e6e1; }
+
+@media (max-width: 620px) {
+  .v2-synthesis-evidence-detail > summary,.v2-problem-context > summary { padding: 12px 16px; align-items: flex-start; flex-direction: column; gap: 8px; }
+  .v2-synthesis-evidence-detail > summary > b,.v2-problem-context > summary > b { align-self: flex-end; }
+  .v2-problem-context .v2-problem-definition { padding-inline: 16px; }
+  .v2-problem-context .v2-problem-confirmed-hypotheses { padding-inline: 16px; }
+}

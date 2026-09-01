@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { researchLeadActionableGap } from "../lib/research-map.ts";
 import { RESEARCH_ROUTE_BASELINE_MODEL, RESEARCH_ROUTE_BASELINE_SQL } from "../lib/research-route-baseline.ts";
 
 const migrationUrl = new URL("../drizzle/0051_tricky_wither.sql", import.meta.url);
@@ -123,9 +124,37 @@ test("research lead detail exposes one responsive decision panel backed by the s
   assert.match(ui, /track\.discoveryEffect\.recommendedCount/);
   assert.match(ui, /track\.discoveryEffect\.acceptedCount/);
   assert.match(ui, /只有通过共享质量评估的论文才会进入今日/);
+  assert.match(ui, /立即补齐关键证据/);
+  assert.match(ui, /onScanGap\(actionableGap\.origin\)/);
   assert.match(ui, /ResearchLeadDecisionPanel track=\{selectedThread\}/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-research-decision-grid \{ grid-template-columns: 1fr; \}/);
   assert.doesNotMatch(css, /\.v2-research-decision-(?:panel|funnel)[^\n]*display:\s*none/);
+});
+
+test("an identified evidence gap becomes a direct, freshness-safe discovery action", () => {
+  assert.deepEqual(researchLeadActionableGap({
+    hasAssessment: false,
+    assessmentStale: false,
+    routeQuery: "KLS conjecture Cheeger inequality stochastic localization",
+  }), {
+    origin: "gap",
+    query: "KLS conjecture Cheeger inequality stochastic localization",
+  });
+  assert.deepEqual(researchLeadActionableGap({
+    hasAssessment: true,
+    assessmentStale: false,
+    assessmentQuery: "KLS original conjecture foundational papers",
+    synthesisQuery: "unrelated fallback",
+  }), {
+    origin: "problem",
+    query: "KLS original conjecture foundational papers",
+  });
+  assert.equal(researchLeadActionableGap({
+    hasAssessment: true,
+    assessmentStale: true,
+    assessmentQuery: "stale query",
+    routeQuery: "route fallback must not shadow the stale decision",
+  }), null);
 });
 
 test("route workspace puts decisions and active research before low-frequency management", async () => {
@@ -145,4 +174,18 @@ test("route workspace puts decisions and active research before low-frequency ma
   assert.match(css, /\.v2-route-management > summary[\s\S]*\.v2-route-management-body/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-route-management > summary \{ align-items: flex-start; flex-direction: column;/);
   assert.doesNotMatch(css, /\.v2-route-management(?:-body)?\s*\{[^}]*display:\s*none/);
+});
+
+test("problem and synthesis workbenches keep decisions before expandable evidence context", async () => {
+  const [ui, css] = await Promise.all([readFile(uiUrl, "utf8"), readFile(cssUrl, "utf8")]);
+  const synthesisStart = ui.indexOf("function ResearchSynthesisWorkbench");
+  const problemStart = ui.indexOf("function ResearchProblemWorkbench");
+  const synthesis = ui.slice(synthesisStart, ui.indexOf("function researchProblemStageLabel", synthesisStart));
+  const problem = ui.slice(problemStart, ui.indexOf("export default function ResearchApp", problemStart));
+
+  assert.ok(synthesis.indexOf('className="v2-synthesis-next"') < synthesis.indexOf('className="v2-synthesis-evidence-detail"'));
+  assert.ok(problem.indexOf("v2-problem-assessment") < problem.indexOf("v2-problem-context"));
+  assert.ok(problem.indexOf("v2-problem-actions") < problem.indexOf("v2-problem-context"));
+  assert.match(css, /\.v2-synthesis-evidence-detail > summary[\s\S]*\.v2-problem-context > summary/);
+  assert.match(css, /@media \(max-width: 620px\)[\s\S]*\.v2-synthesis-evidence-detail > summary,\.v2-problem-context > summary/);
 });

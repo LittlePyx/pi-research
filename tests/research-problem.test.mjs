@@ -113,6 +113,8 @@ test("research-problem conclusions expose their evidence trail and discovery use
   assert.match(map, /activeResearchProblemDiscoverySignal/);
   assert.match(map, /sourceKind = actionExpanding \? "action" : problemExpanding \? "problem"/);
   assert.match(map, /enqueueMonitorCandidates/);
+  assert.match(map, /const needsProtectedBaseline = hydrating[\s\S]*targetedExpanding/);
+  assert.match(map, /hydrating \? 12 : 6/);
   assert.match(monitor, /researchProblemDiscoveryQuery/);
   assert.match(monitor, /problem_assessment_input_revision/);
   assert.match(monitor, /sourceKey: "research-route:problem"/);
@@ -120,6 +122,8 @@ test("research-problem conclusions expose their evidence trail and discovery use
   assert.match(client, /claim \{source\.claimId\}/);
   assert.match(client, /action: origin === "problem" \? "expand-problem" : "expand-gap"/);
   assert.match(client, /候选进入今日共用的质量评估队列/);
+  assert.match(client, /routeBuildDegraded/);
+  assert.match(client, /这不代表没有合适论文/);
   assert.match(styles, /\.v2-problem-statement-trace/);
   assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?\.v2-problem-next-search[^}]*flex-direction:\s*column/);
 });
