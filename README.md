@@ -27,6 +27,8 @@ npm run dev
 
 The application needs a D1 binding named `DB`. For interactive use, open the AI model status in the webpage and paste a DeepSeek API key there. Pi verifies the key and stores it only in a protected, `HttpOnly` browser cookie; it is never written to D1 or exposed back to page JavaScript. The cookie is limited to `/api`, uses `SameSite=Strict`, and expires after 30 days. A hosted `DEEPSEEK_API_KEY` secret remains optional for unattended scheduled scans that run without a user's browser session. Never commit API keys.
 
+During active product development, set `PI_DEVELOPMENT_UNBOUNDED=1` to remove total route, evidence-gap, model-analysis, and local Semantic Scholar usage caps. Transient work continues from durable checkpoints without a maximum attempt count. Provider backoff, request timeouts, single-flight leases, per-pass batch sizes, and final recommendation quality gates remain active.
+
 ## Validation
 
 ```bash

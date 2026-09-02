@@ -1,4 +1,5 @@
 import { getRuntimeEnv } from "../db/repository";
+import { developmentUnboundedEnabled } from "./development-policy.mjs";
 import { reserveSemanticScholarUsage } from "./semantic-scholar-quota";
 
 type SemanticScholarContext = {
@@ -117,6 +118,7 @@ async function acquireThrottleLease(context: SemanticScholarContext, scopeKeys: 
 }
 
 async function consumeUsage(context: SemanticScholarContext) {
+  if (developmentUnboundedEnabled(getRuntimeEnv().PI_DEVELOPMENT_UNBOUNDED)) return;
   const date = new Date().toISOString().slice(0, 10);
   const totalScope = "semantic-scholar-external:global";
   const spaceScope = `semantic-scholar-space:${context.spaceId}`;

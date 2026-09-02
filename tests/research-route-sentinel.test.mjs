@@ -32,6 +32,12 @@ test("route sentinel reports healthy queue feed and retry convergence", () => {
   assert.equal(result.retryConvergenceRate, 0.5);
 });
 
+test("development sentinel treats long-running retry counts as observable rather than exhausted", () => {
+  const result = evaluateResearchRouteSentinel(snapshot({ retryableExhaustedCount: 9 }), null, true);
+  assert.equal(result.outcome, "success");
+  assert.doesNotMatch(result.issues.join(","), /attempt_cap/);
+});
+
 test("route sentinel detects dishonest states, queue gaps, and history regression", () => {
   const previous = snapshot({ monitoredPaperCount: 31, feedbackHistoryCount: 4 });
   const result = evaluateResearchRouteSentinel(snapshot({

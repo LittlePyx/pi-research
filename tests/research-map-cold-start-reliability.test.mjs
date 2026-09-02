@@ -11,7 +11,7 @@ import {
 
 import {
   defensiveResearchTrackBuildStatus,
-  MAX_RESEARCH_TRACK_BUILD_ATTEMPTS,
+  RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT,
   mergeResearchTrackSourceBatches,
   nextResearchTrackBuildAttemptCount,
   researchTrackSourcePlan,
@@ -19,6 +19,7 @@ import {
   researchTrackTopicalFit,
   resolveResearchTrackBuildStatus,
 } from "../lib/research-map-reliability.ts";
+import { developmentUnboundedEnabled, retryAttemptAllowed } from "../lib/development-policy.mjs";
 
 test("partial source failure keeps successful route candidates and reports the failed sibling", () => {
   const kept = { canonicalId: "doi:10.1000/kept" };
@@ -48,9 +49,16 @@ test("a route without visible evidence can never resolve ready", () => {
     modelSucceeded: true,
   };
   assert.equal(resolveResearchTrackBuildStatus({ ...base, attemptCount: 1 }), "retryable");
-  assert.equal(resolveResearchTrackBuildStatus({ ...base, attemptCount: MAX_RESEARCH_TRACK_BUILD_ATTEMPTS }), "empty");
+  assert.equal(resolveResearchTrackBuildStatus({ ...base, attemptCount: RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT }), "empty");
   assert.equal(resolveResearchTrackBuildStatus({ ...base, sourceSuccessCount: 0, sourceFailureCount: 3, attemptCount: 1 }), "retryable");
-  assert.equal(resolveResearchTrackBuildStatus({ ...base, sourceSuccessCount: 0, sourceFailureCount: 3, attemptCount: MAX_RESEARCH_TRACK_BUILD_ATTEMPTS }), "failed");
+  assert.equal(resolveResearchTrackBuildStatus({ ...base, sourceSuccessCount: 0, sourceFailureCount: 3, attemptCount: RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT }), "failed");
+  assert.equal(resolveResearchTrackBuildStatus({
+    ...base,
+    sourceSuccessCount: 0,
+    sourceFailureCount: 3,
+    attemptCount: 100,
+    unboundedRetries: true,
+  }), "retryable");
   assert.equal(resolveResearchTrackBuildStatus({
     ...base,
     selectedPaperCount: 2,
@@ -71,7 +79,7 @@ test("a route without visible evidence can never resolve ready", () => {
   assert.equal(defensiveResearchTrackBuildStatus("ready", 0, 0), "retryable");
   assert.equal(resolveResearchTrackBuildStatus({
     ...base,
-    attemptCount: MAX_RESEARCH_TRACK_BUILD_ATTEMPTS,
+    attemptCount: RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT,
     pendingReviewCount: 2,
   }), "retryable");
 });
@@ -174,6 +182,17 @@ test("a new shared-queue recovery pass resets the bounded attempt window without
   assert.equal(nextResearchTrackBuildAttemptCount({
     currentAttemptCount: 2, deferredForCredential: true, force: true, storedStatus: "failed",
   }), 2);
+  assert.equal(nextResearchTrackBuildAttemptCount({
+    currentAttemptCount: 28, deferredForCredential: false, force: true, storedStatus: "retryable", unboundedRetries: true,
+  }), 29);
+});
+
+test("development mode removes total retry caps without removing per-request control", () => {
+  assert.equal(developmentUnboundedEnabled("1"), true);
+  assert.equal(developmentUnboundedEnabled("unbounded"), true);
+  assert.equal(developmentUnboundedEnabled("0"), false);
+  assert.equal(retryAttemptAllowed({ unbounded: true, attemptCount: 500, maximumAttempts: 3 }), true);
+  assert.equal(retryAttemptAllowed({ unbounded: false, attemptCount: 3, maximumAttempts: 3 }), false);
 });
 
 test("the D1 migration repairs legacy ready routes with zero nodes without touching populated history", async () => {
@@ -245,6 +264,8 @@ test("cold-start API code persists degraded state and queues retrieved candidate
   assert.match(route, /\.slice\(0, 24\)\.map\(\(candidate\) =>/);
   assert.match(route, /build_status = \?, build_attempt_count = \?, build_source_status_json = \?, build_error = \?, build_retry_at = \?/);
   assert.match(route, /resolveResearchTrackBuildStatus/);
+  assert.match(route, /unboundedRetries: unboundedDevelopmentRetries\(\)/);
+  assert.match(monitor, /developmentAnalysisUnbounded/);
   assert.match(monitor, /routeTitleEn:\s*row\.title_en/);
   assert.match(monitor, /researchTrackTitleTopicalFit\(plan\.routeTitleEn/);
   assert.doesNotMatch(route, /UPDATE research_tracks SET expansion_count = 0, updated_at/);

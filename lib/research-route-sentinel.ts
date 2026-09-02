@@ -39,11 +39,12 @@ function count(value: unknown) {
 export function evaluateResearchRouteSentinel(
   current: ResearchRouteSentinelSnapshot,
   previous: ResearchRouteSentinelSnapshot | null,
+  unboundedRetries = false,
 ): ResearchRouteSentinelEvaluation {
   const issues: string[] = [];
   if (current.readyZeroCount > 0) issues.push("ready_without_visible_evidence");
   if (current.partialZeroCount > 0) issues.push("partial_without_visible_evidence");
-  if (current.retryableExhaustedCount > 0) issues.push("retryable_past_attempt_cap");
+  if (!unboundedRetries && current.retryableExhaustedCount > 0) issues.push("retryable_past_attempt_cap");
   if (current.sharedQueueCount < current.routeCandidateCount) issues.push("shared_queue_feed_gap");
   const historyRegressions = previous ? HISTORY_FIELDS
     .filter((field) => current[field] < previous[field]) : [];
@@ -70,7 +71,7 @@ function parsePreviousSnapshot(value: string | null | undefined) {
   }
 }
 
-export async function recordResearchRouteSentinel(database: D1Database, spaceId: string) {
+export async function recordResearchRouteSentinel(database: D1Database, spaceId: string, unboundedRetries = false) {
   const [row, previousRow] = await Promise.all([
     database.prepare(
       `WITH route_candidates AS (
@@ -138,7 +139,7 @@ export async function recordResearchRouteSentinel(database: D1Database, spaceId:
     routeRetryEventCount: count(row?.route_retry_event_count),
     routeRetrySuccessCount: count(row?.route_retry_success_count),
   };
-  const evaluation = evaluateResearchRouteSentinel(snapshot, parsePreviousSnapshot(previousRow?.metadata_json));
+  const evaluation = evaluateResearchRouteSentinel(snapshot, parsePreviousSnapshot(previousRow?.metadata_json), unboundedRetries);
   await database.prepare(
     `INSERT INTO monitor_reliability_events
      (id, space_id, kind, stage, source, outcome, error_code, message, metadata_json)

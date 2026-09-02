@@ -1,6 +1,6 @@
 import type { ResearchTrackBuildStatus, ResearchTrackRole, ResearchTrackSourceStatus } from "./research-map";
 
-export const MAX_RESEARCH_TRACK_BUILD_ATTEMPTS = 3;
+export const RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT = 3;
 
 export type ResearchTrackDiscoveryProvider = "crossref" | "openalex" | "arxiv";
 
@@ -46,6 +46,7 @@ export type ResearchTrackBuildResolutionInput = {
   attemptCount: number;
   pendingReviewCount?: number;
   maxAttempts?: number;
+  unboundedRetries?: boolean;
 };
 
 function safeError(error: unknown) {
@@ -169,16 +170,19 @@ export function researchTrackTitleTopicalFit(
   };
 }
 
-export const SCHEDULED_RESEARCH_ROUTE_RETRY_SQL = `SELECT
+export function scheduledResearchRouteRetrySql(unboundedRetries = false) {
+  const directRetryAttemptGuard = unboundedRetries ? "" : `AND track.build_attempt_count < ${RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT}`;
+  return `SELECT
  track.id AS track_id, track.space_id, track.build_attempt_count, space.owner_user_id,
- CASE WHEN track.build_status IN ('empty', 'failed') OR track.build_attempt_count >= 3 THEN 1 ELSE 0 END AS recovery_from_shared_queue
+ CASE WHEN track.build_status IN ('empty', 'failed') OR track.build_attempt_count >= ${RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT} THEN 1 ELSE 0 END AS recovery_from_shared_queue
  FROM research_tracks track
  JOIN research_spaces space ON space.id = track.space_id
  JOIN monitor_runs run ON run.space_id = track.space_id
  WHERE (
    (track.build_status = 'retryable'
-    AND track.build_attempt_count < 3
-    AND (track.build_retry_at IS NULL OR datetime(track.build_retry_at) <= CURRENT_TIMESTAMP))
+    ${directRetryAttemptGuard}
+    AND ((track.build_retry_at IS NULL AND track.build_attempt_count < ${RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT})
+     OR datetime(track.build_retry_at) <= CURRENT_TIMESTAMP))
     OR (
      track.build_status IN ('retryable', 'empty', 'failed')
      AND (
@@ -211,16 +215,20 @@ export const SCHEDULED_RESEARCH_ROUTE_RETRY_SQL = `SELECT
  ORDER BY recovery_from_shared_queue ASC, datetime(run.last_user_activity_at) DESC,
   datetime(track.build_retry_at) ASC, datetime(track.updated_at) ASC
  LIMIT ?`;
+}
+
+export const SCHEDULED_RESEARCH_ROUTE_RETRY_SQL = scheduledResearchRouteRetrySql(false);
 
 export function nextResearchTrackBuildAttemptCount(input: {
   currentAttemptCount: number;
   deferredForCredential: boolean;
   force: boolean;
   storedStatus: string;
+  unboundedRetries?: boolean;
 }) {
   const current = Math.max(0, Math.floor(input.currentAttemptCount));
   if (input.deferredForCredential) return current;
-  if (input.force && ["retryable", "empty", "failed"].includes(input.storedStatus)) return 1;
+  if (!input.unboundedRetries && input.force && ["retryable", "empty", "failed"].includes(input.storedStatus)) return 1;
   return current + 1;
 }
 
@@ -251,15 +259,16 @@ export function mergeResearchTrackSourceBatches<T>(batches: ResearchTrackSourceB
 /**
  * A route is ready only when at least one paper is visible and the latest
  * source/model pass completed cleanly. Existing evidence makes a degraded pass
- * partial, never empty; a route without visible evidence remains retryable up
- * to a fixed cap and then reports an honest empty or failed terminal state.
+ * partial, never empty. In development, a route without visible evidence stays
+ * retryable indefinitely; production may still opt into a terminal attempt cap.
  */
 export function resolveResearchTrackBuildStatus(input: ResearchTrackBuildResolutionInput): ResearchTrackBuildStatus {
-  const maxAttempts = Math.max(1, input.maxAttempts || MAX_RESEARCH_TRACK_BUILD_ATTEMPTS);
+  const maxAttempts = Math.max(1, input.maxAttempts || RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT);
   const visiblePaperCount = Math.max(0, input.existingPaperCount) + Math.max(0, input.selectedPaperCount);
   const degraded = input.sourceFailureCount > 0 || (input.modelAttempted && !input.modelSucceeded);
   if (visiblePaperCount > 0) return degraded ? "partial" : "ready";
   if (Math.max(0, input.pendingReviewCount || 0) > 0) return "retryable";
+  if (input.unboundedRetries) return "retryable";
   if (input.attemptCount < maxAttempts) return "retryable";
   if (degraded || input.sourceSuccessCount === 0) return "failed";
   return "empty";

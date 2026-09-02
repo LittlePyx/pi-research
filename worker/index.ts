@@ -10,7 +10,8 @@ import {
 import { recordMonitorOperationalSentinel } from "../lib/monitor-operational-sentinel";
 import { readMonitorReliabilityHealth } from "../lib/monitor-reliability-health";
 import { recordResearchRouteSentinel } from "../lib/research-route-sentinel";
-import { SCHEDULED_RESEARCH_ROUTE_RETRY_SQL } from "../lib/research-map-reliability";
+import { scheduledResearchRouteRetrySql } from "../lib/research-map-reliability";
+import { developmentUnboundedEnabled } from "../lib/development-policy.mjs";
 import {
   claimResearchGapDiscovery,
   completeResearchGapDiscovery,
@@ -23,6 +24,7 @@ interface Env {
   DB: D1Database;
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL?: string;
+  PI_DEVELOPMENT_UNBOUNDED?: string;
   MONITOR_SCHEDULER_SECRET?: string;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -183,7 +185,7 @@ async function recordScheduledRouteRetryEvent(env: Env, row: ScheduledRouteRetry
 }
 
 async function runScheduledResearchRouteRetry(env: Env, ctx: ExecutionContext) {
-  const due = await env.DB.prepare(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL)
+  const due = await env.DB.prepare(scheduledResearchRouteRetrySql(developmentUnboundedEnabled(env.PI_DEVELOPMENT_UNBOUNDED)))
     .bind(SCHEDULED_ROUTE_RETRY_BATCH_SIZE).first<ScheduledRouteRetryRow>();
   if (!due) return { attempted: false as const, spaceId: null as string | null };
 
@@ -226,7 +228,8 @@ async function runScheduledResearchRouteRetry(env: Env, ctx: ExecutionContext) {
 
 async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext) {
   await materializeStoredDirectionGapDiscovery(env.DB);
-  const claim = await claimResearchGapDiscovery(env.DB);
+  const unboundedRetries = developmentUnboundedEnabled(env.PI_DEVELOPMENT_UNBOUNDED);
+  const claim = await claimResearchGapDiscovery(env.DB, new Date(), unboundedRetries);
   if (!claim) return { attempted: false as const, spaceId: null as string | null };
   const workspaceId = claim.ownerUserId.startsWith("anonymous:") ? claim.ownerUserId.slice("anonymous:".length) : "";
   if (!workspaceId) {
@@ -237,6 +240,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
       queuedCount: 0,
       sourceStatuses: [],
       error: "workspace_identity_unavailable",
+      unboundedRetries,
     });
     return { attempted: true as const, spaceId: claim.spaceId, trackId: claim.trackId, status: completion.status };
   }
@@ -287,6 +291,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
     queuedCount: state.reviewQueuedCount || 0,
     sourceStatuses,
     error: !response.ok ? state.error || `automatic_gap_http_${response.status}` : sourceDegraded ? "source_unavailable" : undefined,
+    unboundedRetries,
   });
   try {
     await env.DB.prepare(
@@ -334,7 +339,10 @@ async function runScheduledResearchRouteSentinel(env: Env, preferredSpaceId?: st
   ).first<{ id: string }>();
   if (!selected?.id) return null;
   try {
-    return { spaceId: selected.id, ...await recordResearchRouteSentinel(env.DB, selected.id) };
+    return {
+      spaceId: selected.id,
+      ...await recordResearchRouteSentinel(env.DB, selected.id, developmentUnboundedEnabled(env.PI_DEVELOPMENT_UNBOUNDED)),
+    };
   } catch {
     return { spaceId: selected.id, outcome: "failed" as const, issues: ["sentinel_query_failed"] };
   }

@@ -174,16 +174,16 @@ export async function materializeStoredDirectionGapDiscovery(database: D1Databas
   return { queued: false, reason: "none_due" as const };
 }
 
-export async function claimResearchGapDiscovery(database: D1Database, now = new Date()): Promise<ResearchGapDiscoveryClaim | null> {
+export async function claimResearchGapDiscovery(database: D1Database, now = new Date(), unboundedRetries = false): Promise<ResearchGapDiscoveryClaim | null> {
   for (let raceAttempt = 0; raceAttempt < 3; raceAttempt += 1) {
-    const row = await database.prepare(
+    const claim = database.prepare(
       `SELECT job.id, job.space_id, job.track_id, job.purpose, job.origin, job.signal_revision, job.query_text,
         job.attempt_count, space.owner_user_id
        FROM research_gap_discovery_jobs job
        JOIN research_tracks track ON track.id = job.track_id AND track.space_id = job.space_id
        JOIN research_spaces space ON space.id = job.space_id
        JOIN monitor_runs run ON run.space_id = job.space_id
-       WHERE job.attempt_count < ? AND (
+       WHERE ${unboundedRetries ? "" : "job.attempt_count < ? AND"} (
          job.status = 'pending'
          OR (job.status = 'retryable' AND (job.next_retry_at IS NULL OR datetime(job.next_retry_at) <= CURRENT_TIMESTAMP))
          OR (job.status = 'running' AND (job.lock_expires_at IS NULL OR datetime(job.lock_expires_at) <= CURRENT_TIMESTAMP))
@@ -194,7 +194,8 @@ export async function claimResearchGapDiscovery(database: D1Database, now = new 
        ORDER BY CASE job.origin WHEN 'problem' THEN 0 WHEN 'synthesis' THEN 1 ELSE 2 END,
         CASE job.purpose WHEN 'learning' THEN 0 ELSE 1 END,
         datetime(job.created_at) DESC LIMIT 1`,
-    ).bind(RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS).first<ClaimRow>();
+    );
+    const row = await (unboundedRetries ? claim.first<ClaimRow>() : claim.bind(RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS).first<ClaimRow>());
     if (!row) return null;
     const lockToken = crypto.randomUUID();
     const lockExpiresAt = new Date(now.getTime() + RESEARCH_GAP_DISCOVERY_LEASE_MS).toISOString();
@@ -231,12 +232,13 @@ export async function completeResearchGapDiscovery(database: D1Database, input: 
   sourceStatuses: unknown[];
   error?: string;
   now?: Date;
+  unboundedRetries?: boolean;
 }) {
   const current = await database.prepare(
     "SELECT attempt_count FROM research_gap_discovery_jobs WHERE id = ? AND status = 'running' AND lock_token = ? LIMIT 1",
   ).bind(input.id, input.lockToken).first<{ attempt_count: number }>();
   if (!current) return { changed: 0, status: "superseded" as const, retryAt: null };
-  const terminal = !input.degraded || current.attempt_count >= RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS;
+  const terminal = !input.degraded || (!input.unboundedRetries && current.attempt_count >= RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS);
   const status: ResearchGapDiscoveryStatus = !input.degraded ? "ready" : terminal ? "degraded" : "retryable";
   const retryAt = status === "retryable" ? researchGapDiscoveryRetryAt(current.attempt_count, input.now || new Date()) : null;
   const result = await database.prepare(

@@ -12,6 +12,7 @@ type RuntimeEnv = {
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL?: string;
   SEMANTIC_SCHOLAR_API_KEY?: string;
+  PI_DEVELOPMENT_UNBOUNDED?: string;
 };
 
 export function getRuntimeEnv(): RuntimeEnv {

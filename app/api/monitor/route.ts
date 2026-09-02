@@ -1,4 +1,5 @@
-import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
 import {
@@ -666,6 +667,10 @@ const GENERIC_TERMS = new Set([
 ]);
 const NON_PAPER_TITLES = /^(introduction|editorial|preface|foreword|contents|index)$/i;
 const NON_PAPER_PHRASES = /(publication information|information for authors|instructions for authors|author information|table of contents|editorial board|front matter|back matter|issue information|journal masthead)/i;
+
+function developmentAnalysisUnbounded() {
+  return developmentUnboundedEnabled(getRuntimeEnv().PI_DEVELOPMENT_UNBOUNDED);
+}
 
 class MonitorLeaseLostError extends Error {
   constructor() {
@@ -2067,12 +2072,31 @@ async function readMonitorAnalysisBudget(
     baseReserve: MONITOR_SPACE_DAILY_BASE_RESERVE,
   });
   const tomorrow = new Date(Date.now() + 86_400_000);
+  const resetsAt = new Date(`${shanghaiDateKey(tomorrow)}T00:00:00+08:00`).toISOString();
+  if (developmentAnalysisUnbounded()) return {
+    used: spaceUsed,
+    limit: null,
+    remaining: null,
+    fullAvailable: true,
+    compactAvailable: false,
+    available: true,
+    recommendedMode: "full" as const,
+    compactMinimum: MONITOR_COMPACT_SCAN_MINIMUM_CALLS,
+    estimatedFullScans: null,
+    backgroundRemaining: null,
+    backgroundAvailable: true,
+    protectedForOtherSpaces: 0,
+    minimumToStart: minimumCalls,
+    resetsAt,
+    unlimited: true,
+  };
   return {
     used: spaceUsed,
     limit: MONITOR_SPACE_DAILY_ANALYSIS_LIMIT,
     ...decision,
     minimumToStart: minimumCalls,
-    resetsAt: new Date(`${shanghaiDateKey(tomorrow)}T00:00:00+08:00`).toISOString(),
+    resetsAt,
+    unlimited: false,
   };
 }
 
@@ -3033,9 +3057,9 @@ async function quickScreenCandidates(
     usageCount(database, workspaceScope, usageDate),
     usageCount(database, spaceScope, usageDate),
   ]);
-  if (globalCount + groups.length > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+  if (!developmentAnalysisUnbounded() && (globalCount + groups.length > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount + groups.length > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
-    || spaceCount + groups.length > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
+    || spaceCount + groups.length > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT)) {
     throw new Error("DeepSeek Pro screening budget reached");
   }
   const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey, mode)));
@@ -3274,9 +3298,9 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     usageCount(database, workspaceScope, usageDate),
     usageCount(database, spaceScope, usageDate),
   ]);
-  if (globalCount + expectedCalls > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+  if (!developmentAnalysisUnbounded() && (globalCount + expectedCalls > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount + expectedCalls > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
-    || spaceCount + expectedCalls > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
+    || spaceCount + expectedCalls > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT)) {
     throw new Error("DeepSeek Pro review budget reached; unreviewed papers were not published");
   }
   const mapTracks = await database.prepare(
@@ -3587,9 +3611,9 @@ async function reconcileRecommendedReviewTracks(
   const [globalCount, workspaceCount, spaceCount] = await Promise.all([
     usageCount(database, "monitor:global", usageDate), usageCount(database, workspaceScope, usageDate), usageCount(database, spaceScope, usageDate),
   ]);
-  if (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+  if (!developmentAnalysisUnbounded() && (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
-    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) return reviews;
+    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT)) return reviews;
   const candidateById = new Map(candidates.map((candidate) => [candidate.canonicalId, candidate]));
   const validTrackIds = new Set(tracks.results.map((track) => track.id));
   try {
@@ -3884,9 +3908,9 @@ async function generateDailyBrief(
     usageCount(database, workspaceScope, usageDate),
     usageCount(database, spaceScope, usageDate),
   ]);
-  if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+  if (!apiKey || (!developmentAnalysisUnbounded() && (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
-    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
+    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT))) {
     return saveEvidenceBrief(!apiKey ? "DeepSeek Pro is not configured" : "Daily brief analysis budget reached");
   }
   try {
@@ -4154,9 +4178,9 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
     usageCount(database, "monitor:global", usageDate), usageCount(database, workspaceScope, usageDate), usageCount(database, spaceScope, usageDate),
   ]);
   let review: Awaited<ReturnType<typeof fallback>>;
-  if (!apiKey || globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
+  if (!apiKey || (!developmentAnalysisUnbounded() && (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
-    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT) {
+    || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT))) {
     review = await fallback(!apiKey ? "DeepSeek Pro is not configured" : "Weekly review analysis budget reached");
   } else {
     try {
@@ -6274,7 +6298,8 @@ async function runLegacyMonitor(request: Request) {
     if (!payload.force && previous?.status === "error" && retryTime > now.getTime()) {
       return Response.json(await readState(database, space, { cached: true, retryScheduled: true }));
     }
-    const minimumAge = payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
+    const minimumAge = developmentAnalysisUnbounded() && trigger === "manual"
+      ? 0 : payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
     if (previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
       return Response.json(await readState(database, space, {
         cached: true,
@@ -6476,7 +6501,9 @@ export async function POST(request: Request) {
         cached: true, staleLease: true, leaseOwner: false,
       }), { status: 202 });
     }
-    if (trigger === "scheduled") await pauseMonitorAutomation(database, space.id, "model_unavailable");
+    if (trigger === "scheduled" && !developmentAnalysisUnbounded()) {
+      await pauseMonitorAutomation(database, space.id, "model_unavailable");
+    }
     await recordReliabilityEvent(database, {
       spaceId: space.id,
       scanJobId: job?.id || null,
@@ -6606,7 +6633,7 @@ export async function POST(request: Request) {
           scheduledRunsSinceActivity: previous?.scheduled_runs_since_activity || 0,
           now: now.getTime(),
         }) as AutomationPauseReason | null;
-        if (pauseReason) {
+        if (pauseReason && !(developmentAnalysisUnbounded() && pauseReason === "daily_budget")) {
           if (pauseReason === "daily_budget") {
             const budget = await readMonitorAnalysisBudget(database, user.userId, space.id, 1);
             await deferMonitorAutomation(database, space.id, budget.resetsAt);
@@ -6640,7 +6667,8 @@ export async function POST(request: Request) {
       const incompleteDraftCarryoverIds = previousDeepReviews
         .filter((review) => isRetryableEmptyDraftDegradation(review))
         .map((review) => review.canonicalId)
-        .filter((canonicalId) => (previousWork.draftRegenerationAttempts[canonicalId] || 0) < INCOMPLETE_DRAFT_REGENERATION_LIMIT);
+        .filter((canonicalId) => developmentAnalysisUnbounded()
+          || (previousWork.draftRegenerationAttempts[canonicalId] || 0) < INCOMPLETE_DRAFT_REGENERATION_LIMIT);
       const incompleteDraftCarryover = Boolean(incompleteDraftCarryoverIds.length);
       const qualityCarryover = verificationCarryover || incompleteDraftCarryover;
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
@@ -6661,7 +6689,8 @@ export async function POST(request: Request) {
         && previousWork.scanMode === "fresh_only"
         && Boolean(previousJob?.status === "ready" && previousTime)
         && shanghaiDateKey(now) !== shanghaiDateKey(new Date(previousTime));
-      const minimumAge = compactResetEligible ? 0 : payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
+      const minimumAge = developmentAnalysisUnbounded() && trigger === "manual"
+        ? 0 : compactResetEligible ? 0 : payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
       if (!qualityCarryover && !qualityQueueContinuation && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
         return Response.json(await readState(database, space, {
           cached: true,
@@ -6705,6 +6734,9 @@ export async function POST(request: Request) {
           previousWork.verificationCompletedIds = previousWork.verificationCompletedIds.filter((id) => !retryIds.has(id));
           previousWork.verificationDeferredIds = previousWork.verificationDeferredIds.filter((id) => !retryIds.has(id));
           for (const id of retryIds) delete previousWork.verificationAttempts[id];
+          if (developmentAnalysisUnbounded()) {
+            for (const id of retryIds) delete previousWork.draftRegenerationAttempts[id];
+          }
         }
       }
       const initialCheckpoint = qualityQueueContinuation ? "deduplicating" : resumable ? resumeCheckpoint : "planning";

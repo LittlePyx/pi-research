@@ -371,19 +371,20 @@ type MonitorState = {
   };
   analysisBudget?: {
     used: number;
-    limit: number;
-    remaining: number;
+    limit: number | null;
+    remaining: number | null;
     minimumToStart: number;
     available: boolean;
     fullAvailable?: boolean;
     compactAvailable?: boolean;
     recommendedMode?: "full" | "fresh_only" | "wait";
     compactMinimum?: number;
-    estimatedFullScans?: number;
-    backgroundRemaining?: number;
+    estimatedFullScans?: number | null;
+    backgroundRemaining?: number | null;
     backgroundAvailable?: boolean;
     protectedForOtherSpaces?: number;
     resetsAt: string;
+    unlimited?: boolean;
   };
   source: string;
   horizons: string[];

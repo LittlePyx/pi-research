@@ -1,4 +1,5 @@
-import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { buildArxivSearchQuery, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { fetchExternalSource } from "../../../lib/external-source-throttle";
@@ -6,7 +7,7 @@ import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { isDatabaseVerifiedCitationEdge } from "../../../lib/paper-network";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchRouteRevision, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
-import { defensiveResearchTrackBuildStatus, MAX_RESEARCH_TRACK_BUILD_ATTEMPTS, mergeResearchTrackSourceBatches, nextResearchTrackBuildAttemptCount, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTitleTopicalFit, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
+import { defensiveResearchTrackBuildStatus, RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT, mergeResearchTrackSourceBatches, nextResearchTrackBuildAttemptCount, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTitleTopicalFit, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSelectionContradiction, type ResearchTrackPaperCurationReasonCode, type ResearchTrackPaperCurationStatus } from "../../../lib/research-map-curation";
 import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defensiveResearchTrackIntelligenceStatus, deferResearchTrackIntelligence, requestResearchTrackIntelligenceRefresh } from "../../../lib/research-map-intelligence";
@@ -29,6 +30,10 @@ import { ensureResearchRouteBaselines } from "../../../lib/research-route-baseli
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
+
+function unboundedDevelopmentRetries() {
+  return developmentUnboundedEnabled(getRuntimeEnv().PI_DEVELOPMENT_UNBOUNDED);
+}
 type TrackRow = {
   id: string;
   title_zh: string;
@@ -2444,7 +2449,8 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const storedCoverage = storedNetworkState.coverage;
   const needsStructure = tracks.length > 1 && !edges.length;
   const activeTracks = tracks.filter((track) => track.monitoringStatus === "active");
-  const retryableTrackIds = activeTracks.filter((track) => track.buildStatus === "retryable" && track.buildAttemptCount < MAX_RESEARCH_TRACK_BUILD_ATTEMPTS).map((track) => track.id);
+  const retryableTrackIds = activeTracks.filter((track) => track.buildStatus === "retryable"
+    && (unboundedDevelopmentRetries() || track.buildAttemptCount < RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT)).map((track) => track.id);
   const pendingTrackIds = activeTracks.filter((track) => track.buildStatus === "queued").map((track) => track.id).concat(retryableTrackIds);
   const partialTrackIds = activeTracks.filter((track) => track.buildStatus === "partial").map((track) => track.id);
   const emptyTrackIds = activeTracks.filter((track) => track.buildStatus === "empty").map((track) => track.id);
@@ -2663,7 +2669,8 @@ export async function POST(request: Request) {
       return Response.json({ error: "This research direction is paused. Resume it before starting new discovery." }, { status: 409 });
     }
     if (hydrating && track.build_status === "ready") return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
-    if (hydrating && track.build_attempt_count >= MAX_RESEARCH_TRACK_BUILD_ATTEMPTS && payload.force !== true) {
+    if (hydrating && !unboundedDevelopmentRetries()
+      && track.build_attempt_count >= RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT && payload.force !== true) {
       return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0, retryLimitReached: true }));
     }
     const queries = parseJsonArray(track.search_queries);
@@ -2743,7 +2750,7 @@ export async function POST(request: Request) {
       provenance: item.provenance,
     }));
     const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14 : ((track.expansion_count + 1) * 16) % 608;
-    const classicRescueDiscovery = hydrating && track.build_attempt_count >= MAX_RESEARCH_TRACK_BUILD_ATTEMPTS - 1
+    const classicRescueDiscovery = hydrating && track.build_attempt_count >= RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT - 1
       ? await discoverClassicRescueCandidates(database, direction)
       : null;
     const discovery = classicRescueDiscovery?.seedCount
@@ -2888,6 +2895,7 @@ export async function POST(request: Request) {
         deferredForCredential,
         force: payload.force === true,
         storedStatus: track.build_status,
+        unboundedRetries: unboundedDevelopmentRetries(),
       });
       const buildStatus = resolveResearchTrackBuildStatus({
         existingPaperCount: existing.results.length,
@@ -2899,6 +2907,7 @@ export async function POST(request: Request) {
         modelSucceeded: selectableCandidates.length === 0 || !selectionError,
         attemptCount: nextAttemptCount,
         pendingReviewCount: classicRescuePendingReviewCount,
+        unboundedRetries: unboundedDevelopmentRetries(),
       });
       const issueCodes = [
         discovery.errors.length ? "source_unavailable" : "",
