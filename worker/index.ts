@@ -656,10 +656,12 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
       advancedCount += result.value.advanced;
       if (result.value.completed) completedCount += 1;
     }
-    routeSentinel = await runScheduledResearchRouteSentinel(env, gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || due.results[0]?.id || null);
+    const sentinelSpaceId = due.results[0]?.id
+      || gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || null;
+    routeSentinel = await runScheduledResearchRouteSentinel(env, sentinelSpaceId);
     operationalSentinel = await runScheduledMonitorOperationalSentinel(
       env,
-      routeSentinel?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || due.results[0]?.id || null,
+      sentinelSpaceId,
       routeSentinel,
     );
   } catch (error) {
