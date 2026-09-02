@@ -102,6 +102,9 @@ test("scheduler reopens an exhausted route only after genuinely new route-attrib
         space_id TEXT, paper_id TEXT, source_key TEXT, query_key TEXT, first_seen_at TEXT
       );
       CREATE TABLE monitored_papers (id TEXT PRIMARY KEY, space_id TEXT, horizon TEXT);
+      CREATE TABLE paper_insights (
+        paper_id TEXT, space_id TEXT, analysis_source TEXT, analysis_model TEXT, updated_at TEXT
+      );
       INSERT INTO research_spaces VALUES ('space-a', 'anonymous:workspace-a');
       INSERT INTO monitor_runs VALUES ('space-a', NULL, 0, datetime('now'));
       INSERT INTO research_tracks VALUES ('track-a', 'space-a', 'failed', 3, NULL, '2026-08-28 10:00:00');
@@ -112,9 +115,16 @@ test("scheduler reopens an exhausted route only after genuinely new route-attrib
     sqlite.exec(await readFile(new URL("../drizzle/0049_amusing_psynapse.sql", import.meta.url), "utf8"));
     assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL).get(1), undefined);
 
+    sqlite.exec(`INSERT INTO paper_insights VALUES
+      ('old-paper', 'space-a', 'deepseek', 'deepseek-v4-pro', '2026-08-28 11:00:00');`);
+    const qualityReviewed = sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL).get(1);
+    assert.equal(qualityReviewed.track_id, 'track-a');
+    assert.equal(qualityReviewed.recovery_from_shared_queue, 1);
+
     sqlite.exec(`
+      UPDATE research_tracks SET updated_at = '2026-08-28 12:00:00' WHERE id = 'track-a';
       INSERT INTO monitored_papers VALUES ('new-paper', 'space-a', 'years');
-      INSERT INTO monitor_candidate_sources VALUES ('space-a', 'new-paper', 'research-route:foundation', 'query-a', '2026-08-28 11:00:00');
+      INSERT INTO monitor_candidate_sources VALUES ('space-a', 'new-paper', 'research-route:foundation', 'query-a', '2026-08-28 13:00:00');
     `);
     const due = sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL).get(1);
     assert.equal(due.track_id, 'track-a');

@@ -36,7 +36,7 @@ type Space = {
 };
 type User = { userId: string; displayName: string; email: string; fullName: string | null };
 type Localized = { zh: string; en: string };
-type RouteDiscoveryKind = "route_foundation" | "route_milestone" | "route_frontier" | "route_gap" | "route_synthesis" | "route_network" | "route_version_shadow" | "route_learning" | "route_search";
+type RouteDiscoveryKind = "route_foundation" | "route_milestone" | "route_frontier" | "route_gap" | "route_synthesis" | "route_network" | "route_version_shadow" | "route_learning" | "route_classic" | "route_search";
 type RouteDiscoveryType = "route_search" | "gap" | "synthesis" | "citation_network";
 type MonitorPaper = {
   id: string;
@@ -1141,6 +1141,7 @@ function routeDiscoveryKindLabel(paper: MonitorPaper, locale: Locale) {
     route_network: { zh: "引用网络", en: "Citation network" },
     route_version_shadow: { zh: "上一版路线对照", en: "Prior-version control" },
     route_learning: { zh: "学习路径补证", en: "Learning evidence" },
+    route_classic: { zh: "经典文献补证", en: "Classical evidence" },
     route_search: { zh: "路线定向检索", en: "Route search" },
     gap: { zh: "证据缺口", en: "Evidence gap" },
     synthesis: { zh: "研究综合", en: "Research synthesis" },

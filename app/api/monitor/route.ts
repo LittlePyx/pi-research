@@ -4387,7 +4387,7 @@ function selectHorizonScreeningCandidates(candidates: Candidate[], limit: number
 function researchLeadLane(candidate: Candidate) {
   const kinds = new Set(candidate.provenance.map((entry) => monitorRouteOriginKind(entry.sourceKey, entry.routeId)).filter(Boolean));
   if (kinds.has("route_gap") || kinds.has("route_network")) return "open-question-or-network";
-  if (kinds.has("route_foundation") || kinds.has("route_milestone") || kinds.has("route_frontier") || kinds.has("route_learning")) return "route-structure";
+  if (kinds.has("route_foundation") || kinds.has("route_milestone") || kinds.has("route_frontier") || kinds.has("route_learning") || kinds.has("route_classic")) return "route-structure";
   if (kinds.has("route_version_shadow")) return "prior-version-control";
   return "route-directed-search";
 }
@@ -4619,6 +4619,8 @@ function toPaper(paper: PaperRow, now: number) {
         ? { zh: "上一版路线受控对照", en: "Prior-version route control" }
       : originKind === "route_learning"
         ? { zh: "学习路径缺口补证", en: "Learning-path evidence search" }
+      : originKind === "route_classic"
+        ? { zh: "经典文献定向补证", en: "Classical evidence rescue" }
       : originKind === "route_foundation"
         ? { zh: "研究路线奠基补读", en: "Research-route foundation catch-up" }
         : originKind === "route_frontier"

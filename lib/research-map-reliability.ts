@@ -44,6 +44,7 @@ export type ResearchTrackBuildResolutionInput = {
   modelAttempted: boolean;
   modelSucceeded: boolean;
   attemptCount: number;
+  pendingReviewCount?: number;
   maxAttempts?: number;
 };
 
@@ -178,18 +179,30 @@ export const SCHEDULED_RESEARCH_ROUTE_RETRY_SQL = `SELECT
    (track.build_status = 'retryable'
     AND track.build_attempt_count < 3
     AND (track.build_retry_at IS NULL OR datetime(track.build_retry_at) <= CURRENT_TIMESTAMP))
-   OR (
-    track.build_status IN ('retryable', 'empty', 'failed')
-    AND EXISTS (
-     SELECT 1 FROM monitor_discovery_coverage coverage
-     JOIN monitor_candidate_sources candidate ON candidate.space_id = coverage.space_id
-      AND candidate.source_key = coverage.source_key AND candidate.query_key = coverage.query_key
-     JOIN monitored_papers paper ON paper.id = candidate.paper_id AND paper.space_id = candidate.space_id
-      AND paper.horizon = coverage.horizon
-     WHERE coverage.space_id = track.space_id AND coverage.route_id = track.id
-      AND datetime(candidate.first_seen_at) > datetime(track.updated_at)
+    OR (
+     track.build_status IN ('retryable', 'empty', 'failed')
+     AND (
+      EXISTS (
+       SELECT 1 FROM monitor_discovery_coverage coverage
+       JOIN monitor_candidate_sources candidate ON candidate.space_id = coverage.space_id
+        AND candidate.source_key = coverage.source_key AND candidate.query_key = coverage.query_key
+       JOIN monitored_papers paper ON paper.id = candidate.paper_id AND paper.space_id = candidate.space_id
+        AND paper.horizon = coverage.horizon
+       WHERE coverage.space_id = track.space_id AND coverage.route_id = track.id
+        AND datetime(candidate.first_seen_at) > datetime(track.updated_at)
+      ) OR EXISTS (
+       SELECT 1 FROM monitor_discovery_coverage coverage
+       JOIN monitor_candidate_sources candidate ON candidate.space_id = coverage.space_id
+        AND candidate.source_key = coverage.source_key AND candidate.query_key = coverage.query_key
+       JOIN monitored_papers paper ON paper.id = candidate.paper_id AND paper.space_id = candidate.space_id
+        AND paper.horizon = coverage.horizon
+       JOIN paper_insights insight ON insight.paper_id = paper.id AND insight.space_id = paper.space_id
+       WHERE coverage.space_id = track.space_id AND coverage.route_id = track.id
+        AND insight.analysis_source NOT IN ('metadata', 'deepseek_verification_pending')
+        AND insight.analysis_model != '' AND datetime(insight.updated_at) > datetime(track.updated_at)
+      )
+     )
     )
-   )
   )
   AND space.owner_user_id LIKE 'anonymous:%'
   AND run.automation_paused_at IS NULL
@@ -246,6 +259,7 @@ export function resolveResearchTrackBuildStatus(input: ResearchTrackBuildResolut
   const visiblePaperCount = Math.max(0, input.existingPaperCount) + Math.max(0, input.selectedPaperCount);
   const degraded = input.sourceFailureCount > 0 || (input.modelAttempted && !input.modelSucceeded);
   if (visiblePaperCount > 0) return degraded ? "partial" : "ready";
+  if (Math.max(0, input.pendingReviewCount || 0) > 0) return "retryable";
   if (input.attemptCount < maxAttempts) return "retryable";
   if (degraded || input.sourceSuccessCount === 0) return "failed";
   return "empty";

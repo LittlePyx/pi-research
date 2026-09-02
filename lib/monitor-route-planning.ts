@@ -36,6 +36,7 @@ export type MonitorRouteOriginKind =
   | "route_network"
   | "route_version_shadow"
   | "route_learning"
+  | "route_classic"
   | "route_search";
 
 export type MonitorRouteTaskKind = "foundation" | "frontier" | "gap" | "network";
@@ -134,6 +135,7 @@ export function monitorRouteOriginKind(sourceKey: string, routeId?: string | nul
   if (sourceKey === "research-route:network") return "route_network";
   if (sourceKey === "research-route:version-shadow") return "route_version_shadow";
   if (sourceKey === "research-route:learning") return "route_learning";
+  if (sourceKey === "research-route:classic-rescue") return "route_classic";
   if (sourceKey.startsWith("research-route:") || sourceKey.startsWith("crossref:route:")) return "route_search";
   if (routeId?.trim()) return "route_search";
   return null;

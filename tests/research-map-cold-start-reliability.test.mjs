@@ -4,6 +4,12 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import {
+  matchesResearchClassicSeedTitle,
+  preferredResearchClassicCandidate,
+  selectResearchClassicSeeds,
+} from "../lib/research-classic-seeds.ts";
+
+import {
   defensiveResearchTrackBuildStatus,
   MAX_RESEARCH_TRACK_BUILD_ATTEMPTS,
   mergeResearchTrackSourceBatches,
@@ -63,6 +69,43 @@ test("a route without visible evidence can never resolve ready", () => {
     attemptCount: 1,
   }), "ready");
   assert.equal(defensiveResearchTrackBuildStatus("ready", 0, 0), "retryable");
+  assert.equal(resolveResearchTrackBuildStatus({
+    ...base,
+    attemptCount: MAX_RESEARCH_TRACK_BUILD_ATTEMPTS,
+    pendingReviewCount: 2,
+  }), "retryable");
+});
+
+test("terminal cold start selects bounded classical anchors and requires exact returned identities", () => {
+  const applied = selectResearchClassicSeeds({
+    titleEn: "Stochastic localization and the KLS conjecture",
+    summaryEn: "Cheeger constants, spectral gaps, and log-concave isoperimetry",
+    searchQueries: ["Kannan Lovasz Simonovits original conjecture", "Chen almost constant lower bound"],
+  });
+  assert.deepEqual(applied.map((seed) => seed.id).sort(), [
+    "kls-localization-lemma",
+    "chen-almost-constant-kls",
+    "cheeger-laplacian-lower-bound",
+    "eldan-thin-shell-localization",
+  ].sort());
+  const kls = applied.find((seed) => seed.id === "kls-localization-lemma");
+  assert.ok(kls);
+  assert.equal(matchesResearchClassicSeedTitle(kls, "Isoperimetric problems for convex bodies and a localization lemma"), true);
+  assert.equal(matchesResearchClassicSeedTitle(kls, "Isoperimetric inequalities for convex bodies: a modern survey"), false);
+
+  const information = selectResearchClassicSeeds({
+    titleEn: "Gaussian extremality and entropy power inequalities",
+    summaryEn: "Connect I-MMSE and extremal Gaussian information inequalities.",
+    searchQueries: ["Gaussian channels mutual information minimum mean square error"],
+  });
+  assert.ok(information.some((seed) => seed.id === "i-mmse-gaussian-channels"));
+  assert.ok(information.some((seed) => seed.id === "costa-new-entropy-power"));
+  assert.equal(information.length <= 4, true);
+
+  const pending = { canonicalId: "doi:kls", abstractText: "long provider abstract", citationCount: 500, classicRescueSeedId: "kls-localization-lemma" };
+  const reviewed = { canonicalId: "doi:kls", abstractText: "reviewed", citationCount: 400 };
+  assert.equal(preferredResearchClassicCandidate(pending, reviewed), reviewed);
+  assert.equal(preferredResearchClassicCandidate(reviewed, pending), reviewed);
 });
 
 test("bounded cold-start retries rotate providers instead of replaying one degraded source", () => {
@@ -188,6 +231,12 @@ test("cold-start API code persists degraded state and queues retrieved candidate
   ]);
   assert.match(route, /Promise\.allSettled/);
   assert.match(route, /protectedBaselineCandidates/);
+  assert.match(route, /discoverClassicRescueCandidates/);
+  assert.match(route, /matchesResearchClassicSeedTitle/);
+  assert.match(route, /classicRescueSeedId/);
+  assert.match(route, /sourceKey: `research-route:\$\{sourceKind\}`/);
+  assert.match(route, /classic_rescue_pending_review/);
+  assert.match(route, /classic\.source_key = 'research-route:classic-rescue'/);
   assert.match(route, /coverage\.route_id = \?/);
   assert.match(route, /ORDER BY route_candidate DESC/);
   assert.match(route, /researchTrackSourcePlan/);

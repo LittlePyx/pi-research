@@ -13,6 +13,7 @@ import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defe
 import { applyStoredResearchRoutePrecisionAudits, RESEARCH_ROUTE_PRECISION_GATE_VERSION, researchRoutePrecisionAuditProgress, routePrecisionAcceptedForActiveNode, routePrecisionAutoDeactivates, routePrecisionJudgmentIdentity, sanitizeResearchRoutePrecisionJudgments } from "../../../lib/research-map-precision";
 import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
 import { enqueueResearchGapDiscovery, settleMatchingResearchGapDiscoveries } from "../../../lib/research-gap-discovery";
+import { matchesResearchClassicSeedTitle, preferredResearchClassicCandidate, selectResearchClassicSeeds } from "../../../lib/research-classic-seeds";
 import {
   evaluateResearchRouteEffectiveness,
   evaluateResearchRouteShadowExperiment,
@@ -208,6 +209,8 @@ type MapCandidate = {
   abstractText: string;
   proposedRole: ResearchTrackRole;
   source: ResearchTrackDiscoveryProvider | "shared-monitor-baseline";
+  classicRescueSeedId?: string;
+  classicRescueSeedTitle?: string;
 };
 type Selection = {
   directionKey: string;
@@ -835,6 +838,43 @@ async function fetchOpenAlex(database: D1Database, query: string, role: Research
   return (await response.json() as OpenAlexResponse).results || [];
 }
 
+async function fetchCrossrefClassic(title: string, role: ResearchTrackRole, rows = 6) {
+  const dates = roleDates(role);
+  const endpoint = new URL("https://api.crossref.org/works");
+  endpoint.searchParams.set("query.title", cleanText(title).slice(0, 420));
+  endpoint.searchParams.set("filter", `from-pub-date:${dates.from},until-pub-date:${dates.until}`);
+  endpoint.searchParams.set("rows", String(rows));
+  endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
+  const options: RequestInit = {
+    headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+    signal: AbortSignal.timeout(20_000),
+  };
+  let response = await fetch(endpoint, options);
+  if (response.status === 429) {
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    response = await fetch(endpoint, options);
+  }
+  if (!response.ok) throw new Error(`Crossref returned ${response.status}`);
+  return (await response.json() as CrossrefResponse).message?.items || [];
+}
+
+async function fetchOpenAlexClassic(database: D1Database, title: string, role: ResearchTrackRole, rows = 6) {
+  const dates = roleDates(role);
+  const endpoint = new URL("https://api.openalex.org/works");
+  endpoint.searchParams.set("search", cleanText(title).slice(0, 420));
+  endpoint.searchParams.set("filter", `from_publication_date:${dates.from},to_publication_date:${dates.until},is_paratext:false`);
+  endpoint.searchParams.set("per-page", String(rows));
+  endpoint.searchParams.set("sort", "relevance_score:desc");
+  endpoint.searchParams.set("select", "id,doi,title,display_name,relevance_score,publication_date,cited_by_count,authorships,primary_location,abstract_inverted_index");
+  endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
+  const response = await fetchExternalSource(endpoint, {
+    headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+    signal: AbortSignal.timeout(20_000),
+  }, { database, sourceKey: "openalex" });
+  if (!response.ok) throw new Error(`OpenAlex returned ${response.status}`);
+  return (await response.json() as OpenAlexResponse).results || [];
+}
+
 async function normalizeOpenAlexItem(item: OpenAlexWork, directionKey: string, proposedRole: ResearchTrackRole): Promise<MapCandidate | null> {
   const title = cleanText(item.display_name || item.title || "");
   if (title.length < 12 || NON_PAPER_PHRASES.test(title)) return null;
@@ -888,6 +928,61 @@ async function normalizeArxivItem(item: ReturnType<typeof parseArxivAtom>[number
     abstractText: cleanText(item.abstract || "").slice(0, 1200),
     proposedRole,
     source: "arxiv",
+  };
+}
+
+function routeSourceError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "Source unavailable");
+  return cleanText(message.replace(/Bearer\s+\S+/gi, "Bearer [redacted]")).slice(0, 240);
+}
+
+async function discoverClassicRescueCandidates(database: D1Database, direction: DirectionDraft, limit = 4) {
+  const seeds = selectResearchClassicSeeds(direction, limit);
+  const tasks = seeds.map((seed, index) => ({
+    seed,
+    provider: (index % 2 === 0 ? "crossref" : "openalex") as Extract<ResearchTrackDiscoveryProvider, "crossref" | "openalex">,
+  }));
+  const settled = await Promise.allSettled(tasks.map(async ({ seed, provider }) => {
+    const normalized = provider === "crossref"
+      ? await Promise.all((await fetchCrossrefClassic(seed.title, seed.role)).map((item) => normalizeItem(item, direction.key, seed.role)))
+      : await Promise.all((await fetchOpenAlexClassic(database, seed.title, seed.role)).map((item) => normalizeOpenAlexItem(item, direction.key, seed.role)));
+    const records = normalized.filter((item): item is MapCandidate => Boolean(item));
+    const exact = records.filter((candidate) => matchesResearchClassicSeedTitle(seed, candidate.title));
+    return {
+      candidates: exact.map((candidate) => ({
+        ...candidate,
+        classicRescueSeedId: seed.id,
+        classicRescueSeedTitle: seed.title,
+      })),
+      rejectedCount: records.length - exact.length,
+    };
+  }));
+  const candidates: MapCandidate[] = [];
+  const sources: ResearchTrackSourceReport[] = [];
+  let topicalRejectedCount = 0;
+  for (let index = 0; index < tasks.length; index += 1) {
+    const task = tasks[index];
+    const result = settled[index];
+    const source = `${task.provider}:classic-rescue:${task.seed.id}`;
+    if (result.status === "fulfilled") {
+      candidates.push(...result.value.candidates);
+      topicalRejectedCount += result.value.rejectedCount;
+      sources.push({
+        source,
+        role: task.seed.role,
+        status: result.value.candidates.length ? "ok" : "empty",
+        candidateCount: result.value.candidates.length,
+      });
+    } else {
+      sources.push({ source, role: task.seed.role, status: "failed", candidateCount: 0, error: routeSourceError(result.reason) });
+    }
+  }
+  return {
+    candidates,
+    sources,
+    errors: sources.flatMap((source) => source.error ? [source.error] : []),
+    topicalRejectedCount,
+    seedCount: seeds.length,
   };
 }
 
@@ -955,7 +1050,16 @@ async function protectedBaselineCandidates(
       WHERE candidate.space_id = p.space_id AND candidate.paper_id = p.id AND coverage.route_id = ?
      ) THEN 1 ELSE 0 END AS route_candidate
      FROM monitored_papers p LEFT JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
-     WHERE p.space_id = ? ORDER BY route_candidate DESC, p.relevance_score DESC,
+     WHERE p.space_id = ? AND NOT EXISTS (
+      SELECT 1 FROM monitor_candidate_sources classic
+      WHERE classic.space_id = p.space_id AND classic.paper_id = p.id
+       AND classic.source_key = 'research-route:classic-rescue'
+       AND COALESCE((
+        SELECT audit.recommended FROM recommendation_audit_events audit
+        WHERE audit.space_id = p.space_id AND audit.paper_id = p.id
+        ORDER BY datetime(audit.reviewed_at) DESC, audit.rowid DESC LIMIT 1
+       ), 0) != 1
+     ) ORDER BY route_candidate DESC, p.relevance_score DESC,
       COALESCE(i.quality_score, 0) DESC, p.last_seen_at DESC LIMIT 240`,
   ).bind(direction.key, spaceId).all<ProtectedBaselineRow>();
   return rows.results.map((row) => {
@@ -2639,7 +2743,12 @@ export async function POST(request: Request) {
       provenance: item.provenance,
     }));
     const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14 : ((track.expansion_count + 1) * 16) % 608;
-    const discovery = await discoverCandidates(database, [direction], offset, hydrating ? 14 : 16, hydrating ? track.build_attempt_count : 0);
+    const classicRescueDiscovery = hydrating && track.build_attempt_count >= MAX_RESEARCH_TRACK_BUILD_ATTEMPTS - 1
+      ? await discoverClassicRescueCandidates(database, direction)
+      : null;
+    const discovery = classicRescueDiscovery?.seedCount
+      ? classicRescueDiscovery
+      : await discoverCandidates(database, [direction], offset, hydrating ? 14 : 16, hydrating ? track.build_attempt_count : 0);
     const existingIds = new Set(allExistingIds.results.map((row) => row.canonical_id));
     let candidates = discovery.candidates.filter((item) => !existingIds.has(item.canonicalId));
     const sourceStatuses = [...discovery.sources];
@@ -2651,7 +2760,9 @@ export async function POST(request: Request) {
         database,
         space.id,
         direction,
-        new Set([...existingIds, ...candidates.map((item) => item.canonicalId)]),
+        new Set(classicRescueDiscovery?.seedCount
+          ? [...existingIds]
+          : [...existingIds, ...candidates.map((item) => item.canonicalId)]),
         hydrating ? 12 : 6,
       );
       candidates = [...candidates, ...baseline];
@@ -2660,12 +2771,13 @@ export async function POST(request: Request) {
     const uniqueCandidates = new Map<string, MapCandidate>();
     for (const candidate of candidates) {
       const current = uniqueCandidates.get(candidate.canonicalId);
-      if (!current || candidate.abstractText.length > current.abstractText.length || candidate.citationCount > current.citationCount) uniqueCandidates.set(candidate.canonicalId, candidate);
+      uniqueCandidates.set(candidate.canonicalId, preferredResearchClassicCandidate(current, candidate));
     }
     candidates = Array.from(uniqueCandidates.values()).slice(0, 36);
+    const selectableCandidates = candidates.filter((candidate) => !candidate.classicRescueSeedId);
     let selectionError: unknown = null;
     let reviewed: Awaited<ReturnType<typeof selectPapers>> = { selections: [], intelligence: [], precisionJudgments: [] };
-    if (candidates.length) {
+    if (selectableCandidates.length) {
       try {
         reviewed = await selectPapers(
           database,
@@ -2673,7 +2785,7 @@ export async function POST(request: Request) {
           space,
           memory,
           [direction],
-          candidates,
+          selectableCandidates,
           hydrating ? "initialize" : "expand",
           apiKey,
           existingEvidence.map((item) => ({ canonicalId: item.canonicalId, title: item.title, publishedAt: item.publishedAt, role: item.role, summaryEn: item.summaryEn, rationaleEn: item.rationaleEn, provenance: item.provenance })),
@@ -2684,7 +2796,7 @@ export async function POST(request: Request) {
     }
     const selections = reviewed.selections;
     const precisionByCandidate = new Map(reviewed.precisionJudgments.map((judgment) => [routePrecisionJudgmentIdentity(judgment), judgment]));
-    const candidateById = new Map(candidates.map((item) => [item.canonicalId, item]));
+    const candidateById = new Map(selectableCandidates.map((item) => [item.canonicalId, item]));
     const inserted = new Set<string>();
     let position = existing.results.length;
     let addedCount = 0;
@@ -2695,8 +2807,10 @@ export async function POST(request: Request) {
     const queueCandidates = candidates.filter((candidate) => !routePrecisionAutoDeactivates(
       precisionByCandidate.get(`${candidate.directionKey}:${candidate.canonicalId}`),
     )).slice(0, 24).map((candidate) => {
-      const sourceKind = automaticGapExpanding ? automaticSourceKind : actionExpanding ? "action" : problemExpanding ? "problem" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
-      const querySuffix = automaticGapExpanding ? `auto:${automaticGapJob?.signal_revision}` : actionExpanding ? `action:${payload.actionRunId}` : problemExpanding ? `problem:${problemSignal?.assessmentRevision}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
+      const sourceKind = candidate.classicRescueSeedId ? "classic-rescue"
+        : automaticGapExpanding ? automaticSourceKind : actionExpanding ? "action" : problemExpanding ? "problem" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
+      const querySuffix = candidate.classicRescueSeedId ? `classic:${candidate.classicRescueSeedId}`
+        : automaticGapExpanding ? `auto:${automaticGapJob?.signal_revision}` : actionExpanding ? `action:${payload.actionRunId}` : problemExpanding ? `problem:${problemSignal?.assessmentRevision}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
         : gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}:${candidate.proposedRole}`;
       return {
         canonicalId: candidate.canonicalId,
@@ -2719,12 +2833,14 @@ export async function POST(request: Request) {
           sourceKey: `research-route:${sourceKind}`,
           channel: candidate.source === "arxiv" ? "preprint" as const : candidate.source === "openalex" ? "semantic" as const : "topic" as const,
           queryKey: `${track.id}:${candidate.source}:${querySuffix}`,
-          queryText: targetedExpanding ? targetedQuery : queries.join(" | "),
+          queryText: candidate.classicRescueSeedTitle || (targetedExpanding ? targetedQuery : queries.join(" | ")),
           routeId: track.id,
         }],
       };
     });
     const queueResult = await enqueueMonitorCandidates(database, space.id, queueCandidates, { recordDiscoveryCoverage: true });
+    const classicRescueCandidateCount = candidates.filter((candidate) => candidate.classicRescueSeedId).length;
+    const classicRescuePendingReviewCount = Math.min(classicRescueCandidateCount, queueResult.queuedForReviewCount);
     const targetedDegraded = discovery.errors.length > 0 || Boolean(selectionError);
     if (targetedExpanding && !automaticGapExpanding) await settleMatchingResearchGapDiscoveries(database, {
       spaceId: space.id,
@@ -2779,16 +2895,18 @@ export async function POST(request: Request) {
         candidateCount: candidates.length,
         sourceSuccessCount: sourceStatuses.filter((source) => source.status !== "failed").length,
         sourceFailureCount: sourceStatuses.filter((source) => source.status === "failed").length,
-        modelAttempted: candidates.length > 0,
-        modelSucceeded: candidates.length === 0 || !selectionError,
+        modelAttempted: selectableCandidates.length > 0,
+        modelSucceeded: selectableCandidates.length === 0 || !selectionError,
         attemptCount: nextAttemptCount,
+        pendingReviewCount: classicRescuePendingReviewCount,
       });
       const issueCodes = [
         discovery.errors.length ? "source_unavailable" : "",
         selectionError ? deferredForCredential ? "model_credential_required" : "model_unavailable" : "",
+        classicRescuePendingReviewCount > 0 ? "classic_rescue_pending_review" : "",
         existing.results.length + addedCount === 0 ? "no_visible_evidence" : "",
       ].filter(Boolean);
-      const retryAt = buildStatus === "retryable"
+      const retryAt = buildStatus === "retryable" && classicRescuePendingReviewCount === 0
         ? researchTrackRetryAt(nextAttemptCount, deferredForCredential ? Date.now() + 6 * 60 * 60 * 1000 : Date.now())
         : null;
       await database.prepare(
@@ -2815,6 +2933,8 @@ export async function POST(request: Request) {
           selectedPaperCount: addedCount,
           retainedPaperCount: existing.results.length,
           queuedForReviewCount: queueResult.queuedForReviewCount,
+          classicRescueSeedCount: classicRescueDiscovery?.seedCount || 0,
+          classicRescuePendingReviewCount,
           sourceStatuses,
           issueCodes,
         },
