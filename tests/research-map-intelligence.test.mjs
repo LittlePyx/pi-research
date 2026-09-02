@@ -185,10 +185,12 @@ test("the background selector prioritizes explicit refreshes and respects retry,
       );
       INSERT INTO research_spaces VALUES
         ('space-a', 'anonymous:workspace-a'),
+        ('space-fresher', 'anonymous:workspace-fresher'),
         ('space-paused', 'anonymous:workspace-paused'),
         ('space-inactive', 'anonymous:workspace-inactive');
       INSERT INTO monitor_runs VALUES
-        ('space-a', NULL, datetime('now')),
+        ('space-a', NULL, datetime('now', '-10 minutes')),
+        ('space-fresher', NULL, datetime('now')),
         ('space-paused', datetime('now'), datetime('now')),
         ('space-inactive', NULL, datetime('now', '-8 days'));
       INSERT INTO research_tracks
@@ -196,7 +198,8 @@ test("the background selector prioritizes explicit refreshes and respects retry,
          intelligence_attempt_count, intelligence_retry_at, intelligence_refresh_requested_at)
       VALUES
         ('initial-core', 'space-a', 'core', 0, '{}', 'pending', 0, NULL, NULL),
-        ('confirmed-refresh', 'space-a', 'explore', 4, '{"assessmentZh":"旧研判"}', 'pending', 0, NULL, datetime('now')),
+        ('confirmed-refresh', 'space-a', 'explore', 4, '{"assessmentZh":"旧研判"}', 'pending', 0, NULL, datetime('now', '-2 hours')),
+        ('newer-refresh', 'space-fresher', 'core', 0, '{"assessmentZh":"较新研判"}', 'pending', 0, NULL, datetime('now', '-1 hour')),
         ('future-retry', 'space-a', 'core', 1, '{"assessmentZh":"保留"}', 'retryable', 5, datetime('now', '+1 hour'), datetime('now', '-1 hour')),
         ('no-evidence', 'space-a', 'core', 2, '{}', 'pending', 0, NULL, datetime('now')),
         ('paused-route', 'space-paused', 'core', 0, '{}', 'pending', 0, NULL, datetime('now')),
@@ -204,6 +207,7 @@ test("the background selector prioritizes explicit refreshes and respects retry,
       INSERT INTO research_track_papers VALUES
         ('paper-initial', 'initial-core', 'space-a', 'active'),
         ('paper-confirmed', 'confirmed-refresh', 'space-a', 'active'),
+        ('paper-newer', 'newer-refresh', 'space-fresher', 'active'),
         ('paper-future', 'future-retry', 'space-a', 'active'),
         ('paper-paused', 'paused-route', 'space-paused', 'active'),
         ('paper-inactive', 'inactive-route', 'space-inactive', 'active');
@@ -213,6 +217,9 @@ test("the background selector prioritizes explicit refreshes and respects retry,
     assert.equal(preferred.refresh_requested, 1);
 
     sqlite.prepare("UPDATE research_tracks SET intelligence_status = 'ready', intelligence_json = '{\"assessmentZh\":\"新研判\"}', intelligence_updated_at = CURRENT_TIMESTAMP WHERE id = 'confirmed-refresh'").run();
+    assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL).get(1).track_id, "newer-refresh");
+
+    sqlite.prepare("UPDATE research_tracks SET intelligence_status = 'ready', intelligence_json = '{\"assessmentZh\":\"较新完成\"}', intelligence_updated_at = CURRENT_TIMESTAMP WHERE id = 'newer-refresh'").run();
     assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL).get(1).track_id, "initial-core");
 
     sqlite.prepare("UPDATE research_tracks SET intelligence_status = 'ready', intelligence_json = '{\"assessmentZh\":\"初始研判\"}', intelligence_updated_at = CURRENT_TIMESTAMP WHERE id = 'initial-core'").run();

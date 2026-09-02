@@ -45,9 +45,10 @@ export const SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL = `SELECT
   AND run.automation_paused_at IS NULL
   AND run.last_user_activity_at IS NOT NULL
   AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
- ORDER BY refresh_requested DESC, datetime(run.last_user_activity_at) DESC,
+ ORDER BY refresh_requested DESC,
+  datetime(COALESCE(rt.intelligence_refresh_requested_at, rt.intelligence_retry_at, rt.updated_at)) ASC,
+  datetime(run.last_user_activity_at) DESC,
   CASE rt.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END,
-  datetime(COALESCE(rt.intelligence_retry_at, rt.intelligence_refresh_requested_at, rt.updated_at)) ASC,
   rt.position ASC
  LIMIT ?`;
 
