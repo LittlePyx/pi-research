@@ -34,6 +34,7 @@ type ClaimRow = {
 type LearningDiscoveryJobRow = {
   id: string;
   space_id: string;
+  track_id: string;
   signal_revision: string;
   status: LearningEvidenceDiscovery["status"];
   attempt_count: number;
@@ -41,6 +42,8 @@ type LearningDiscoveryJobRow = {
   next_retry_at: string | null;
   updated_at: string;
 };
+
+type LearningDiscoveryCoverageRow = { query_key: string };
 
 type LearningDiscoveryCandidateRow = {
   paper_id: string;
@@ -199,18 +202,35 @@ export async function readLearningGapDiscovery(
 ): Promise<LearningEvidenceDiscovery | null> {
   if (!jobId) return null;
   const job = await database.prepare(
-    `SELECT id, space_id, signal_revision, status, attempt_count, queued_count, next_retry_at, updated_at
+    `SELECT id, space_id, track_id, signal_revision, status, attempt_count, queued_count, next_retry_at, updated_at
      FROM research_gap_discovery_jobs WHERE id = ? AND purpose = 'learning' LIMIT 1`,
   ).bind(jobId).first<LearningDiscoveryJobRow>();
   if (!job) return null;
+  const coverage = await database.prepare(
+    `SELECT DISTINCT query_key FROM monitor_discovery_coverage
+     WHERE space_id = ? AND route_id = ? AND source_key = 'research-route:learning' AND query_key LIKE ?
+     LIMIT 24`,
+  ).bind(job.space_id, job.track_id, `${job.track_id}:%:auto:${job.signal_revision}`).all<LearningDiscoveryCoverageRow>();
+  const queryKeys = coverage.results.map((row) => row.query_key);
+  if (!queryKeys.length) return {
+    id: job.id,
+    status: job.status,
+    attemptCount: job.attempt_count,
+    queuedCount: job.queued_count,
+    reviewPendingCount: 0,
+    reviewedCount: 0,
+    nextRetryAt: job.next_retry_at,
+    updatedAt: job.updated_at,
+  };
   const candidates = await database.prepare(
     `SELECT DISTINCT cs.paper_id, COALESCE(i.ever_recommended, 0) AS ever_recommended,
       COALESCE(i.analysis_source, 'metadata') AS analysis_source
      FROM monitor_candidate_sources cs
      LEFT JOIN paper_insights i ON i.space_id = cs.space_id AND i.paper_id = cs.paper_id
-     WHERE cs.space_id = ? AND cs.source_key = 'research-route:learning' AND cs.query_key LIKE ?
+     WHERE cs.space_id = ? AND cs.source_key = 'research-route:learning'
+      AND cs.query_key IN (${queryKeys.map(() => "?").join(", ")})
      LIMIT 100`,
-  ).bind(job.space_id, `%:auto:${job.signal_revision}`).all<LearningDiscoveryCandidateRow>();
+  ).bind(job.space_id, ...queryKeys).all<LearningDiscoveryCandidateRow>();
   let reviewPendingCount = 0;
   let reviewedCount = 0;
   for (const candidate of candidates.results) {
