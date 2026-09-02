@@ -39,6 +39,6 @@ test("development flag is wired through model budgets, route retries, gap retrie
   assert.match(learningPath, /unboundedRetries: unboundedDevelopmentRetries\(\)/);
   assert.match(gaps, /Boolean\(input\.unboundedRetries\) \|\| current\.attempt_count < RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS/);
   assert.match(semanticScholar, /developmentUnboundedEnabled\(getRuntimeEnv\(\)\.PI_DEVELOPMENT_UNBOUNDED\)/);
-  assert.match(worker, /claimResearchGapDiscovery\(env\.DB, new Date\(\), unboundedRetries\)/);
+  assert.match(worker, /claimResearchGapDiscovery\(env\.DB, new Date\(\), unboundedRetries, mode\)/);
   assert.match(worker, /recordResearchRouteSentinel\(env\.DB, selected\.id, developmentUnboundedEnabled/);
 });

@@ -398,11 +398,11 @@ async function runScheduledResearchRouteEvolution(env: Env, ctx: ExecutionContex
   };
 }
 
-async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext) {
-  await materializeStoredDirectionGapDiscovery(env.DB);
+async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext, mode: "due" | "stalled" = "due") {
+  if (mode === "due") await materializeStoredDirectionGapDiscovery(env.DB);
   const unboundedRetries = developmentUnboundedEnabled(env.PI_DEVELOPMENT_UNBOUNDED);
-  const claim = await claimResearchGapDiscovery(env.DB, new Date(), unboundedRetries);
-  if (!claim) return { attempted: false as const, spaceId: null as string | null };
+  const claim = await claimResearchGapDiscovery(env.DB, new Date(), unboundedRetries, mode);
+  if (!claim) return { attempted: false as const, spaceId: null as string | null, mode };
   const workspaceId = claim.ownerUserId.startsWith("anonymous:") ? claim.ownerUserId.slice("anonymous:".length) : "";
   if (!workspaceId) {
     const completion = await completeResearchGapDiscovery(env.DB, {
@@ -415,7 +415,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
       error: "workspace_identity_unavailable",
       unboundedRetries,
     });
-    return { attempted: true as const, spaceId: claim.spaceId, trackId: claim.trackId, status: completion.status };
+    return { attempted: true as const, spaceId: claim.spaceId, trackId: claim.trackId, status: completion.status, mode };
   }
   const response = await handler.fetch(new Request("https://pi-research.internal/api/research-map", {
     method: "POST",
@@ -453,6 +453,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
       status: "superseded" as const,
       queuedForReviewCount: 0,
       sourceDegraded: false,
+      mode,
     };
   }
   const sourceStatuses = state.routeSourceStatuses || [];
@@ -486,6 +487,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
         queuedForReviewCount: state.reviewQueuedCount || 0,
         sourceStatuses,
         retryAt: completion.retryAt,
+        claimMode: mode,
       }),
     ).run();
   } catch {
@@ -499,6 +501,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
     status: completion.status,
     queuedForReviewCount: state.reviewQueuedCount || 0,
     sourceDegraded,
+    mode,
   };
 }
 
@@ -573,6 +576,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
   let routeIntelligence: Awaited<ReturnType<typeof runScheduledResearchRouteIntelligence>> | null = null;
   let routeEvolution: Awaited<ReturnType<typeof runScheduledResearchRouteEvolution>> | null = null;
   let gapDiscovery: Awaited<ReturnType<typeof runScheduledResearchGapDiscovery>> | null = null;
+  let gapRecovery: Awaited<ReturnType<typeof runScheduledResearchGapDiscovery>> | null = null;
   let routeSentinel: Awaited<ReturnType<typeof runScheduledResearchRouteSentinel>> | null = null;
   let operationalSentinel: Awaited<ReturnType<typeof runScheduledMonitorOperationalSentinel>> | null = null;
   let tickError = "";
@@ -584,8 +588,13 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     if (!routeIntelligence.attempted && !routeEvolution?.attempted) {
       routeRetry = await runScheduledResearchRouteRetry(env, ctx);
     }
-    if (!routeIntelligence.attempted && !routeEvolution?.attempted && !routeRetry?.attempted) {
-      gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx);
+    if (trigger === "visit_backstop") {
+      if (!routeIntelligence.attempted && !routeEvolution?.attempted && !routeRetry?.attempted) {
+        gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx, "due");
+      }
+    } else {
+      gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx, "due");
+      gapRecovery = await runScheduledResearchGapDiscovery(env, ctx, "stalled");
     }
     const due = await env.DB.prepare(SCHEDULED_MONITOR_SPACE_SQL)
       .bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
@@ -670,7 +679,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     const unresolvedOperationalSpace = await env.DB.prepare(MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL)
       .first<{ space_id: string }>();
     const sentinelSpaceId = unresolvedOperationalSpace?.space_id || stalledRecoverySpace?.id || due.results[0]?.id
-      || gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || null;
+      || gapRecovery?.spaceId || gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || null;
     routeSentinel = await runScheduledResearchRouteSentinel(env, sentinelSpaceId);
     operationalSentinel = await runScheduledMonitorOperationalSentinel(
       env,
@@ -688,7 +697,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     ).bind(new Date().toISOString(), dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount,
       failedCount, recoveredJobCount, tickError, tickId, leaseToken).run().catch(() => undefined);
   }
-  return { acquired: true, trigger, dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount, failedCount, recoveredJobCount, routeRetry, routeIntelligence, routeEvolution, gapDiscovery, routeSentinel, operationalSentinel, tickError };
+  return { acquired: true, trigger, dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount, failedCount, recoveredJobCount, routeRetry, routeIntelligence, routeEvolution, gapDiscovery, gapRecovery, routeSentinel, operationalSentinel, tickError };
 }
 
 // Image security config. SVG sources with .svg extension auto-skip the

@@ -172,6 +172,43 @@ test("automatic discovery is leased once, retries degradation, and preserves que
   }
 });
 
+test("due work and stalled recovery use independent fair slots without deleting history", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    sqlite.exec(`
+      INSERT INTO research_tracks VALUES ('track-b', 'space-a', 'ready', 'active', '{}', NULL, 'pending');
+      INSERT INTO research_tracks VALUES ('track-c', 'space-a', 'ready', 'active', '{}', NULL, 'pending');
+    `);
+    const oldest = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-oldest-v1",
+      queryText: "KLS conjecture original formulation foundational paper",
+    });
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET created_at = datetime('now', '-3 hours') WHERE id = ?").run(oldest.id);
+    const newer = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-b", origin: "problem", sourceRevision: "problem-newer-v1",
+      queryText: "KLS conjecture stochastic localization milestone result",
+    });
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET created_at = datetime('now', '-1 hour') WHERE id = ?").run(newer.id);
+    const stalled = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-c", purpose: "learning", origin: "direction", sourceRevision: "learning-stalled-v1",
+      queryText: "KLS conjecture classical Cheeger inequality work",
+    });
+    sqlite.prepare(`UPDATE research_gap_discovery_jobs SET status = 'running', attempt_count = 3,
+      lock_token = 'expired-token', lock_expires_at = datetime('now', '-30 minutes'), created_at = datetime('now', '-4 hours') WHERE id = ?`).run(stalled.id);
+
+    const dueClaim = await claimResearchGapDiscovery(database, new Date(), false, "due");
+    assert.equal(dueClaim.id, oldest.id);
+    assert.equal(dueClaim.purpose, "learning");
+    const recoveryClaim = await claimResearchGapDiscovery(database, new Date(), false, "stalled");
+    assert.equal(recoveryClaim.id, stalled.id);
+    assert.equal(recoveryClaim.attemptCount, 4);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_gap_discovery_jobs").get().count, 3);
+    assert.equal(sqlite.prepare("SELECT status FROM research_gap_discovery_jobs WHERE id = ?").get(newer.id).status, "pending");
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("healthy zero-candidate attempts rotate before ending honestly as empty", async () => {
   const { sqlite, database } = await fixture();
   try {

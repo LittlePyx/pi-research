@@ -3,6 +3,7 @@ import { researchProblemDiscoveryQuery } from "./research-problem.ts";
 export type ResearchGapDiscoveryOrigin = "direction" | "synthesis" | "problem";
 export type ResearchGapDiscoveryPurpose = "route" | "learning";
 export type ResearchGapDiscoveryStatus = "pending" | "running" | "retryable" | "ready" | "empty" | "degraded" | "superseded";
+export type ResearchGapDiscoveryClaimMode = "due" | "stalled";
 
 export type ResearchGapDiscoveryClaim = {
   id: string;
@@ -174,8 +175,20 @@ export async function materializeStoredDirectionGapDiscovery(database: D1Databas
   return { queued: false, reason: "none_due" as const };
 }
 
-export async function claimResearchGapDiscovery(database: D1Database, now = new Date(), unboundedRetries = false): Promise<ResearchGapDiscoveryClaim | null> {
+export async function claimResearchGapDiscovery(
+  database: D1Database,
+  now = new Date(),
+  unboundedRetries = false,
+  mode: ResearchGapDiscoveryClaimMode = "due",
+): Promise<ResearchGapDiscoveryClaim | null> {
   for (let raceAttempt = 0; raceAttempt < 3; raceAttempt += 1) {
+    const eligibility = mode === "stalled"
+      ? "job.status = 'running' AND (job.lock_expires_at IS NULL OR datetime(job.lock_expires_at) <= CURRENT_TIMESTAMP)"
+      : `job.status = 'pending'
+         OR (job.status = 'retryable' AND (job.next_retry_at IS NULL OR datetime(job.next_retry_at) <= CURRENT_TIMESTAMP))`;
+    const ordering = mode === "stalled"
+      ? "datetime(COALESCE(job.lock_expires_at, job.created_at)) ASC, datetime(job.created_at) ASC, job.id ASC"
+      : "datetime(COALESCE(job.next_retry_at, job.created_at)) ASC, datetime(job.created_at) ASC, job.id ASC";
     const claim = database.prepare(
       `SELECT job.id, job.space_id, job.track_id, job.purpose, job.origin, job.signal_revision, job.query_text,
         job.attempt_count, space.owner_user_id
@@ -183,30 +196,25 @@ export async function claimResearchGapDiscovery(database: D1Database, now = new 
        JOIN research_tracks track ON track.id = job.track_id AND track.space_id = job.space_id
        JOIN research_spaces space ON space.id = job.space_id
        JOIN monitor_runs run ON run.space_id = job.space_id
-       WHERE ${unboundedRetries ? "" : "job.attempt_count < ? AND"} (
-         job.status = 'pending'
-         OR (job.status = 'retryable' AND (job.next_retry_at IS NULL OR datetime(job.next_retry_at) <= CURRENT_TIMESTAMP))
-         OR (job.status = 'running' AND (job.lock_expires_at IS NULL OR datetime(job.lock_expires_at) <= CURRENT_TIMESTAMP))
-       )
+       WHERE ${mode === "due" && !unboundedRetries ? "job.attempt_count < ? AND" : ""} (${eligibility})
         AND track.build_status IN ('ready', 'partial') AND COALESCE(track.monitoring_status, 'active') = 'active'
         AND space.owner_user_id LIKE 'anonymous:%' AND run.automation_paused_at IS NULL
         AND run.last_user_activity_at IS NOT NULL AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
-       ORDER BY CASE job.origin WHEN 'problem' THEN 0 WHEN 'synthesis' THEN 1 ELSE 2 END,
-        CASE job.purpose WHEN 'learning' THEN 0 ELSE 1 END,
-        datetime(job.created_at) DESC LIMIT 1`,
+       ORDER BY ${ordering} LIMIT 1`,
     );
-    const row = await (unboundedRetries ? claim.first<ClaimRow>() : claim.bind(RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS).first<ClaimRow>());
+    const row = await (mode === "due" && !unboundedRetries
+      ? claim.bind(RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS).first<ClaimRow>()
+      : claim.first<ClaimRow>());
     if (!row) return null;
     const lockToken = crypto.randomUUID();
     const lockExpiresAt = new Date(now.getTime() + RESEARCH_GAP_DISCOVERY_LEASE_MS).toISOString();
     const claimed = await database.prepare(
       `UPDATE research_gap_discovery_jobs SET status = 'running', attempt_count = attempt_count + 1,
         error = NULL, next_retry_at = NULL, lock_token = ?, lock_expires_at = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND (
-        status = 'pending'
-        OR (status = 'retryable' AND (next_retry_at IS NULL OR datetime(next_retry_at) <= CURRENT_TIMESTAMP))
-        OR (status = 'running' AND (lock_expires_at IS NULL OR datetime(lock_expires_at) <= CURRENT_TIMESTAMP))
-       )`,
+       WHERE id = ? AND (${mode === "stalled"
+    ? "status = 'running' AND (lock_expires_at IS NULL OR datetime(lock_expires_at) <= CURRENT_TIMESTAMP)"
+    : `status = 'pending'
+        OR (status = 'retryable' AND (next_retry_at IS NULL OR datetime(next_retry_at) <= CURRENT_TIMESTAMP))`})`,
     ).bind(lockToken, lockExpiresAt, row.id).run();
     if (Number(claimed.meta?.changes || 0)) return {
       id: row.id,
