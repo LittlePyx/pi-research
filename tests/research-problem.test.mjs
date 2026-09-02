@@ -111,7 +111,7 @@ test("research-problem conclusions expose their evidence trail and discovery use
   assert.match(api, /sanitizeResearchProblemAssessment\(llm\.parsed, statementIds, hypothesisIds\)/);
   assert.match(map, /const problemExpanding = payload\.action === "expand-problem"/);
   assert.match(map, /activeResearchProblemDiscoverySignal/);
-  assert.match(map, /sourceKind = actionExpanding \? "action" : problemExpanding \? "problem"/);
+  assert.match(map, /sourceKind = automaticGapExpanding \? automaticSourceKind : actionExpanding \? "action" : problemExpanding \? "problem"/);
   assert.match(map, /enqueueMonitorCandidates/);
   assert.match(map, /const needsProtectedBaseline = hydrating[\s\S]*targetedExpanding/);
   assert.match(map, /hydrating \? 12 : 6/);

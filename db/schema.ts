@@ -1093,6 +1093,43 @@ export const researchTracks = sqliteTable(
   ],
 );
 
+export const researchGapDiscoveryJobs = sqliteTable(
+  "research_gap_discovery_jobs",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    origin: text("origin").notNull(),
+    signalRevision: text("signal_revision").notNull(),
+    queryText: text("query_text").notNull(),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    queuedCount: integer("queued_count").notNull().default(0),
+    sourceStatusJson: text("source_status_json").notNull().default("[]"),
+    error: text("error"),
+    nextRetryAt: text("next_retry_at"),
+    lockToken: text("lock_token"),
+    lockExpiresAt: text("lock_expires_at"),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+    updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  },
+  (table) => [
+    uniqueIndex("idx_research_gap_discovery_signal").on(table.spaceId, table.trackId, table.signalRevision),
+    index("idx_research_gap_discovery_due").on(table.status, table.nextRetryAt, table.lockExpiresAt, table.attemptCount),
+    index("idx_research_gap_discovery_track_created").on(table.trackId, table.createdAt),
+    check("research_gap_discovery_origin_check", sql`${table.origin} in ('direction', 'synthesis', 'problem')`),
+    check("research_gap_discovery_status_check", sql`${table.status} in ('pending', 'running', 'retryable', 'ready', 'degraded', 'superseded')`),
+  ],
+);
+
+export const researchGapDiscoveryBootstrapSql = [
+  "CREATE TABLE IF NOT EXISTS research_gap_discovery_jobs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, origin TEXT NOT NULL CHECK (origin IN ('direction', 'synthesis', 'problem')), signal_revision TEXT NOT NULL, query_text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'retryable', 'ready', 'degraded', 'superseded')), attempt_count INTEGER NOT NULL DEFAULT 0, queued_count INTEGER NOT NULL DEFAULT 0, source_status_json TEXT NOT NULL DEFAULT '[]', error TEXT, next_retry_at TEXT, lock_token TEXT, lock_expires_at TEXT, completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_gap_discovery_signal ON research_gap_discovery_jobs(space_id, track_id, signal_revision)",
+  "CREATE INDEX IF NOT EXISTS idx_research_gap_discovery_due ON research_gap_discovery_jobs(status, next_retry_at, lock_expires_at, attempt_count)",
+  "CREATE INDEX IF NOT EXISTS idx_research_gap_discovery_track_created ON research_gap_discovery_jobs(track_id, created_at)",
+] as const;
+
 export const researchTrackEdges = sqliteTable(
   "research_track_edges",
   {

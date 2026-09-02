@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { researchMapEvidenceProposalBootstrapSql, researchProblemBootstrapSql, researchRouteRevisionBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
+import { researchGapDiscoveryBootstrapSql, researchMapEvidenceProposalBootstrapSql, researchProblemBootstrapSql, researchRouteRevisionBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
 
 export type ApiUser = {
   userId: string;
@@ -328,6 +328,7 @@ export async function ensureSchema(database = getDatabase()) {
     ...researchRouteRevisionBootstrapSql.map((statement) => database.prepare(statement)),
     ...researchSynthesisBootstrapSql.map((statement) => database.prepare(statement)),
     ...researchProblemBootstrapSql.map((statement) => database.prepare(statement)),
+    ...researchGapDiscoveryBootstrapSql.map((statement) => database.prepare(statement)),
     database.prepare("CREATE TABLE IF NOT EXISTS research_paper_edges (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, source_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, target_paper_id TEXT NOT NULL REFERENCES research_track_papers(id) ON DELETE CASCADE, kind TEXT NOT NULL, relation_kind TEXT NOT NULL DEFAULT 'related', relationship_zh TEXT NOT NULL DEFAULT '', relationship_en TEXT NOT NULL DEFAULT '', confidence INTEGER NOT NULL DEFAULT 0, evidence_source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_paper_edges_pair_kind_relation ON research_paper_edges(source_paper_id, target_paper_id, kind, relation_kind)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_paper_edges_space_kind ON research_paper_edges(space_id, kind)"),

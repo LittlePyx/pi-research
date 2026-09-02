@@ -1,5 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { enqueueResearchGapDiscovery } from "../../../lib/research-gap-discovery";
 import {
   primaryResearchSynthesisGap,
   researchSynthesisDiscoveryQuery,
@@ -372,6 +373,13 @@ export async function POST(request: Request) {
         JSON.stringify({ questionZh, questionEn, overviewZh, overviewEn, nextSearchQuery, confidence, statements }), counts.paperCount),
     ];
     await context.database.batch(writes);
+    await enqueueResearchGapDiscovery(context.database, {
+      spaceId,
+      trackId,
+      origin: "synthesis",
+      sourceRevision: current.revision,
+      queryText: nextSearchQuery,
+    });
     await Promise.all([
       recordUsage(context.database, "research-synthesis:global", date, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
       recordUsage(context.database, workspaceScope, date, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),

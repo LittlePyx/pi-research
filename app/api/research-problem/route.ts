@@ -1,5 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { enqueueResearchGapDiscovery } from "../../../lib/research-gap-discovery";
 import {
   cleanResearchProblemText,
   researchProblemInputRevision,
@@ -402,6 +403,13 @@ export async function POST(request: Request) {
         ).bind(crypto.randomUUID(), current.problem!.id, assessmentId, spaceId, trackId, item.kind, item.titleZh,
           item.titleEn, item.rationaleZh, item.rationaleEn, position)),
       ]);
+      await enqueueResearchGapDiscovery(context.database, {
+        spaceId,
+        trackId,
+        origin: "problem",
+        sourceRevision: current.revision,
+        queryText: assessment.nextSearchQuery,
+      });
       await context.database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = ?")
         .bind(spaceId, new Date().toISOString().slice(0, 10)).run();
       await Promise.all([

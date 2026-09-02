@@ -12,6 +12,7 @@ import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSe
 import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defensiveResearchTrackIntelligenceStatus, deferResearchTrackIntelligence, requestResearchTrackIntelligenceRefresh } from "../../../lib/research-map-intelligence";
 import { applyStoredResearchRoutePrecisionAudits, RESEARCH_ROUTE_PRECISION_GATE_VERSION, researchRoutePrecisionAuditProgress, routePrecisionAcceptedForActiveNode, routePrecisionAutoDeactivates, routePrecisionJudgmentIdentity, sanitizeResearchRoutePrecisionJudgments } from "../../../lib/research-map-precision";
 import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
+import { enqueueResearchGapDiscovery, settleMatchingResearchGapDiscoveries } from "../../../lib/research-gap-discovery";
 import {
   evaluateResearchRouteEffectiveness,
   evaluateResearchRouteShadowExperiment,
@@ -1233,6 +1234,13 @@ async function saveDirectionIntelligence(database: D1Database, spaceId: string, 
   if (!intelligence) return;
   await database.prepare("UPDATE research_tracks SET intelligence_json = ?, intelligence_model = ?, intelligence_updated_at = CURRENT_TIMESTAMP, intelligence_status = 'ready', intelligence_attempt_count = 0, intelligence_error = NULL, intelligence_retry_at = NULL, intelligence_lock_token = NULL, intelligence_lock_expires_at = NULL, intelligence_refresh_requested_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
     .bind(JSON.stringify(intelligence), MODEL, trackId, spaceId).run();
+  await enqueueResearchGapDiscovery(database, {
+    spaceId,
+    trackId,
+    origin: "direction",
+    sourceRevision: JSON.stringify({ evidenceCanonicalIds: intelligence.evidenceCanonicalIds, nextSearchQuery: intelligence.nextSearchQuery }),
+    queryText: intelligence.nextSearchQuery,
+  });
 }
 
 function directionIntelligenceErrorCode(error: unknown) {
@@ -1293,6 +1301,13 @@ async function advanceDirectionIntelligence(
     const changed = await completeResearchTrackIntelligence(database, {
       spaceId: space.id, trackId: track.id, lockToken: claim.lockToken,
       intelligenceJson: JSON.stringify(intelligence), model: MODEL,
+    });
+    if (changed > 0) await enqueueResearchGapDiscovery(database, {
+      spaceId: space.id,
+      trackId: track.id,
+      origin: "direction",
+      sourceRevision: JSON.stringify({ evidenceCanonicalIds: intelligence.evidenceCanonicalIds, nextSearchQuery: intelligence.nextSearchQuery }),
+      queryText: intelligence.nextSearchQuery,
     });
     return changed > 0 ? { status: "ready" as const, trackId: track.id } : { status: "superseded" as const, trackId: track.id };
   } catch (error) {
@@ -2389,7 +2404,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-problem" | "expand-action" | "interpret" | "advance-intelligence" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision" | "propose-evolution"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
+    const payload = await request.json() as { spaceId?: string; action?: "read" | "initialize" | "hydrate" | "expand" | "expand-gap" | "expand-problem" | "expand-action" | "expand-auto-gap" | "interpret" | "advance-intelligence" | "structure" | "activity" | "network" | "reconcile" | "curate-paper" | "audit-precision" | "propose-evolution"; trackId?: string; paperId?: string; curationStatus?: ResearchTrackPaperCurationStatus; curationReasonCode?: ResearchTrackPaperCurationReasonCode; actionRunId?: string; gapJobId?: string; gapJobToken?: string; activityKind?: "paper_opened" | "track_opened"; force?: boolean; networkPhase?: PaperNetworkBuildPhase };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
@@ -2505,13 +2520,14 @@ export async function POST(request: Request) {
     const gapExpanding = payload.action === "expand-gap";
     const problemExpanding = payload.action === "expand-problem";
     const actionExpanding = payload.action === "expand-action";
-    const targetedExpanding = gapExpanding || problemExpanding || actionExpanding;
+    const automaticGapExpanding = payload.action === "expand-auto-gap";
+    const targetedExpanding = gapExpanding || problemExpanding || actionExpanding || automaticGapExpanding;
     const trackId = payload.trackId?.trim() || "";
     const track = await database.prepare(
       "SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
     ).bind(trackId, space.id).first<TrackRow>();
     if (!track) return Response.json({ error: "Research direction not found" }, { status: 404 });
-    if (track.monitoring_status === "paused" && ["hydrate", "expand", "expand-gap", "expand-problem", "expand-action"].includes(payload.action || "")) {
+    if (track.monitoring_status === "paused" && ["hydrate", "expand", "expand-gap", "expand-problem", "expand-action", "expand-auto-gap"].includes(payload.action || "")) {
       return Response.json({ error: "This research direction is paused. Resume it before starting new discovery." }, { status: 409 });
     }
     if (hydrating && track.build_status === "ready") return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
@@ -2530,7 +2546,31 @@ export async function POST(request: Request) {
        WHERE run.id = ? AND run.space_id = ? AND run.track_id = ? AND run.status = 'ready'
         AND run.verification_status IN ('verified', 'revised') AND run.search_query != '' LIMIT 1`,
     ).bind(payload.actionRunId?.trim() || "", space.id, track.id).first<{ search_query: string }>() : null;
-    const targetedQuery = actionExpanding ? actionQuery?.search_query.trim() || ""
+    if (automaticGapExpanding && request.headers.get("x-pi-scheduled-gap-discovery") !== "1") {
+      return Response.json({ error: "Automatic evidence-gap discovery is scheduler-only" }, { status: 403 });
+    }
+    const automaticGapJob = automaticGapExpanding ? await database.prepare(
+      `SELECT id, origin, signal_revision, query_text FROM research_gap_discovery_jobs
+       WHERE id = ? AND space_id = ? AND track_id = ? AND status = 'running' AND lock_token = ? LIMIT 1`,
+    ).bind(payload.gapJobId?.trim() || "", space.id, track.id, payload.gapJobToken?.trim() || "")
+      .first<{ id: string; origin: string; signal_revision: string; query_text: string }>() : null;
+    if (automaticGapExpanding && !automaticGapJob) {
+      return Response.json({ error: "Automatic evidence-gap discovery lease is unavailable" }, { status: 409 });
+    }
+    if (automaticGapJob) {
+      const currentAutomaticQuery = automaticGapJob.origin === "problem"
+        ? (await activeResearchProblemDiscoverySignal(database, space.id, track.id))?.query || ""
+        : automaticGapJob.origin === "synthesis"
+          ? (await database.prepare(
+            "SELECT next_search_query FROM research_syntheses WHERE space_id = ? AND track_id = ? AND status IN ('ready', 'partial') LIMIT 1",
+          ).bind(space.id, track.id).first<{ next_search_query: string }>())?.next_search_query.trim() || ""
+          : parseStoredIntelligence(track)?.nextSearchQuery.trim() || "";
+      if (!currentAutomaticQuery || currentAutomaticQuery !== automaticGapJob.query_text.trim()) {
+        return Response.json({ error: "The evidence-gap signal changed before discovery", automaticGapSuperseded: true }, { status: 409 });
+      }
+    }
+    const targetedQuery = automaticGapExpanding ? automaticGapJob?.query_text.trim() || ""
+      : actionExpanding ? actionQuery?.search_query.trim() || ""
       : problemExpanding ? problemSignal?.query || ""
         : gapExpanding ? synthesisGap?.next_search_query.trim() || parseStoredIntelligence(track)?.nextSearchQuery.trim() || "" : "";
     if (targetedExpanding && !targetedQuery) {
@@ -2620,11 +2660,13 @@ export async function POST(request: Request) {
     let position = existing.results.length;
     let addedCount = 0;
     const synthesisExpanding = gapExpanding && Boolean(synthesisGap?.next_search_query.trim());
+    const automaticSourceKind = automaticGapJob?.origin === "problem" ? "problem"
+      : automaticGapJob?.origin === "synthesis" ? "synthesis" : "gap";
     const queueCandidates = candidates.filter((candidate) => !routePrecisionAutoDeactivates(
       precisionByCandidate.get(`${candidate.directionKey}:${candidate.canonicalId}`),
     )).slice(0, 24).map((candidate) => {
-      const sourceKind = actionExpanding ? "action" : problemExpanding ? "problem" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
-      const querySuffix = actionExpanding ? `action:${payload.actionRunId}` : problemExpanding ? `problem:${problemSignal?.assessmentRevision}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
+      const sourceKind = automaticGapExpanding ? automaticSourceKind : actionExpanding ? "action" : problemExpanding ? "problem" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
+      const querySuffix = automaticGapExpanding ? `auto:${automaticGapJob?.signal_revision}` : actionExpanding ? `action:${payload.actionRunId}` : problemExpanding ? `problem:${problemSignal?.assessmentRevision}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
         : gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}:${candidate.proposedRole}`;
       return {
         canonicalId: candidate.canonicalId,
@@ -2653,6 +2695,15 @@ export async function POST(request: Request) {
       };
     });
     const queueResult = await enqueueMonitorCandidates(database, space.id, queueCandidates, { recordDiscoveryCoverage: true });
+    const targetedDegraded = discovery.errors.length > 0 || Boolean(selectionError);
+    if (targetedExpanding && !automaticGapExpanding) await settleMatchingResearchGapDiscoveries(database, {
+      spaceId: space.id,
+      trackId: track.id,
+      queryText: targetedQuery,
+      degraded: targetedDegraded,
+      queuedCount: queueResult.queuedForReviewCount,
+      sourceStatuses,
+    });
     if (targetedExpanding) {
       // Gap discovery is only a review candidate. Deep review creates the
       // pending evidence proposal if and only if it passes the quality gate.
@@ -2761,11 +2812,12 @@ export async function POST(request: Request) {
       topicalRejectedCandidateCount: discovery.topicalRejectedCount,
       routeSourceStatuses: sourceStatuses,
       routeBuildStatus: resolvedBuildStatus,
-      routeBuildDegraded: discovery.errors.length > 0 || Boolean(selectionError),
+      routeBuildDegraded: targetedDegraded,
       hydratedTrackId: hydrating ? track.id : null,
       gapExpanded: gapExpanding,
       problemExpanded: problemExpanding,
       actionExpanded: actionExpanding,
+      automaticGapExpanded: automaticGapExpanding,
       gapQuery: targetedExpanding ? targetedQuery : undefined,
     }));
   } catch (error) {
