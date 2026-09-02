@@ -50,6 +50,7 @@ const SCHEDULED_ROUTE_RETRY_BATCH_SIZE = 1;
 const SCHEDULED_ROUTE_INTELLIGENCE_BATCH_SIZE = 1;
 const SCHEDULED_ROUTE_EVOLUTION_BATCH_SIZE = 1;
 const SCHEDULER_LEASE_MS = MONITOR_SCHEDULER_BUCKET_MS - 60_000;
+const VISIT_BACKSTOP_LEASE_MS = 35_000;
 const HARD_STALE_JOB_HOURS = 6;
 const VISIT_BACKSTOP_GAP_MS = 25 * 60 * 1000;
 
@@ -81,7 +82,8 @@ async function acquireSchedulerLease(env: Env, trigger: SchedulerTrigger) {
   const now = new Date();
   const tickId = monitorSchedulerBucketId(now.getTime());
   const leaseToken = crypto.randomUUID();
-  const leaseExpiresAt = new Date(now.getTime() + SCHEDULER_LEASE_MS).toISOString();
+  const leaseExpiresAt = new Date(now.getTime()
+    + (trigger === "visit_backstop" ? VISIT_BACKSTOP_LEASE_MS : SCHEDULER_LEASE_MS)).toISOString();
   const previousTick = await env.DB.prepare(
     `SELECT completed_at AS heartbeat_at FROM monitor_scheduler_ticks
      WHERE id != ? AND completed_at IS NOT NULL ORDER BY datetime(completed_at) DESC LIMIT 1`,
@@ -569,6 +571,14 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
 
   try {
     recoveredJobCount = await recoverStaleMonitorJobs(env);
+    routeIntelligence = await runScheduledResearchRouteIntelligence(env, ctx);
+    if (!routeIntelligence.attempted) routeEvolution = await runScheduledResearchRouteEvolution(env, ctx);
+    if (!routeIntelligence.attempted && !routeEvolution?.attempted) {
+      routeRetry = await runScheduledResearchRouteRetry(env, ctx);
+    }
+    if (!routeIntelligence.attempted && !routeEvolution?.attempted && !routeRetry?.attempted) {
+      gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx);
+    }
     const due = await env.DB.prepare(
       `SELECT s.id, s.owner_user_id FROM research_spaces s
        JOIN monitor_runs r ON r.space_id = s.id
@@ -584,7 +594,10 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
         COALESCE(r.next_run_at, r.last_run_at, r.updated_at) ASC LIMIT ?`,
     ).bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
     dueSpaceCount = due.results.length;
-    const results = await Promise.allSettled(due.results.map(async (space) => {
+    const monitorSpaces = trigger === "visit_backstop"
+      && (routeIntelligence.attempted || routeEvolution?.attempted || routeRetry?.attempted || gapDiscovery?.attempted)
+      ? [] : due.results;
+    const results = await Promise.allSettled(monitorSpaces.map(async (space) => {
       const workspaceId = space.owner_user_id.startsWith("anonymous:") ? space.owner_user_id.slice("anonymous:".length) : "";
       if (!workspaceId) throw new Error("Scheduled workspace identity is unavailable");
       const headers = { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${workspaceId}` };
@@ -653,14 +666,6 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
       if (result.value.paused) pausedCount += 1;
       advancedCount += result.value.advanced;
       if (result.value.completed) completedCount += 1;
-    }
-    routeIntelligence = await runScheduledResearchRouteIntelligence(env, ctx);
-    if (!routeIntelligence.attempted) routeEvolution = await runScheduledResearchRouteEvolution(env, ctx);
-    if (!routeIntelligence.attempted && !routeEvolution?.attempted) {
-      routeRetry = await runScheduledResearchRouteRetry(env, ctx);
-    }
-    if (!routeIntelligence.attempted && !routeEvolution?.attempted && !routeRetry?.attempted) {
-      gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx);
     }
     routeSentinel = await runScheduledResearchRouteSentinel(env, gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || due.results[0]?.id || null);
     operationalSentinel = await runScheduledMonitorOperationalSentinel(

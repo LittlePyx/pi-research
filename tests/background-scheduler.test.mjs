@@ -41,6 +41,8 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /external_watchdog/);
   assert.match(worker, /visit_backstop/);
   assert.match(worker, /VISIT_BACKSTOP_GAP_MS = 25 \* 60 \* 1000/);
+  assert.match(worker, /VISIT_BACKSTOP_LEASE_MS = 35_000/);
+  assert.match(worker, /trigger === "visit_backstop" \? VISIT_BACKSTOP_LEASE_MS : SCHEDULER_LEASE_MS/);
   assert.match(worker, /const result = await runScheduledMonitorSweep\(env, ctx, "external_watchdog"\)/);
   assert.match(worker, /INSERT OR IGNORE INTO monitor_scheduler_ticks/);
   assert.match(worker, /stale_scheduler_recovery/);
@@ -67,6 +69,9 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /research_route_evolution/);
   assert.match(worker, /if \(!routeIntelligence\.attempted\) routeEvolution/);
   assert.match(worker, /!routeEvolution\?\.attempted && !routeRetry\?\.attempted/);
+  const schedulerSweep = worker.slice(worker.indexOf("async function runScheduledMonitorSweep"));
+  assert.ok(schedulerSweep.indexOf("routeIntelligence = await runScheduledResearchRouteIntelligence") < schedulerSweep.indexOf("const due = await env.DB.prepare"));
+  assert.match(worker, /const monitorSpaces = trigger === "visit_backstop"/);
   assert.match(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL, /intelligence_refresh_requested_at IS NULL THEN 0 ELSE 1/);
   assert.match(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL, /datetime\(run\.last_user_activity_at\) > datetime\('now', '-7 days'\)/);
   assert.doesNotMatch(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL, /intelligence_attempt_count\s*</);
