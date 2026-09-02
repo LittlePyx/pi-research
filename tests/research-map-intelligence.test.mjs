@@ -8,6 +8,7 @@ import {
   completeResearchTrackIntelligence,
   deferResearchTrackIntelligence,
   requestResearchTrackIntelligenceRefresh,
+  SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL,
 } from "../lib/research-map-intelligence.ts";
 
 function d1Database(sqlite) {
@@ -161,6 +162,66 @@ test("pausing a route blocks automatic intelligence work without clearing the sa
   }
 });
 
+test("the background selector prioritizes explicit refreshes and respects retry, activity, and visible-evidence gates", () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec(`
+      CREATE TABLE research_spaces (id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL);
+      CREATE TABLE monitor_runs (
+        space_id TEXT PRIMARY KEY, automation_paused_at TEXT, last_user_activity_at TEXT
+      );
+      CREATE TABLE research_tracks (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, build_status TEXT NOT NULL DEFAULT 'ready',
+        user_role TEXT NOT NULL DEFAULT 'explore', monitoring_status TEXT NOT NULL DEFAULT 'active',
+        position INTEGER NOT NULL DEFAULT 0, intelligence_json TEXT NOT NULL DEFAULT '{}',
+        intelligence_updated_at TEXT, intelligence_status TEXT NOT NULL DEFAULT 'pending',
+        intelligence_attempt_count INTEGER NOT NULL DEFAULT 0, intelligence_retry_at TEXT,
+        intelligence_lock_expires_at TEXT, intelligence_refresh_requested_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE research_track_papers (
+        id TEXT PRIMARY KEY, track_id TEXT NOT NULL, space_id TEXT NOT NULL,
+        curation_status TEXT NOT NULL DEFAULT 'active'
+      );
+      INSERT INTO research_spaces VALUES
+        ('space-a', 'anonymous:workspace-a'),
+        ('space-paused', 'anonymous:workspace-paused'),
+        ('space-inactive', 'anonymous:workspace-inactive');
+      INSERT INTO monitor_runs VALUES
+        ('space-a', NULL, datetime('now')),
+        ('space-paused', datetime('now'), datetime('now')),
+        ('space-inactive', NULL, datetime('now', '-8 days'));
+      INSERT INTO research_tracks
+        (id, space_id, user_role, position, intelligence_json, intelligence_status,
+         intelligence_attempt_count, intelligence_retry_at, intelligence_refresh_requested_at)
+      VALUES
+        ('initial-core', 'space-a', 'core', 0, '{}', 'pending', 0, NULL, NULL),
+        ('confirmed-refresh', 'space-a', 'explore', 4, '{"assessmentZh":"旧研判"}', 'pending', 0, NULL, datetime('now')),
+        ('future-retry', 'space-a', 'core', 1, '{"assessmentZh":"保留"}', 'retryable', 5, datetime('now', '+1 hour'), datetime('now', '-1 hour')),
+        ('no-evidence', 'space-a', 'core', 2, '{}', 'pending', 0, NULL, datetime('now')),
+        ('paused-route', 'space-paused', 'core', 0, '{}', 'pending', 0, NULL, datetime('now')),
+        ('inactive-route', 'space-inactive', 'core', 0, '{}', 'pending', 0, NULL, datetime('now'));
+      INSERT INTO research_track_papers VALUES
+        ('paper-initial', 'initial-core', 'space-a', 'active'),
+        ('paper-confirmed', 'confirmed-refresh', 'space-a', 'active'),
+        ('paper-future', 'future-retry', 'space-a', 'active'),
+        ('paper-paused', 'paused-route', 'space-paused', 'active'),
+        ('paper-inactive', 'inactive-route', 'space-inactive', 'active');
+    `);
+    const preferred = sqlite.prepare(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL).get(1);
+    assert.equal(preferred.track_id, "confirmed-refresh");
+    assert.equal(preferred.refresh_requested, 1);
+
+    sqlite.prepare("UPDATE research_tracks SET intelligence_status = 'ready', intelligence_json = '{\"assessmentZh\":\"新研判\"}', intelligence_updated_at = CURRENT_TIMESTAMP WHERE id = 'confirmed-refresh'").run();
+    assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL).get(1).track_id, "initial-core");
+
+    sqlite.prepare("UPDATE research_tracks SET intelligence_status = 'ready', intelligence_json = '{\"assessmentZh\":\"初始研判\"}', intelligence_updated_at = CURRENT_TIMESTAMP WHERE id = 'initial-core'").run();
+    assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL).get(1), undefined);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("the additive migration backfills saved intelligence and leaves empty routes pending", async () => {
   const sqlite = new DatabaseSync(":memory:");
   try {
@@ -200,6 +261,8 @@ test("the API advances one durable job per bounded request and the page never dr
   ]);
   assert.ok(route.indexOf('payload.action === "advance-intelligence"') < route.indexOf("const hydrating ="));
   assert.match(route, /thinking: "disabled", timeoutMs: 36_000/);
+  assert.match(route, /const preferredTrackId = payload\.trackId\?\.trim\(\) \|\| undefined/);
+  assert.match(route, /payload\.action === "interpret" && preferredTrackId/);
   assert.match(app, /intelligencePass < 2/);
   assert.match(app, /action: "advance-intelligence"/);
   for (const source of [route, feedback, evidence, curation, dismissal]) {

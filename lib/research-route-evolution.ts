@@ -1,5 +1,56 @@
 export type ResearchRouteEvolutionStatus = "proposed" | "confirmed" | "dismissed" | "superseded";
 
+/**
+ * Confirmed, independently verified evidence becomes eligible for one
+ * provisional route-version assessment only after the direction intelligence
+ * has caught up. Successful proposals are deduplicated by their stored
+ * revision; an evidence-grounded "no material change" result is remembered by
+ * the reliability event so it is not repeatedly billed. Transient failures
+ * retain the evidence and are retried after a short cooldown.
+ */
+export const SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL = `WITH route_evolution_candidates AS (
+ SELECT rt.id AS track_id, rt.space_id, space.owner_user_id,
+  MAX(COALESCE(proposal.decided_at, proposal.updated_at)) AS evidence_updated_at,
+  MAX(CASE WHEN revision.model <> 'system-baseline' THEN revision.created_at ELSE NULL END) AS revision_created_at
+ FROM research_tracks rt
+ JOIN research_spaces space ON space.id = rt.space_id
+ JOIN monitor_runs run ON run.space_id = rt.space_id
+ JOIN research_map_evidence_proposals proposal
+  ON proposal.track_id = rt.id AND proposal.space_id = rt.space_id AND proposal.status = 'confirmed'
+ JOIN paper_insights insight ON insight.paper_id = proposal.paper_id AND insight.space_id = proposal.space_id
+ LEFT JOIN research_route_revisions revision ON revision.track_id = rt.id AND revision.space_id = rt.space_id
+ WHERE rt.build_status IN ('ready', 'partial')
+  AND COALESCE(rt.monitoring_status, 'active') = 'active'
+  AND rt.intelligence_status = 'ready' AND rt.intelligence_updated_at IS NOT NULL
+  AND insight.ever_recommended = 1
+  AND insight.verification_status IN ('verified', 'revised')
+  AND insight.verification_coverage_score >= 70
+  AND space.owner_user_id LIKE 'anonymous:%'
+  AND run.automation_paused_at IS NULL
+  AND run.last_user_activity_at IS NOT NULL
+  AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
+ GROUP BY rt.id, rt.space_id, space.owner_user_id, rt.intelligence_updated_at
+ HAVING datetime(rt.intelligence_updated_at) >= datetime(MAX(COALESCE(proposal.decided_at, proposal.updated_at)))
+)
+SELECT candidate.track_id, candidate.space_id, candidate.owner_user_id, candidate.evidence_updated_at
+FROM route_evolution_candidates candidate
+WHERE (candidate.revision_created_at IS NULL
+ OR datetime(candidate.revision_created_at) <= datetime(candidate.evidence_updated_at))
+ AND NOT EXISTS (
+  SELECT 1 FROM monitor_reliability_events event
+  WHERE event.space_id = candidate.space_id
+   AND event.kind = 'research_route_evolution' AND event.stage = 'scheduled'
+   AND json_extract(event.metadata_json, '$.trackId') = candidate.track_id
+   AND (
+    (event.outcome IN ('success', 'info')
+     AND datetime(event.created_at) >= datetime(candidate.evidence_updated_at))
+    OR (event.outcome IN ('degraded', 'failed')
+     AND datetime(event.created_at) > datetime('now', '-30 minutes'))
+   )
+ )
+ORDER BY datetime(candidate.evidence_updated_at) ASC
+LIMIT ?`;
+
 export type ResearchRouteEvolutionDraft = {
   titleZh?: string;
   titleEn?: string;

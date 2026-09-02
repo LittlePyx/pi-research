@@ -13,6 +13,44 @@ type ClaimRow = {
 
 export const RESEARCH_TRACK_INTELLIGENCE_LEASE_MS = 42_000;
 
+/**
+ * Selects one durable direction-intelligence job for the shared background
+ * scheduler. The API still performs the atomic claim, so a visit and a cron
+ * tick can race without evaluating the same route twice. Explicit refreshes
+ * (confirmed evidence, route edits, or curation changes) are served before
+ * initial map interpretation work.
+ */
+export const SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL = `SELECT
+ rt.id AS track_id, rt.space_id, space.owner_user_id,
+ rt.intelligence_status, rt.intelligence_attempt_count,
+ CASE WHEN rt.intelligence_refresh_requested_at IS NULL THEN 0 ELSE 1 END AS refresh_requested
+ FROM research_tracks rt
+ JOIN research_spaces space ON space.id = rt.space_id
+ JOIN monitor_runs run ON run.space_id = rt.space_id
+ WHERE rt.build_status IN ('ready', 'partial')
+  AND COALESCE(rt.monitoring_status, 'active') = 'active'
+  AND EXISTS (
+   SELECT 1 FROM research_track_papers tp
+   WHERE tp.track_id = rt.id AND tp.space_id = rt.space_id AND tp.curation_status = 'active'
+  )
+  AND (
+   rt.intelligence_status = 'pending'
+   OR (rt.intelligence_status = 'ready' AND (rt.intelligence_updated_at IS NULL OR rt.intelligence_json = '{}'))
+   OR (rt.intelligence_status = 'retryable'
+    AND (rt.intelligence_retry_at IS NULL OR datetime(rt.intelligence_retry_at) <= CURRENT_TIMESTAMP))
+   OR (rt.intelligence_status = 'running'
+    AND (rt.intelligence_lock_expires_at IS NULL OR datetime(rt.intelligence_lock_expires_at) <= CURRENT_TIMESTAMP))
+  )
+  AND space.owner_user_id LIKE 'anonymous:%'
+  AND run.automation_paused_at IS NULL
+  AND run.last_user_activity_at IS NOT NULL
+  AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
+ ORDER BY refresh_requested DESC, datetime(run.last_user_activity_at) DESC,
+  CASE rt.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END,
+  datetime(COALESCE(rt.intelligence_retry_at, rt.intelligence_refresh_requested_at, rt.updated_at)) ASC,
+  rt.position ASC
+ LIMIT ?`;
+
 export function defensiveResearchTrackIntelligenceStatus(value: unknown, hasStoredIntelligence: boolean): ResearchTrackIntelligenceStatus {
   if (value === "ready") return hasStoredIntelligence ? "ready" : "pending";
   if (value === "running" || value === "retryable" || value === "pending") return value;

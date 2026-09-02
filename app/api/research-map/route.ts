@@ -2598,11 +2598,13 @@ export async function POST(request: Request) {
     }
 
     if (payload.action === "advance-intelligence" || payload.action === "interpret") {
-      const preferredTrackId = payload.action === "interpret" ? payload.trackId?.trim() || "" : undefined;
+      const preferredTrackId = payload.trackId?.trim() || undefined;
       if (payload.action === "interpret" && !preferredTrackId) {
         return Response.json({ error: "trackId is required" }, { status: 400 });
       }
-      if (preferredTrackId) await requestResearchTrackIntelligenceRefresh(database, space.id, preferredTrackId);
+      if (payload.action === "interpret" && preferredTrackId) {
+        await requestResearchTrackIntelligenceRefresh(database, space.id, preferredTrackId);
+      }
       const intelligenceAdvance = await advanceDirectionIntelligence(database, workspaceId, space, memory, apiKey, preferredTrackId);
       return Response.json(await readMap(database, space.id, { intelligenceAdvance }));
     }

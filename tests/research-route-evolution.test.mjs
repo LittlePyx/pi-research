@@ -6,6 +6,7 @@ import {
   researchRouteEvolutionDecisionAllowed,
   researchRouteEvolutionInputRevision,
   safeResearchRouteQuery,
+  SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL,
   sanitizeResearchRouteEvolution,
 } from "../lib/research-route-evolution.ts";
 import { researchRouteRevisionBootstrapSql } from "../db/schema.ts";
@@ -82,6 +83,64 @@ test("a proposal cannot silently update a stale or already decided route", () =>
   assert.equal(researchRouteEvolutionDecisionAllowed("proposed", "revision-a", "revision-b"), false);
   assert.equal(researchRouteEvolutionDecisionAllowed("confirmed", "revision-a", "revision-a"), false);
   assert.equal(researchRouteEvolutionDecisionAllowed("dismissed", "revision-a", "revision-a"), false);
+});
+
+test("confirmed evidence schedules one provisional route assessment after intelligence catches up", () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec(`
+      CREATE TABLE research_spaces (id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL);
+      CREATE TABLE monitor_runs (space_id TEXT PRIMARY KEY, automation_paused_at TEXT, last_user_activity_at TEXT);
+      CREATE TABLE research_tracks (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, build_status TEXT NOT NULL,
+        monitoring_status TEXT NOT NULL, intelligence_status TEXT NOT NULL,
+        intelligence_updated_at TEXT
+      );
+      CREATE TABLE research_map_evidence_proposals (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, track_id TEXT NOT NULL, paper_id TEXT NOT NULL,
+        status TEXT NOT NULL, decided_at TEXT, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE paper_insights (
+        paper_id TEXT NOT NULL, space_id TEXT NOT NULL, ever_recommended INTEGER NOT NULL,
+        verification_status TEXT NOT NULL, verification_coverage_score INTEGER NOT NULL
+      );
+      CREATE TABLE research_route_revisions (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, track_id TEXT NOT NULL,
+        model TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE TABLE monitor_reliability_events (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, kind TEXT NOT NULL, stage TEXT NOT NULL,
+        outcome TEXT NOT NULL, metadata_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO research_spaces VALUES ('space-a', 'anonymous:workspace-a');
+      INSERT INTO monitor_runs VALUES ('space-a', NULL, datetime('now'));
+      INSERT INTO research_tracks VALUES
+        ('track-a', 'space-a', 'ready', 'active', 'ready', datetime('now'));
+      INSERT INTO research_map_evidence_proposals VALUES
+        ('proposal-a', 'space-a', 'track-a', 'paper-a', 'confirmed', datetime('now', '-1 hour'), datetime('now', '-1 hour'));
+      INSERT INTO paper_insights VALUES ('paper-a', 'space-a', 1, 'verified', 84);
+      INSERT INTO research_route_revisions VALUES
+        ('baseline-a', 'space-a', 'track-a', 'system-baseline', datetime('now'));
+    `);
+    assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL).get(1).track_id, "track-a");
+
+    sqlite.prepare(
+      `INSERT INTO monitor_reliability_events VALUES
+       ('failure-a', 'space-a', 'research_route_evolution', 'scheduled', 'degraded', '{"trackId":"track-a"}', datetime('now'))`,
+    ).run();
+    assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL).get(1), undefined);
+
+    sqlite.prepare("UPDATE monitor_reliability_events SET created_at = datetime('now', '-31 minutes') WHERE id = 'failure-a'").run();
+    assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL).get(1).track_id, "track-a");
+
+    sqlite.prepare(
+      `INSERT INTO research_route_revisions VALUES
+       ('proposal-version-a', 'space-a', 'track-a', 'deepseek-v4-pro', datetime('now'))`,
+    ).run();
+    assert.equal(sqlite.prepare(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL).get(1), undefined);
+  } finally {
+    sqlite.close();
+  }
 });
 
 test("the additive route revision migration preserves historical research state", async () => {

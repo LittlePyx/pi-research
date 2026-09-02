@@ -10,6 +10,8 @@ import {
   shouldWakeMonitorScheduler,
 } from "../lib/monitor-scheduler.mjs";
 import { SCHEDULED_RESEARCH_ROUTE_RETRY_SQL } from "../lib/research-map-reliability.ts";
+import { SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL } from "../lib/research-map-intelligence.ts";
+import { SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL } from "../lib/research-route-evolution.ts";
 
 test("scheduler buckets deduplicate cron, watchdog, and visit wakeups", () => {
   assert.equal(MONITOR_SCHEDULER_BUCKET_MS, 10 * 60 * 1000);
@@ -47,11 +49,30 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /datetime\('now', '-20 minutes'\)/);
   assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 1/);
   assert.match(worker, /SCHEDULED_ROUTE_RETRY_BATCH_SIZE = 1/);
+  assert.match(worker, /SCHEDULED_ROUTE_INTELLIGENCE_BATCH_SIZE = 1/);
+  assert.match(worker, /SCHEDULED_ROUTE_EVOLUTION_BATCH_SIZE = 1/);
   assert.match(worker, /scheduledResearchRouteRetrySql\(developmentUnboundedEnabled/);
   assert.match(worker, /recovery_from_shared_queue === 1/);
   assert.match(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL, /datetime\(run\.last_user_activity_at\) > datetime\('now', '-7 days'\)/);
   assert.doesNotMatch(SCHEDULED_RESEARCH_ROUTE_RETRY_SQL, /scheduled_runs_since_activity < 3/);
   assert.match(worker, /x-pi-scheduled-route-retry/);
+  assert.match(worker, /runScheduledResearchRouteIntelligence/);
+  assert.match(worker, /x-pi-scheduled-route-intelligence/);
+  assert.match(worker, /action: "advance-intelligence"/);
+  assert.match(worker, /trackId: due\.track_id/);
+  assert.match(worker, /research_route_intelligence/);
+  assert.match(worker, /runScheduledResearchRouteEvolution/);
+  assert.match(worker, /x-pi-scheduled-route-evolution/);
+  assert.match(worker, /action: "propose-evolution"/);
+  assert.match(worker, /research_route_evolution/);
+  assert.match(worker, /if \(!routeIntelligence\.attempted\) routeEvolution/);
+  assert.match(worker, /!routeEvolution\?\.attempted && !routeRetry\?\.attempted/);
+  assert.match(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL, /intelligence_refresh_requested_at IS NULL THEN 0 ELSE 1/);
+  assert.match(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL, /datetime\(run\.last_user_activity_at\) > datetime\('now', '-7 days'\)/);
+  assert.doesNotMatch(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL, /intelligence_attempt_count\s*</);
+  assert.match(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL, /insight\.ever_recommended = 1/);
+  assert.match(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL, /verification_coverage_score >= 70/);
+  assert.match(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL, /event\.outcome IN \('degraded', 'failed'\)/);
   assert.match(worker, /recordResearchRouteSentinel/);
   assert.match(worker, /recordMonitorOperationalSentinel/);
   assert.match(worker, /Pi monitor operational sentinel/);

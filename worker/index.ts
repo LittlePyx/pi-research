@@ -11,6 +11,8 @@ import { recordMonitorOperationalSentinel } from "../lib/monitor-operational-sen
 import { readMonitorReliabilityHealth } from "../lib/monitor-reliability-health";
 import { recordResearchRouteSentinel } from "../lib/research-route-sentinel";
 import { scheduledResearchRouteRetrySql } from "../lib/research-map-reliability";
+import { SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL } from "../lib/research-map-intelligence";
+import { SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL } from "../lib/research-route-evolution";
 import { developmentUnboundedEnabled } from "../lib/development-policy.mjs";
 import {
   claimResearchGapDiscovery,
@@ -45,6 +47,8 @@ type SchedulerTrigger = "cloudflare_cron" | "external_watchdog" | "visit_backsto
 const SCHEDULED_SPACE_BATCH_SIZE = 1;
 const SCHEDULED_ADVANCE_STEPS = 1;
 const SCHEDULED_ROUTE_RETRY_BATCH_SIZE = 1;
+const SCHEDULED_ROUTE_INTELLIGENCE_BATCH_SIZE = 1;
+const SCHEDULED_ROUTE_EVOLUTION_BATCH_SIZE = 1;
 const SCHEDULER_LEASE_MS = MONITOR_SCHEDULER_BUCKET_MS - 60_000;
 const HARD_STALE_JOB_HOURS = 6;
 const VISIT_BACKSTOP_GAP_MS = 25 * 60 * 1000;
@@ -226,6 +230,166 @@ async function runScheduledResearchRouteRetry(env: Env, ctx: ExecutionContext) {
   return { attempted: true as const, spaceId: due.space_id, trackId: due.track_id, outcome, buildStatus };
 }
 
+type ScheduledRouteIntelligenceRow = {
+  track_id: string;
+  space_id: string;
+  owner_user_id: string;
+  intelligence_status: string;
+  intelligence_attempt_count: number;
+  refresh_requested: number;
+};
+
+async function recordScheduledRouteIntelligenceEvent(
+  env: Env,
+  row: ScheduledRouteIntelligenceRow,
+  outcome: "success" | "degraded" | "failed" | "info",
+  metadata: Record<string, unknown>,
+) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO monitor_reliability_events
+       (id, space_id, kind, stage, source, outcome, message, metadata_json)
+       VALUES (?, ?, 'research_route_intelligence', 'scheduled', 'research-route', ?, ?, ?)`,
+    ).bind(
+      crypto.randomUUID(), row.space_id, outcome, `Scheduled research route intelligence ${outcome}`,
+      JSON.stringify({
+        trackId: row.track_id,
+        statusBefore: row.intelligence_status,
+        attemptCountBefore: row.intelligence_attempt_count,
+        refreshRequested: row.refresh_requested === 1,
+        ...metadata,
+      }),
+    ).run();
+  } catch {
+    // Intelligence telemetry must not prevent the durable job from retrying.
+  }
+}
+
+async function runScheduledResearchRouteIntelligence(env: Env, ctx: ExecutionContext) {
+  const due = await env.DB.prepare(SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL)
+    .bind(SCHEDULED_ROUTE_INTELLIGENCE_BATCH_SIZE).first<ScheduledRouteIntelligenceRow>();
+  if (!due) return { attempted: false as const, spaceId: null as string | null };
+
+  const workspaceId = due.owner_user_id.startsWith("anonymous:") ? due.owner_user_id.slice("anonymous:".length) : "";
+  if (!workspaceId) return { attempted: false as const, spaceId: due.space_id };
+  const response = await handler.fetch(new Request("https://pi-research.internal/api/research-map", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: `pi_anonymous_workspace=${workspaceId}`,
+      "x-pi-scheduled-route-intelligence": "1",
+    },
+    body: JSON.stringify({
+      spaceId: due.space_id,
+      action: "advance-intelligence",
+      trackId: due.track_id,
+    }),
+  }), env, ctx);
+  const state = await response.json().catch(() => ({})) as {
+    error?: string;
+    intelligenceAdvance?: {
+      status?: string;
+      trackId?: string;
+      retryAt?: string;
+      errorCode?: string;
+    };
+  };
+  const advance = state.intelligenceAdvance;
+  const status = advance?.status || (response.ok ? "unknown" : "failed");
+  const outcome = response.ok && status === "ready" ? "success"
+    : response.ok && ["idle", "superseded"].includes(status) ? "info"
+      : response.ok ? "degraded" : "failed";
+  await recordScheduledRouteIntelligenceEvent(env, due, outcome, {
+    httpStatus: response.status,
+    status,
+    retryAt: advance?.retryAt || null,
+    errorCode: advance?.errorCode || state.error || null,
+  });
+  return {
+    attempted: true as const,
+    spaceId: due.space_id,
+    trackId: due.track_id,
+    outcome,
+    status,
+    retryAt: advance?.retryAt || null,
+  };
+}
+
+type ScheduledRouteEvolutionRow = {
+  track_id: string;
+  space_id: string;
+  owner_user_id: string;
+  evidence_updated_at: string;
+};
+
+async function recordScheduledRouteEvolutionEvent(
+  env: Env,
+  row: ScheduledRouteEvolutionRow,
+  outcome: "success" | "degraded" | "failed" | "info",
+  metadata: Record<string, unknown>,
+) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO monitor_reliability_events
+       (id, space_id, kind, stage, source, outcome, message, metadata_json)
+       VALUES (?, ?, 'research_route_evolution', 'scheduled', 'research-route', ?, ?, ?)`,
+    ).bind(
+      crypto.randomUUID(), row.space_id, outcome, `Scheduled research route evolution ${outcome}`,
+      JSON.stringify({ trackId: row.track_id, evidenceUpdatedAt: row.evidence_updated_at, ...metadata }),
+    ).run();
+  } catch {
+    // Proposal telemetry must not hide or mutate confirmed route evidence.
+  }
+}
+
+async function runScheduledResearchRouteEvolution(env: Env, ctx: ExecutionContext) {
+  const due = await env.DB.prepare(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL)
+    .bind(SCHEDULED_ROUTE_EVOLUTION_BATCH_SIZE).first<ScheduledRouteEvolutionRow>();
+  if (!due) return { attempted: false as const, spaceId: null as string | null };
+
+  const workspaceId = due.owner_user_id.startsWith("anonymous:") ? due.owner_user_id.slice("anonymous:".length) : "";
+  if (!workspaceId) return { attempted: false as const, spaceId: due.space_id };
+  const response = await handler.fetch(new Request("https://pi-research.internal/api/research-map", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: `pi_anonymous_workspace=${workspaceId}`,
+      "x-pi-scheduled-route-evolution": "1",
+    },
+    body: JSON.stringify({
+      spaceId: due.space_id,
+      action: "propose-evolution",
+      trackId: due.track_id,
+    }),
+  }), env, ctx);
+  const state = await response.json().catch(() => ({})) as {
+    error?: string;
+    routeEvolutionProposed?: boolean;
+    routeEvolutionRevisionId?: string;
+    cached?: boolean;
+  };
+  const noMaterialChange = response.status === 422;
+  const outcome = response.ok && state.routeEvolutionProposed ? "success"
+    : noMaterialChange ? "info" : response.ok ? "info" : "degraded";
+  const status = response.ok && state.routeEvolutionProposed ? "proposed"
+    : noMaterialChange ? "no_material_change" : "retryable";
+  await recordScheduledRouteEvolutionEvent(env, due, outcome, {
+    httpStatus: response.status,
+    status,
+    revisionId: state.routeEvolutionRevisionId || null,
+    cached: state.cached === true,
+    error: state.error || null,
+  });
+  return {
+    attempted: true as const,
+    spaceId: due.space_id,
+    trackId: due.track_id,
+    outcome,
+    status,
+    revisionId: state.routeEvolutionRevisionId || null,
+  };
+}
+
 async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext) {
   await materializeStoredDirectionGapDiscovery(env.DB);
   const unboundedRetries = developmentUnboundedEnabled(env.PI_DEVELOPMENT_UNBOUNDED);
@@ -396,6 +560,8 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
   let failedCount = 0;
   let recoveredJobCount = 0;
   let routeRetry: Awaited<ReturnType<typeof runScheduledResearchRouteRetry>> | null = null;
+  let routeIntelligence: Awaited<ReturnType<typeof runScheduledResearchRouteIntelligence>> | null = null;
+  let routeEvolution: Awaited<ReturnType<typeof runScheduledResearchRouteEvolution>> | null = null;
   let gapDiscovery: Awaited<ReturnType<typeof runScheduledResearchGapDiscovery>> | null = null;
   let routeSentinel: Awaited<ReturnType<typeof runScheduledResearchRouteSentinel>> | null = null;
   let operationalSentinel: Awaited<ReturnType<typeof runScheduledMonitorOperationalSentinel>> | null = null;
@@ -488,12 +654,18 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
       advancedCount += result.value.advanced;
       if (result.value.completed) completedCount += 1;
     }
-    routeRetry = await runScheduledResearchRouteRetry(env, ctx);
-    gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx);
-    routeSentinel = await runScheduledResearchRouteSentinel(env, gapDiscovery.spaceId || routeRetry.spaceId || due.results[0]?.id || null);
+    routeIntelligence = await runScheduledResearchRouteIntelligence(env, ctx);
+    if (!routeIntelligence.attempted) routeEvolution = await runScheduledResearchRouteEvolution(env, ctx);
+    if (!routeIntelligence.attempted && !routeEvolution?.attempted) {
+      routeRetry = await runScheduledResearchRouteRetry(env, ctx);
+    }
+    if (!routeIntelligence.attempted && !routeEvolution?.attempted && !routeRetry?.attempted) {
+      gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx);
+    }
+    routeSentinel = await runScheduledResearchRouteSentinel(env, gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || due.results[0]?.id || null);
     operationalSentinel = await runScheduledMonitorOperationalSentinel(
       env,
-      routeSentinel?.spaceId || routeRetry.spaceId || due.results[0]?.id || null,
+      routeSentinel?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || due.results[0]?.id || null,
       routeSentinel,
     );
   } catch (error) {
@@ -507,7 +679,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     ).bind(new Date().toISOString(), dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount,
       failedCount, recoveredJobCount, tickError, tickId, leaseToken).run().catch(() => undefined);
   }
-  return { acquired: true, trigger, dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount, failedCount, recoveredJobCount, routeRetry, gapDiscovery, routeSentinel, operationalSentinel, tickError };
+  return { acquired: true, trigger, dueSpaceCount, startedCount, advancedCount, completedCount, pausedCount, failedCount, recoveredJobCount, routeRetry, routeIntelligence, routeEvolution, gapDiscovery, routeSentinel, operationalSentinel, tickError };
 }
 
 // Image security config. SVG sources with .svg extension auto-skip the
