@@ -112,6 +112,15 @@ type MonitorPaper = {
   discoveryTrack?: { id: string; titleZh: string; titleEn: string } | null;
   qualityStage?: "queued" | "discovered" | "reviewed" | "reviewing" | "recommended" | null;
 };
+type FeedbackRouteEvidence = {
+  status: "pending" | "confirmed" | "dismissed";
+  trackId: string;
+  trackTitleZh: string;
+  trackTitleEn: string;
+  qualityEligible: boolean;
+  formal: boolean;
+  changed: boolean;
+};
 type ResearchSynthesisSource = {
   claimId: string;
   paperId: string;
@@ -4637,7 +4646,8 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const saveFeedback = (paper: MonitorPaper, kind: "save" | "relevant" | "not_relevant" | "later", reasonCode?: string, note = "") => {
-    const key = activeSpace.id + ":" + paper.id;
+    const spaceId = activeSpace.id;
+    const key = spaceId + ":" + paper.id;
     const currentSaved = saved[key] ?? paper.saved;
     const value = kind === "save" ? !currentSaved : true;
     const nextState: MonitorPaper["userState"] = kind === "not_relevant" ? "dismissed"
@@ -4669,22 +4679,34 @@ export default function ResearchApp({ user }: { user: User }) {
         const response = await fetch("/api/feedback", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, kind, value, reasonCode, note }),
+          body: JSON.stringify({ spaceId, paperId: paper.id, kind, value, reasonCode, note }),
         });
-        const result = await response.json().catch(() => ({})) as { effect?: { zh?: string; en?: string } };
+        const result = await response.json().catch(() => ({})) as {
+          effect?: { zh?: string; en?: string };
+          routeEvidence?: FeedbackRouteEvidence | null;
+        };
         if (!response.ok) throw new Error("feedback save failed");
         const authoritativeEffect = locale === "zh" ? result.effect?.zh : result.effect?.en;
         if (authoritativeEffect) setToast(authoritativeEffect);
+        if (result.routeEvidence?.changed) {
+          const refreshedMap = await readResearchMapState(spaceId).catch(() => null);
+          if (refreshedMap && paperNetworkSpaceRef.current === spaceId) {
+            setResearchMap(refreshedMap);
+            setSelectedThread((current) => refreshedMap.tracks.find((track) => track.id === current?.id)
+              || refreshedMap.tracks.find((track) => track.id === result.routeEvidence?.trackId)
+              || refreshedMap.tracks[0] || null);
+          }
+        }
         if (reasonCode) {
-          const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(activeSpace.id)}`).catch(() => null);
+          const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}`).catch(() => null);
           const data = refreshed?.ok ? await refreshed.json() as { monitor?: MonitorState } : null;
-          if (data?.monitor) setMonitor(data.monitor);
+          if (data?.monitor && paperNetworkSpaceRef.current === spaceId) setMonitor(data.monitor);
         }
       } catch {
         setToast(locale === "zh" ? "反馈保存失败，已恢复服务器中的真实状态" : "Feedback could not be saved; restoring server state");
-        const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(activeSpace.id)}`).catch(() => null);
+        const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}`).catch(() => null);
         const data = refreshed?.ok ? await refreshed.json() as { monitor?: MonitorState } : null;
-        if (data?.monitor) setMonitor(data.monitor);
+        if (data?.monitor && paperNetworkSpaceRef.current === spaceId) setMonitor(data.monitor);
       }
     })();
   };
@@ -6137,7 +6159,11 @@ export default function ResearchApp({ user }: { user: User }) {
               ["topic_drift", "偏离我的研究范围", "Outside my scope"], ["too_shallow", "内容太浅或增量太小", "Too shallow or incremental"], ["weak_evidence", "证据或方法不够可靠", "Weak evidence or method"], ["duplicate_known", "内容很好，但我已掌握", "Valuable, but already mastered"], ["wrong_type", "不是我需要的论文类型", "Wrong kind of paper"],
             ]).map(([code, zh, en]) => <button type="button" key={code} onClick={() => chooseFeedbackReason(code)}><span>{feedbackPrompt.kind === "relevant" ? "＋" : "—"}</span><strong>{locale === "zh" ? zh : en}</strong><b>→</b></button>)}</div>
             <label><span>{locale === "zh" ? "可选：补充一句具体原因" : "Optional: add a specific note"}</span><textarea value={feedbackNote} maxLength={500} onChange={(event) => setFeedbackNote(event.target.value)} placeholder={locale === "zh" ? "例如：这个证明策略正好可用于我正在处理的边界情形。" : "For example: this proof strategy fits the boundary case I am working on."} /></label>
-            <small>{locale === "zh" ? "选择后会写入当前研究空间；明确反馈不会与其他研究方向混用。" : "Your choice is stored only in this research space."}</small>
+            <small>{feedbackPrompt.kind === "relevant" && (feedbackPrompt.paper.discoveryOrigin || feedbackPrompt.paper.discoveryTrack)
+              ? (locale === "zh"
+                ? `确认后，已通过质量核验的论文会加入“${feedbackPrompt.paper.discoveryOrigin?.trackTitleZh || feedbackPrompt.paper.discoveryTrack?.titleZh}”的正式路线证据，并触发路线重新判断。`
+                : `After confirmation, a quality-verified paper becomes formal evidence for “${feedbackPrompt.paper.discoveryOrigin?.trackTitleEn || feedbackPrompt.paper.discoveryTrack?.titleEn}” and triggers route reassessment.`)
+              : (locale === "zh" ? "选择后会写入当前研究空间；明确反馈不会与其他研究方向混用。" : "Your choice is stored only in this research space.")}</small>
           </div>
         </div>
       )}

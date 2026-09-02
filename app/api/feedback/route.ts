@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { passiveEngagementWeight, passiveInterestConfidence } from "../../../lib/passive-engagement.mjs";
 import { FEEDBACK_REASONS, recordPaperFeedbackSignal, upsertPreferenceSignal, type FeedbackReasonCode } from "../../../lib/preference-memory";
-import { reconcileResearchMapEvidenceStatements } from "../../../lib/research-map-evidence";
+import { readResearchMapEvidenceOutcome, reconcileResearchMapEvidenceStatements, type ResearchMapEvidenceOutcome } from "../../../lib/research-map-evidence";
 
 type PassiveEngagementKind = "engaged_view" | "detail_dwell" | "original_click" | "share" | "ask_pi";
 type PassiveEngagementEventKind = PassiveEngagementKind | "detail_open" | "revisit";
@@ -22,7 +22,12 @@ type FeedbackPayload = {
 
 type EngagementTrack = { id: string; title_zh: string; title_en: string };
 
-function feedbackEffect(kind: FeedbackPayload["kind"], value: boolean, reasonCode: FeedbackReasonCode | null) {
+function feedbackEffect(
+  kind: FeedbackPayload["kind"],
+  value: boolean,
+  reasonCode: FeedbackReasonCode | null,
+  routeEvidence: (ResearchMapEvidenceOutcome & { changed: boolean }) | null = null,
+) {
   if (!value) return {
     zh: "已撤销这次判断；论文回到待处理状态。",
     en: "This decision was removed and the paper returned to the inbox.",
@@ -34,6 +39,17 @@ function feedbackEffect(kind: FeedbackPayload["kind"], value: boolean, reasonCod
   if (reasonCode === "duplicate_known") return {
     zh: "已标记为已掌握；下一轮会减少同类入门内容，继续寻找更深或更新的工作。",
     en: "Marked as mastered. Pi will reduce similar introductory work and seek deeper or newer papers.",
+  };
+  if (routeEvidence?.formal && routeEvidence.status === "confirmed") return routeEvidence.changed ? {
+    zh: `已加入“${routeEvidence.trackTitleZh}”的正式路线证据，并安排重新判断这条路线。`,
+    en: `Added to the formal evidence for “${routeEvidence.trackTitleEn}”; this route is queued for reassessment.`,
+  } : {
+    zh: `这篇论文已是“${routeEvidence.trackTitleZh}”的正式路线证据；你的判断也已记录。`,
+    en: `This paper is already formal evidence for “${routeEvidence.trackTitleEn}”; your decision was recorded.`,
+  };
+  if (routeEvidence?.changed && routeEvidence.status === "dismissed") return {
+    zh: `已从“${routeEvidence.trackTitleZh}”的路线候选中移除；论文与历史记录仍然保留。`,
+    en: `Removed from the route candidates for “${routeEvidence.trackTitleEn}”; the paper and its history remain available.`,
   };
   if (kind === "not_relevant") return {
     zh: "已降低相似检索分支的优先级；历史论文和其他研究方向不会被删除。",
@@ -308,6 +324,7 @@ export async function POST(request: Request) {
     }
   }
 
+  const previousRouteEvidence = await readResearchMapEvidenceOutcome(DB, spaceId, paperId);
   let feedbackStatement: D1PreparedStatement;
   if (kind === "save") {
     feedbackStatement = DB.prepare(
@@ -356,6 +373,13 @@ export async function POST(request: Request) {
     ).bind(crypto.randomUUID(), spaceId, paperId)] : []),
     ...reconcileResearchMapEvidenceStatements(DB, spaceId, paperId),
   ]);
+  const currentRouteEvidence = await readResearchMapEvidenceOutcome(DB, spaceId, paperId);
+  const routeEvidence = currentRouteEvidence ? {
+    ...currentRouteEvidence,
+    changed: previousRouteEvidence?.status !== currentRouteEvidence.status
+      || previousRouteEvidence?.trackId !== currentRouteEvidence.trackId
+      || previousRouteEvidence?.formal !== currentRouteEvidence.formal,
+  } : null;
 
   if (body.value) {
     await DB.prepare("UPDATE paper_delivery_state SET snoozed_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
@@ -382,6 +406,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     state: body.value ? kind === "not_relevant" ? "dismissed" : "accepted" : "pending",
-    effect: feedbackEffect(kind, body.value, reasonCode),
+    effect: feedbackEffect(kind, body.value, reasonCode, routeEvidence),
+    routeEvidence,
   });
 }

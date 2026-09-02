@@ -13,6 +13,7 @@ import {
   formalResearchMapEvidencePredicate,
   promoteAlreadyAcceptedResearchMapEvidence,
   promoteResearchMapEvidence,
+  readResearchMapEvidenceOutcome,
   reconcileConfirmedResearchMapEvidence,
   reconcileResearchMapEvidenceDecision,
   reconcileResearchMapEvidenceStatements,
@@ -1243,6 +1244,40 @@ test("feedback writes and evidence reconciliation can share one atomic D1 batch"
     ]);
     assert.equal(sqlite.prepare("SELECT status FROM research_map_evidence_proposals").get().status, "pending");
     assert.equal(count(sqlite, "research_track_papers"), 0);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("route evidence outcomes distinguish a confirmed decision from formal quality-verified evidence", async () => {
+  const { sqlite, database } = createFixture();
+  try {
+    assert.equal(await readResearchMapEvidenceOutcome(database, "space-a", "paper-a"), null);
+    await upsertPendingResearchMapEvidence(database, [proposal()]);
+    assert.deepEqual(await readResearchMapEvidenceOutcome(database, "space-a", "paper-a"), {
+      status: "pending",
+      trackId: "track-a",
+      trackTitleZh: "率失真理论",
+      trackTitleEn: "Rate-distortion theory",
+      qualityEligible: true,
+      formal: false,
+    });
+
+    await database.batch([
+      database.prepare("INSERT INTO paper_feedback (id, space_id, paper_id, feedback) VALUES (?, ?, ?, 'relevant')")
+        .bind("feedback-route-outcome", "space-a", "paper-a"),
+      ...reconcileResearchMapEvidenceStatements(database, "space-a", "paper-a"),
+    ]);
+    const confirmed = await readResearchMapEvidenceOutcome(database, "space-a", "paper-a");
+    assert.equal(confirmed.status, "confirmed");
+    assert.equal(confirmed.qualityEligible, true);
+    assert.equal(confirmed.formal, true);
+
+    sqlite.prepare("UPDATE paper_insights SET verification_status = 'degraded' WHERE paper_id = 'paper-a'").run();
+    const degraded = await readResearchMapEvidenceOutcome(database, "space-a", "paper-a");
+    assert.equal(degraded.status, "confirmed");
+    assert.equal(degraded.qualityEligible, false);
+    assert.equal(degraded.formal, false);
   } finally {
     sqlite.close();
   }

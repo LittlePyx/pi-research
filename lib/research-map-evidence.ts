@@ -32,6 +32,7 @@ type EvidenceProposalRow = {
   summary_en: string;
   track_title_zh: string;
   track_title_en: string;
+  quality_eligible: number;
 };
 
 export const PERSISTENT_RESEARCH_MAP_ACCEPTANCE_ID_PREFIX = "network-accept:";
@@ -57,6 +58,15 @@ export function formalResearchMapEvidencePredicate(changeAlias: string, paperIdE
 export type ResearchMapEvidenceDecision = {
   changed: number;
   trackIds: string[];
+};
+
+export type ResearchMapEvidenceOutcome = {
+  status: "pending" | "confirmed" | "dismissed";
+  trackId: string;
+  trackTitleZh: string;
+  trackTitleEn: string;
+  qualityEligible: boolean;
+  formal: boolean;
 };
 
 export type RouteGapResearchMapEvidenceInput = {
@@ -289,7 +299,8 @@ async function evidenceRows(database: D1Database, spaceId: string, paperId: stri
     `SELECT ep.id, ep.rowid AS proposal_order, ep.track_id, ep.paper_id, ep.map_role, ep.rationale_zh, ep.rationale_en, ep.confidence, ep.status,
      p.canonical_id, p.doi, p.title AS paper_title, p.authors, p.venue, p.url, p.published_at, p.citation_count,
      COALESCE(i.summary_zh, '') AS summary_zh, COALESCE(i.summary_en, '') AS summary_en,
-     t.title_zh AS track_title_zh, t.title_en AS track_title_en
+     t.title_zh AS track_title_zh, t.title_en AS track_title_en,
+     CASE WHEN ${formalResearchMapEvidencePredicate("ep")} THEN 1 ELSE 0 END AS quality_eligible
      FROM research_map_evidence_proposals ep
      JOIN monitored_papers p ON p.id = ep.paper_id AND p.space_id = ep.space_id
      JOIN research_tracks t ON t.id = ep.track_id AND t.space_id = ep.space_id
@@ -302,6 +313,29 @@ async function evidenceRows(database: D1Database, spaceId: string, paperId: stri
 
 function activeEvidenceRow(rows: EvidenceProposalRow[]) {
   return rows[0] || null;
+}
+
+/**
+ * Reads the authoritative user-decision state for a paper's active route proposal.
+ * `formal` deliberately requires both confirmation and the independent recommendation
+ * audit; a user click alone can never make an unverified paper formal route evidence.
+ */
+export async function readResearchMapEvidenceOutcome(
+  database: D1Database,
+  spaceId: string,
+  paperId: string,
+): Promise<ResearchMapEvidenceOutcome | null> {
+  const row = activeEvidenceRow(await evidenceRows(database, spaceId, paperId));
+  if (!row) return null;
+  const qualityEligible = Boolean(row.quality_eligible);
+  return {
+    status: row.status,
+    trackId: row.track_id,
+    trackTitleZh: row.track_title_zh,
+    trackTitleEn: row.track_title_en,
+    qualityEligible,
+    formal: row.status === "confirmed" && qualityEligible,
+  };
 }
 
 function isPersistentExplicitAcceptance(row: EvidenceProposalRow) {

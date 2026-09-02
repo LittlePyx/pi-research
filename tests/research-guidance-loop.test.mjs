@@ -61,6 +61,8 @@ test("today feedback refreshes direction intelligence and research memory", asyn
   assert.doesNotMatch(feedback, /intelligence_json = '\{\}'/);
   assert.match(feedback, /kind === "save" \|\| kind === "relevant" \|\| kind === "not_relevant"/);
   assert.match(feedback, /reconcileResearchMapEvidenceStatements/);
+  assert.match(feedback, /readResearchMapEvidenceOutcome/);
+  assert.match(feedback, /routeEvidence/);
   assert.match(feedback, /DB\.batch\(\[\s*feedbackStatement,[\s\S]*\.\.\.reconcileResearchMapEvidenceStatements/);
   assert.match(feedback, /reasonCode === "duplicate_known"[\s\S]*status = 'mastered'/);
   assert.match(feedback, /完成书目与摘要证据核对后，才会记为路线证据变化/);
@@ -77,6 +79,9 @@ test("the interface explains the research-route and daily-discovery loop", async
   assert.match(app, /篇候选正在质量评估/);
   assert.match(app, /discoveryOrigin/);
   assert.match(app, /RouteDiscoveryBadge/);
+  assert.match(app, /result\.routeEvidence\?\.changed/);
+  assert.match(app, /const refreshedMap = await readResearchMapState\(spaceId\)/);
+  assert.match(app, /正式路线证据，并触发路线重新判断/);
   assert.match(app, /if \(!origin && !\(track && paper\.discoveryType\)\) return null/);
   assert.match(app, /queuedForReviewCount/);
   assert.match(app, /reviewingForReviewCount/);
