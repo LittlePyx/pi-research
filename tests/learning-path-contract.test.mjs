@@ -23,7 +23,7 @@ function sqlConstant(source, name) {
 }
 
 async function loadTargetDirectionCoverage(source) {
-  const functionSource = section(source, "function targetDirectionResourceCoverage", "class TargetDirectionCoverageError");
+  const functionSource = section(source, "function targetDirectionResourceCoverage", "function parseResources");
   const output = ts.transpileModule(`export ${functionSource}`, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -200,7 +200,7 @@ test("0027 runs before runtime bootstrap without a duplicate-column path", async
 test("direction-scoped candidate context uses a target backbone and bounded bridges", async () => {
   const route = await readFile(routePath, "utf8");
   const context = section(route, "async function contextForSpace", "async function usageCount");
-  const draft = section(route, "async function buildDraft", "async function stateFor");
+  const draft = section(route, "async function buildDraft", "async function queueRouteLearningCandidates");
 
   assert.match(route, /TARGET_DIRECTION_RESOURCE_LIMIT = 36/);
   assert.match(route, /CROSS_DIRECTION_RESOURCE_LIMIT = 12/);
@@ -212,13 +212,13 @@ test("direction-scoped candidate context uses a target backbone and bounded brid
   assert.match(context, /daily-scan-bridge/);
   assert.match(draft, /targetDirection: context\.targetTrack/);
   assert.match(draft, /candidatePolicy: context\.candidatePolicy/);
-  assert.match(draft, /make its target-direction papers the backbone/);
+  assert.match(draft, /target-direction/);
+  assert.match(context, /i\.ever_recommended = 1/);
 });
 
 test("direction-scoped drafts enforce real target-paper coverage after model output", async () => {
   const route = await readFile(routePath, "utf8");
-  const post = section(route, "export async function POST", "export async function PATCH");
-  const draft = section(route, "async function buildDraft", "async function stateFor");
+  const draft = section(route, "async function buildDraft", "async function queueRouteLearningCandidates");
   const { targetDirectionResourceCoverage } = await loadTargetDirectionCoverage(route);
   const candidates = [
     { resource_id: "target-a", track_id: "track-a", selection_role: "target-direction" },
@@ -234,9 +234,9 @@ test("direction-scoped drafts enforce real target-paper coverage after model out
   assert.deepEqual(targetDirectionResourceCoverage(candidates.slice(0, 1), "track-a", ["target-a"]), { available: 1, required: 1, used: 1, valid: true });
 
   assert.match(draft, /targetDirectionResourceCoverage\(context\.candidates, context\.targetTrack\?\.id \|\| null, usedResourceIds\)/);
-  assert.match(draft, /throw new TargetDirectionCoverageError/);
-  assert.match(post, /targetCoverage\.available === 0/);
-  assert.match(post, /status: error instanceof TargetDirectionCoverageError \? 422 : 500/);
+  assert.match(draft, /missingTargetIds/);
+  assert.match(draft, /step\.resourceIds\.push\(candidate\.resource_id\)/);
+  assert.match(draft, /step\.evidenceQuery = ""/);
 });
 
 test("learning resources preserve provenance, quality and reading state with legacy compatibility", async () => {
@@ -245,20 +245,21 @@ test("learning resources preserve provenance, quality and reading state with leg
     readFile(new URL("../lib/learning-path.ts", import.meta.url), "utf8"),
   ]);
   const parser = section(route, "function parseResources", "async function ownedSpace");
-  const post = section(route, "export async function POST", "export async function PATCH");
 
   assert.match(types, /canonicalId\?: string/);
   assert.match(types, /source\?: LearningResourceSource/);
   assert.match(types, /qualityScore\?: number \| null/);
   assert.match(types, /readingStatus\?: LearningReadingStatus/);
   assert.match(types, /suggestedMinutes\?: number \| null/);
+  assert.match(types, /qualification\?: "quality_approved"/);
   assert.match(parser, /typeof item\.canonicalId === "string"/);
   assert.match(parser, /item\.source === "research-map"/);
-  assert.match(post, /canonicalId: item\.canonical_id/);
-  assert.match(post, /source: item\.source/);
-  assert.match(post, /qualityScore: item\.quality_score/);
-  assert.match(post, /readingStatus: readingStatus\(item\.reading_status\)/);
-  assert.match(post, /suggestedMinutes: item\.read_minutes/);
+  assert.match(route, /canonicalId: item\.canonical_id/);
+  assert.match(route, /source: item\.source/);
+  assert.match(route, /qualityScore: item\.quality_score/);
+  assert.match(route, /readingStatus: readingStatus\(item\.reading_status\)/);
+  assert.match(route, /suggestedMinutes: item\.read_minutes/);
+  assert.match(route, /qualification: "quality_approved"/);
   assert.match(route, /candidate\.reading_status !== "mastered" && candidate\.reading_status !== "cited"/);
 });
 
@@ -273,18 +274,16 @@ test("legacy learning resources expose only safe original-paper links", async ()
   assert.equal(learningResourceTitleKey("  Rate–Distortion:  Theory  "), "rate distortion theory");
 });
 
-test("draft validation rejects repeated papers and incomplete bilingual guidance", async () => {
+test("draft validation de-duplicates papers and leaves honest evidence queries for missing stages", async () => {
   const route = await readFile(routePath, "utf8");
-  const draft = section(route, "async function buildDraft", "async function stateFor");
+  const draft = section(route, "async function buildDraft", "async function queueRouteLearningCandidates");
 
   assert.match(draft, /const usedResourceIds = new Set<string>\(\)/);
   assert.match(draft, /!usedResourceIds\.has\(id\)/);
   assert.match(draft, /for \(const id of resourceIds\) usedResourceIds\.add\(id\)/);
-  assert.match(draft, /usedResourceIds\.size < 3/);
-  assert.match(draft, /!cleaned\.whyZh \|\| !cleaned\.whyEn/);
-  assert.match(draft, /!cleaned\.readFocusZh \|\| !cleaned\.readFocusEn/);
-  assert.match(draft, /!cleaned\.checkpointZh \|\| !cleaned\.checkpointEn/);
-  assert.match(draft, /Not enough unique grounded resources/);
+  assert.match(draft, /LEARNING_STAGE_ORDER\.map/);
+  assert.match(draft, /safeAutomaticResearchGapQuery\(raw\?\.evidenceQuery\) \|\| fallback\.evidenceQuery/);
+  assert.match(draft, /resourceIds\.length \? ""/);
 });
 
 test("progress updates cannot revive a superseded path", async () => {
@@ -298,5 +297,6 @@ test("progress updates cannot revive a superseded path", async () => {
   assert.match(patch, /status: 409/);
   assert.match(patch, /EXISTS \(SELECT 1 FROM learning_paths p WHERE p\.id = \? AND p\.space_id = \? AND p\.status != 'superseded'\)/);
   assert.match(patch, /stepUpdate\.meta\.changes/);
-  assert.match(patch, /AND status != 'superseded'/);
+  assert.match(patch, /p\.status != 'superseded'/);
+  assert.match(patch, /visibleStep\.resources\.length === 0/);
 });

@@ -5144,3 +5144,52 @@ button:disabled { cursor: not-allowed; }
   .v2-research-decision-panel > footer { display: block; }
   .v2-learning-guidance > div { grid-template-columns: 1fr; gap: 11px; }
 }
+
+/* Evidence-driven learning loop — one current action, one compact roadmap */
+.v2-learning-now { margin: 18px 24px; padding: 20px 22px; border: 1px solid #ccd9d1; border-radius: 12px; background: #fbfdfb; }
+.v2-learning-now.page { max-width: 980px; margin: 22px auto 0; }
+.v2-learning-now > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.v2-learning-now > header > span { color: #456654; font-size: 10px; font-weight: 820; letter-spacing: .07em; text-transform: uppercase; }
+.v2-learning-now > header > b { padding: 5px 8px; border-radius: 99px; background: #e7f0ea; color: #42614f; font-size: 10px; }
+.v2-learning-now.searching > header > b,.v2-learning-now.awaiting_quality > header > b { background: #eef2f6; color: #456279; }
+.v2-learning-now.retryable > header > b,.v2-learning-now.degraded > header > b,.v2-learning-now.insufficient > header > b,.v2-learning-now.missing > header > b { background: #f5eee3; color: #815f37; }
+.v2-learning-now h3,.v2-learning-now h4 { margin: 10px 0 7px; color: #35483d; font: 22px/1.3 Georgia,serif; font-weight: 400; }
+.v2-learning-now > .v2-learning-goal { margin: 0 0 15px; color: #66736b; font: 14px/1.55 Georgia,serif; }
+.v2-learning-now .v2-learning-stage-resources { margin-top: 15px; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.v2-learning-now .v2-learning-resources { margin-top: 15px; }
+.v2-learning-evidence-gap { margin-top: 15px; padding: 14px 15px; border: 1px dashed #d6c3a8; border-radius: 9px; background: #fbf7f0; }
+.v2-learning-evidence-gap strong { color: #735a3a; font-size: 12px; }
+.v2-learning-evidence-gap p { margin: 5px 0 0; color: #7d7366; font-size: 11px; line-height: 1.55; }
+.v2-learning-now-guidance { margin-top: 16px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.v2-learning-now-guidance article { padding: 11px 12px; border-left: 2px solid #9db2a4; background: #f4f7f4; }
+.v2-learning-now-guidance small { color: #587061; font-size: 9px; font-weight: 820; letter-spacing: .07em; }
+.v2-learning-now-guidance p { margin: 5px 0 0; color: #5f6962; font-size: 11px; line-height: 1.55; }
+.v2-learning-now > footer { margin-top: 16px; padding-top: 13px; border-top: 1px solid #e0e6e1; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.v2-learning-now > footer span { color: #758078; font-size: 10px; }
+.v2-learning-now > footer button { min-height: 38px; padding: 0 14px; border: 1px solid #446954; border-radius: 6px; background: #446954; color: #fff; font-size: 10px; font-weight: 780; }
+.v2-learning-now > footer button:disabled { opacity: .45; }
+.v2-learning-roadmap { margin: 0 24px 20px; border: 1px solid #dfe5e0; border-radius: 10px; background: #fafbf9; overflow: hidden; }
+.v2-learning-roadmap.page { max-width: 980px; margin: 16px auto 0; }
+.v2-learning-roadmap > article { min-height: 55px; padding: 10px 14px; border-bottom: 1px solid #e3e8e4; display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 10px; }
+.v2-learning-roadmap > article:last-child { border-bottom: 0; }
+.v2-learning-roadmap > article.active { background: #f1f6f3; }
+.v2-learning-roadmap > article.completed { opacity: .72; }
+.v2-learning-roadmap > article > span { color: #8a958e; font-size: 10px; font-weight: 800; }
+.v2-learning-roadmap > article > div { min-width: 0; }
+.v2-learning-roadmap strong,.v2-learning-roadmap small { display: block; }
+.v2-learning-roadmap strong { overflow: hidden; color: #46554c; font: 13px/1.35 Georgia,serif; text-overflow: ellipsis; white-space: nowrap; }
+.v2-learning-roadmap small { margin-top: 3px; color: #7b857e; font-size: 9px; }
+.v2-learning-roadmap > article > b { color: #426a54; font-size: 10px; }
+.v2-learning-roadmap > article > button { min-height: 30px; padding: 0 9px; border: 1px solid #bdc9c1; border-radius: 5px; background: transparent; color: #64736a; font-size: 9px; }
+
+@media (max-width: 720px) {
+  .v2-learning-now { margin: 12px; padding: 16px; }
+  .v2-learning-now.page { margin: 16px 0 0; }
+  .v2-learning-now > header { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .v2-learning-now h3,.v2-learning-now h4 { font-size: 19px; }
+  .v2-learning-now .v2-learning-stage-resources,.v2-learning-now-guidance { grid-template-columns: 1fr; }
+  .v2-learning-roadmap { margin: 0 12px 14px; }
+  .v2-learning-roadmap.page { margin: 13px 0 0; }
+  .v2-learning-roadmap > article { grid-template-columns: 28px minmax(0,1fr) auto; padding: 10px; }
+  .v2-learning-roadmap strong { font-size: 12px; }
+}

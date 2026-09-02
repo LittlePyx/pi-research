@@ -17,10 +17,12 @@ test("primary pages use progressive disclosure instead of repeating internal pro
   assert.match(app, /v2-background-review-status/);
   assert.doesNotMatch(routeCards, /RoutePipelineFunnel|RouteLearningNote|v2-route-review-policy|<label><span>\{locale === "zh" \? "定位"/);
   assert.doesNotMatch(decisionPanel, /v2-research-decision-funnel|证据发生了什么变化/);
-  assert.match(app, /<details className="v2-learning-guidance">/);
+  assert.doesNotMatch(app, /<details className="v2-learning-guidance">/);
+  assert.match(app, /v2-learning-now-guidance/);
+  assert.match(app, /learningEvidenceLabel/);
   assert.match(app, /<details className="v2-gap-query">/);
   assert.match(css, /\.v2-gap-discovery-status/);
-  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-learning-guidance > div \{ grid-template-columns: 1fr/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-learning-now-guidance \{ grid-template-columns: 1fr/);
 });
 
 test("the route response exposes the latest durable evidence-gap job without its internal query or error", async () => {

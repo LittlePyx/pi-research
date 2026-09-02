@@ -2107,7 +2107,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
       `SELECT track_id, origin, status, attempt_count, queued_count, next_retry_at, updated_at
        FROM (
         SELECT job.*, ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY datetime(created_at) DESC, job.rowid DESC) AS job_rank
-        FROM research_gap_discovery_jobs job WHERE space_id = ?
+        FROM research_gap_discovery_jobs job WHERE space_id = ? AND purpose = 'route'
        ) WHERE job_rank = 1`,
     ).bind(spaceId).all<TrackGapDiscoveryRow>(),
     database.prepare(RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL)
@@ -2578,15 +2578,16 @@ export async function POST(request: Request) {
       return Response.json({ error: "Automatic evidence-gap discovery is scheduler-only" }, { status: 403 });
     }
     const automaticGapJob = automaticGapExpanding ? await database.prepare(
-      `SELECT id, origin, signal_revision, query_text FROM research_gap_discovery_jobs
+      `SELECT id, purpose, origin, signal_revision, query_text FROM research_gap_discovery_jobs
        WHERE id = ? AND space_id = ? AND track_id = ? AND status = 'running' AND lock_token = ? LIMIT 1`,
     ).bind(payload.gapJobId?.trim() || "", space.id, track.id, payload.gapJobToken?.trim() || "")
-      .first<{ id: string; origin: string; signal_revision: string; query_text: string }>() : null;
+      .first<{ id: string; purpose: string; origin: string; signal_revision: string; query_text: string }>() : null;
     if (automaticGapExpanding && !automaticGapJob) {
       return Response.json({ error: "Automatic evidence-gap discovery lease is unavailable" }, { status: 409 });
     }
     if (automaticGapJob) {
-      const currentAutomaticQuery = automaticGapJob.origin === "problem"
+      const currentAutomaticQuery = automaticGapJob.purpose === "learning" ? automaticGapJob.query_text.trim()
+        : automaticGapJob.origin === "problem"
         ? (await activeResearchProblemDiscoverySignal(database, space.id, track.id))?.query || ""
         : automaticGapJob.origin === "synthesis"
           ? (await database.prepare(
@@ -2688,8 +2689,9 @@ export async function POST(request: Request) {
     let position = existing.results.length;
     let addedCount = 0;
     const synthesisExpanding = gapExpanding && Boolean(synthesisGap?.next_search_query.trim());
-    const automaticSourceKind = automaticGapJob?.origin === "problem" ? "problem"
-      : automaticGapJob?.origin === "synthesis" ? "synthesis" : "gap";
+    const automaticSourceKind = automaticGapJob?.purpose === "learning" ? "learning"
+      : automaticGapJob?.origin === "problem" ? "problem"
+        : automaticGapJob?.origin === "synthesis" ? "synthesis" : "gap";
     const queueCandidates = candidates.filter((candidate) => !routePrecisionAutoDeactivates(
       precisionByCandidate.get(`${candidate.directionKey}:${candidate.canonicalId}`),
     )).slice(0, 24).map((candidate) => {

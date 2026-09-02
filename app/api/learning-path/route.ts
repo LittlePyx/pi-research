@@ -1,16 +1,34 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
-import type { LearningPath, LearningPathState, LearningReadingStatus, LearningResource, LearningResourceSource, LearningStepKind, LearningStepStatus } from "../../../lib/learning-path";
+import {
+  LEARNING_STAGE_ORDER,
+  learningEvidenceStatus,
+  learningPathProgressState,
+  learningResourceTitleKey,
+  type LearningEvidenceDiscovery,
+  type LearningPath,
+  type LearningPathState,
+  type LearningReadingStatus,
+  type LearningResource,
+  type LearningResourceSource,
+  type LearningStepKind,
+  type LearningStepStatus,
+} from "../../../lib/learning-path";
+import { enqueueMonitorCandidates, type MonitorCandidateInput } from "../../../lib/monitor-candidate-queue";
+import { researchEvidenceHorizon } from "../../../lib/research-map-evidence";
+import { enqueueResearchGapDiscovery, safeAutomaticResearchGapQuery } from "../../../lib/research-gap-discovery";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type PathRow = {
-  id: string; target: string; target_track_id: string | null; title_zh: string; title_en: string; rationale_zh: string; rationale_en: string;
-  status: LearningPath["status"]; analysis_model: string; estimated_minutes: number; created_at: string; updated_at: string;
+  id: string; target: string; target_track_id: string | null; parent_path_id: string | null; revision: number; source_revision: string;
+  title_zh: string; title_en: string; rationale_zh: string; rationale_en: string; status: LearningPath["status"];
+  analysis_model: string; estimated_minutes: number; created_at: string; updated_at: string;
 };
 type StepRow = {
   id: string; kind: LearningStepKind; title_zh: string; title_en: string; goal_zh: string; goal_en: string;
   why_zh: string; why_en: string; read_focus_zh: string; read_focus_en: string; checkpoint_zh: string; checkpoint_en: string;
-  estimated_minutes: number; status: LearningStepStatus; position: number; resources_json: string; completed_at: string | null;
+  estimated_minutes: number; status: LearningStepStatus; position: number; resources_json: string; evidence_query: string;
+  discovery_job_id: string | null; completed_at: string | null;
 };
 type CandidateRow = {
   resource_id: string; canonical_id: string; source: LearningResourceSource; title: string; authors: string; venue: string; url: string; published_at: string | null;
@@ -19,16 +37,33 @@ type CandidateRow = {
   reading_focus_zh: string; reading_focus_en: string; quality_score: number | null; read_minutes: number | null; reading_status: LearningReadingStatus;
   selection_role: "target-direction" | "cross-direction-bridge" | "all-space" | "daily-scan-bridge";
 };
-type TrackContext = { id: string; title_zh: string; title_en: string; summary_zh: string; summary_en: string; user_role: string; depth_score: number; support_score: number };
+type TrackContext = {
+  id: string; title_zh: string; title_en: string; summary_zh: string; summary_en: string; user_role: string;
+  depth_score: number; support_score: number; search_queries: string; updated_at: string;
+};
+type RouteBaselineRow = {
+  id: string; track_id: string; canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
+  published_at: string | null; citation_count: number; role: string; summary_zh: string; summary_en: string; rationale_zh: string;
+  rationale_en: string; search_queries: string;
+};
 type DraftStep = {
   kind: LearningStepKind; titleZh: string; titleEn: string; goalZh: string; goalEn: string; whyZh: string; whyEn: string;
-  readFocusZh: string; readFocusEn: string; checkpointZh: string; checkpointEn: string; estimatedMinutes: number; resourceIds: string[];
+  readFocusZh: string; readFocusEn: string; checkpointZh: string; checkpointEn: string; estimatedMinutes: number;
+  resourceIds: string[]; evidenceQuery: string;
 };
 type DraftPath = { titleZh: string; titleEn: string; rationaleZh: string; rationaleEn: string; steps: DraftStep[] };
 type DeepSeekResponse = { choices?: Array<{ message?: { content?: string | null } }>; usage?: { prompt_tokens?: number; completion_tokens?: number }; error?: { message?: string } };
+type LiveResourceRow = {
+  id: string; canonical_id: string; title: string; quality_score: number; ever_recommended: number; reading_status: string; dismissed: number;
+};
+type DiscoveryRow = {
+  id: string; status: LearningEvidenceDiscovery["status"]; attempt_count: number; queued_count: number; next_retry_at: string | null;
+  updated_at: string; review_pending_count: number; reviewed_count: number;
+};
 
 const MODEL = "deepseek-v4-pro";
-const STEP_KINDS = new Set<LearningStepKind>(["prerequisite", "foundation", "method", "frontier", "project"]);
+const FALLBACK_MODEL = "evidence-structure-v1";
+const STEP_KINDS = new Set<LearningStepKind>(["prerequisite", ...LEARNING_STAGE_ORDER]);
 const GLOBAL_DAILY_LIMIT = 120;
 const WORKSPACE_DAILY_LIMIT = 8;
 const TARGET_DIRECTION_RESOURCE_LIMIT = 36;
@@ -58,6 +93,15 @@ function readingStatus(value: unknown): LearningReadingStatus {
   return READING_STATUSES.has(value as LearningReadingStatus) ? value as LearningReadingStatus : "unread";
 }
 
+function parseJsonStrings(value: string) {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map((item) => cleanText(item, 240)).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 function targetDirectionResourceCoverage(
   candidates: Array<Pick<CandidateRow, "resource_id" | "track_id" | "selection_role">>,
   targetTrackId: string | null,
@@ -69,10 +113,8 @@ function targetDirectionResourceCoverage(
     .map((candidate) => candidate.resource_id));
   const required = Math.min(2, targetResourceIds.size);
   const used = Array.from(new Set(usedResourceIds)).filter((resourceId) => targetResourceIds.has(resourceId)).length;
-  return { available: targetResourceIds.size, required, used, valid: required > 0 && used >= required };
+  return { available: targetResourceIds.size, required, used, valid: required === 0 || used >= required };
 }
-
-class TargetDirectionCoverageError extends Error {}
 
 function parseResources(value: string): LearningResource[] {
   try {
@@ -91,10 +133,33 @@ function parseResources(value: string): LearningResource[] {
       ...(typeof item.qualityScore === "number" && Number.isFinite(item.qualityScore) ? { qualityScore: item.qualityScore } : item.qualityScore === null ? { qualityScore: null } : {}),
       ...(typeof item.readingStatus === "string" ? { readingStatus: readingStatus(item.readingStatus) } : {}),
       ...(typeof item.suggestedMinutes === "number" && Number.isFinite(item.suggestedMinutes) ? { suggestedMinutes: item.suggestedMinutes } : item.suggestedMinutes === null ? { suggestedMinutes: null } : {}),
+      ...(item.qualification === "quality_approved" ? { qualification: "quality_approved" as const } : {}),
     }));
   } catch {
     return [];
   }
+}
+
+function resourceIdentity(resource: Pick<LearningResource, "canonicalId" | "title">) {
+  return resource.canonicalId?.trim().toLocaleLowerCase() || `title:${learningResourceTitleKey(resource.title)}`;
+}
+
+function candidateResource(item: CandidateRow): LearningResource {
+  return {
+    id: item.resource_id,
+    canonicalId: item.canonical_id,
+    title: item.title,
+    authors: item.authors,
+    venue: item.venue,
+    url: item.url,
+    publishedAt: item.published_at,
+    trackId: item.track_id,
+    source: item.source,
+    qualityScore: item.quality_score,
+    readingStatus: readingStatus(item.reading_status),
+    suggestedMinutes: item.read_minutes,
+    qualification: "quality_approved",
+  };
 }
 
 async function ownedSpace(request: Request, spaceId: string) {
@@ -108,29 +173,80 @@ async function ownedSpace(request: Request, spaceId: string) {
   return { database, space, user };
 }
 
+async function liveResourceRows(database: D1Database, spaceId: string) {
+  return database.prepare(
+    `SELECT p.id, p.canonical_id, p.title, i.quality_score, i.ever_recommended,
+      COALESCE(r.status, 'unread') AS reading_status,
+      CASE WHEN EXISTS (SELECT 1 FROM paper_feedback f WHERE f.space_id = p.space_id AND f.paper_id = p.id AND f.feedback = 'not_relevant') THEN 1 ELSE 0 END AS dismissed
+     FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+     LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
+     WHERE p.space_id = ? ORDER BY i.ever_recommended DESC, i.quality_score DESC LIMIT 2000`,
+  ).bind(spaceId).all<LiveResourceRow>();
+}
+
+async function readDiscovery(database: D1Database, jobId: string | null): Promise<LearningEvidenceDiscovery | null> {
+  if (!jobId) return null;
+  const row = await database.prepare(
+    `SELECT job.id, job.status, job.attempt_count, job.queued_count, job.next_retry_at, job.updated_at,
+      COUNT(DISTINCT CASE WHEN i.ever_recommended = 0 AND i.analysis_source NOT IN ('deepseek', 'deepseek_rejected') THEN cs.paper_id END) AS review_pending_count,
+      COUNT(DISTINCT CASE WHEN i.ever_recommended = 1 OR i.analysis_source IN ('deepseek', 'deepseek_rejected') THEN cs.paper_id END) AS reviewed_count
+     FROM research_gap_discovery_jobs job
+     LEFT JOIN monitor_discovery_coverage coverage ON coverage.space_id = job.space_id AND coverage.route_id = job.track_id
+      AND coverage.source_key = 'research-route:learning' AND coverage.query_key LIKE '%' || job.signal_revision
+     LEFT JOIN monitor_candidate_sources cs ON cs.space_id = coverage.space_id AND cs.source_key = coverage.source_key AND cs.query_key = coverage.query_key
+     LEFT JOIN paper_insights i ON i.space_id = cs.space_id AND i.paper_id = cs.paper_id
+     WHERE job.id = ? GROUP BY job.id`,
+  ).bind(jobId).first<DiscoveryRow>();
+  return row ? {
+    id: row.id,
+    status: row.status,
+    attemptCount: row.attempt_count,
+    queuedCount: row.queued_count,
+    reviewPendingCount: row.review_pending_count,
+    reviewedCount: row.reviewed_count,
+    nextRetryAt: row.next_retry_at,
+    updatedAt: row.updated_at,
+  } : null;
+}
+
 async function readPath(database: D1Database, spaceId: string): Promise<LearningPath | null> {
-  const path = await database.prepare("SELECT id, target, target_track_id, title_zh, title_en, rationale_zh, rationale_en, status, analysis_model, estimated_minutes, created_at, updated_at FROM learning_paths WHERE space_id = ? AND status != 'superseded' ORDER BY updated_at DESC LIMIT 1")
-    .bind(spaceId).first<PathRow>();
+  const path = await database.prepare(
+    "SELECT id, target, target_track_id, parent_path_id, revision, source_revision, title_zh, title_en, rationale_zh, rationale_en, status, analysis_model, estimated_minutes, created_at, updated_at FROM learning_paths WHERE space_id = ? AND status != 'superseded' ORDER BY updated_at DESC LIMIT 1",
+  ).bind(spaceId).first<PathRow>();
   if (!path) return null;
-  const steps = await database.prepare("SELECT id, kind, title_zh, title_en, goal_zh, goal_en, why_zh, why_en, read_focus_zh, read_focus_en, checkpoint_zh, checkpoint_en, estimated_minutes, status, position, resources_json, completed_at FROM learning_path_steps WHERE path_id = ? ORDER BY position")
-    .bind(path.id).all<StepRow>();
-  return {
-    id: path.id,
-    target: path.target,
-    targetTrackId: path.target_track_id,
-    titleZh: path.title_zh,
-    titleEn: path.title_en,
-    rationaleZh: path.rationale_zh,
-    rationaleEn: path.rationale_en,
-    status: path.status,
-    model: path.analysis_model,
-    estimatedMinutes: path.estimated_minutes,
-    completedSteps: steps.results.filter((step) => step.status === "completed").length,
-    createdAt: path.created_at,
-    updatedAt: path.updated_at,
-    steps: steps.results.map((step) => ({
+  const [steps, liveRows] = await Promise.all([
+    database.prepare(
+      "SELECT id, kind, title_zh, title_en, goal_zh, goal_en, why_zh, why_en, read_focus_zh, read_focus_en, checkpoint_zh, checkpoint_en, estimated_minutes, status, position, resources_json, evidence_query, discovery_job_id, completed_at FROM learning_path_steps WHERE path_id = ? ORDER BY position",
+    ).bind(path.id).all<StepRow>(),
+    liveResourceRows(database, spaceId),
+  ]);
+  const liveByCanonical = new Map<string, LiveResourceRow>();
+  const liveByTitle = new Map<string, LiveResourceRow | null>();
+  for (const row of liveRows.results) {
+    const canonical = row.canonical_id.trim().toLocaleLowerCase();
+    if (canonical && !liveByCanonical.has(canonical)) liveByCanonical.set(canonical, row);
+    const title = learningResourceTitleKey(row.title);
+    if (title) liveByTitle.set(title, liveByTitle.has(title) ? null : row);
+  }
+  const discoveries = await Promise.all(steps.results.map((step) => readDiscovery(database, step.discovery_job_id)));
+  const hydratedSteps = steps.results.map((step, index) => {
+    const resources = parseResources(step.resources_json).flatMap((resource) => {
+      const canonical = resource.canonicalId?.trim().toLocaleLowerCase() || "";
+      const live = (canonical ? liveByCanonical.get(canonical) : undefined) || liveByTitle.get(learningResourceTitleKey(resource.title));
+      if (!live || !live.ever_recommended || live.dismissed) return [];
+      return [{
+        ...resource,
+        id: `monitor:${live.id}`,
+        canonicalId: live.canonical_id,
+        qualityScore: live.quality_score,
+        readingStatus: readingStatus(live.reading_status),
+        qualification: "quality_approved" as const,
+      }];
+    });
+    const discovery = discoveries[index];
+    return {
       id: step.id,
-      kind: step.kind,
+      kind: STEP_KINDS.has(step.kind) ? step.kind : "foundation" as LearningStepKind,
       titleZh: step.title_zh,
       titleEn: step.title_en,
       goalZh: step.goal_zh,
@@ -144,42 +260,100 @@ async function readPath(database: D1Database, spaceId: string): Promise<Learning
       estimatedMinutes: step.estimated_minutes,
       status: step.status,
       position: step.position,
-      resources: parseResources(step.resources_json),
+      resources,
+      evidenceStatus: learningEvidenceStatus({ resourceCount: resources.length, discovery }),
+      evidenceQuery: step.evidence_query,
+      discovery,
       completedAt: step.completed_at,
-    })),
+    };
+  });
+  const progress = learningPathProgressState(hydratedSteps);
+  const normalizedSteps = hydratedSteps.map((step, index) => ({
+    ...step,
+    status: step.status === "completed" ? "completed" as const : index === progress.activeIndex ? "active" as const : "pending" as const,
+  }));
+  return {
+    id: path.id,
+    target: path.target,
+    targetTrackId: path.target_track_id,
+    parentPathId: path.parent_path_id,
+    revision: path.revision || 1,
+    sourceRevision: path.source_revision || "",
+    titleZh: path.title_zh,
+    titleEn: path.title_en,
+    rationaleZh: path.rationale_zh,
+    rationaleEn: path.rationale_en,
+    status: progress.pathStatus,
+    model: path.analysis_model,
+    estimatedMinutes: path.estimated_minutes,
+    completedSteps: normalizedSteps.filter((step) => step.status === "completed").length,
+    createdAt: path.created_at,
+    updatedAt: path.updated_at,
+    steps: normalizedSteps,
   };
 }
 
 async function contextForSpace(database: D1Database, space: SpaceRow, targetTrackId: string | null = null) {
-  const routePaperSelect = "SELECT 'track:' || p.id AS resource_id, p.canonical_id, 'research-map' AS source, p.title, p.authors, p.venue, p.url, p.published_at, p.track_id, COALESCE(NULLIF(t.title_en, ''), t.title_zh) AS track_title, t.user_role AS track_role, p.role AS paper_role, p.citation_count, p.summary_zh, p.summary_en, p.rationale_zh, p.rationale_en, '' AS reading_focus_zh, '' AS reading_focus_en, NULL AS quality_score, NULL AS read_minutes, COALESCE((SELECT r.status FROM monitored_papers mp JOIN paper_reading_progress r ON r.paper_id = mp.id AND r.space_id = mp.space_id WHERE mp.space_id = p.space_id AND ((p.doi IS NOT NULL AND p.doi != '' AND lower(mp.doi) = lower(p.doi)) OR lower(trim(mp.title)) = lower(trim(p.title))) LIMIT 1), 'unread') AS reading_status";
-  const routePaperOrder = " ORDER BY CASE p.role WHEN 'foundation' THEN 0 WHEN 'milestone' THEN 1 ELSE 2 END, p.citation_count DESC";
+  const routePaperSelect = `SELECT 'monitor:' || mp.id AS resource_id, mp.canonical_id, 'research-map' AS source,
+   mp.title, mp.authors, mp.venue, mp.url, mp.published_at, p.track_id,
+   COALESCE(NULLIF(t.title_en, ''), t.title_zh) AS track_title, t.user_role AS track_role, p.role AS paper_role,
+   mp.citation_count, COALESCE(NULLIF(p.summary_zh, ''), i.summary_zh) AS summary_zh,
+   COALESCE(NULLIF(p.summary_en, ''), i.summary_en) AS summary_en,
+   COALESCE(NULLIF(p.rationale_zh, ''), i.why_read_zh) AS rationale_zh,
+   COALESCE(NULLIF(p.rationale_en, ''), i.why_read_en) AS rationale_en,
+   i.reading_focus_zh, i.reading_focus_en, i.quality_score, i.read_minutes,
+   COALESCE(r.status, 'unread') AS reading_status`;
+  const routePaperJoin = ` FROM research_track_papers p JOIN research_tracks t ON t.id = p.track_id
+   JOIN monitored_papers mp ON mp.id = (SELECT candidate.id FROM monitored_papers candidate
+    WHERE candidate.space_id = p.space_id AND (
+     (p.canonical_id != '' AND lower(candidate.canonical_id) = lower(p.canonical_id))
+     OR (p.doi IS NOT NULL AND p.doi != '' AND lower(candidate.doi) = lower(p.doi))
+     OR lower(trim(candidate.title)) = lower(trim(p.title)))
+    ORDER BY CASE WHEN lower(candidate.canonical_id) = lower(p.canonical_id) THEN 0 ELSE 1 END LIMIT 1)
+   JOIN paper_insights i ON i.paper_id = mp.id AND i.space_id = mp.space_id AND i.ever_recommended = 1
+   LEFT JOIN paper_reading_progress r ON r.paper_id = mp.id AND r.space_id = mp.space_id`;
+  const visibleRouteWhere = ` AND p.curation_status = 'active' AND NOT EXISTS (
+   SELECT 1 FROM paper_feedback dismissed WHERE dismissed.space_id = mp.space_id AND dismissed.paper_id = mp.id AND dismissed.feedback = 'not_relevant')`;
+  const routePaperOrder = " ORDER BY CASE p.role WHEN 'foundation' THEN 0 WHEN 'milestone' THEN 1 ELSE 2 END, i.quality_score DESC, mp.citation_count DESC";
   const targetPaperQuery = targetTrackId
-    ? database.prepare(`${routePaperSelect}, 'target-direction' AS selection_role FROM research_track_papers p JOIN research_tracks t ON t.id = p.track_id WHERE p.space_id = ? AND p.track_id = ? AND p.curation_status = 'active'${routePaperOrder} LIMIT ${TARGET_DIRECTION_RESOURCE_LIMIT}`).bind(space.id, targetTrackId).all<CandidateRow>()
-    : database.prepare(`${routePaperSelect}, 'all-space' AS selection_role FROM research_track_papers p JOIN research_tracks t ON t.id = p.track_id WHERE p.space_id = ? AND p.curation_status = 'active' ORDER BY CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, CASE p.role WHEN 'foundation' THEN 0 WHEN 'milestone' THEN 1 ELSE 2 END, p.citation_count DESC LIMIT ${ALL_SPACE_ROUTE_LIMIT}`).bind(space.id).all<CandidateRow>();
+    ? database.prepare(`${routePaperSelect}, 'target-direction' AS selection_role${routePaperJoin} WHERE p.space_id = ? AND p.track_id = ?${visibleRouteWhere}${routePaperOrder} LIMIT ${TARGET_DIRECTION_RESOURCE_LIMIT}`).bind(space.id, targetTrackId).all<CandidateRow>()
+    : database.prepare(`${routePaperSelect}, 'all-space' AS selection_role${routePaperJoin} WHERE p.space_id = ?${visibleRouteWhere} ORDER BY CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, CASE p.role WHEN 'foundation' THEN 0 WHEN 'milestone' THEN 1 ELSE 2 END, i.quality_score DESC LIMIT ${ALL_SPACE_ROUTE_LIMIT}`).bind(space.id).all<CandidateRow>();
   const crossDirectionQuery = targetTrackId
-    ? database.prepare(`${routePaperSelect}, 'cross-direction-bridge' AS selection_role FROM research_track_papers p JOIN research_tracks t ON t.id = p.track_id WHERE p.space_id = ? AND p.track_id != ? AND p.curation_status = 'active' ORDER BY CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, p.citation_count DESC LIMIT ${CROSS_DIRECTION_RESOURCE_LIMIT}`).bind(space.id, targetTrackId).all<CandidateRow>()
+    ? database.prepare(`${routePaperSelect}, 'cross-direction-bridge' AS selection_role${routePaperJoin} WHERE p.space_id = ? AND p.track_id != ?${visibleRouteWhere} ORDER BY CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, i.quality_score DESC LIMIT ${CROSS_DIRECTION_RESOURCE_LIMIT}`).bind(space.id, targetTrackId).all<CandidateRow>()
     : Promise.resolve({ results: [] as CandidateRow[] });
   const dailyLimit = targetTrackId ? TARGET_DAILY_BRIDGE_LIMIT : ALL_SPACE_DAILY_LIMIT;
   const tracksQuery = targetTrackId
-    ? database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, user_role, depth_score + interaction_score AS depth_score, support_score FROM research_tracks WHERE space_id = ? ORDER BY CASE WHEN id = ? THEN 0 WHEN user_role = 'core' THEN 1 WHEN user_role = 'support' THEN 2 ELSE 3 END, position LIMIT 64").bind(space.id, targetTrackId).all<TrackContext>()
-    : database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, user_role, depth_score + interaction_score AS depth_score, support_score FROM research_tracks WHERE space_id = ? ORDER BY CASE user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, position LIMIT 64").bind(space.id).all<TrackContext>();
-  const [tracks, targetPapers, crossDirectionPapers, monitored, imports] = await Promise.all([
+    ? database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, user_role, depth_score + interaction_score AS depth_score, support_score, search_queries, updated_at FROM research_tracks WHERE space_id = ? ORDER BY CASE WHEN id = ? THEN 0 WHEN user_role = 'core' THEN 1 WHEN user_role = 'support' THEN 2 ELSE 3 END, position LIMIT 64").bind(space.id, targetTrackId).all<TrackContext>()
+    : database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, user_role, depth_score + interaction_score AS depth_score, support_score, search_queries, updated_at FROM research_tracks WHERE space_id = ? ORDER BY CASE user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, position LIMIT 64").bind(space.id).all<TrackContext>();
+  const [tracks, targetPapers, crossDirectionPapers, monitored, imports, waitingQuality] = await Promise.all([
     tracksQuery,
     targetPaperQuery,
     crossDirectionQuery,
-    database.prepare(`SELECT 'monitor:' || p.id AS resource_id, p.canonical_id, 'daily-scan' AS source, p.title, p.authors, p.venue, p.url, p.published_at, NULL AS track_id, '' AS track_title, 'explore' AS track_role, CASE p.horizon WHEN 'years' THEN 'foundation' ELSE 'frontier' END AS paper_role, p.citation_count, i.summary_zh, i.summary_en, i.why_read_zh AS rationale_zh, i.why_read_en AS rationale_en, i.reading_focus_zh, i.reading_focus_en, i.quality_score, i.read_minutes, COALESCE(r.status, 'unread') AS reading_status, '${targetTrackId ? "daily-scan-bridge" : "all-space"}' AS selection_role FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek' ORDER BY i.quality_score DESC, p.citation_count DESC LIMIT ${dailyLimit}`)
-      .bind(space.id).all<CandidateRow>(),
-    database.prepare("SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5")
-      .bind(space.id).all<{ analysis_json: string }>(),
+    database.prepare(`SELECT 'monitor:' || p.id AS resource_id, p.canonical_id, 'daily-scan' AS source, p.title, p.authors, p.venue, p.url, p.published_at,
+      NULL AS track_id, '' AS track_title, 'explore' AS track_role, CASE p.horizon WHEN 'years' THEN 'foundation' ELSE 'frontier' END AS paper_role,
+      p.citation_count, i.summary_zh, i.summary_en, i.why_read_zh AS rationale_zh, i.why_read_en AS rationale_en,
+      i.reading_focus_zh, i.reading_focus_en, i.quality_score, i.read_minutes, COALESCE(r.status, 'unread') AS reading_status,
+      '${targetTrackId ? "daily-scan-bridge" : "all-space"}' AS selection_role
+     FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+     LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
+     WHERE p.space_id = ? AND i.ever_recommended = 1 AND NOT EXISTS (
+      SELECT 1 FROM paper_feedback dismissed WHERE dismissed.space_id = p.space_id AND dismissed.paper_id = p.id AND dismissed.feedback = 'not_relevant')
+     ORDER BY i.quality_score DESC, p.citation_count DESC LIMIT ${dailyLimit}`).bind(space.id).all<CandidateRow>(),
+    database.prepare("SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5").bind(space.id).all<{ analysis_json: string }>(),
+    database.prepare(`SELECT COUNT(DISTINCT cs.paper_id) AS count FROM monitor_candidate_sources cs
+      JOIN paper_insights i ON i.paper_id = cs.paper_id AND i.space_id = cs.space_id
+      LEFT JOIN paper_feedback f ON f.paper_id = cs.paper_id AND f.space_id = cs.space_id AND f.feedback = 'not_relevant'
+      WHERE cs.space_id = ? AND cs.source_key = 'research-route:learning' AND i.ever_recommended = 0
+       AND i.analysis_source NOT IN ('deepseek', 'deepseek_rejected') AND f.paper_id IS NULL`).bind(space.id).first<{ count: number }>(),
   ]);
   const candidateMap = new Map<string, CandidateRow>();
   const candidateKeyByTitle = new Map<string, string>();
   const readingRanks: Record<LearningReadingStatus, number> = { unread: 0, queued: 1, reading: 2, read: 3, mastered: 4, cited: 5 };
   const richer = (left: string, right: string) => right.trim().length > left.trim().length ? right : left;
   for (const rawItem of [...targetPapers.results, ...crossDirectionPapers.results, ...monitored.results]) {
-    if (!rawItem.url) continue;
+    if (!rawItem.url && !rawItem.canonical_id.toLocaleLowerCase().startsWith("doi:")) continue;
     const item = { ...rawItem, reading_status: readingStatus(rawItem.reading_status) };
-    const normalizedTitle = item.title.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const normalizedTitle = learningResourceTitleKey(item.title);
     const canonicalKey = item.canonical_id.trim().toLocaleLowerCase();
     const fingerprint = canonicalKey || normalizedTitle;
     if (!fingerprint) continue;
@@ -216,19 +390,134 @@ async function contextForSpace(database: D1Database, space: SpaceRow, targetTrac
   }).filter(Boolean).join("\n").slice(0, 7000);
   const targetTrack = targetTrackId ? tracks.results.find((track) => track.id === targetTrackId) || null : null;
   const suggestedTarget = cleanText(targetTrack?.title_zh || tracks.results.find((track) => track.user_role === "core")?.title_zh || tracks.results[0]?.title_zh || space.description || space.name, 160);
-  const actionableCandidates = Array.from(candidateMap.values())
-    .filter((candidate) => candidate.reading_status !== "mastered" && candidate.reading_status !== "cited");
+  const approvedCandidates = Array.from(candidateMap.values());
+  const candidates = approvedCandidates.filter((candidate) => candidate.reading_status !== "mastered" && candidate.reading_status !== "cited");
   return {
     tracks: tracks.results,
-    candidates: actionableCandidates,
+    candidates,
+    approvedCandidates,
     memory,
     suggestedTarget,
     targetTrack,
+    waitingQualityCount: waitingQuality?.count || 0,
     candidatePolicy: targetTrackId ? {
       targetDirectionLimit: TARGET_DIRECTION_RESOURCE_LIMIT,
       crossDirectionBridgeLimit: CROSS_DIRECTION_RESOURCE_LIMIT,
       dailyScanBridgeLimit: TARGET_DAILY_BRIDGE_LIMIT,
     } : null,
+  };
+}
+
+async function sourceRevisionFor(context: Awaited<ReturnType<typeof contextForSpace>>, targetTrackId: string | null) {
+  const stable = JSON.stringify({
+    targetTrackId,
+    tracks: context.tracks.map((track) => [track.id, track.title_zh, track.title_en, track.summary_zh, track.summary_en, track.search_queries]),
+    papers: context.approvedCandidates.map((item) => [item.canonical_id, item.quality_score, item.reading_status, item.track_id]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+  });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(stable));
+  return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function baseLearningQuery(context: Awaited<ReturnType<typeof contextForSpace>>, target: string) {
+  const routeQueries = [context.targetTrack, ...context.tracks].flatMap((track) => track ? parseJsonStrings(track.search_queries) : []);
+  for (const query of routeQueries) {
+    const safe = safeAutomaticResearchGapQuery(query);
+    if (safe) return safe;
+  }
+  const asciiTarget = target.normalize("NFKD").replace(/[^\x20-\x7E]+/g, " ").replace(/\b(?:AND|OR|NOT)\b/gi, " ").replace(/\s+/g, " ").trim();
+  return safeAutomaticResearchGapQuery(asciiTarget) || "research foundations and current methods";
+}
+
+function stageEvidenceQuery(base: string, kind: LearningStepKind) {
+  const suffix: Record<string, string> = {
+    prerequisite: "essential prerequisites",
+    foundation: "foundational theory seminal work",
+    method: "core method technique",
+    milestone: "milestone breakthrough",
+    frontier: "recent frontier advances",
+    project: "open problem research question",
+  };
+  const compactBase = base.slice(0, Math.max(20, 235 - (suffix[kind] || suffix.foundation).length));
+  return safeAutomaticResearchGapQuery(`${compactBase} ${suffix[kind] || suffix.foundation}`) || "research foundations seminal work";
+}
+
+function stageTemplate(kind: LearningStepKind, target: string, baseQuery: string): DraftStep {
+  const labels: Record<string, Omit<DraftStep, "kind" | "resourceIds" | "evidenceQuery">> = {
+    foundation: {
+      titleZh: "建立问题与经典基础", titleEn: "Establish the problem and foundations",
+      goalZh: `说清“${target}”的核心对象、基本定义与经典问题。`, goalEn: `State the core objects, definitions, and classical problem behind “${target}”.`,
+      whyZh: "先固定问题边界，避免用后来的方法替代原始命题。", whyEn: "Fix the problem boundary before later methods obscure the original claim.",
+      readFocusZh: "关注问题陈述、核心定义、代表性例子和最初证据。", readFocusEn: "Inspect the problem statement, core definitions, representative examples, and original evidence.",
+      checkpointZh: "能不看原文写出问题、假设和至少一个非平凡例子。", checkpointEn: "Write the problem, assumptions, and one non-trivial example without consulting the paper.",
+      estimatedMinutes: 90,
+    },
+    method: {
+      titleZh: "掌握核心方法", titleEn: "Master the core method",
+      goalZh: "理解推动该方向的主要技术，以及它们在什么条件下有效。", goalEn: "Understand the main techniques and the conditions under which they work.",
+      whyZh: "方法层决定哪些后续结论可以复用，哪些只是特例。", whyEn: "The method layer separates reusable arguments from one-off results.",
+      readFocusZh: "关注关键构造、证明骨架、实验设计和失败边界。", readFocusEn: "Inspect key constructions, proof skeletons, experimental design, and failure boundaries.",
+      checkpointZh: "能画出方法流程，并指出最脆弱的一步。", checkpointEn: "Draw the method flow and identify its most fragile step.",
+      estimatedMinutes: 120,
+    },
+    milestone: {
+      titleZh: "理解里程碑式推进", titleEn: "Understand the milestone advances",
+      goalZh: "识别哪些结果真正改变了问题的可解范围。", goalEn: "Identify which results genuinely changed what could be solved.",
+      whyZh: "里程碑把经典基础与当前前沿连接成可解释的发展脉络。", whyEn: "Milestones connect foundations to the frontier as an explainable progression.",
+      readFocusZh: "比较突破前后的假设、界限、技术与遗留问题。", readFocusEn: "Compare assumptions, bounds, techniques, and remaining questions before and after the breakthrough.",
+      checkpointZh: "能解释这项推进解决了什么、没有解决什么。", checkpointEn: "Explain what the advance resolved and what it left open.",
+      estimatedMinutes: 110,
+    },
+    frontier: {
+      titleZh: "定位当前前沿与证据缺口", titleEn: "Locate the frontier and evidence gaps",
+      goalZh: "区分已经有证据支持的进展、仍在争论的判断和真正空白。", goalEn: "Separate supported progress, contested claims, and genuine gaps.",
+      whyZh: "只有到达可靠前沿，研究问题才不会重复已知工作。", whyEn: "A reliable frontier prevents the research question from repeating known work.",
+      readFocusZh: "关注最新界限、对照结果、负结果、局限和后续问题。", readFocusEn: "Inspect current bounds, comparisons, negative results, limitations, and follow-up questions.",
+      checkpointZh: "列出一个已解决问题、一个未解决问题和一条证据缺口。", checkpointEn: "List one resolved question, one open question, and one evidence gap.",
+      estimatedMinutes: 120,
+    },
+    project: {
+      titleZh: "收敛为可证伪研究问题", titleEn: "Converge on a falsifiable research question",
+      goalZh: "把路线收敛为带有对象、假设、判据和下一步证据的研究问题。", goalEn: "Turn the route into a question with an object, assumptions, falsification criterion, and next evidence.",
+      whyZh: "阅读只有转化为可检验决策，才会真正推进研究路线。", whyEn: "Reading advances the route only when it becomes a testable decision.",
+      readFocusZh: "复核最接近问题的结果、基线、反例和可执行验证方案。", readFocusEn: "Recheck the nearest results, baselines, counterexamples, and executable validation plan.",
+      checkpointZh: "写出一句可证伪问题，并指定会改变判断的结果。", checkpointEn: "Write one falsifiable question and the result that would change your judgment.",
+      estimatedMinutes: 90,
+    },
+  };
+  const template = labels[kind] || labels.foundation;
+  return { kind, ...template, resourceIds: [], evidenceQuery: stageEvidenceQuery(baseQuery, kind) };
+}
+
+function stageFit(candidate: CandidateRow, kind: LearningStepKind) {
+  const roleScores: Record<string, Record<string, number>> = {
+    foundation: { foundation: 100, milestone: 35, frontier: 5 },
+    method: { milestone: 95, foundation: 75, frontier: 45 },
+    milestone: { milestone: 100, foundation: 30, frontier: 45 },
+    frontier: { frontier: 100, milestone: 50, foundation: 5 },
+    project: { frontier: 90, milestone: 55, foundation: 10 },
+  };
+  return (roleScores[kind]?.[candidate.paper_role] || 0)
+    + (candidate.selection_role === "target-direction" ? 30 : candidate.selection_role === "cross-direction-bridge" ? 5 : 0)
+    + Math.round((candidate.quality_score || 0) / 10);
+}
+
+function evidenceSkeleton(context: Awaited<ReturnType<typeof contextForSpace>>, target: string): DraftPath {
+  const baseQuery = baseLearningQuery(context, target);
+  const steps = LEARNING_STAGE_ORDER.map((kind) => stageTemplate(kind, target, baseQuery));
+  const unused = new Set(context.candidates.map((candidate) => candidate.resource_id));
+  for (const step of steps) {
+    const candidate = context.candidates.filter((item) => unused.has(item.resource_id)).sort((left, right) => stageFit(right, step.kind) - stageFit(left, step.kind))[0];
+    if (!candidate || stageFit(candidate, step.kind) < 45) continue;
+    step.resourceIds = [candidate.resource_id];
+    step.evidenceQuery = "";
+    unused.delete(candidate.resource_id);
+  }
+  return {
+    titleZh: `${target}：证据驱动学习路径`,
+    titleEn: `${target}: evidence-driven learning path`,
+    rationaleZh: "按经典基础、核心方法、里程碑、当前前沿和可证伪问题推进；缺失阶段会继续补证，未通过质量评估的候选不会成为正式材料。",
+    rationaleEn: "Progress through foundations, methods, milestones, the frontier, and a falsifiable question. Missing stages keep searching; candidates do not become formal materials before quality approval.",
+    steps,
   };
 }
 
@@ -267,11 +556,11 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
     body: JSON.stringify({
       model: MODEL,
       messages: [
-        { role: "system", content: "You are Pi Research's curriculum architect. Build a compact, rigorous, personalized bilingual research learning path. Use only the supplied real paper IDs; never invent a paper, author, venue, URL, section number, or citation. Infer what the user already knows from memory and direction depth, skip redundant basics, and order the shortest coherent route from prerequisites to independent research. Return JSON only." },
+        { role: "system", content: "You are Pi Research's curriculum architect. Build a compact bilingual path grounded only in supplied quality-approved paper IDs. Never invent papers or bibliographic facts. If a stage lacks suitable evidence, leave resourceIds empty and provide one safe ASCII scholarly search query without Boolean operators. Return JSON only." },
         { role: "user", content: JSON.stringify({
-          task: "Create 4-7 ordered stages. Every stage must cite 1-3 supplied resource IDs, and each resource may appear in only one stage. Papers inside one stage are parallel resources, not a hidden order. When targetDirection is present, make its target-direction papers the backbone and use only a small number of cross-direction-bridge or daily-scan-bridge papers when they close a prerequisite or method gap. Use prerequisite only if evidence shows a genuine gap. Treat read/mastered/cited papers as prior knowledge or optional references instead of repeating them as core work. Prefer quality-reviewed or route-grounded evidence. Include a concrete checkpoint that lets the user verify mastery. readFocus must describe concepts, figures, proofs, experiments, or questions to inspect without inventing section numbers.",
-          outputSchema: { titleZh: "string", titleEn: "string", rationaleZh: "string", rationaleEn: "string", steps: [{ kind: "prerequisite|foundation|method|frontier|project", titleZh: "string", titleEn: "string", goalZh: "string", goalEn: "string", whyZh: "string", whyEn: "string", readFocusZh: "string", readFocusEn: "string", checkpointZh: "string", checkpointEn: "string", estimatedMinutes: 90, resourceIds: ["exact supplied id"] }] },
-          target, targetDirection: context.targetTrack, candidatePolicy: context.candidatePolicy, space: { name: space.name, description: space.description }, researchDirections: context.tracks, confirmedResearchMemory: context.memory || "No confirmed import", realPaperPool: sources,
+          task: "Create exactly five ordered stages: foundation, method, milestone, frontier, project. Use 1-3 unique supplied IDs when evidence fits. A paper may appear in only one stage. Empty evidence is allowed only with an ASCII evidenceQuery. Read/mastered/cited work is prior knowledge, not repeated core work. The project stage must end in a falsifiable research question. Include concise why-now, reading focus, and a verifiable checkpoint.",
+          outputSchema: { titleZh: "string", titleEn: "string", rationaleZh: "string", rationaleEn: "string", steps: [{ kind: "foundation|method|milestone|frontier|project", titleZh: "string", titleEn: "string", goalZh: "string", goalEn: "string", whyZh: "string", whyEn: "string", readFocusZh: "string", readFocusEn: "string", checkpointZh: "string", checkpointEn: "string", estimatedMinutes: 90, resourceIds: ["exact supplied id"], evidenceQuery: "safe ASCII query when resourceIds is empty" }] },
+          target, targetDirection: context.targetTrack, candidatePolicy: context.candidatePolicy, space: { name: space.name, description: space.description }, researchDirections: context.tracks, confirmedResearchMemory: context.memory || "No confirmed import", qualityApprovedPaperPool: sources,
         }) },
       ],
       response_format: { type: "json_object" },
@@ -284,38 +573,178 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
   const content = body.choices?.[0]?.message?.content;
   if (!content) throw new Error("DeepSeek Pro returned an empty learning path");
   const parsed = extractJson(content) as Partial<DraftPath>;
+  const skeleton = evidenceSkeleton(context, target);
   const allowedIds = new Set(context.candidates.map((item) => item.resource_id));
   const usedResourceIds = new Set<string>();
-  const steps = (Array.isArray(parsed.steps) ? parsed.steps : []).slice(0, 7).flatMap((step) => {
-    const cleaned = {
-      kind: STEP_KINDS.has(step.kind) ? step.kind : "foundation" as LearningStepKind,
-      titleZh: cleanText(step.titleZh, 180), titleEn: cleanText(step.titleEn, 180), goalZh: cleanText(step.goalZh), goalEn: cleanText(step.goalEn),
-      whyZh: cleanText(step.whyZh), whyEn: cleanText(step.whyEn), readFocusZh: cleanText(step.readFocusZh), readFocusEn: cleanText(step.readFocusEn),
-      checkpointZh: cleanText(step.checkpointZh), checkpointEn: cleanText(step.checkpointEn), estimatedMinutes: boundedMinutes(step.estimatedMinutes),
-    };
-    if (!cleaned.titleZh || !cleaned.titleEn || !cleaned.whyZh || !cleaned.whyEn || !cleaned.readFocusZh || !cleaned.readFocusEn || !cleaned.checkpointZh || !cleaned.checkpointEn) return [];
-    const resourceIds = Array.isArray(step.resourceIds) ? Array.from(new Set(step.resourceIds.filter((id) => typeof id === "string" && allowedIds.has(id) && !usedResourceIds.has(id)))).slice(0, 3) : [];
-    if (!resourceIds.length) return [];
+  const rawSteps = Array.isArray(parsed.steps) ? parsed.steps : [];
+  const steps = LEARNING_STAGE_ORDER.map((kind, index) => {
+    const raw = rawSteps.find((step) => step?.kind === kind) as Partial<DraftStep> | undefined;
+    const fallback = skeleton.steps[index];
+    const resourceIds = Array.isArray(raw?.resourceIds) ? Array.from(new Set(raw.resourceIds.filter((id) => typeof id === "string" && allowedIds.has(id) && !usedResourceIds.has(id)))).slice(0, 3) : [];
     for (const id of resourceIds) usedResourceIds.add(id);
-    return [{ ...cleaned, resourceIds }];
+    const text = (value: unknown, fallbackValue: string, max = 900) => cleanText(value, max) || fallbackValue;
+    return {
+      kind,
+      titleZh: text(raw?.titleZh, fallback.titleZh, 180), titleEn: text(raw?.titleEn, fallback.titleEn, 180),
+      goalZh: text(raw?.goalZh, fallback.goalZh), goalEn: text(raw?.goalEn, fallback.goalEn),
+      whyZh: text(raw?.whyZh, fallback.whyZh), whyEn: text(raw?.whyEn, fallback.whyEn),
+      readFocusZh: text(raw?.readFocusZh, fallback.readFocusZh), readFocusEn: text(raw?.readFocusEn, fallback.readFocusEn),
+      checkpointZh: text(raw?.checkpointZh, fallback.checkpointZh), checkpointEn: text(raw?.checkpointEn, fallback.checkpointEn),
+      estimatedMinutes: boundedMinutes(raw?.estimatedMinutes),
+      resourceIds,
+      evidenceQuery: resourceIds.length ? "" : safeAutomaticResearchGapQuery(raw?.evidenceQuery) || fallback.evidenceQuery,
+    };
   });
-  if (steps.length < 3 || usedResourceIds.size < 3) throw new Error("Not enough unique grounded resources were produced from the real paper pool");
   const targetCoverage = targetDirectionResourceCoverage(context.candidates, context.targetTrack?.id || null, usedResourceIds);
   if (!targetCoverage.valid) {
-    throw new TargetDirectionCoverageError(
-      `The generated path used ${targetCoverage.used} of ${targetCoverage.required} required real papers from the target direction`,
-    );
+    const missingTargetIds = context.candidates.filter((item) => item.selection_role === "target-direction" && !usedResourceIds.has(item.resource_id));
+    for (const candidate of missingTargetIds.slice(0, targetCoverage.required - targetCoverage.used)) {
+      const step = [...steps].sort((left, right) => stageFit(candidate, right.kind) - stageFit(candidate, left.kind)).find((item) => item.resourceIds.length < 3);
+      if (!step) continue;
+      step.resourceIds.push(candidate.resource_id);
+      step.evidenceQuery = "";
+      usedResourceIds.add(candidate.resource_id);
+    }
   }
   await Promise.all([
     recordUsage(database, "learning-path:global", date, body.usage?.prompt_tokens || 0, body.usage?.completion_tokens || 0),
     recordUsage(database, workspaceScope, date, body.usage?.prompt_tokens || 0, body.usage?.completion_tokens || 0),
   ]);
-  return { titleZh: cleanText(parsed.titleZh, 220), titleEn: cleanText(parsed.titleEn, 220), rationaleZh: cleanText(parsed.rationaleZh, 1200), rationaleEn: cleanText(parsed.rationaleEn, 1200), steps };
+  return {
+    titleZh: cleanText(parsed.titleZh, 220) || skeleton.titleZh,
+    titleEn: cleanText(parsed.titleEn, 220) || skeleton.titleEn,
+    rationaleZh: cleanText(parsed.rationaleZh, 1200) || skeleton.rationaleZh,
+    rationaleEn: cleanText(parsed.rationaleEn, 1200) || skeleton.rationaleEn,
+    steps,
+  };
+}
+
+async function queueRouteLearningCandidates(database: D1Database, spaceId: string, trackId: string | null) {
+  const rows = await database.prepare(
+    `SELECT p.id, p.track_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at,
+      p.citation_count, p.role, p.summary_zh, p.summary_en, p.rationale_zh, p.rationale_en, t.search_queries
+     FROM research_track_papers p JOIN research_tracks t ON t.id = p.track_id AND t.space_id = p.space_id
+     WHERE p.space_id = ? AND p.curation_status = 'active' AND (? IS NULL OR p.track_id = ?)
+      AND NOT EXISTS (
+       SELECT 1 FROM monitor_candidate_sources cs JOIN monitored_papers mp ON mp.id = cs.paper_id AND mp.space_id = cs.space_id
+       WHERE cs.space_id = p.space_id AND cs.source_key = 'research-route:learning'
+        AND cs.query_key = 'learning-baseline:' || p.id)
+     ORDER BY CASE t.user_role WHEN 'core' THEN 0 WHEN 'support' THEN 1 ELSE 2 END,
+      CASE p.role WHEN 'foundation' THEN 0 WHEN 'milestone' THEN 1 ELSE 2 END, p.citation_count DESC LIMIT 48`,
+  ).bind(spaceId, trackId, trackId).all<RouteBaselineRow>();
+  const inputs: MonitorCandidateInput[] = rows.results.map((paper) => {
+    const routeQuery = parseJsonStrings(paper.search_queries).map((query) => safeAutomaticResearchGapQuery(query)).find(Boolean) || "research route evidence";
+    const score = Math.min(72, 42 + Math.round(Math.log1p(Math.max(0, paper.citation_count)) * 4));
+    return {
+      canonicalId: paper.canonical_id,
+      doi: paper.doi,
+      title: paper.title,
+      authors: paper.authors,
+      venue: paper.venue,
+      url: paper.url,
+      publishedAt: paper.published_at,
+      abstractText: cleanText(`${paper.summary_en} ${paper.summary_zh}`, 2200),
+      horizon: researchEvidenceHorizon(paper.published_at),
+      citationCount: paper.citation_count,
+      relevanceScore: score,
+      qualityScore: score,
+      priorityVenue: false,
+      source: "research-route",
+      provenance: [{
+        sourceKey: "research-route:learning",
+        channel: "topic",
+        queryKey: `learning-baseline:${paper.id}`,
+        queryText: routeQuery,
+        routeId: paper.track_id,
+      }],
+    };
+  });
+  return enqueueMonitorCandidates(database, spaceId, inputs, { recordDiscoveryCoverage: true });
+}
+
+function candidatesForStep(candidates: CandidateRow[], step: LearningPath["steps"][number], used: Set<string>) {
+  return candidates.filter((candidate) => !used.has(candidate.canonical_id.toLocaleLowerCase()))
+    .sort((left, right) => stageFit(right, step.kind) - stageFit(left, step.kind));
+}
+
+async function advanceLearningPath(database: D1Database, space: SpaceRow, context: Awaited<ReturnType<typeof contextForSpace>>) {
+  let path = await readPath(database, space.id);
+  if (!path) return null;
+  const masteredSteps = path.steps.filter((step) => step.status !== "completed" && step.resources.length > 0
+    && step.resources.every((resource) => resource.readingStatus === "mastered" || resource.readingStatus === "cited"));
+  if (masteredSteps.length) {
+    await database.batch(masteredSteps.map((step) => database.prepare(
+      "UPDATE learning_path_steps SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ?",
+    ).bind(step.id, path!.id)));
+    path = await readPath(database, space.id);
+    if (!path) return null;
+  }
+  const used = new Set(path.steps.flatMap((step) => step.resources.map((resource) => resourceIdentity(resource))));
+  const attachmentStatements: D1PreparedStatement[] = [];
+  for (const step of path.steps) {
+    if (step.status === "completed" || step.resources.length > 0) continue;
+    const match = candidatesForStep(context.candidates, step, used).find((candidate) => stageFit(candidate, step.kind) >= 45);
+    if (!match) continue;
+    const resource = candidateResource(match);
+    used.add(resourceIdentity(resource));
+    const raw = await database.prepare("SELECT resources_json FROM learning_path_steps WHERE id = ? AND path_id = ? LIMIT 1")
+      .bind(step.id, path.id).first<{ resources_json: string }>();
+    const existing = parseResources(raw?.resources_json || "[]");
+    const identities = new Set(existing.map(resourceIdentity));
+    const merged = identities.has(resourceIdentity(resource)) ? existing : [...existing, resource];
+    attachmentStatements.push(database.prepare(
+      "UPDATE learning_path_steps SET resources_json = ?, evidence_query = '', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ?",
+    ).bind(JSON.stringify(merged), step.id, path.id));
+  }
+  if (attachmentStatements.length) await database.batch(attachmentStatements);
+  path = await readPath(database, space.id);
+  if (!path) return null;
+  const progress = learningPathProgressState(path.steps);
+  const statusStatements = path.steps.filter((step) => step.status !== "completed").map((step) => database.prepare(
+    "UPDATE learning_path_steps SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ?",
+  ).bind(step.position === progress.activeIndex ? "active" : "pending", step.id, path.id));
+  statusStatements.push(database.prepare("UPDATE learning_paths SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND status != 'superseded'")
+    .bind(progress.pathStatus, path.id, space.id));
+  await database.batch(statusStatements);
+
+  const firstBlocked = path.steps.find((step) => step.status !== "completed" && step.resources.length === 0);
+  if (firstBlocked && !firstBlocked.discovery) {
+    const discoveryTrack = path.targetTrackId
+      ? context.tracks.find((track) => track.id === path.targetTrackId) || null
+      : context.tracks.find((track) => track.user_role === "core") || context.tracks[0] || null;
+    if (discoveryTrack) {
+      const query = safeAutomaticResearchGapQuery(firstBlocked.evidenceQuery)
+        || stageEvidenceQuery(baseLearningQuery(context, path.target), firstBlocked.kind);
+      const queued = await enqueueResearchGapDiscovery(database, {
+        spaceId: space.id,
+        trackId: discoveryTrack.id,
+        purpose: "learning",
+        origin: "direction",
+        sourceRevision: `${path.id}:${path.revision}:${path.sourceRevision}:${firstBlocked.kind}`,
+        queryText: query,
+      });
+      if (queued.id) await database.prepare(
+        "UPDATE learning_path_steps SET evidence_query = ?, discovery_job_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ?",
+      ).bind(query, queued.id, firstBlocked.id, path.id).run();
+    }
+  }
+  return readPath(database, space.id);
 }
 
 async function stateFor(database: D1Database, space: SpaceRow): Promise<LearningPathState> {
-  const context = await contextForSpace(database, space);
-  return { path: await readPath(database, space.id), suggestedTarget: context.suggestedTarget, availablePaperCount: context.candidates.length, model: MODEL };
+  let path = await readPath(database, space.id);
+  if (path) await queueRouteLearningCandidates(database, space.id, path.targetTrackId);
+  const context = await contextForSpace(database, space, path?.targetTrackId || null);
+  if (path) {
+    path = await advanceLearningPath(database, space, context);
+  }
+  return {
+    path,
+    suggestedTarget: context.suggestedTarget,
+    availablePaperCount: context.candidates.length,
+    waitingQualityCount: context.waitingQualityCount,
+    model: MODEL,
+  };
 }
 
 export async function GET(request: Request) {
@@ -331,54 +760,68 @@ export async function POST(request: Request) {
   const targetTrackId = cleanText(body.trackId, 100) || null;
   const owned = await ownedSpace(request, spaceId);
   if ("error" in owned) return owned.error;
-  const requestedTrack = targetTrackId ? await owned.database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, user_role, depth_score + interaction_score AS depth_score, support_score FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1")
-    .bind(targetTrackId, spaceId).first<TrackContext>() : null;
+  const requestedTrack = targetTrackId ? await owned.database.prepare(
+    "SELECT id, title_zh, title_en, summary_zh, summary_en, user_role, depth_score + interaction_score AS depth_score, support_score, search_queries, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
+  ).bind(targetTrackId, spaceId).first<TrackContext>() : null;
   if (targetTrackId && !requestedTrack) return Response.json({ error: "Research direction not found in this workspace" }, { status: 404 });
+  await queueRouteLearningCandidates(owned.database, spaceId, targetTrackId);
   const context = await contextForSpace(owned.database, owned.space, targetTrackId);
-  if (context.candidates.length < 3) return Response.json({ error: "研究地图中还没有足够的真实论文，请先完成一次扫描或继续深挖研究路线。" }, { status: 422 });
-  const targetCoverage = targetDirectionResourceCoverage(context.candidates, targetTrackId, []);
-  if (targetTrackId && targetCoverage.available === 0) {
-    return Response.json({ error: "目标研究方向还没有可用于学习路径的真实论文，请先继续填充该方向。" }, { status: 422 });
-  }
   const target = cleanText(body.target, 240) || cleanText(requestedTrack?.title_zh || requestedTrack?.title_en, 240) || context.suggestedTarget;
   if (target.length < 2) return Response.json({ error: "Please provide a learning target" }, { status: 400 });
-  try {
-    const draft = await buildDraft(owned.database, owned.user.userId, owned.space, target, context, resolveDeepSeekCredential(request).apiKey);
-    const pathId = crypto.randomUUID();
-    const estimatedMinutes = draft.steps.reduce((sum, step) => sum + step.estimatedMinutes, 0);
-    const candidateMap = new Map(context.candidates.map((item) => [item.resource_id, item]));
-    const statements = [
-      owned.database.prepare("UPDATE learning_paths SET status = 'superseded', updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND status != 'superseded'").bind(spaceId),
-      owned.database.prepare("INSERT INTO learning_paths (id, space_id, target, target_track_id, title_zh, title_en, rationale_zh, rationale_en, status, analysis_model, estimated_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)")
-        .bind(pathId, spaceId, target, targetTrackId, draft.titleZh || target, draft.titleEn || target, draft.rationaleZh, draft.rationaleEn, MODEL, estimatedMinutes),
-      ...draft.steps.map((step, index) => {
-        const resources: LearningResource[] = step.resourceIds.map((id) => candidateMap.get(id)).filter((item): item is CandidateRow => Boolean(item)).map((item) => ({
-          id: item.resource_id,
-          canonicalId: item.canonical_id,
-          title: item.title,
-          authors: item.authors,
-          venue: item.venue,
-          url: item.url,
-          publishedAt: item.published_at,
-          trackId: item.track_id,
-          source: item.source,
-          qualityScore: item.quality_score,
-          readingStatus: readingStatus(item.reading_status),
-          suggestedMinutes: item.read_minutes,
-        }));
-        return owned.database.prepare("INSERT INTO learning_path_steps (id, path_id, space_id, kind, title_zh, title_en, goal_zh, goal_en, why_zh, why_en, read_focus_zh, read_focus_en, checkpoint_zh, checkpoint_en, estimated_minutes, status, position, resources_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .bind(crypto.randomUUID(), pathId, spaceId, step.kind, step.titleZh, step.titleEn, step.goalZh, step.goalEn, step.whyZh, step.whyEn, step.readFocusZh, step.readFocusEn, step.checkpointZh, step.checkpointEn, step.estimatedMinutes, index === 0 ? "active" : "pending", index, JSON.stringify(resources));
-      }),
-      ...(targetTrackId ? [owned.database.prepare(LEARNING_PATH_GENERATION_ROUTE_SIGNAL_SQL).bind(targetTrackId, spaceId)] : []),
-    ];
-    await owned.database.batch(statements);
+  const previous = await readPath(owned.database, spaceId);
+  const sourceRevision = await sourceRevisionFor(context, targetTrackId);
+  const sameScope = Boolean(previous && previous.targetTrackId === targetTrackId && previous.target.trim().toLocaleLowerCase() === target.trim().toLocaleLowerCase());
+  if (sameScope && previous?.sourceRevision && previous.sourceRevision === sourceRevision) {
     return Response.json(await stateFor(owned.database, owned.space));
-  } catch (error) {
-    return Response.json(
-      { error: error instanceof Error ? error.message : "Learning path generation failed" },
-      { status: error instanceof TargetDirectionCoverageError ? 422 : 500 },
-    );
   }
+  let draft = evidenceSkeleton(context, target);
+  let analysisModel = FALLBACK_MODEL;
+  if (context.candidates.length >= 3) {
+    try {
+      draft = await buildDraft(owned.database, owned.user.userId, owned.space, target, context, resolveDeepSeekCredential(request).apiKey);
+      analysisModel = MODEL;
+    } catch {
+      // Evidence structure remains usable and honest when the model is unavailable.
+    }
+  }
+  const pathId = crypto.randomUUID();
+  const revision = sameScope && previous ? previous.revision + 1 : 1;
+  const candidateMap = new Map(context.candidates.map((item) => [item.resource_id, item]));
+  const previousByKind = new Map((sameScope ? previous?.steps : [])?.map((step) => [step.kind, step]) || []);
+  const persistedSteps = draft.steps.map((step) => {
+    const previousStep = previousByKind.get(step.kind);
+    const resources = step.resourceIds.map((id) => candidateMap.get(id)).filter((item): item is CandidateRow => Boolean(item)).map(candidateResource);
+    const resourceMap = new Map(resources.map((resource) => [resourceIdentity(resource), resource]));
+    for (const resource of previousStep?.resources || []) resourceMap.set(resourceIdentity(resource), resource);
+    const mergedResources = Array.from(resourceMap.values()).slice(0, 4);
+    const carriesCompletion = previousStep?.status === "completed" && (previousStep.resources.length > 0 || mergedResources.length > 0);
+    return {
+      ...(carriesCompletion ? {
+        ...step,
+        titleZh: previousStep.titleZh, titleEn: previousStep.titleEn, goalZh: previousStep.goalZh, goalEn: previousStep.goalEn,
+        whyZh: previousStep.whyZh, whyEn: previousStep.whyEn, readFocusZh: previousStep.readFocusZh, readFocusEn: previousStep.readFocusEn,
+        checkpointZh: previousStep.checkpointZh, checkpointEn: previousStep.checkpointEn,
+      } : step),
+      resources: mergedResources,
+      status: carriesCompletion ? "completed" as const : "pending" as const,
+      completedAt: carriesCompletion ? previousStep.completedAt : null,
+      evidenceQuery: mergedResources.length ? "" : step.evidenceQuery,
+    };
+  });
+  const progress = learningPathProgressState(persistedSteps);
+  const estimatedMinutes = persistedSteps.reduce((sum, step) => sum + step.estimatedMinutes, 0);
+  const statements: D1PreparedStatement[] = [
+    owned.database.prepare("UPDATE learning_paths SET status = 'superseded', updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND status != 'superseded'").bind(spaceId),
+    owned.database.prepare("INSERT INTO learning_paths (id, space_id, target, target_track_id, parent_path_id, revision, source_revision, title_zh, title_en, rationale_zh, rationale_en, status, analysis_model, estimated_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(pathId, spaceId, target, targetTrackId, sameScope ? previous?.id || null : null, revision, sourceRevision, draft.titleZh || target, draft.titleEn || target, draft.rationaleZh, draft.rationaleEn, progress.pathStatus, analysisModel, estimatedMinutes),
+    ...persistedSteps.map((step, index) => owned.database.prepare(
+      "INSERT INTO learning_path_steps (id, path_id, space_id, kind, title_zh, title_en, goal_zh, goal_en, why_zh, why_en, read_focus_zh, read_focus_en, checkpoint_zh, checkpoint_en, estimated_minutes, status, position, resources_json, evidence_query, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(crypto.randomUUID(), pathId, spaceId, step.kind, step.titleZh, step.titleEn, step.goalZh, step.goalEn, step.whyZh, step.whyEn, step.readFocusZh, step.readFocusEn, step.checkpointZh, step.checkpointEn, step.estimatedMinutes, step.status === "completed" ? "completed" : index === progress.activeIndex ? "active" : "pending", index, JSON.stringify(step.resources), step.evidenceQuery, step.completedAt)),
+    ...(targetTrackId ? [owned.database.prepare(LEARNING_PATH_GENERATION_ROUTE_SIGNAL_SQL).bind(targetTrackId, spaceId)] : []),
+  ];
+  await owned.database.batch(statements);
+  await advanceLearningPath(owned.database, owned.space, context);
+  return Response.json(await stateFor(owned.database, owned.space));
 }
 
 export async function PATCH(request: Request) {
@@ -388,26 +831,25 @@ export async function PATCH(request: Request) {
   const stepId = cleanText(body.stepId, 100);
   const owned = await ownedSpace(request, spaceId);
   if ("error" in owned) return owned.error;
+  const currentPath = await readPath(owned.database, spaceId);
+  const visibleStep = currentPath?.id === pathId ? currentPath.steps.find((step) => step.id === stepId) : null;
+  if (!visibleStep) return Response.json({ error: "Learning step not found" }, { status: 404 });
   const step = await owned.database.prepare("SELECT s.id, s.status, s.completed_at, p.status AS path_status, p.target_track_id FROM learning_path_steps s JOIN learning_paths p ON p.id = s.path_id WHERE s.id = ? AND s.path_id = ? AND s.space_id = ? AND p.space_id = ? LIMIT 1")
     .bind(stepId, pathId, spaceId, spaceId).first<{ id: string; status: LearningStepStatus; completed_at: string | null; path_status: LearningPath["status"]; target_track_id: string | null }>();
   if (!step) return Response.json({ error: "Learning step not found" }, { status: 404 });
   if (step.path_status === "superseded") return Response.json({ error: "This learning path has been superseded; refresh before updating progress" }, { status: 409 });
   const completing = body.completed === true;
+  if (completing && visibleStep.resources.length === 0) return Response.json({ error: "这一阶段还没有通过质量评估的可见证据，不能标记完成。" }, { status: 409 });
   const completedAt = new Date().toISOString();
   const progressStatements: D1PreparedStatement[] = [];
-  if (completing && step.target_track_id) {
-    progressStatements.push(owned.database.prepare(LEARNING_PATH_STAGE_ROUTE_SIGNAL_SQL)
-      .bind(step.target_track_id, spaceId, stepId, pathId, spaceId));
-  }
+  if (completing && step.target_track_id) progressStatements.push(owned.database.prepare(LEARNING_PATH_STAGE_ROUTE_SIGNAL_SQL)
+    .bind(step.target_track_id, spaceId, stepId, pathId, spaceId));
   progressStatements.push(owned.database.prepare("UPDATE learning_path_steps SET status = ?, completed_at = CASE WHEN ? = 1 THEN COALESCE(completed_at, ?) ELSE completed_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ? AND space_id = ? AND EXISTS (SELECT 1 FROM learning_paths p WHERE p.id = ? AND p.space_id = ? AND p.status != 'superseded')")
     .bind(completing ? "completed" : "pending", completing ? 1 : 0, completedAt, stepId, pathId, spaceId, pathId, spaceId));
   const progressResults = await owned.database.batch(progressStatements);
   const stepUpdate = progressResults[progressResults.length - 1];
   if ((stepUpdate.meta.changes || 0) !== 1) return Response.json({ error: "This learning path has been superseded; refresh before updating progress" }, { status: 409 });
-  const steps = await owned.database.prepare("SELECT id, status FROM learning_path_steps WHERE path_id = ? ORDER BY position").bind(pathId).all<{ id: string; status: LearningStepStatus }>();
-  const firstOpen = steps.results.find((item) => item.status !== "completed");
-  const updates = steps.results.filter((item) => item.status !== "completed").map((item) => owned.database.prepare("UPDATE learning_path_steps SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(item.id === firstOpen?.id ? "active" : "pending", item.id));
-  updates.push(owned.database.prepare("UPDATE learning_paths SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND status != 'superseded'").bind(firstOpen ? "active" : "completed", pathId, spaceId));
-  if (updates.length) await owned.database.batch(updates);
+  const context = await contextForSpace(owned.database, owned.space, step.target_track_id);
+  await advanceLearningPath(owned.database, owned.space, context);
   return Response.json(await stateFor(owned.database, owned.space));
 }

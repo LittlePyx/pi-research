@@ -1,6 +1,7 @@
 import { researchProblemDiscoveryQuery } from "./research-problem.ts";
 
 export type ResearchGapDiscoveryOrigin = "direction" | "synthesis" | "problem";
+export type ResearchGapDiscoveryPurpose = "route" | "learning";
 export type ResearchGapDiscoveryStatus = "pending" | "running" | "retryable" | "ready" | "degraded" | "superseded";
 
 export type ResearchGapDiscoveryClaim = {
@@ -9,6 +10,7 @@ export type ResearchGapDiscoveryClaim = {
   trackId: string;
   ownerUserId: string;
   origin: ResearchGapDiscoveryOrigin;
+  purpose: ResearchGapDiscoveryPurpose;
   signalRevision: string;
   queryText: string;
   attemptCount: number;
@@ -21,6 +23,7 @@ type ClaimRow = {
   track_id: string;
   owner_user_id: string;
   origin: string;
+  purpose: string;
   signal_revision: string;
   query_text: string;
   attempt_count: number;
@@ -41,11 +44,13 @@ export function researchGapDiscoveryRetryAt(attemptCount: number, now = new Date
 
 export async function researchGapDiscoverySignalRevision(input: {
   origin: ResearchGapDiscoveryOrigin;
+  purpose?: ResearchGapDiscoveryPurpose;
   sourceRevision: string;
   queryText: string;
 }) {
   const stable = JSON.stringify({
     origin: input.origin,
+    purpose: input.purpose || "route",
     sourceRevision: input.sourceRevision.trim(),
     queryText: safeAutomaticResearchGapQuery(input.queryText).toLocaleLowerCase(),
   });
@@ -57,6 +62,7 @@ export async function enqueueResearchGapDiscovery(database: D1Database, input: {
   spaceId: string;
   trackId: string;
   origin: ResearchGapDiscoveryOrigin;
+  purpose?: ResearchGapDiscoveryPurpose;
   sourceRevision: string;
   queryText: string;
 }) {
@@ -64,12 +70,13 @@ export async function enqueueResearchGapDiscovery(database: D1Database, input: {
   if (!queryText || !input.sourceRevision.trim()) return { queued: false, reason: "unsafe_or_unversioned" as const };
   const signalRevision = await researchGapDiscoverySignalRevision({
     origin: input.origin,
+    purpose: input.purpose,
     sourceRevision: input.sourceRevision,
     queryText,
   });
   const existing = await database.prepare(
-    "SELECT id, status FROM research_gap_discovery_jobs WHERE space_id = ? AND track_id = ? AND signal_revision = ? LIMIT 1",
-  ).bind(input.spaceId, input.trackId, signalRevision).first<{ id: string; status: string }>();
+    "SELECT id, status FROM research_gap_discovery_jobs WHERE space_id = ? AND track_id = ? AND purpose = ? AND signal_revision = ? LIMIT 1",
+  ).bind(input.spaceId, input.trackId, input.purpose || "route", signalRevision).first<{ id: string; status: string }>();
   if (existing) return { queued: false, reason: "already_recorded" as const, id: existing.id, signalRevision };
 
   const id = crypto.randomUUID();
@@ -78,13 +85,13 @@ export async function enqueueResearchGapDiscovery(database: D1Database, input: {
     database.prepare(
       `UPDATE research_gap_discovery_jobs SET status = 'superseded', completed_at = CURRENT_TIMESTAMP,
         lock_token = NULL, lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
-       WHERE space_id = ? AND track_id = ? AND status IN ('pending', 'retryable')`,
-    ).bind(input.spaceId, input.trackId),
+       WHERE space_id = ? AND track_id = ? AND purpose = ? AND status IN ('pending', 'retryable')`,
+    ).bind(input.spaceId, input.trackId, input.purpose || "route"),
     database.prepare(
       `INSERT OR IGNORE INTO research_gap_discovery_jobs
-       (id, space_id, track_id, origin, signal_revision, query_text, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-    ).bind(id, input.spaceId, input.trackId, input.origin, signalRevision, queryText),
+       (id, space_id, track_id, purpose, origin, signal_revision, query_text, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+    ).bind(id, input.spaceId, input.trackId, input.purpose || "route", input.origin, signalRevision, queryText),
     database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = ?").bind(input.spaceId, today),
   ]);
   return { queued: true, id, signalRevision };
@@ -107,7 +114,7 @@ export async function materializeStoredDirectionGapDiscovery(database: D1Databas
       AND COALESCE(track.monitoring_status, 'active') = 'active'
       AND space.owner_user_id LIKE 'anonymous:%' AND run.automation_paused_at IS NULL
       AND run.last_user_activity_at IS NOT NULL AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
-      AND NOT EXISTS (SELECT 1 FROM research_gap_discovery_jobs job WHERE job.track_id = track.id)
+      AND NOT EXISTS (SELECT 1 FROM research_gap_discovery_jobs job WHERE job.track_id = track.id AND job.purpose = 'route')
      ORDER BY datetime(run.last_user_activity_at) DESC, datetime(problem.updated_at) DESC LIMIT 3`,
   ).all<{ id: string; space_id: string; track_id: string; updated_at: string; synthesis_revision: string; assessment_revision: string; next_search_query: string }>();
   for (const problem of problems.results) {
@@ -147,7 +154,7 @@ export async function materializeStoredDirectionGapDiscovery(database: D1Databas
       AND COALESCE(track.monitoring_status, 'active') = 'active'
       AND space.owner_user_id LIKE 'anonymous:%' AND run.automation_paused_at IS NULL
       AND run.last_user_activity_at IS NOT NULL AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
-      AND NOT EXISTS (SELECT 1 FROM research_gap_discovery_jobs job WHERE job.track_id = track.id)
+      AND NOT EXISTS (SELECT 1 FROM research_gap_discovery_jobs job WHERE job.track_id = track.id AND job.purpose = 'route')
      ORDER BY datetime(run.last_user_activity_at) DESC, datetime(track.intelligence_updated_at) DESC LIMIT 3`,
   ).all<{ id: string; space_id: string; intelligence_json: string; intelligence_updated_at: string }>();
   for (const row of rows.results) {
@@ -170,7 +177,7 @@ export async function materializeStoredDirectionGapDiscovery(database: D1Databas
 export async function claimResearchGapDiscovery(database: D1Database, now = new Date()): Promise<ResearchGapDiscoveryClaim | null> {
   for (let raceAttempt = 0; raceAttempt < 3; raceAttempt += 1) {
     const row = await database.prepare(
-      `SELECT job.id, job.space_id, job.track_id, job.origin, job.signal_revision, job.query_text,
+      `SELECT job.id, job.space_id, job.track_id, job.purpose, job.origin, job.signal_revision, job.query_text,
         job.attempt_count, space.owner_user_id
        FROM research_gap_discovery_jobs job
        JOIN research_tracks track ON track.id = job.track_id AND track.space_id = job.space_id
@@ -185,6 +192,7 @@ export async function claimResearchGapDiscovery(database: D1Database, now = new 
         AND space.owner_user_id LIKE 'anonymous:%' AND run.automation_paused_at IS NULL
         AND run.last_user_activity_at IS NOT NULL AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
        ORDER BY CASE job.origin WHEN 'problem' THEN 0 WHEN 'synthesis' THEN 1 ELSE 2 END,
+        CASE job.purpose WHEN 'learning' THEN 0 ELSE 1 END,
         datetime(job.created_at) DESC LIMIT 1`,
     ).bind(RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS).first<ClaimRow>();
     if (!row) return null;
@@ -204,6 +212,7 @@ export async function claimResearchGapDiscovery(database: D1Database, now = new 
       spaceId: row.space_id,
       trackId: row.track_id,
       ownerUserId: row.owner_user_id,
+      purpose: row.purpose === "learning" ? "learning" : "route",
       origin: row.origin === "problem" || row.origin === "synthesis" ? row.origin : "direction",
       signalRevision: row.signal_revision,
       queryText: row.query_text,
@@ -266,7 +275,7 @@ export async function settleMatchingResearchGapDiscoveries(database: D1Database,
       source_status_json = ?, error = CASE WHEN ? = 1 THEN 'source_unavailable' ELSE NULL END,
       next_retry_at = ?, completed_at = CASE WHEN ? = 'ready' THEN CURRENT_TIMESTAMP ELSE NULL END,
       updated_at = CURRENT_TIMESTAMP
-     WHERE space_id = ? AND track_id = ? AND query_text = ? AND status IN ('pending', 'retryable')`,
+     WHERE space_id = ? AND track_id = ? AND purpose = 'route' AND query_text = ? AND status IN ('pending', 'retryable')`,
   ).bind(status, Math.max(0, Math.floor(input.queuedCount || 0)), JSON.stringify(input.sourceStatuses || []),
     input.degraded ? 1 : 0, retryAt, status, input.spaceId, input.trackId, queryText).run();
   return Number(result.meta?.changes || 0);

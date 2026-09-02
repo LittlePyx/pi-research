@@ -212,7 +212,25 @@ async function ensureLearningPathColumns(database: D1Database) {
   if (!existing.has("target_track_id")) {
     await database.prepare("ALTER TABLE learning_paths ADD COLUMN target_track_id TEXT REFERENCES research_tracks(id) ON DELETE SET NULL").run();
   }
+  if (!existing.has("parent_path_id")) await database.prepare("ALTER TABLE learning_paths ADD COLUMN parent_path_id TEXT").run();
+  if (!existing.has("revision")) await database.prepare("ALTER TABLE learning_paths ADD COLUMN revision INTEGER NOT NULL DEFAULT 1").run();
+  if (!existing.has("source_revision")) await database.prepare("ALTER TABLE learning_paths ADD COLUMN source_revision TEXT NOT NULL DEFAULT ''").run();
+  const stepColumns = await database.prepare("PRAGMA table_info(learning_path_steps)").all<{ name: string }>();
+  const existingStepColumns = new Set(stepColumns.results.map((column) => column.name));
+  if (!existingStepColumns.has("evidence_query")) await database.prepare("ALTER TABLE learning_path_steps ADD COLUMN evidence_query TEXT NOT NULL DEFAULT ''").run();
+  if (!existingStepColumns.has("discovery_job_id")) await database.prepare("ALTER TABLE learning_path_steps ADD COLUMN discovery_job_id TEXT").run();
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_paths_space_target_updated ON learning_paths(space_id, target_track_id, updated_at)").run();
+}
+
+async function ensureResearchGapDiscoveryColumns(database: D1Database) {
+  const columns = await database.prepare("PRAGMA table_info(research_gap_discovery_jobs)").all<{ name: string }>();
+  const existing = new Set(columns.results.map((column) => column.name));
+  if (!existing.has("purpose")) await database.prepare("ALTER TABLE research_gap_discovery_jobs ADD COLUMN purpose TEXT NOT NULL DEFAULT 'route'").run();
+  const indexColumns = await database.prepare("PRAGMA index_info(idx_research_gap_discovery_signal)").all<{ name: string }>();
+  if (indexColumns.results.map((column) => column.name).join(",") !== "space_id,track_id,purpose,signal_revision") {
+    await database.prepare("DROP INDEX IF EXISTS idx_research_gap_discovery_signal").run();
+    await database.prepare("CREATE UNIQUE INDEX idx_research_gap_discovery_signal ON research_gap_discovery_jobs(space_id, track_id, purpose, signal_revision)").run();
+  }
 }
 
 export async function ensureSchema(database = getDatabase()) {
@@ -348,12 +366,13 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS research_network_expansion_states (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, expansion_key TEXT NOT NULL, seed_canonical_ids TEXT NOT NULL DEFAULT '[]', recommendation_offset INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'idle', error TEXT, similarity_json TEXT NOT NULL DEFAULT '[]', similarity_status TEXT NOT NULL DEFAULT 'idle', similarity_expires_at TEXT, lock_token TEXT, lock_expires_at TEXT, last_expanded_at TEXT, expires_at TEXT)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_network_expansion_state_unique ON research_network_expansion_states(space_id, expansion_key)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_research_network_expansion_state_fresh ON research_network_expansion_states(space_id, expires_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS learning_paths (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, target TEXT NOT NULL, target_track_id TEXT REFERENCES research_tracks(id) ON DELETE SET NULL, title_zh TEXT NOT NULL, title_en TEXT NOT NULL, rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', analysis_model TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS learning_paths (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, target TEXT NOT NULL, target_track_id TEXT REFERENCES research_tracks(id) ON DELETE SET NULL, parent_path_id TEXT, revision INTEGER NOT NULL DEFAULT 1, source_revision TEXT NOT NULL DEFAULT '', title_zh TEXT NOT NULL, title_en TEXT NOT NULL, rationale_zh TEXT NOT NULL DEFAULT '', rationale_en TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', analysis_model TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_paths_space_updated ON learning_paths(space_id, updated_at)"),
-    database.prepare("CREATE TABLE IF NOT EXISTS learning_path_steps (id TEXT PRIMARY KEY NOT NULL, path_id TEXT NOT NULL REFERENCES learning_paths(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, kind TEXT NOT NULL DEFAULT 'foundation', title_zh TEXT NOT NULL, title_en TEXT NOT NULL, goal_zh TEXT NOT NULL DEFAULT '', goal_en TEXT NOT NULL DEFAULT '', why_zh TEXT NOT NULL DEFAULT '', why_en TEXT NOT NULL DEFAULT '', read_focus_zh TEXT NOT NULL DEFAULT '', read_focus_en TEXT NOT NULL DEFAULT '', checkpoint_zh TEXT NOT NULL DEFAULT '', checkpoint_en TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', position INTEGER NOT NULL DEFAULT 0, resources_json TEXT NOT NULL DEFAULT '[]', completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
+    database.prepare("CREATE TABLE IF NOT EXISTS learning_path_steps (id TEXT PRIMARY KEY NOT NULL, path_id TEXT NOT NULL REFERENCES learning_paths(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, kind TEXT NOT NULL DEFAULT 'foundation', title_zh TEXT NOT NULL, title_en TEXT NOT NULL, goal_zh TEXT NOT NULL DEFAULT '', goal_en TEXT NOT NULL DEFAULT '', why_zh TEXT NOT NULL DEFAULT '', why_en TEXT NOT NULL DEFAULT '', read_focus_zh TEXT NOT NULL DEFAULT '', read_focus_en TEXT NOT NULL DEFAULT '', checkpoint_zh TEXT NOT NULL DEFAULT '', checkpoint_en TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', position INTEGER NOT NULL DEFAULT 0, resources_json TEXT NOT NULL DEFAULT '[]', evidence_query TEXT NOT NULL DEFAULT '', discovery_job_id TEXT, completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_path_steps_path_position ON learning_path_steps(path_id, position)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_learning_path_steps_space_status ON learning_path_steps(space_id, status)"),
   ]);
+  await ensureResearchGapDiscoveryColumns(database);
   await ensureLearningPathColumns(database);
   await ensureEvidenceVerificationColumns(database);
   await ensurePaperInsightReviewColumns(database);

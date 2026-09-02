@@ -1099,6 +1099,7 @@ export const researchGapDiscoveryJobs = sqliteTable(
     id: text("id").primaryKey(),
     spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
     trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull().default("route"),
     origin: text("origin").notNull(),
     signalRevision: text("signal_revision").notNull(),
     queryText: text("query_text").notNull(),
@@ -1115,7 +1116,7 @@ export const researchGapDiscoveryJobs = sqliteTable(
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
   },
   (table) => [
-    uniqueIndex("idx_research_gap_discovery_signal").on(table.spaceId, table.trackId, table.signalRevision),
+    uniqueIndex("idx_research_gap_discovery_signal").on(table.spaceId, table.trackId, table.purpose, table.signalRevision),
     index("idx_research_gap_discovery_due").on(table.status, table.nextRetryAt, table.lockExpiresAt, table.attemptCount),
     index("idx_research_gap_discovery_track_created").on(table.trackId, table.createdAt),
     check("research_gap_discovery_origin_check", sql`${table.origin} in ('direction', 'synthesis', 'problem')`),
@@ -1124,8 +1125,8 @@ export const researchGapDiscoveryJobs = sqliteTable(
 );
 
 export const researchGapDiscoveryBootstrapSql = [
-  "CREATE TABLE IF NOT EXISTS research_gap_discovery_jobs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, origin TEXT NOT NULL CHECK (origin IN ('direction', 'synthesis', 'problem')), signal_revision TEXT NOT NULL, query_text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'retryable', 'ready', 'degraded', 'superseded')), attempt_count INTEGER NOT NULL DEFAULT 0, queued_count INTEGER NOT NULL DEFAULT 0, source_status_json TEXT NOT NULL DEFAULT '[]', error TEXT, next_retry_at TEXT, lock_token TEXT, lock_expires_at TEXT, completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
-  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_gap_discovery_signal ON research_gap_discovery_jobs(space_id, track_id, signal_revision)",
+  "CREATE TABLE IF NOT EXISTS research_gap_discovery_jobs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, purpose TEXT NOT NULL DEFAULT 'route', origin TEXT NOT NULL CHECK (origin IN ('direction', 'synthesis', 'problem')), signal_revision TEXT NOT NULL, query_text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'retryable', 'ready', 'degraded', 'superseded')), attempt_count INTEGER NOT NULL DEFAULT 0, queued_count INTEGER NOT NULL DEFAULT 0, source_status_json TEXT NOT NULL DEFAULT '[]', error TEXT, next_retry_at TEXT, lock_token TEXT, lock_expires_at TEXT, completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_gap_discovery_signal ON research_gap_discovery_jobs(space_id, track_id, purpose, signal_revision)",
   "CREATE INDEX IF NOT EXISTS idx_research_gap_discovery_due ON research_gap_discovery_jobs(status, next_retry_at, lock_expires_at, attempt_count)",
   "CREATE INDEX IF NOT EXISTS idx_research_gap_discovery_track_created ON research_gap_discovery_jobs(track_id, created_at)",
 ] as const;
@@ -1462,6 +1463,9 @@ export const learningPaths = sqliteTable(
     spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
     target: text("target").notNull(),
     targetTrackId: text("target_track_id").references(() => researchTracks.id, { onDelete: "set null" }),
+    parentPathId: text("parent_path_id"),
+    revision: integer("revision").notNull().default(1),
+    sourceRevision: text("source_revision").notNull().default(""),
     titleZh: text("title_zh").notNull(),
     titleEn: text("title_en").notNull(),
     rationaleZh: text("rationale_zh").notNull().default(""),
@@ -1499,6 +1503,8 @@ export const learningPathSteps = sqliteTable(
     status: text("status").notNull().default("pending"),
     position: integer("position").notNull().default(0),
     resourcesJson: text("resources_json").notNull().default("[]"),
+    evidenceQuery: text("evidence_query").notNull().default(""),
+    discoveryJobId: text("discovery_job_id"),
     completedAt: text("completed_at"),
     createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
     updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),

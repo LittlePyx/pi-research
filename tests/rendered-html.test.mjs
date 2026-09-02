@@ -388,16 +388,15 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.doesNotMatch(client, /model\.ledger\.slice\(0, 16\)/);
   assert.match(client, /function ReadingOrderWorkbench/);
   assert.match(client, /learningState: LearningPathState/);
-  assert.match(client, /为什么现在读/);
-  assert.match(client, /重点读什么/);
-  assert.match(client, /完成检查/);
-  assert.match(client, /每个阶段内的多篇论文是并行材料/);
+  assert.match(client, /v2-learning-now-guidance/);
+  assert.match(client, /如何决定/);
+  assert.match(client, /v2-learning-roadmap/);
   assert.match(client, /pathDirectionMismatch/);
   assert.match(client, /nodeByCanonicalId/);
   assert.match(client, /nodeByTitleKey/);
   assert.match(client, /unique\.set\(key, unique\.has\(key\) \? null : node\)/);
   assert.match(client, /learningResourceHref\(resource\)/);
-  assert.match(client, /原文链接待补全/);
+  assert.match(client, /className="unavailable"/);
   assert.doesNotMatch(client, /href=\{resource\.url \|\| "#"\}/);
   assert.doesNotMatch(client, /本路径中的衔接/);
   assert.match(client, /paperNetworkMode === "similarity" \? <>/);
@@ -434,9 +433,9 @@ test("builds persistent personalized learning paths from real research papers", 
   ]);
 
   assert.match(route, /MODEL = "deepseek-v4-pro"/);
-  assert.match(route, /Use only the supplied real paper IDs/);
+  assert.match(route, /grounded only in supplied quality-approved paper IDs/);
   assert.match(route, /research_track_papers/);
-  assert.match(route, /i\.llm_recommended = 1/);
+  assert.match(route, /i\.ever_recommended = 1/);
   assert.match(route, /confirmedResearchMemory/);
   assert.match(route, /resourceIds: \["exact supplied id"\]/);
   assert.match(route, /INSERT INTO learning_paths/);
@@ -462,9 +461,11 @@ test("builds persistent personalized learning paths from real research papers", 
   assert.match(client, /按全空间重新规划/);
   assert.match(client, /activeLearningState\.path \? generateLearningPath\(activeLearningState\.path\.target, activeLearningState\.path\.targetTrackId\) : generateLearningPath\(learningTarget\)/);
   assert.match(client, /learningResourceSignals/);
-  assert.match(client, /学习材料/);
-  assert.match(client, /<details className="v2-learning-guidance">/);
-  assert.match(client, /完成检查/);
+  assert.match(client, /质量已通过/);
+  assert.match(client, /v2-learning-now-guidance/);
+  assert.match(client, /如何决定/);
+  assert.match(route, /purpose: "learning"/);
+  assert.match(route, /visibleStep\.resources\.length === 0/);
   assert.doesNotMatch(client, /Schrödinger’s Problem and Entropic Transport/);
   assert.doesNotMatch(client, /Mean-Field Schrödinger Problems: A Survey/);
   assert.match(css, /grounded, persistent learning paths/);

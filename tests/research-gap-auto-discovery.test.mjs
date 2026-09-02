@@ -67,6 +67,12 @@ async function fixture() {
   `);
   sqlite.exec((await readFile(new URL("../drizzle/0053_aberrant_sandman.sql", import.meta.url), "utf8"))
     .replaceAll("--> statement-breakpoint", ""));
+  sqlite.exec(`
+    DROP INDEX idx_research_gap_discovery_signal;
+    ALTER TABLE research_gap_discovery_jobs ADD purpose TEXT NOT NULL DEFAULT 'route';
+    CREATE UNIQUE INDEX idx_research_gap_discovery_signal
+      ON research_gap_discovery_jobs(space_id, track_id, purpose, signal_revision);
+  `);
   return { sqlite, database: d1Database(sqlite) };
 }
 
@@ -100,6 +106,28 @@ test("a new gap revision supersedes pending work without deleting history", asyn
       { origin: "synthesis", status: "pending" },
     ]);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM monitor_query_plans").get().count, 0);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("learning evidence work does not supersede route-gap work", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    const routeJob = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", origin: "direction", sourceRevision: "route-v1",
+      queryText: "KLS conjecture stochastic localization",
+    });
+    const learningJob = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-v1",
+      queryText: "KLS conjecture foundational theory seminal work",
+    });
+    assert.equal(routeJob.queued, true);
+    assert.equal(learningJob.queued, true);
+    assert.deepEqual(sqlite.prepare("SELECT purpose, status FROM research_gap_discovery_jobs ORDER BY rowid").all().map((row) => ({ ...row })), [
+      { purpose: "route", status: "pending" },
+      { purpose: "learning", status: "pending" },
+    ]);
   } finally {
     sqlite.close();
   }
