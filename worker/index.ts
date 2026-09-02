@@ -8,7 +8,10 @@ import {
   monitorSchedulerSecretMatches,
   shouldWakeMonitorScheduler,
 } from "../lib/monitor-scheduler.mjs";
-import { recordMonitorOperationalSentinel } from "../lib/monitor-operational-sentinel";
+import {
+  MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL,
+  recordMonitorOperationalSentinel,
+} from "../lib/monitor-operational-sentinel";
 import { readMonitorReliabilityHealth } from "../lib/monitor-reliability-health";
 import { recordResearchRouteSentinel } from "../lib/research-route-sentinel";
 import { scheduledResearchRouteRetrySql } from "../lib/research-map-reliability";
@@ -656,7 +659,9 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
       advancedCount += result.value.advanced;
       if (result.value.completed) completedCount += 1;
     }
-    const sentinelSpaceId = due.results[0]?.id
+    const unresolvedOperationalSpace = await env.DB.prepare(MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL)
+      .first<{ space_id: string }>();
+    const sentinelSpaceId = unresolvedOperationalSpace?.space_id || due.results[0]?.id
       || gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || null;
     routeSentinel = await runScheduledResearchRouteSentinel(env, sentinelSpaceId);
     operationalSentinel = await runScheduledMonitorOperationalSentinel(

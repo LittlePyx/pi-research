@@ -3,6 +3,18 @@ import { activeResearchRouteSupplyPredicate } from "./research-map-curation.ts";
 const ACTIVE_JOB_STALE_MS = 20 * 60 * 1000;
 export const MONITOR_QUALITY_QUEUE_STALL_GRACE_MS = 25 * 60 * 1000;
 export const MONITOR_OPERATIONAL_ALERT_BUCKET_MS = 60 * 60 * 1000;
+export const MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL = `SELECT alert.space_id
+ FROM monitor_reliability_events alert
+ WHERE alert.kind = 'monitor_operational_alert' AND alert.outcome = 'failed'
+  AND datetime(alert.created_at) >= datetime('now', '-24 hours')
+  AND NOT EXISTS (
+   SELECT 1 FROM monitor_reliability_events recovery
+   WHERE recovery.kind = 'monitor_operational_recovery'
+    AND recovery.space_id = alert.space_id AND recovery.error_code = alert.error_code
+    AND datetime(recovery.created_at) >= datetime(alert.created_at)
+  )
+ GROUP BY alert.space_id
+ ORDER BY MIN(datetime(alert.created_at)) ASC LIMIT 1`;
 
 const TERMINAL_RUN_STATUSES = new Set(["idle", "ready", "error"]);
 const CRITICAL_ISSUES = new Set([

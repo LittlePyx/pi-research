@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   MONITOR_OPERATIONAL_ALERT_BUCKET_MS,
+  MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL,
   MONITOR_QUALITY_QUEUE_STALL_GRACE_MS,
   consecutiveMonitorFailureCount,
   evaluateMonitorOperationalSentinel,
@@ -219,6 +220,27 @@ test("operational alert ids deduplicate cron, watchdog, and visit wakeups by hou
   const first = monitorOperationalEventId("space-1", "alert:stalled_scan_lease", NOW);
   assert.equal(first, monitorOperationalEventId("space-1", "alert:stalled_scan_lease", NOW + 59 * 60 * 1000));
   assert.notEqual(first, monitorOperationalEventId("space-1", "alert:stalled_scan_lease", NOW + 60 * 60 * 1000));
+});
+
+test("operational review prioritizes the oldest unresolved critical space", () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec(`
+      CREATE TABLE monitor_reliability_events (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, kind TEXT NOT NULL,
+        outcome TEXT NOT NULL, error_code TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      INSERT INTO monitor_reliability_events VALUES
+        ('old-alert', 'space-old', 'monitor_operational_alert', 'failed', 'retry_not_converging', datetime('now', '-3 hours')),
+        ('new-alert', 'space-new', 'monitor_operational_alert', 'failed', 'quality_queue_stalled', datetime('now', '-1 hour')),
+        ('old-recovery', 'space-old', 'monitor_operational_recovery', 'success', 'retry_not_converging', datetime('now', '-2 hours'));
+    `);
+    assert.equal(sqlite.prepare(MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL).get().space_id, "space-new");
+    sqlite.prepare("DELETE FROM monitor_reliability_events WHERE id = 'old-recovery'").run();
+    assert.equal(sqlite.prepare(MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL).get().space_id, "space-old");
+  } finally {
+    sqlite.close();
+  }
 });
 
 test("D1 sentinel persistence deduplicates active alerts and records later recovery", async () => {

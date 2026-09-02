@@ -81,7 +81,8 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL, /event\.outcome IN \('degraded', 'failed'\)/);
   assert.match(worker, /recordResearchRouteSentinel/);
   assert.match(worker, /recordMonitorOperationalSentinel/);
-  assert.match(worker, /const sentinelSpaceId = due\.results\[0\]\?\.id/);
+  assert.match(worker, /MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL/);
+  assert.match(worker, /unresolvedOperationalSpace\?\.space_id \|\| due\.results\[0\]\?\.id/);
   assert.match(worker, /runScheduledMonitorOperationalSentinel\(\s*env,\s*sentinelSpaceId,/);
   assert.match(worker, /Pi monitor operational sentinel/);
   assert.match(worker, /readMonitorReliabilityHealth/);
