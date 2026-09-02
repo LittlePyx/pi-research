@@ -81,7 +81,7 @@ test("the interface explains the research-route and daily-discovery loop", async
   assert.match(app, /RouteDiscoveryBadge/);
   assert.match(app, /result\.routeEvidence\?\.changed/);
   assert.match(app, /const refreshedMap = await readResearchMapState\(spaceId\)/);
-  assert.match(app, /正式路线证据，并触发路线重新判断/);
+  assert.match(app, /按最终证据归属加入对应路线，并触发路线重新判断/);
   assert.match(app, /if \(!origin && !\(track && paper\.discoveryType\)\) return null/);
   assert.match(app, /queuedForReviewCount/);
   assert.match(app, /reviewingForReviewCount/);

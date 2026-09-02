@@ -6161,8 +6161,8 @@ export default function ResearchApp({ user }: { user: User }) {
             <label><span>{locale === "zh" ? "可选：补充一句具体原因" : "Optional: add a specific note"}</span><textarea value={feedbackNote} maxLength={500} onChange={(event) => setFeedbackNote(event.target.value)} placeholder={locale === "zh" ? "例如：这个证明策略正好可用于我正在处理的边界情形。" : "For example: this proof strategy fits the boundary case I am working on."} /></label>
             <small>{feedbackPrompt.kind === "relevant" && (feedbackPrompt.paper.discoveryOrigin || feedbackPrompt.paper.discoveryTrack)
               ? (locale === "zh"
-                ? `确认后，已通过质量核验的论文会加入“${feedbackPrompt.paper.discoveryOrigin?.trackTitleZh || feedbackPrompt.paper.discoveryTrack?.titleZh}”的正式路线证据，并触发路线重新判断。`
-                : `After confirmation, a quality-verified paper becomes formal evidence for “${feedbackPrompt.paper.discoveryOrigin?.trackTitleEn || feedbackPrompt.paper.discoveryTrack?.titleEn}” and triggers route reassessment.`)
+                ? "确认后，已通过质量核验的论文会按最终证据归属加入对应路线，并触发路线重新判断。"
+                : "After confirmation, a quality-verified paper is assigned to its evidence-supported route and triggers reassessment.")
               : (locale === "zh" ? "选择后会写入当前研究空间；明确反馈不会与其他研究方向混用。" : "Your choice is stored only in this research space.")}</small>
           </div>
         </div>
