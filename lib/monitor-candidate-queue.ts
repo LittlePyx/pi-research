@@ -310,6 +310,52 @@ export function compatibleResearchWorkMetadata(
   return true;
 }
 
+function researchTitleFamilyToken(value: string) {
+  if (/^(.+?)iz(?:ation|ations|ed|es|ing)$/.test(value)) {
+    return value.replace(/^(.+?)iz(?:ation|ations|ed|es|ing)$/, "$1ize");
+  }
+  if (value.length >= 6 && value.endsWith("ies")) return `${value.slice(0, -3)}y`;
+  if (value.length >= 6 && value.endsWith("s") && !value.endsWith("ss")) return value.slice(0, -1);
+  return value;
+}
+
+function researchTitleFamilyTokens(value: string) {
+  return Array.from(new Set(normalizedTitleKey(value).split(/\s+/).filter(Boolean).map(researchTitleFamilyToken)));
+}
+
+/**
+ * Conservative version-family matching for a single discovery surface. This
+ * is deliberately not used as the global canonical identity: it can keep a
+ * reviewed preprint/published-title variant from consuming another protected
+ * learning-gap slot without merging or deleting either historical record.
+ */
+export function likelySameResearchWork(
+  left: Pick<MonitorCandidateInput, "doi" | "title" | "authors" | "publishedAt">,
+  right: Pick<MonitorCandidateInput, "doi" | "title" | "authors" | "publishedAt">,
+) {
+  const leftDoi = normalizedDoi(left.doi);
+  const rightDoi = normalizedDoi(right.doi);
+  if (leftDoi && rightDoi && leftDoi !== rightDoi) return false;
+  if (compatibleResearchWorkMetadata(left, right)) return true;
+
+  const leftYear = publicationYear(left.publishedAt);
+  const rightYear = publicationYear(right.publishedAt);
+  if (leftYear && rightYear && Math.abs(Number(leftYear) - Number(rightYear)) > 1) return false;
+  const leftAuthors = normalizedAuthorTokens(left.authors);
+  const rightAuthors = normalizedAuthorTokens(right.authors);
+  if (leftAuthors.length && rightAuthors.length && !leftAuthors.some((token) => rightAuthors.includes(token))) return false;
+
+  const leftTokens = researchTitleFamilyTokens(left.title);
+  const rightTokens = researchTitleFamilyTokens(right.title);
+  if (Math.min(leftTokens.length, rightTokens.length) < 6) return false;
+  const discriminators = (tokens: string[]) => tokens.filter((token) => /^(?:\d+|i{1,3}|iv|v|vi{0,3}|ix|x)$/.test(token)).sort();
+  if (discriminators(leftTokens).join("|") !== discriminators(rightTokens).join("|")) return false;
+  const rightSet = new Set(rightTokens);
+  const intersection = leftTokens.filter((token) => rightSet.has(token)).length;
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  return intersection / union >= 0.86 && intersection / Math.min(leftTokens.length, rightTokens.length) >= 0.9;
+}
+
 export function researchWorkIdentitySignature(candidate: Pick<MonitorCandidateInput, "title" | "authors" | "publishedAt">) {
   const title = normalizedTitleKey(candidate.title);
   const authors = normalizedAuthorTokens(candidate.authors).slice(0, 3).join("-") || "unknown-author";

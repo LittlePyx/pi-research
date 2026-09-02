@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   enqueueMonitorCandidates,
+  likelySameResearchWork,
   RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL,
   RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL,
 } from "../lib/monitor-candidate-queue.ts";
@@ -687,6 +688,31 @@ test("route-gap horizon follows the three discovery windows", () => {
   assert.equal(researchEvidenceHorizon("2026-04-01", now), "months");
   assert.equal(researchEvidenceHorizon("2024-01-01", now), "years");
   assert.equal(researchEvidenceHorizon(null, now), "years");
+});
+
+test("learning-gap version matching excludes only conservative near-duplicates", () => {
+  const reviewed = {
+    doi: null,
+    title: "Generalizations of Talagrand Inequality for Sinkhorn Distance Using Entropy Power Inequality",
+    authors: "Ada Researcher; Grace Scholar",
+    publishedAt: "2025-04-01",
+  };
+  assert.equal(likelySameResearchWork(reviewed, {
+    doi: null,
+    title: "Generalized Talagrand Inequality for Sinkhorn Distance using Entropy Power Inequality",
+    authors: "Ada Researcher",
+    publishedAt: "2026-01-01",
+  }), true);
+  assert.equal(likelySameResearchWork(reviewed, {
+    doi: "10.1000/distinct",
+    title: "Generalized Talagrand Inequality for Sinkhorn Distance using Entropy Power Inequality Part II",
+    authors: "Ada Researcher",
+    publishedAt: "2026-01-01",
+  }), false);
+  assert.equal(likelySameResearchWork({ ...reviewed, doi: "10.1000/one" }, {
+    ...reviewed,
+    doi: "10.1000/two",
+  }), false);
 });
 
 test("the shared queue deduplicates DOI-less provider identities within and across batches", async () => {

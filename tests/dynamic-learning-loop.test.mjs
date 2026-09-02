@@ -107,6 +107,8 @@ test("learning evidence reuses the shared quality queue and keeps one count sour
   assert.match(route, /qualification: "quality_approved"/);
   assert.match(route, /purpose: "learning"/);
   assert.match(route, /continueResearchGapDiscoveryAfterQualityShortfall/);
+  assert.match(route, /sourceRevision: `\$\{path\.id\}:\$\{path\.revision\}:\$\{path\.sourceRevision\}:\$\{firstBlocked\.kind\}`/);
+  assert.match(route, /continuation\.refined/);
   assert.match(monitorPlanning, /sourceKey === "research-route:learning"/);
   assert.match(client, /path\.steps\.reduce\(\(sum, step\) => sum \+ step\.resources\.length, 0\)/);
   assert.match(client, /activeLearningState\.path\.steps\.reduce\(\(sum, step\) => sum \+ step\.resources\.length, 0\)/);

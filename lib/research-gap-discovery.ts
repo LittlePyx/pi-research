@@ -35,7 +35,9 @@ type LearningDiscoveryJobRow = {
   id: string;
   space_id: string;
   track_id: string;
+  origin: ResearchGapDiscoveryOrigin;
   signal_revision: string;
+  query_text: string;
   status: LearningEvidenceDiscovery["status"];
   attempt_count: number;
   queued_count: number;
@@ -49,6 +51,13 @@ type LearningDiscoveryCandidateRow = {
   analysis_source: string;
 };
 
+type LearningDiscoveryFeedbackRow = {
+  canonical_id: string;
+  title: string;
+  analysis_source: string;
+  screening_reason: string;
+};
+
 export const RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS = 3;
 export const RESEARCH_GAP_DISCOVERY_LEASE_MS = 2 * 60_000;
 
@@ -60,6 +69,40 @@ export function safeAutomaticResearchGapQuery(value: unknown) {
 export function researchGapDiscoveryRetryAt(attemptCount: number, now = new Date()) {
   const delays = [15 * 60_000, 2 * 60 * 60_000, 12 * 60 * 60_000];
   return new Date(now.getTime() + delays[Math.min(Math.max(1, attemptCount), delays.length) - 1]).toISOString();
+}
+
+const transientQualityFeedback = /\b(?:timeout|timed out|aborted|temporar(?:y|ily) unavailable|rate limit|429|model unavailable|network error)\b|超时|暂时不可用|限流|模型不可用/i;
+
+function boundedLearningRefinementBase(queryText: string, suffix: string) {
+  const limit = Math.max(40, 239 - suffix.length);
+  const safe = safeAutomaticResearchGapQuery(queryText);
+  const base = (safe.length > limit ? safe.slice(0, limit).replace(/\s+\S*$/, "") : safe).trim();
+  return safeAutomaticResearchGapQuery(`${base} ${suffix}`);
+}
+
+export function learningGapQualityRefinementQuery(input: {
+  queryText: string;
+  stageKind: string;
+  feedback: Array<{ title?: string; analysisSource?: string; screeningReason?: string }>;
+  variant?: number;
+}) {
+  const actionable = input.feedback.filter((item) => !transientQualityFeedback.test(item.screeningReason || ""));
+  if (!actionable.length) return "";
+  const stageVariants: Record<string, string[]> = {
+    prerequisite: ["textbook prerequisite canonical reference", "essential definitions primary source", "standard prerequisite rigorous treatment"],
+    foundation: ["original formulation classical foundational paper", "seminal primary source exact theorem", "historical survey canonical references"],
+    method: ["core proof technique methodological paper", "original method rigorous derivation", "canonical technique primary source"],
+    milestone: ["seminal breakthrough primary paper", "historical milestone exact result", "definitive advance original proof"],
+    frontier: ["current best bound peer reviewed result", "recent direct advance exact problem", "state of the art rigorous result"],
+    project: ["open problem limitations counterexample", "unsolved question negative result", "research gap falsifiable evidence"],
+  };
+  const reasonText = actionable.map((item) => item.screeningReason || "").join(" ").toLocaleLowerCase();
+  const variants = stageVariants[input.stageKind] || stageVariants.foundation;
+  let variant = Math.abs(Math.floor(input.variant || 0)) % variants.length;
+  if (/off.?topic|unrelated|scope|mismatch|偏题|不相关|范围不符/.test(reasonText)) variant = 1;
+  else if (/survey|secondary|综述|二手/.test(reasonText) && input.stageKind !== "frontier") variant = 0;
+  else if (/preprint|unpublished|not peer|预印本|未发表/.test(reasonText)) variant = 2;
+  return boundedLearningRefinementBase(input.queryText, variants[variant]);
 }
 
 export async function researchGapDiscoverySignalRevision(input: {
@@ -200,7 +243,7 @@ export async function readLearningGapDiscovery(
 ): Promise<LearningEvidenceDiscovery | null> {
   if (!jobId) return null;
   const job = await database.prepare(
-    `SELECT id, space_id, track_id, signal_revision, status, attempt_count, queued_count, next_retry_at, updated_at
+    `SELECT id, space_id, track_id, origin, signal_revision, query_text, status, attempt_count, queued_count, next_retry_at, updated_at
      FROM research_gap_discovery_jobs WHERE id = ? AND purpose = 'learning' LIMIT 1`,
   ).bind(jobId).first<LearningDiscoveryJobRow>();
   if (!job) return null;
@@ -329,20 +372,76 @@ export async function completeResearchGapDiscovery(database: D1Database, input: 
 
 /**
  * A successful retrieval is not the end of a learning-gap search when every
- * candidate later fails the shared quality gate. Reopen the same durable job
- * so its next attempt can rotate provider pages without deleting the rejected
- * candidates or their audits. Production remains bounded; development can keep
- * exploring indefinitely through the existing unbounded policy.
+ * candidate later fails the shared quality gate. Actionable review feedback
+ * creates a narrower versioned job while preserving the completed audit;
+ * transport/model unavailability falls back to the existing page rotation.
+ * Production remains bounded and development keeps its unbounded policy.
  */
 export async function continueResearchGapDiscoveryAfterQualityShortfall(database: D1Database, input: {
   id: string;
   now?: Date;
   unboundedRetries?: boolean;
+  sourceRevision?: string;
+  stageKind?: string;
 }) {
   const current = await database.prepare(
-    "SELECT attempt_count FROM research_gap_discovery_jobs WHERE id = ? AND purpose = 'learning' AND status = 'ready' LIMIT 1",
-  ).bind(input.id).first<{ attempt_count: number }>();
-  if (!current) return { changed: 0, status: "superseded" as const, retryAt: null };
+    `SELECT id, space_id, track_id, origin, signal_revision, query_text, status, attempt_count, queued_count, next_retry_at, updated_at
+     FROM research_gap_discovery_jobs WHERE id = ? AND purpose = 'learning' AND status = 'ready' LIMIT 1`,
+  ).bind(input.id).first<LearningDiscoveryJobRow>();
+  if (!current) return { changed: 0, status: "superseded" as const, retryAt: null, id: null, queryText: "", refined: false as const };
+  if (input.sourceRevision?.trim() && input.stageKind?.trim()) {
+    const queryKeys = ["crossref", "openalex", "arxiv", "shared-monitor-baseline"]
+      .map((source) => `${current.track_id}:${source}:auto:${current.signal_revision}`);
+    const rows = await database.prepare(
+      `SELECT DISTINCT mp.canonical_id, mp.title, COALESCE(i.analysis_source, 'metadata') AS analysis_source,
+        COALESCE(i.screening_reason, '') AS screening_reason
+       FROM monitor_candidate_sources cs
+       JOIN monitored_papers mp ON mp.id = cs.paper_id AND mp.space_id = cs.space_id
+       JOIN paper_insights i ON i.paper_id = cs.paper_id AND i.space_id = cs.space_id
+       WHERE cs.space_id = ? AND cs.source_key = 'research-route:learning'
+        AND cs.query_key IN (${queryKeys.map(() => "?").join(", ")})
+        AND i.analysis_source IN ('deepseek', 'deepseek_rejected')
+       ORDER BY mp.canonical_id LIMIT 12`,
+    ).bind(current.space_id, ...queryKeys).all<LearningDiscoveryFeedbackRow>();
+    const actionable = rows.results.filter((row) => !transientQualityFeedback.test(row.screening_reason));
+    if (actionable.length) {
+      const stableFeedback = actionable.map((row) => ({
+        canonicalId: row.canonical_id,
+        title: row.title,
+        analysisSource: row.analysis_source,
+        screeningReason: row.screening_reason.slice(0, 240),
+      }));
+      const digestBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(stableFeedback)));
+      const digest = Array.from(new Uint8Array(digestBuffer)).map((value) => value.toString(16).padStart(2, "0")).join("");
+      const queryText = learningGapQualityRefinementQuery({
+        queryText: current.query_text,
+        stageKind: input.stageKind,
+        feedback: stableFeedback,
+        variant: Number.parseInt(digest.slice(0, 2), 16),
+      });
+      if (queryText) {
+        const queued = await enqueueResearchGapDiscovery(database, {
+          spaceId: current.space_id,
+          trackId: current.track_id,
+          purpose: "learning",
+          origin: current.origin,
+          sourceRevision: `${input.sourceRevision.trim()}:quality:${digest.slice(0, 16)}`,
+          queryText,
+        });
+        if (queued.id && queued.id !== current.id) {
+          const result = await database.prepare(
+            `UPDATE research_gap_discovery_jobs SET status = 'superseded', error = 'quality_gate_no_match',
+              next_retry_at = NULL, completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND purpose = 'learning' AND status = 'ready'`,
+          ).bind(current.id).run();
+          return {
+            changed: Number(result.meta?.changes || 0), status: "pending" as const, retryAt: null,
+            id: queued.id, queryText, refined: true as const,
+          };
+        }
+      }
+    }
+  }
   const retryAllowed = Boolean(input.unboundedRetries) || current.attempt_count < RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS;
   const status: ResearchGapDiscoveryStatus = retryAllowed ? "retryable" : "empty";
   const retryAt = status === "retryable" ? researchGapDiscoveryRetryAt(current.attempt_count, input.now || new Date()) : null;
@@ -352,7 +451,7 @@ export async function continueResearchGapDiscoveryAfterQualityShortfall(database
       lock_token = NULL, lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND purpose = 'learning' AND status = 'ready'`,
   ).bind(status, retryAt, status, input.id).run();
-  return { changed: Number(result.meta?.changes || 0), status, retryAt };
+  return { changed: Number(result.meta?.changes || 0), status, retryAt, id: current.id, queryText: current.query_text, refined: false as const };
 }
 
 export async function supersedeResearchGapDiscovery(database: D1Database, input: { id: string; lockToken: string; error?: string }) {

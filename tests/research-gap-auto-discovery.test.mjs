@@ -8,6 +8,7 @@ import {
   completeResearchGapDiscovery,
   continueResearchGapDiscoveryAfterQualityShortfall,
   enqueueResearchGapDiscovery,
+  learningGapQualityRefinementQuery,
   materializeStoredDirectionGapDiscovery,
   readLearningGapDiscovery,
   safeAutomaticResearchGapQuery,
@@ -52,8 +53,13 @@ async function fixture() {
       id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT, source_key TEXT, channel TEXT,
       query_key TEXT, appearances INTEGER, first_seen_at TEXT, last_seen_at TEXT
     );
+    CREATE TABLE monitored_papers (
+      id TEXT PRIMARY KEY, space_id TEXT, canonical_id TEXT, doi TEXT, title TEXT,
+      authors TEXT DEFAULT '', published_at TEXT
+    );
     CREATE TABLE paper_insights (
-      paper_id TEXT, space_id TEXT, ever_recommended INTEGER, analysis_source TEXT
+      paper_id TEXT, space_id TEXT, ever_recommended INTEGER, analysis_source TEXT,
+      screening_reason TEXT DEFAULT '', updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE research_problems (
       id TEXT PRIMARY KEY, space_id TEXT, track_id TEXT, status TEXT, updated_at TEXT
@@ -259,8 +265,8 @@ test("learning discovery counts its shared-queue candidates without a fragile co
     sqlite.prepare("INSERT INTO monitor_candidate_sources VALUES (?, 'space-a', ?, 'research-route:learning', 'topic', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
       .run("source-unrelated", "paper-unrelated", "track-a:crossref:auto:another-signal");
     sqlite.exec(`
-      INSERT INTO paper_insights VALUES ('paper-recommended', 'space-a', 1, 'deepseek');
-      INSERT INTO paper_insights VALUES ('paper-rejected', 'space-a', 0, 'deepseek_rejected');
+      INSERT INTO paper_insights (paper_id, space_id, ever_recommended, analysis_source) VALUES ('paper-recommended', 'space-a', 1, 'deepseek');
+      INSERT INTO paper_insights (paper_id, space_id, ever_recommended, analysis_source) VALUES ('paper-rejected', 'space-a', 0, 'deepseek_rejected');
     `);
 
     const discovery = await readLearningGapDiscovery(database, job.id);
@@ -350,6 +356,51 @@ test("a learning search reopens after every candidate fails quality without eras
   }
 });
 
+test("quality feedback creates a narrower learning search and preserves the rejected job audit", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    const job = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-quality-v2",
+      queryText: "KLS conjecture stochastic localization milestone paper",
+    });
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET status = 'ready', attempt_count = 1, queued_count = 2, completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(job.id);
+    sqlite.exec(`
+      INSERT INTO monitored_papers VALUES ('paper-off-topic', 'space-a', 'doi:10.1000/off-topic', '10.1000/off-topic', 'A transport inequality with a different scope', 'Ada Researcher', '2025-01-01');
+      INSERT INTO paper_insights (paper_id, space_id, ever_recommended, analysis_source, screening_reason)
+        VALUES ('paper-off-topic', 'space-a', 0, 'deepseek_rejected', 'Off-topic scope mismatch for the exact conjecture');
+    `);
+    sqlite.prepare("INSERT INTO monitor_candidate_sources VALUES (?, 'space-a', ?, 'research-route:learning', 'topic', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
+      .run("source-off-topic", "paper-off-topic", `track-a:crossref:auto:${job.signalRevision}`);
+
+    const continuation = await continueResearchGapDiscoveryAfterQualityShortfall(database, {
+      id: job.id,
+      sourceRevision: "path-a:2:source-a:foundation",
+      stageKind: "foundation",
+    });
+    assert.equal(continuation.refined, true);
+    assert.equal(continuation.status, "pending");
+    assert.notEqual(continuation.id, job.id);
+    assert.match(continuation.queryText, /seminal primary source exact theorem$/);
+    assert.deepEqual({ ...sqlite.prepare(
+      "SELECT status, queued_count, error, completed_at IS NOT NULL AS completed FROM research_gap_discovery_jobs WHERE id = ?",
+    ).get(job.id) }, { status: "superseded", queued_count: 2, error: "quality_gate_no_match", completed: 1 });
+    assert.deepEqual({ ...sqlite.prepare(
+      "SELECT status, query_text FROM research_gap_discovery_jobs WHERE id = ?",
+    ).get(continuation.id) }, { status: "pending", query_text: continuation.queryText });
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_gap_discovery_jobs").get().count, 2);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("temporary model failures do not rewrite a learning query as quality feedback", () => {
+  assert.equal(learningGapQualityRefinementQuery({
+    queryText: "KLS conjecture foundational paper",
+    stageKind: "foundation",
+    feedback: [{ title: "A candidate", analysisSource: "deepseek_rejected", screeningReason: "Model temporarily unavailable after timeout" }],
+  }), "");
+});
+
 test("paused or inactive routes do not consume automatic discovery", async () => {
   const { sqlite, database } = await fixture();
   try {
@@ -434,6 +485,8 @@ test("scheduler and API keep automatic gap discovery bounded and inside the shar
   assert.match(map, /enqueueMonitorCandidates/);
   assert.match(map, /automaticGapExpanded/);
   assert.match(map, /automaticAttemptIndex \* 16/);
+  assert.match(map, /priorRejectedLearningWorks/);
+  assert.match(map, /likelySameResearchWork/);
   assert.match(synthesis, /enqueueResearchGapDiscovery/);
   assert.match(problem, /origin: "problem"/);
   assert.match(repository, /researchGapDiscoveryBootstrapSql/);

@@ -3,7 +3,7 @@ import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs
 import { buildArxivSearchQuery, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { fetchExternalSource } from "../../../lib/external-source-throttle";
-import { enqueueMonitorCandidates, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
+import { enqueueMonitorCandidates, likelySameResearchWork, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { isDatabaseVerifiedCitationEdge } from "../../../lib/paper-network";
 import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchRouteRevision, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
@@ -2758,6 +2758,18 @@ export async function POST(request: Request) {
       provenance: item.provenance,
     }));
     const automaticAttemptIndex = Math.max(0, (automaticGapJob?.attempt_count || 1) - 1);
+    const priorRejectedLearningWorks = automaticGapJob?.purpose === "learning" ? await database.prepare(
+      `SELECT DISTINCT mp.canonical_id, mp.doi, mp.title, mp.authors, mp.published_at
+       FROM monitor_candidate_sources cs
+       JOIN monitored_papers mp ON mp.id = cs.paper_id AND mp.space_id = cs.space_id
+       JOIN paper_insights i ON i.paper_id = cs.paper_id AND i.space_id = cs.space_id
+       WHERE cs.space_id = ? AND cs.source_key = 'research-route:learning'
+        AND substr(cs.query_key, 1, length(?) + 1) = ? || ':'
+        AND i.analysis_source = 'deepseek_rejected' AND COALESCE(i.ever_recommended, 0) = 0
+       ORDER BY datetime(i.updated_at) DESC LIMIT 120`,
+    ).bind(space.id, track.id, track.id).all<{
+      canonical_id: string; doi: string | null; title: string; authors: string; published_at: string | null;
+    }>() : { results: [] };
     const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14
       : automaticGapJob ? (automaticAttemptIndex * 16) % 608
         : ((track.expansion_count + 1) * 16) % 608;
@@ -2787,6 +2799,14 @@ export async function POST(request: Request) {
       candidates = [...candidates, ...baseline];
       sourceStatuses.push({ source: "shared-monitor-baseline", role: "baseline", status: baseline.length ? "cached" : "empty", candidateCount: baseline.length });
     }
+    if (priorRejectedLearningWorks.results.length) candidates = candidates.filter((candidate) => !priorRejectedLearningWorks.results.some((reviewed) => (
+      candidate.canonicalId === reviewed.canonical_id || likelySameResearchWork(candidate, {
+        doi: reviewed.doi,
+        title: reviewed.title,
+        authors: reviewed.authors,
+        publishedAt: reviewed.published_at,
+      })
+    )));
     const uniqueCandidates = new Map<string, MapCandidate>();
     for (const candidate of candidates) {
       const current = uniqueCandidates.get(candidate.canonicalId);

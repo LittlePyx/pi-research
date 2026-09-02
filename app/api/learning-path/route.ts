@@ -684,10 +684,15 @@ async function advanceLearningPath(database: D1Database, space: SpaceRow, contex
   const firstBlocked = path.steps.find((step) => step.status !== "completed" && step.resources.length === 0);
   if (firstBlocked?.discovery?.status === "ready" && firstBlocked.discovery.reviewPendingCount === 0
     && firstBlocked.discovery.reviewedCount > 0) {
-    await continueResearchGapDiscoveryAfterQualityShortfall(database, {
+    const continuation = await continueResearchGapDiscoveryAfterQualityShortfall(database, {
       id: firstBlocked.discovery.id,
       unboundedRetries: unboundedDevelopmentRetries(),
+      sourceRevision: `${path.id}:${path.revision}:${path.sourceRevision}:${firstBlocked.kind}`,
+      stageKind: firstBlocked.kind,
     });
+    if (continuation.refined && continuation.id && continuation.queryText) await database.prepare(
+      "UPDATE learning_path_steps SET evidence_query = ?, discovery_job_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ?",
+    ).bind(continuation.queryText, continuation.id, firstBlocked.id, path.id).run();
     path = await readPath(database, space.id);
     if (!path) return null;
   }
