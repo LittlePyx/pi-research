@@ -420,6 +420,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(worker, /async scheduled/);
   assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 1/);
   assert.match(worker, /SCHEDULED_MONITOR_SPACE_SQL/);
+  assert.match(worker, /SCHEDULED_MONITOR_RECOVERY_SPACE_SQL/);
+  assert.match(worker, /mergeScheduledMonitorSpaces/);
   assert.match(scheduler, /LIMIT \?/);
   assert.match(worker, /Promise\.allSettled/);
   assert.match(viteConfig, /crons: \["\*\/10 \* \* \* \*"\]/);
