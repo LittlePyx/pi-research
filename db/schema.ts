@@ -1120,12 +1120,12 @@ export const researchGapDiscoveryJobs = sqliteTable(
     index("idx_research_gap_discovery_due").on(table.status, table.nextRetryAt, table.lockExpiresAt, table.attemptCount),
     index("idx_research_gap_discovery_track_created").on(table.trackId, table.createdAt),
     check("research_gap_discovery_origin_check", sql`${table.origin} in ('direction', 'synthesis', 'problem')`),
-    check("research_gap_discovery_status_check", sql`${table.status} in ('pending', 'running', 'retryable', 'ready', 'degraded', 'superseded')`),
+    check("research_gap_discovery_status_check", sql`${table.status} in ('pending', 'running', 'retryable', 'ready', 'empty', 'degraded', 'superseded')`),
   ],
 );
 
 export const researchGapDiscoveryBootstrapSql = [
-  "CREATE TABLE IF NOT EXISTS research_gap_discovery_jobs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, purpose TEXT NOT NULL DEFAULT 'route', origin TEXT NOT NULL CHECK (origin IN ('direction', 'synthesis', 'problem')), signal_revision TEXT NOT NULL, query_text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'retryable', 'ready', 'degraded', 'superseded')), attempt_count INTEGER NOT NULL DEFAULT 0, queued_count INTEGER NOT NULL DEFAULT 0, source_status_json TEXT NOT NULL DEFAULT '[]', error TEXT, next_retry_at TEXT, lock_token TEXT, lock_expires_at TEXT, completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE TABLE IF NOT EXISTS research_gap_discovery_jobs (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, purpose TEXT NOT NULL DEFAULT 'route', origin TEXT NOT NULL CHECK (origin IN ('direction', 'synthesis', 'problem')), signal_revision TEXT NOT NULL, query_text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'retryable', 'ready', 'empty', 'degraded', 'superseded')), attempt_count INTEGER NOT NULL DEFAULT 0, queued_count INTEGER NOT NULL DEFAULT 0, source_status_json TEXT NOT NULL DEFAULT '[]', error TEXT, next_retry_at TEXT, lock_token TEXT, lock_expires_at TEXT, completed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_gap_discovery_signal ON research_gap_discovery_jobs(space_id, track_id, purpose, signal_revision)",
   "CREATE INDEX IF NOT EXISTS idx_research_gap_discovery_due ON research_gap_discovery_jobs(status, next_retry_at, lock_expires_at, attempt_count)",
   "CREATE INDEX IF NOT EXISTS idx_research_gap_discovery_track_created ON research_gap_discovery_jobs(track_id, created_at)",

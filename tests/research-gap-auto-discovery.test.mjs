@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   claimResearchGapDiscovery,
   completeResearchGapDiscovery,
+  continueResearchGapDiscoveryAfterQualityShortfall,
   enqueueResearchGapDiscovery,
   materializeStoredDirectionGapDiscovery,
   safeAutomaticResearchGapQuery,
@@ -73,6 +74,8 @@ async function fixture() {
     CREATE UNIQUE INDEX idx_research_gap_discovery_signal
       ON research_gap_discovery_jobs(space_id, track_id, purpose, signal_revision);
   `);
+  sqlite.exec((await readFile(new URL("../drizzle/0055_round_amphibian.sql", import.meta.url), "utf8"))
+    .replaceAll("--> statement-breakpoint", ""));
   return { sqlite, database: d1Database(sqlite) };
 }
 
@@ -155,6 +158,7 @@ test("automatic discovery is leased once, retries degradation, and preserves que
     assert.ok(retry);
     const ready = await completeResearchGapDiscovery(database, {
       id: retry.id, lockToken: retry.lockToken, degraded: false, queuedCount: 2,
+      discoveredCount: 4,
       sourceStatuses: [{ source: "crossref", status: "ok" }],
     });
     assert.equal(ready.status, "ready");
@@ -163,6 +167,81 @@ test("automatic discovery is leased once, retries degradation, and preserves que
     ).get(claim.id) }, {
       status: "ready", attempt_count: 2, queued_count: 5, error: null, next_retry_at: null, lock_token: null,
     });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("healthy zero-candidate attempts rotate before ending honestly as empty", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-empty-v1",
+      queryText: "KLS conjecture original formulation foundational paper",
+    });
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const claim = await claimResearchGapDiscovery(database);
+      assert.ok(claim);
+      const completion = await completeResearchGapDiscovery(database, {
+        id: claim.id, lockToken: claim.lockToken, degraded: false, discoveredCount: 0, queuedCount: 0,
+        sourceStatuses: [{ source: "crossref", status: "empty" }],
+      });
+      assert.equal(completion.status, attempt < 3 ? "retryable" : "empty");
+      if (attempt < 3) sqlite.prepare("UPDATE research_gap_discovery_jobs SET next_retry_at = datetime('now', '-1 minute') WHERE id = ?").run(claim.id);
+    }
+    assert.deepEqual({ ...sqlite.prepare(
+      "SELECT status, attempt_count, queued_count, error, completed_at IS NOT NULL AS completed FROM research_gap_discovery_jobs",
+    ).get() }, { status: "empty", attempt_count: 3, queued_count: 0, error: "no_candidates", completed: 1 });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("development keeps a healthy empty search retryable while a discovered duplicate can finish ready", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    const emptyJob = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-dev-v1",
+      queryText: "KLS conjecture classical baseline original work",
+    });
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET attempt_count = 8 WHERE id = ?").run(emptyJob.id);
+    const emptyClaim = await claimResearchGapDiscovery(database, new Date(), true);
+    const empty = await completeResearchGapDiscovery(database, {
+      id: emptyClaim.id, lockToken: emptyClaim.lockToken, degraded: false, discoveredCount: 0, queuedCount: 0,
+      sourceStatuses: [{ source: "openalex", status: "empty" }], unboundedRetries: true,
+    });
+    assert.equal(empty.status, "retryable");
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET status = 'superseded', completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(emptyJob.id);
+
+    const duplicateJob = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-duplicate-v2",
+      queryText: "KLS conjecture Cheeger inequality seminal result",
+    });
+    const duplicateClaim = await claimResearchGapDiscovery(database, new Date(), true);
+    assert.equal(duplicateClaim.id, duplicateJob.id);
+    const ready = await completeResearchGapDiscovery(database, {
+      id: duplicateClaim.id, lockToken: duplicateClaim.lockToken, degraded: false, discoveredCount: 3, queuedCount: 0,
+      sourceStatuses: [{ source: "shared-monitor-baseline", status: "cached" }], unboundedRetries: true,
+    });
+    assert.equal(ready.status, "ready");
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a learning search reopens after every candidate fails quality without erasing its audit", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    const job = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-quality-v1",
+      queryText: "KLS conjecture stochastic localization milestone paper",
+    });
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET status = 'ready', attempt_count = 1, queued_count = 4, completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(job.id);
+    const continuation = await continueResearchGapDiscoveryAfterQualityShortfall(database, { id: job.id });
+    assert.equal(continuation.status, "retryable");
+    assert.deepEqual({ ...sqlite.prepare(
+      "SELECT status, queued_count, error, completed_at FROM research_gap_discovery_jobs WHERE id = ?",
+    ).get(job.id) }, { status: "retryable", queued_count: 4, error: "quality_gate_no_match", completed_at: null });
   } finally {
     sqlite.close();
   }
@@ -245,11 +324,13 @@ test("scheduler and API keep automatic gap discovery bounded and inside the shar
   assert.match(worker, /runScheduledResearchGapDiscovery/);
   assert.match(worker, /x-pi-scheduled-gap-discovery/);
   assert.match(worker, /sourceStatuses\.some\(\(source\) => source\.status === "failed"\)/);
+  assert.match(worker, /discoveredCount: state\.discoveredRouteCandidateCount/);
   assert.match(map, /action === "expand-auto-gap"/);
   assert.match(map, /Automatic evidence-gap discovery is scheduler-only/);
   assert.match(map, /automaticGapSuperseded: true/);
   assert.match(map, /enqueueMonitorCandidates/);
   assert.match(map, /automaticGapExpanded/);
+  assert.match(map, /automaticAttemptIndex \* 16/);
   assert.match(synthesis, /enqueueResearchGapDiscovery/);
   assert.match(problem, /origin: "problem"/);
   assert.match(repository, /researchGapDiscoveryBootstrapSql/);

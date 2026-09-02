@@ -255,9 +255,10 @@ type TrackReviewQueueCountRow = {
 type TrackGapDiscoveryRow = {
   track_id: string;
   origin: "direction" | "synthesis" | "problem";
-  status: "pending" | "running" | "retryable" | "ready" | "degraded" | "superseded";
+  status: "pending" | "running" | "retryable" | "ready" | "empty" | "degraded" | "superseded";
   attempt_count: number;
   queued_count: number;
+  public_reason: "no_candidates" | "quality_gate_no_match" | "source_unavailable" | null;
   next_retry_at: string | null;
   updated_at: string;
 };
@@ -2213,7 +2214,11 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     database.prepare(RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL)
       .bind(spaceId, spaceId).all<TrackReviewQueueCountRow>(),
     database.prepare(
-      `SELECT track_id, origin, status, attempt_count, queued_count, next_retry_at, updated_at
+      `SELECT track_id, origin, status, attempt_count, queued_count,
+       CASE WHEN error = 'no_candidates' THEN 'no_candidates'
+        WHEN error = 'quality_gate_no_match' THEN 'quality_gate_no_match'
+        WHEN error IS NOT NULL THEN 'source_unavailable' ELSE NULL END AS public_reason,
+       next_retry_at, updated_at
        FROM (
         SELECT job.*, ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY datetime(created_at) DESC, job.rowid DESC) AS job_rank
         FROM research_gap_discovery_jobs job WHERE space_id = ? AND purpose = 'route'
@@ -2409,6 +2414,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
         status: job.status,
         attemptCount: Math.max(0, job.attempt_count || 0),
         queuedCount: Math.max(0, job.queued_count || 0),
+        reason: job.public_reason,
         nextRetryAt: job.next_retry_at,
         updatedAt: job.updated_at,
       } : null;
@@ -2691,10 +2697,10 @@ export async function POST(request: Request) {
       return Response.json({ error: "Automatic evidence-gap discovery is scheduler-only" }, { status: 403 });
     }
     const automaticGapJob = automaticGapExpanding ? await database.prepare(
-      `SELECT id, purpose, origin, signal_revision, query_text FROM research_gap_discovery_jobs
+      `SELECT id, purpose, origin, signal_revision, query_text, attempt_count FROM research_gap_discovery_jobs
        WHERE id = ? AND space_id = ? AND track_id = ? AND status = 'running' AND lock_token = ? LIMIT 1`,
     ).bind(payload.gapJobId?.trim() || "", space.id, track.id, payload.gapJobToken?.trim() || "")
-      .first<{ id: string; purpose: string; origin: string; signal_revision: string; query_text: string }>() : null;
+      .first<{ id: string; purpose: string; origin: string; signal_revision: string; query_text: string; attempt_count: number }>() : null;
     if (automaticGapExpanding && !automaticGapJob) {
       return Response.json({ error: "Automatic evidence-gap discovery lease is unavailable" }, { status: 409 });
     }
@@ -2751,13 +2757,17 @@ export async function POST(request: Request) {
       citations: item.citation_count, role: item.role, summaryZh: item.summary_zh, summaryEn: item.summary_en, rationaleZh: item.rationale_zh, rationaleEn: item.rationale_en,
       provenance: item.provenance,
     }));
-    const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14 : ((track.expansion_count + 1) * 16) % 608;
+    const automaticAttemptIndex = Math.max(0, (automaticGapJob?.attempt_count || 1) - 1);
+    const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14
+      : automaticGapJob ? (automaticAttemptIndex * 16) % 608
+        : ((track.expansion_count + 1) * 16) % 608;
     const classicRescueDiscovery = hydrating && track.build_attempt_count >= RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT - 1
       ? await discoverClassicRescueCandidates(database, direction)
       : null;
     const discovery = classicRescueDiscovery?.seedCount
       ? classicRescueDiscovery
-      : await discoverCandidates(database, [direction], offset, hydrating ? 14 : 16, hydrating ? track.build_attempt_count : 0);
+      : await discoverCandidates(database, [direction], offset, hydrating ? 14 : 16,
+        hydrating ? track.build_attempt_count : automaticGapJob ? automaticAttemptIndex : 0);
     const existingIds = new Set(allExistingIds.results.map((row) => row.canonical_id));
     let candidates = discovery.candidates.filter((item) => !existingIds.has(item.canonicalId));
     const sourceStatuses = [...discovery.sources];
@@ -2856,6 +2866,7 @@ export async function POST(request: Request) {
       trackId: track.id,
       queryText: targetedQuery,
       degraded: targetedDegraded,
+      discoveredCount: candidates.length,
       queuedCount: queueResult.queuedForReviewCount,
       sourceStatuses,
     });

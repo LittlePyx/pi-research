@@ -2,7 +2,7 @@ import { researchProblemDiscoveryQuery } from "./research-problem.ts";
 
 export type ResearchGapDiscoveryOrigin = "direction" | "synthesis" | "problem";
 export type ResearchGapDiscoveryPurpose = "route" | "learning";
-export type ResearchGapDiscoveryStatus = "pending" | "running" | "retryable" | "ready" | "degraded" | "superseded";
+export type ResearchGapDiscoveryStatus = "pending" | "running" | "retryable" | "ready" | "empty" | "degraded" | "superseded";
 
 export type ResearchGapDiscoveryClaim = {
   id: string;
@@ -228,6 +228,7 @@ export async function completeResearchGapDiscovery(database: D1Database, input: 
   id: string;
   lockToken: string;
   degraded: boolean;
+  discoveredCount?: number;
   queuedCount: number;
   sourceStatuses: unknown[];
   error?: string;
@@ -238,16 +239,51 @@ export async function completeResearchGapDiscovery(database: D1Database, input: 
     "SELECT attempt_count FROM research_gap_discovery_jobs WHERE id = ? AND status = 'running' AND lock_token = ? LIMIT 1",
   ).bind(input.id, input.lockToken).first<{ attempt_count: number }>();
   if (!current) return { changed: 0, status: "superseded" as const, retryAt: null };
-  const terminal = !input.degraded || (!input.unboundedRetries && current.attempt_count >= RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS);
-  const status: ResearchGapDiscoveryStatus = !input.degraded ? "ready" : terminal ? "degraded" : "retryable";
+  const discoveredCount = Math.max(0, Math.floor(input.discoveredCount ?? input.queuedCount ?? 0));
+  const noCandidates = !input.degraded && discoveredCount === 0;
+  const retryAllowed = Boolean(input.unboundedRetries) || current.attempt_count < RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS;
+  const status: ResearchGapDiscoveryStatus = input.degraded
+    ? retryAllowed ? "retryable" : "degraded"
+    : noCandidates
+      ? retryAllowed ? "retryable" : "empty"
+      : "ready";
   const retryAt = status === "retryable" ? researchGapDiscoveryRetryAt(current.attempt_count, input.now || new Date()) : null;
+  const error = input.error?.slice(0, 300) || (noCandidates ? "no_candidates" : null);
   const result = await database.prepare(
     `UPDATE research_gap_discovery_jobs SET status = ?, queued_count = queued_count + ?,
-      source_status_json = ?, error = ?, next_retry_at = ?, completed_at = CASE WHEN ? IN ('ready', 'degraded') THEN CURRENT_TIMESTAMP ELSE NULL END,
+      source_status_json = ?, error = ?, next_retry_at = ?, completed_at = CASE WHEN ? IN ('ready', 'empty', 'degraded') THEN CURRENT_TIMESTAMP ELSE NULL END,
       lock_token = NULL, lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND status = 'running' AND lock_token = ?`,
   ).bind(status, Math.max(0, Math.floor(input.queuedCount || 0)), JSON.stringify(input.sourceStatuses || []),
-    input.error?.slice(0, 300) || null, retryAt, status, input.id, input.lockToken).run();
+    error, retryAt, status, input.id, input.lockToken).run();
+  return { changed: Number(result.meta?.changes || 0), status, retryAt };
+}
+
+/**
+ * A successful retrieval is not the end of a learning-gap search when every
+ * candidate later fails the shared quality gate. Reopen the same durable job
+ * so its next attempt can rotate provider pages without deleting the rejected
+ * candidates or their audits. Production remains bounded; development can keep
+ * exploring indefinitely through the existing unbounded policy.
+ */
+export async function continueResearchGapDiscoveryAfterQualityShortfall(database: D1Database, input: {
+  id: string;
+  now?: Date;
+  unboundedRetries?: boolean;
+}) {
+  const current = await database.prepare(
+    "SELECT attempt_count FROM research_gap_discovery_jobs WHERE id = ? AND purpose = 'learning' AND status = 'ready' LIMIT 1",
+  ).bind(input.id).first<{ attempt_count: number }>();
+  if (!current) return { changed: 0, status: "superseded" as const, retryAt: null };
+  const retryAllowed = Boolean(input.unboundedRetries) || current.attempt_count < RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS;
+  const status: ResearchGapDiscoveryStatus = retryAllowed ? "retryable" : "empty";
+  const retryAt = status === "retryable" ? researchGapDiscoveryRetryAt(current.attempt_count, input.now || new Date()) : null;
+  const result = await database.prepare(
+    `UPDATE research_gap_discovery_jobs SET status = ?, error = 'quality_gate_no_match', next_retry_at = ?,
+      completed_at = CASE WHEN ? = 'empty' THEN CURRENT_TIMESTAMP ELSE NULL END,
+      lock_token = NULL, lock_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND purpose = 'learning' AND status = 'ready'`,
+  ).bind(status, retryAt, status, input.id).run();
   return { changed: Number(result.meta?.changes || 0), status, retryAt };
 }
 
@@ -265,20 +301,22 @@ export async function settleMatchingResearchGapDiscoveries(database: D1Database,
   trackId: string;
   queryText: string;
   degraded: boolean;
+  discoveredCount?: number;
   queuedCount: number;
   sourceStatuses: unknown[];
 }) {
   const queryText = safeAutomaticResearchGapQuery(input.queryText);
   if (!queryText) return 0;
-  const status = input.degraded ? "retryable" : "ready";
-  const retryAt = input.degraded ? researchGapDiscoveryRetryAt(1) : null;
+  const noCandidates = !input.degraded && Math.max(0, Math.floor(input.discoveredCount ?? input.queuedCount ?? 0)) === 0;
+  const status = input.degraded || noCandidates ? "retryable" : "ready";
+  const retryAt = status === "retryable" ? researchGapDiscoveryRetryAt(1) : null;
   const result = await database.prepare(
     `UPDATE research_gap_discovery_jobs SET status = ?, queued_count = queued_count + ?,
-      source_status_json = ?, error = CASE WHEN ? = 1 THEN 'source_unavailable' ELSE NULL END,
+      source_status_json = ?, error = CASE WHEN ? = 1 THEN 'source_unavailable' WHEN ? = 1 THEN 'no_candidates' ELSE NULL END,
       next_retry_at = ?, completed_at = CASE WHEN ? = 'ready' THEN CURRENT_TIMESTAMP ELSE NULL END,
       updated_at = CURRENT_TIMESTAMP
      WHERE space_id = ? AND track_id = ? AND purpose = 'route' AND query_text = ? AND status IN ('pending', 'retryable')`,
   ).bind(status, Math.max(0, Math.floor(input.queuedCount || 0)), JSON.stringify(input.sourceStatuses || []),
-    input.degraded ? 1 : 0, retryAt, status, input.spaceId, input.trackId, queryText).run();
+    input.degraded ? 1 : 0, noCandidates ? 1 : 0, retryAt, status, input.spaceId, input.trackId, queryText).run();
   return Number(result.meta?.changes || 0);
 }

@@ -23,9 +23,10 @@ test("development retry policy removes total caps while production remains bound
 });
 
 test("development flag is wired through model budgets, route retries, gap retries, and source quotas", async () => {
-  const [monitor, researchMap, gaps, semanticScholar, worker] = await Promise.all([
+  const [monitor, researchMap, learningPath, gaps, semanticScholar, worker] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/learning-path/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/research-gap-discovery.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/semantic-scholar.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
@@ -35,7 +36,8 @@ test("development flag is wired through model budgets, route retries, gap retrie
   assert.match(monitor, /developmentAnalysisUnbounded\(\) && trigger === "manual"/);
   assert.match(monitor, /developmentAnalysisUnbounded\(\)[\s\S]*?delete previousWork\.draftRegenerationAttempts/);
   assert.match(researchMap, /unboundedRetries: unboundedDevelopmentRetries\(\)/);
-  assert.match(gaps, /!input\.unboundedRetries && current\.attempt_count >= RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS/);
+  assert.match(learningPath, /unboundedRetries: unboundedDevelopmentRetries\(\)/);
+  assert.match(gaps, /Boolean\(input\.unboundedRetries\) \|\| current\.attempt_count < RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS/);
   assert.match(semanticScholar, /developmentUnboundedEnabled\(getRuntimeEnv\(\)\.PI_DEVELOPMENT_UNBOUNDED\)/);
   assert.match(worker, /claimResearchGapDiscovery\(env\.DB, new Date\(\), unboundedRetries\)/);
   assert.match(worker, /recordResearchRouteSentinel\(env\.DB, selected\.id, developmentUnboundedEnabled/);

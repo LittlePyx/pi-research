@@ -17,6 +17,7 @@ test("a stage with zero visible evidence is never ready or completable", async (
   assert.equal(learningEvidenceStatus({ resourceCount: 0, discovery: discovery("pending") }), "searching");
   assert.equal(learningEvidenceStatus({ resourceCount: 0, discovery: discovery("retryable") }), "retryable");
   assert.equal(learningEvidenceStatus({ resourceCount: 0, discovery: discovery("degraded") }), "degraded");
+  assert.equal(learningEvidenceStatus({ resourceCount: 0, discovery: discovery("empty") }), "insufficient");
   assert.equal(learningEvidenceStatus({ resourceCount: 0, discovery: discovery("ready", { queuedCount: 4, reviewPendingCount: 2 }) }), "awaiting_quality");
   assert.equal(learningEvidenceStatus({ resourceCount: 0, discovery: discovery("ready", { queuedCount: 4, reviewedCount: 4 }) }), "insufficient");
   assert.equal(learningEvidenceStatus({ resourceCount: 1, discovery: discovery("degraded") }), "ready");
@@ -105,6 +106,7 @@ test("learning evidence reuses the shared quality queue and keeps one count sour
   assert.match(route, /i\.ever_recommended = 1/);
   assert.match(route, /qualification: "quality_approved"/);
   assert.match(route, /purpose: "learning"/);
+  assert.match(route, /continueResearchGapDiscoveryAfterQualityShortfall/);
   assert.match(monitorPlanning, /sourceKey === "research-route:learning"/);
   assert.match(client, /path\.steps\.reduce\(\(sum, step\) => sum \+ step\.resources\.length, 0\)/);
   assert.match(client, /activeLearningState\.path\.steps\.reduce\(\(sum, step\) => sum \+ step\.resources\.length, 0\)/);

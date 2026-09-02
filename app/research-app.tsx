@@ -1279,11 +1279,15 @@ function ResearchGapDiscoveryStatus({ track, locale }: { track: ResearchTrack; l
     : status === "running"
       ? (locale === "zh" ? "正在查找缺失文献" : "Finding missing papers")
       : status === "retryable"
-        ? (locale === "zh" ? "来源暂不可用，任务已保留" : "Sources are unavailable; the task is retained")
+        ? job?.reason === "no_candidates"
+          ? (locale === "zh" ? "本轮未找到候选，正在扩大范围" : "No candidates yet; broadening the search")
+          : (locale === "zh" ? "来源暂不可用，任务已保留" : "Sources are unavailable; the task is retained")
         : status === "ready"
           ? job.queuedCount > 0
             ? (locale === "zh" ? `${job.queuedCount} 篇候选已进入质量评估` : `${job.queuedCount} candidates entered quality review`)
             : (locale === "zh" ? "本轮补证完成，暂未新增候选" : "Evidence search finished with no new candidates")
+          : status === "empty"
+            ? (locale === "zh" ? "已完成多轮检索，暂未找到合格候选" : "Multiple searches completed without a qualified candidate")
           : status === "degraded"
             ? (locale === "zh" ? "来源持续不可用，可稍后重试" : "Sources remain unavailable; retry later")
             : status === "superseded"

@@ -261,9 +261,10 @@ export type ResearchRouteLearningSignal = "paused" | "reinforcing" | "awaiting_f
 
 export type ResearchGapDiscoveryProgress = {
   origin: "direction" | "synthesis" | "problem";
-  status: "pending" | "running" | "retryable" | "ready" | "degraded" | "superseded";
+  status: "pending" | "running" | "retryable" | "ready" | "empty" | "degraded" | "superseded";
   attemptCount: number;
   queuedCount: number;
+  reason: "no_candidates" | "quality_gate_no_match" | "source_unavailable" | null;
   nextRetryAt: string | null;
   updatedAt: string;
 };

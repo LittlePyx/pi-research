@@ -27,7 +27,7 @@ export type LearningResource = {
 
 export type LearningEvidenceDiscovery = {
   id: string;
-  status: "pending" | "running" | "retryable" | "ready" | "degraded" | "superseded";
+  status: "pending" | "running" | "retryable" | "ready" | "empty" | "degraded" | "superseded";
   attemptCount: number;
   queuedCount: number;
   reviewPendingCount: number;
@@ -124,6 +124,7 @@ export function learningEvidenceStatus(input: {
   if (discovery.status === "pending" || discovery.status === "running") return "searching";
   if (discovery.status === "retryable") return "retryable";
   if (discovery.status === "degraded") return "degraded";
+  if (discovery.status === "empty") return "insufficient";
   if (discovery.status === "ready") {
     if (discovery.reviewPendingCount > 0) return "awaiting_quality";
     return discovery.queuedCount > 0 && discovery.reviewedCount === 0 ? "awaiting_quality" : "insufficient";

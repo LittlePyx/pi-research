@@ -1,4 +1,5 @@
-import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import {
   LEARNING_STAGE_ORDER,
   learningEvidenceStatus,
@@ -15,7 +16,7 @@ import {
 } from "../../../lib/learning-path";
 import { enqueueMonitorCandidates, type MonitorCandidateInput } from "../../../lib/monitor-candidate-queue";
 import { researchEvidenceHorizon } from "../../../lib/research-map-evidence";
-import { enqueueResearchGapDiscovery, safeAutomaticResearchGapQuery } from "../../../lib/research-gap-discovery";
+import { continueResearchGapDiscoveryAfterQualityShortfall, enqueueResearchGapDiscovery, safeAutomaticResearchGapQuery } from "../../../lib/research-gap-discovery";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -60,6 +61,10 @@ type DiscoveryRow = {
   id: string; status: LearningEvidenceDiscovery["status"]; attempt_count: number; queued_count: number; next_retry_at: string | null;
   updated_at: string; review_pending_count: number; reviewed_count: number;
 };
+
+function unboundedDevelopmentRetries() {
+  return developmentUnboundedEnabled(getRuntimeEnv().PI_DEVELOPMENT_UNBOUNDED);
+}
 
 const MODEL = "deepseek-v4-pro";
 const FALLBACK_MODEL = "evidence-structure-v1";
@@ -708,24 +713,34 @@ async function advanceLearningPath(database: D1Database, space: SpaceRow, contex
   await database.batch(statusStatements);
 
   const firstBlocked = path.steps.find((step) => step.status !== "completed" && step.resources.length === 0);
-  if (firstBlocked && !firstBlocked.discovery) {
+  if (firstBlocked?.discovery?.status === "ready" && firstBlocked.discovery.reviewPendingCount === 0
+    && firstBlocked.discovery.reviewedCount > 0) {
+    await continueResearchGapDiscoveryAfterQualityShortfall(database, {
+      id: firstBlocked.discovery.id,
+      unboundedRetries: unboundedDevelopmentRetries(),
+    });
+    path = await readPath(database, space.id);
+    if (!path) return null;
+  }
+  const currentBlocked = path.steps.find((step) => step.status !== "completed" && step.resources.length === 0);
+  if (currentBlocked && !currentBlocked.discovery) {
     const discoveryTrack = path.targetTrackId
       ? context.tracks.find((track) => track.id === path.targetTrackId) || null
       : context.tracks.find((track) => track.user_role === "core") || context.tracks[0] || null;
     if (discoveryTrack) {
-      const query = safeAutomaticResearchGapQuery(firstBlocked.evidenceQuery)
-        || stageEvidenceQuery(baseLearningQuery(context, path.target), firstBlocked.kind);
+      const query = safeAutomaticResearchGapQuery(currentBlocked.evidenceQuery)
+        || stageEvidenceQuery(baseLearningQuery(context, path.target), currentBlocked.kind);
       const queued = await enqueueResearchGapDiscovery(database, {
         spaceId: space.id,
         trackId: discoveryTrack.id,
         purpose: "learning",
         origin: "direction",
-        sourceRevision: `${path.id}:${path.revision}:${path.sourceRevision}:${firstBlocked.kind}`,
+        sourceRevision: `${path.id}:${path.revision}:${path.sourceRevision}:${currentBlocked.kind}`,
         queryText: query,
       });
       if (queued.id) await database.prepare(
         "UPDATE learning_path_steps SET evidence_query = ?, discovery_job_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ?",
-      ).bind(query, queued.id, firstBlocked.id, path.id).run();
+      ).bind(query, queued.id, currentBlocked.id, path.id).run();
     }
   }
   return readPath(database, space.id);

@@ -409,6 +409,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
       id: claim.id,
       lockToken: claim.lockToken,
       degraded: true,
+      discoveredCount: 0,
       queuedCount: 0,
       sourceStatuses: [],
       error: "workspace_identity_unavailable",
@@ -460,6 +461,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
     id: claim.id,
     lockToken: claim.lockToken,
     degraded: sourceDegraded,
+    discoveredCount: state.discoveredRouteCandidateCount || 0,
     queuedCount: state.reviewQueuedCount || 0,
     sourceStatuses,
     error: !response.ok ? state.error || `automatic_gap_http_${response.status}` : sourceDegraded ? "source_unavailable" : undefined,
@@ -472,7 +474,7 @@ async function runScheduledResearchGapDiscovery(env: Env, ctx: ExecutionContext)
        VALUES (?, ?, 'research_gap_discovery', 'scheduled', ?, ?, ?, ?)`,
     ).bind(
       crypto.randomUUID(), claim.spaceId, `research-route:${claim.origin}`,
-      completion.status === "ready" ? "success" : completion.status === "retryable" ? "degraded" : "failed",
+      completion.status === "ready" || completion.status === "empty" ? "success" : completion.status === "retryable" ? "degraded" : "failed",
       `Automatic research gap discovery resolved ${completion.status}`,
       JSON.stringify({
         trackId: claim.trackId,
