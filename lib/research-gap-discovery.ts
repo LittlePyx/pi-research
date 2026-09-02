@@ -197,7 +197,9 @@ export async function claimResearchGapDiscovery(
        JOIN research_spaces space ON space.id = job.space_id
        JOIN monitor_runs run ON run.space_id = job.space_id
        WHERE ${mode === "due" && !unboundedRetries ? "job.attempt_count < ? AND" : ""} (${eligibility})
-        AND track.build_status IN ('ready', 'partial') AND COALESCE(track.monitoring_status, 'active') = 'active'
+        AND (track.build_status IN ('ready', 'partial')
+          OR (job.purpose = 'learning' AND track.build_status IN ('queued', 'retryable', 'empty', 'failed')))
+        AND COALESCE(track.monitoring_status, 'active') = 'active'
         AND space.owner_user_id LIKE 'anonymous:%' AND run.automation_paused_at IS NULL
         AND run.last_user_activity_at IS NOT NULL AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
        ORDER BY ${ordering} LIMIT 1`,

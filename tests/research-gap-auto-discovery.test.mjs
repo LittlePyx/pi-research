@@ -209,6 +209,31 @@ test("due work and stalled recovery use independent fair slots without deleting 
   }
 });
 
+test("learning evidence can repair a retryable zero-node route without opening route-gap work", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    const routeJob = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", origin: "direction", sourceRevision: "route-retryable-v1",
+      queryText: "KLS conjecture stochastic localization",
+    });
+    const learningJob = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-retryable-v1",
+      queryText: "KLS conjecture original formulation foundational paper",
+    });
+    sqlite.prepare("UPDATE research_tracks SET build_status = 'retryable' WHERE id = 'track-a'").run();
+
+    const claim = await claimResearchGapDiscovery(database, new Date(), false, "due");
+    assert.equal(claim.id, learningJob.id);
+    assert.equal(claim.purpose, "learning");
+    assert.deepEqual({ ...sqlite.prepare(
+      "SELECT status, attempt_count FROM research_gap_discovery_jobs WHERE id = ?",
+    ).get(routeJob.id) }, { status: "pending", attempt_count: 0 });
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_gap_discovery_jobs").get().count, 2);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("healthy zero-candidate attempts rotate before ending honestly as empty", async () => {
   const { sqlite, database } = await fixture();
   try {
