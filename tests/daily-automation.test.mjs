@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { SCHEDULED_MONITOR_SPACE_SQL } from "../lib/monitor-scheduler.mjs";
 
 test("scheduled monitoring uses a durable single-run lock and retry lineage", async () => {
   const [monitor, schema, worker] = await Promise.all([
@@ -17,7 +18,7 @@ test("scheduled monitoring uses a durable single-run lock and retry lineage", as
   assert.match(monitor, /checkpoint = 'retry_pending'/);
   assert.match(monitor, /schedulerCheckMinutes: 10/);
   assert.match(worker, /trigger: "scheduled"/);
-  assert.match(worker, /r\.next_run_at IS NULL OR datetime\(r\.next_run_at\) <= CURRENT_TIMESTAMP/);
+  assert.match(SCHEDULED_MONITOR_SPACE_SQL, /r\.next_run_at IS NULL OR datetime\(r\.next_run_at\) <= CURRENT_TIMESTAMP/);
   assert.match(monitor, /alreadyAdvancing: true/);
   assert.match(monitor, /advance_lock_token = NULL, advance_lock_expires_at = NULL/);
   assert.match(monitor, /MONITOR_NEW_RUN_CLAIM_SQL/);

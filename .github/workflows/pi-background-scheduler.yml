@@ -27,6 +27,18 @@ jobs:
             --header "Authorization: Bearer $PI_SCHEDULER_SECRET" \
             https://pi-research-agent.qiudao-pika.chatgpt.site/api/internal/scheduler)"
           jq -e '(.acquired == true) or (.acquired == false)' <<<"$response" >/dev/null
+
+  production-reliability-health:
+    name: Production reliability health
+    needs: wake-background-research
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check persistent production incidents
+        env:
+          PI_SCHEDULER_SECRET: ${{ secrets.PI_SCHEDULER_SECRET }}
+        run: |
+          test -n "$PI_SCHEDULER_SECRET"
           health="$(curl --silent --show-error --fail-with-body \
             --retry 2 --retry-all-errors --connect-timeout 15 --max-time 30 \
             --request POST \

@@ -179,7 +179,10 @@ export function evaluateMonitorOperationalSentinel(
     (Number.isFinite(lockExpiresAt) && lockExpiresAt <= now)
     || (Number.isFinite(oldestActiveUpdatedAt) && now - oldestActiveUpdatedAt > ACTIVE_JOB_STALE_MS)
   )) issues.push("stalled_scan_lease");
-  if ((runIsActive || snapshot.runStatus === "error")
+  // A resumed job inherits its retry lineage. Once it owns an active run, the
+  // lease/stall checks describe its current health; the inherited count alone
+  // must not keep a recovered attempt in a permanent critical state.
+  if (snapshot.runStatus === "error"
     && (snapshot.latestRetryCount >= 3 || snapshot.consecutiveFailureCount >= 3)) {
     issues.push("retry_not_converging");
   }

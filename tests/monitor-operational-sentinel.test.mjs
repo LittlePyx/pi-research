@@ -188,6 +188,23 @@ test("operational sentinel escalates non-converging retry, queue gaps, and histo
   ]);
 });
 
+test("a resumed job that has crossed the failed checkpoint is not permanently critical", () => {
+  const result = evaluateMonitorOperationalSentinel(snapshot({
+    runStatus: "deep_reviewing",
+    runActiveJobId: "job-recovered",
+    activeJobCount: 1,
+    activeJobIds: ["job-recovered"],
+    boundActiveJobCount: 1,
+    oldestActiveUpdatedAt: "2026-08-27T07:59:00.000Z",
+    latestRetryCount: 9,
+    consecutiveFailureCount: 4,
+    latestFailureKind: "stage_failed",
+    latestFailureSource: "saved-checkpoint",
+  }), [], NOW);
+  assert.equal(result.outcome, "success");
+  assert.doesNotMatch(result.issues.join(","), /retry_not_converging/);
+});
+
 test("failure convergence counts only the latest identical stage and source signature", () => {
   assert.equal(consecutiveMonitorFailureCount([
     { failure_kind: "timeout", failure_source: "deep-review", retry_count: 3 },

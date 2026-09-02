@@ -97,7 +97,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
 });
 
 test("continuously explores new discovery branches and grows a connected research map", async () => {
-  const [monitor, mapRoute, schema, repository, client, css, worker, viteConfig] = await Promise.all([
+  const [monitor, mapRoute, schema, repository, client, css, worker, viteConfig, scheduler] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -106,6 +106,7 @@ test("continuously explores new discovery branches and grows a connected researc
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/monitor-scheduler.mjs", import.meta.url), "utf8"),
   ]);
 
   assert.match(monitor, /monitor_discovery_pages/);
@@ -418,7 +419,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(worker, /runScheduledMonitorSweep/);
   assert.match(worker, /async scheduled/);
   assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 1/);
-  assert.match(worker, /LIMIT \?/);
+  assert.match(worker, /SCHEDULED_MONITOR_SPACE_SQL/);
+  assert.match(scheduler, /LIMIT \?/);
   assert.match(worker, /Promise\.allSettled/);
   assert.match(viteConfig, /crons: \["\*\/10 \* \* \* \*"\]/);
 });

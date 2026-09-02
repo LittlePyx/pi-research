@@ -11,6 +11,7 @@ import {
   recordMonitorVisitActivity,
 } from "../lib/monitor-automation.mjs";
 import { shouldBlockManualMonitorStart } from "../lib/monitor-runtime-control.mjs";
+import { SCHEDULED_MONITOR_SPACE_SQL } from "../lib/monitor-scheduler.mjs";
 
 const now = Date.parse("2026-08-21T08:00:00.000Z");
 const healthy = {
@@ -115,7 +116,7 @@ test("scheduled monitoring persists heartbeats and advances only a bounded check
 
   assert.match(worker, /SCHEDULED_ADVANCE_STEPS = 1/);
   assert.match(worker, /monitor_scheduler_ticks/);
-  assert.match(worker, /r\.automation_paused_at IS NULL/);
+  assert.match(SCHEDULED_MONITOR_SPACE_SQL, /r\.automation_paused_at IS NULL/);
   assert.match(worker, /automationDeferred/);
   assert.match(route, /monitorAutomationPauseReason/);
   assert.match(route, /await recordMonitorVisitActivity\(context\.database, context\.space\.id\)/);

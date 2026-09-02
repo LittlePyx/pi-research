@@ -3,6 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import {
   MONITOR_SCHEDULER_BUCKET_MS,
+  SCHEDULED_MONITOR_SPACE_SQL,
   monitorSchedulerBucketId,
   monitorSchedulerSecretMatches,
   shouldWakeMonitorScheduler,
@@ -579,20 +580,8 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     if (!routeIntelligence.attempted && !routeEvolution?.attempted && !routeRetry?.attempted) {
       gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx);
     }
-    const due = await env.DB.prepare(
-      `SELECT s.id, s.owner_user_id FROM research_spaces s
-       JOIN monitor_runs r ON r.space_id = s.id
-       WHERE s.owner_user_id LIKE 'anonymous:%' AND r.automation_paused_at IS NULL AND (
-         (r.status IN ('ready', 'error', 'idle') AND (r.next_run_at IS NULL OR datetime(r.next_run_at) <= CURRENT_TIMESTAMP))
-         OR (r.status NOT IN ('ready', 'error', 'idle')
-          AND (r.next_run_at IS NULL OR datetime(r.next_run_at) <= CURRENT_TIMESTAMP)
-          AND (r.lock_expires_at IS NULL OR datetime(r.lock_expires_at) <= CURRENT_TIMESTAMP))
-       )
-       ORDER BY CASE WHEN r.last_user_activity_at IS NULL THEN 1 ELSE 0 END,
-        datetime(r.last_user_activity_at) DESC,
-        CASE WHEN r.status NOT IN ('ready', 'error', 'idle') THEN 0 ELSE 1 END,
-        COALESCE(r.next_run_at, r.last_run_at, r.updated_at) ASC LIMIT ?`,
-    ).bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
+    const due = await env.DB.prepare(SCHEDULED_MONITOR_SPACE_SQL)
+      .bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
     dueSpaceCount = due.results.length;
     const monitorSpaces = trigger === "visit_backstop"
       && (routeIntelligence.attempted || routeEvolution?.attempted || routeRetry?.attempted || gapDiscovery?.attempted)

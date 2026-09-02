@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   MONITOR_SCHEDULER_BUCKET_MS,
+  SCHEDULED_MONITOR_SPACE_SQL,
   monitorSchedulerBucketId,
   monitorSchedulerSecretMatches,
   shouldWakeMonitorScheduler,
@@ -84,10 +85,10 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /readMonitorReliabilityHealth/);
   assert.match(worker, /api\/internal\/reliability/);
   assert.match(worker, /reliability_health_query_failed/);
-  assert.match(worker, /datetime\(r\.last_user_activity_at\) DESC/);
+  assert.match(SCHEDULED_MONITOR_SPACE_SQL, /datetime\(r\.last_user_activity_at\) DESC/);
   assert.match(
-    worker,
-    /ORDER BY CASE WHEN r\.last_user_activity_at IS NULL THEN 1 ELSE 0 END,\s*datetime\(r\.last_user_activity_at\) DESC,\s*CASE WHEN r\.status NOT IN/,
+    SCHEDULED_MONITOR_SPACE_SQL,
+    /ORDER BY CASE WHEN r\.status NOT IN[\s\S]+THEN COALESCE\(datetime\(r\.next_run_at\)/,
   );
   assert.match(worker, /WHERE id != \? AND completed_at IS NOT NULL ORDER BY datetime\(completed_at\) DESC/);
   assert.match(worker, /MONITOR_SCHEDULER_SECRET/);
@@ -106,6 +107,34 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(workflow, /api\/internal\/reliability/);
   assert.match(workflow, /persistentCriticalCount/);
   assert.match(workflow, /jq -e '\.healthy == true'/);
+  assert.match(workflow, /production-reliability-health:/);
+  assert.match(workflow, /needs: wake-background-research/);
+});
+
+test("an older active checkpoint is not starved by a more recently visited active space", () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec(`
+      CREATE TABLE research_spaces (id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL);
+      CREATE TABLE monitor_runs (
+        space_id TEXT PRIMARY KEY, status TEXT NOT NULL, next_run_at TEXT, last_run_at TEXT,
+        updated_at TEXT NOT NULL, lock_expires_at TEXT, automation_paused_at TEXT,
+        last_user_activity_at TEXT
+      );
+      INSERT INTO research_spaces VALUES
+        ('recovering-space', 'anonymous:recovering'),
+        ('recent-space', 'anonymous:recent');
+      INSERT INTO monitor_runs VALUES
+        ('recovering-space', 'deep_reviewing', datetime('now', '-30 minutes'), datetime('now', '-1 day'),
+         datetime('now', '-30 minutes'), NULL, NULL, datetime('now', '-2 hours')),
+        ('recent-space', 'screening', datetime('now', '-5 minutes'), datetime('now', '-1 day'),
+         datetime('now', '-5 minutes'), NULL, NULL, datetime('now'));
+    `);
+    const selected = sqlite.prepare(SCHEDULED_MONITOR_SPACE_SQL).get(1);
+    assert.equal(selected.id, "recovering-space");
+  } finally {
+    sqlite.close();
+  }
 });
 
 test("scheduler reopens an exhausted route only after genuinely new route-attributed candidates arrive", async () => {
