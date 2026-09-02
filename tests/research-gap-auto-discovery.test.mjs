@@ -9,6 +9,7 @@ import {
   continueResearchGapDiscoveryAfterQualityShortfall,
   enqueueResearchGapDiscovery,
   materializeStoredDirectionGapDiscovery,
+  readLearningGapDiscovery,
   safeAutomaticResearchGapQuery,
   supersedeResearchGapDiscovery,
 } from "../lib/research-gap-discovery.ts";
@@ -47,6 +48,13 @@ async function fixture() {
       space_id TEXT PRIMARY KEY, automation_paused_at TEXT, last_user_activity_at TEXT
     );
     CREATE TABLE monitor_query_plans (space_id TEXT, plan_date TEXT);
+    CREATE TABLE monitor_candidate_sources (
+      id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT, source_key TEXT, channel TEXT,
+      query_key TEXT, appearances INTEGER, first_seen_at TEXT, last_seen_at TEXT
+    );
+    CREATE TABLE paper_insights (
+      paper_id TEXT, space_id TEXT, ever_recommended INTEGER, analysis_source TEXT
+    );
     CREATE TABLE research_problems (
       id TEXT PRIMARY KEY, space_id TEXT, track_id TEXT, status TEXT, updated_at TEXT
     );
@@ -229,6 +237,39 @@ test("learning evidence can repair a retryable zero-node route without opening r
       "SELECT status, attempt_count FROM research_gap_discovery_jobs WHERE id = ?",
     ).get(routeJob.id) }, { status: "pending", attempt_count: 0 });
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM research_gap_discovery_jobs").get().count, 2);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("learning discovery counts its shared-queue candidates without a fragile coverage aggregate", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    const job = await enqueueResearchGapDiscovery(database, {
+      spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "learning-counts-v1",
+      queryText: "KLS conjecture original formulation foundational paper",
+    });
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET status = 'ready', attempt_count = 1, queued_count = 3 WHERE id = ?").run(job.id);
+    sqlite.prepare("INSERT INTO monitor_candidate_sources VALUES (?, 'space-a', ?, 'research-route:learning', 'topic', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
+      .run("source-pending", "paper-pending", `track-a:crossref:auto:${job.signalRevision}`);
+    sqlite.prepare("INSERT INTO monitor_candidate_sources VALUES (?, 'space-a', ?, 'research-route:learning', 'topic', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
+      .run("source-recommended", "paper-recommended", `track-a:crossref:auto:${job.signalRevision}`);
+    sqlite.prepare("INSERT INTO monitor_candidate_sources VALUES (?, 'space-a', ?, 'research-route:learning', 'topic', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
+      .run("source-rejected", "paper-rejected", `track-a:crossref:auto:${job.signalRevision}`);
+    sqlite.prepare("INSERT INTO monitor_candidate_sources VALUES (?, 'space-a', ?, 'research-route:learning', 'topic', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
+      .run("source-unrelated", "paper-unrelated", "track-a:crossref:auto:another-signal");
+    sqlite.exec(`
+      INSERT INTO paper_insights VALUES ('paper-recommended', 'space-a', 1, 'deepseek');
+      INSERT INTO paper_insights VALUES ('paper-rejected', 'space-a', 0, 'deepseek_rejected');
+    `);
+
+    const discovery = await readLearningGapDiscovery(database, job.id);
+    assert.deepEqual(discovery && {
+      status: discovery.status,
+      queuedCount: discovery.queuedCount,
+      reviewPendingCount: discovery.reviewPendingCount,
+      reviewedCount: discovery.reviewedCount,
+    }, { status: "ready", queuedCount: 3, reviewPendingCount: 1, reviewedCount: 2 });
   } finally {
     sqlite.close();
   }

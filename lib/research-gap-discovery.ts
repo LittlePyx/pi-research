@@ -1,4 +1,5 @@
 import { researchProblemDiscoveryQuery } from "./research-problem.ts";
+import type { LearningEvidenceDiscovery } from "./learning-path.ts";
 
 export type ResearchGapDiscoveryOrigin = "direction" | "synthesis" | "problem";
 export type ResearchGapDiscoveryPurpose = "route" | "learning";
@@ -28,6 +29,23 @@ type ClaimRow = {
   signal_revision: string;
   query_text: string;
   attempt_count: number;
+};
+
+type LearningDiscoveryJobRow = {
+  id: string;
+  space_id: string;
+  signal_revision: string;
+  status: LearningEvidenceDiscovery["status"];
+  attempt_count: number;
+  queued_count: number;
+  next_retry_at: string | null;
+  updated_at: string;
+};
+
+type LearningDiscoveryCandidateRow = {
+  paper_id: string;
+  ever_recommended: number;
+  analysis_source: string;
 };
 
 export const RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS = 3;
@@ -173,6 +191,42 @@ export async function materializeStoredDirectionGapDiscovery(database: D1Databas
     });
   }
   return { queued: false, reason: "none_due" as const };
+}
+
+export async function readLearningGapDiscovery(
+  database: D1Database,
+  jobId: string | null,
+): Promise<LearningEvidenceDiscovery | null> {
+  if (!jobId) return null;
+  const job = await database.prepare(
+    `SELECT id, space_id, signal_revision, status, attempt_count, queued_count, next_retry_at, updated_at
+     FROM research_gap_discovery_jobs WHERE id = ? AND purpose = 'learning' LIMIT 1`,
+  ).bind(jobId).first<LearningDiscoveryJobRow>();
+  if (!job) return null;
+  const candidates = await database.prepare(
+    `SELECT DISTINCT cs.paper_id, COALESCE(i.ever_recommended, 0) AS ever_recommended,
+      COALESCE(i.analysis_source, 'metadata') AS analysis_source
+     FROM monitor_candidate_sources cs
+     LEFT JOIN paper_insights i ON i.space_id = cs.space_id AND i.paper_id = cs.paper_id
+     WHERE cs.space_id = ? AND cs.source_key = 'research-route:learning' AND cs.query_key LIKE ?
+     LIMIT 100`,
+  ).bind(job.space_id, `%:auto:${job.signal_revision}`).all<LearningDiscoveryCandidateRow>();
+  let reviewPendingCount = 0;
+  let reviewedCount = 0;
+  for (const candidate of candidates.results) {
+    if (candidate.ever_recommended === 1 || ["deepseek", "deepseek_rejected"].includes(candidate.analysis_source)) reviewedCount += 1;
+    else reviewPendingCount += 1;
+  }
+  return {
+    id: job.id,
+    status: job.status,
+    attemptCount: job.attempt_count,
+    queuedCount: job.queued_count,
+    reviewPendingCount,
+    reviewedCount,
+    nextRetryAt: job.next_retry_at,
+    updatedAt: job.updated_at,
+  };
 }
 
 export async function claimResearchGapDiscovery(

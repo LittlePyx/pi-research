@@ -5,7 +5,6 @@ import {
   learningEvidenceStatus,
   learningPathProgressState,
   learningResourceTitleKey,
-  type LearningEvidenceDiscovery,
   type LearningPath,
   type LearningPathState,
   type LearningReadingStatus,
@@ -16,7 +15,7 @@ import {
 } from "../../../lib/learning-path";
 import { enqueueMonitorCandidates, type MonitorCandidateInput } from "../../../lib/monitor-candidate-queue";
 import { researchEvidenceHorizon } from "../../../lib/research-map-evidence";
-import { continueResearchGapDiscoveryAfterQualityShortfall, enqueueResearchGapDiscovery, safeAutomaticResearchGapQuery } from "../../../lib/research-gap-discovery";
+import { continueResearchGapDiscoveryAfterQualityShortfall, enqueueResearchGapDiscovery, readLearningGapDiscovery, safeAutomaticResearchGapQuery } from "../../../lib/research-gap-discovery";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -57,11 +56,6 @@ type DeepSeekResponse = { choices?: Array<{ message?: { content?: string | null 
 type LiveResourceRow = {
   id: string; canonical_id: string; title: string; quality_score: number; ever_recommended: number; reading_status: string; dismissed: number;
 };
-type DiscoveryRow = {
-  id: string; status: LearningEvidenceDiscovery["status"]; attempt_count: number; queued_count: number; next_retry_at: string | null;
-  updated_at: string; review_pending_count: number; reviewed_count: number;
-};
-
 function unboundedDevelopmentRetries() {
   return developmentUnboundedEnabled(getRuntimeEnv().PI_DEVELOPMENT_UNBOUNDED);
 }
@@ -189,31 +183,6 @@ async function liveResourceRows(database: D1Database, spaceId: string) {
   ).bind(spaceId).all<LiveResourceRow>();
 }
 
-async function readDiscovery(database: D1Database, jobId: string | null): Promise<LearningEvidenceDiscovery | null> {
-  if (!jobId) return null;
-  const row = await database.prepare(
-    `SELECT job.id, job.status, job.attempt_count, job.queued_count, job.next_retry_at, job.updated_at,
-      COUNT(DISTINCT CASE WHEN i.ever_recommended = 0 AND i.analysis_source NOT IN ('deepseek', 'deepseek_rejected') THEN cs.paper_id END) AS review_pending_count,
-      COUNT(DISTINCT CASE WHEN i.ever_recommended = 1 OR i.analysis_source IN ('deepseek', 'deepseek_rejected') THEN cs.paper_id END) AS reviewed_count
-     FROM research_gap_discovery_jobs job
-     LEFT JOIN monitor_discovery_coverage coverage ON coverage.space_id = job.space_id AND coverage.route_id = job.track_id
-      AND coverage.source_key = 'research-route:learning' AND coverage.query_key LIKE '%' || job.signal_revision
-     LEFT JOIN monitor_candidate_sources cs ON cs.space_id = coverage.space_id AND cs.source_key = coverage.source_key AND cs.query_key = coverage.query_key
-     LEFT JOIN paper_insights i ON i.space_id = cs.space_id AND i.paper_id = cs.paper_id
-     WHERE job.id = ? GROUP BY job.id`,
-  ).bind(jobId).first<DiscoveryRow>();
-  return row ? {
-    id: row.id,
-    status: row.status,
-    attemptCount: row.attempt_count,
-    queuedCount: row.queued_count,
-    reviewPendingCount: row.review_pending_count,
-    reviewedCount: row.reviewed_count,
-    nextRetryAt: row.next_retry_at,
-    updatedAt: row.updated_at,
-  } : null;
-}
-
 async function readPath(database: D1Database, spaceId: string): Promise<LearningPath | null> {
   const path = await database.prepare(
     "SELECT id, target, target_track_id, parent_path_id, revision, source_revision, title_zh, title_en, rationale_zh, rationale_en, status, analysis_model, estimated_minutes, created_at, updated_at FROM learning_paths WHERE space_id = ? AND status != 'superseded' ORDER BY updated_at DESC LIMIT 1",
@@ -233,7 +202,7 @@ async function readPath(database: D1Database, spaceId: string): Promise<Learning
     const title = learningResourceTitleKey(row.title);
     if (title) liveByTitle.set(title, liveByTitle.has(title) ? null : row);
   }
-  const discoveries = await Promise.all(steps.results.map((step) => readDiscovery(database, step.discovery_job_id)));
+  const discoveries = await Promise.all(steps.results.map((step) => readLearningGapDiscovery(database, step.discovery_job_id)));
   const hydratedSteps = steps.results.map((step, index) => {
     const resources = parseResources(step.resources_json).flatMap((resource) => {
       const canonical = resource.canonicalId?.trim().toLocaleLowerCase() || "";
