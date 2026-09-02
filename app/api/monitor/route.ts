@@ -11,6 +11,7 @@ import { hasStrongFitScoreContradiction, inferModelScoreScale, normalizeModelSco
 import { passesRecommendationGate } from "../../../lib/discovery/review-gate";
 import {
   deepCandidateScore,
+  evidenceReadyRescueCandidates,
   formalRecommendationRescueSize,
   isContinuityDeepCandidate,
   isGuardedFallbackDeepCandidate,
@@ -7895,7 +7896,11 @@ export async function POST(request: Request) {
           const recommendationShortfall = Math.max(0, HIGH_POTENTIAL_DRAFT_TARGET - potentialRecommendations);
           if (recommendationShortfall && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
-            const rescueCandidates = allCandidates.filter((candidate) => !work.evidenceExcludedIds.includes(candidate.canonicalId));
+            const rescueCandidates = evidenceReadyRescueCandidates(
+              allCandidates,
+              work.evidenceExcludedIds,
+              candidateHasReviewableEvidence,
+            );
             const secondWaveLimit = Math.min(
               DEEP_REVIEW_RESCUE_LIMIT,
               DEEP_REVIEW_MAX_LIMIT - work.deepIds.length,
@@ -8157,7 +8162,11 @@ export async function POST(request: Request) {
           }
           if (work.freshLaneActive) return continueAfterFreshLane();
           const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
-          const rescueCandidates = allCandidates.filter((candidate) => !work.evidenceExcludedIds.includes(candidate.canonicalId));
+          const rescueCandidates = evidenceReadyRescueCandidates(
+            allCandidates,
+            work.evidenceExcludedIds,
+            candidateHasReviewableEvidence,
+          );
           const availableCandidates = rescueCandidates.filter((candidate) => !work.deepIds.includes(candidate.canonicalId));
           const formalRescueSize = formalRecommendationRescueSize({
             published,

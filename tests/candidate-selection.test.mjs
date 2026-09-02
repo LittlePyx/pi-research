@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   deepCandidateScore,
+  evidenceReadyRescueCandidates,
   formalRecommendationRescueSize,
   isContinuityDeepCandidate,
   isGuardedFallbackDeepCandidate,
@@ -69,6 +70,24 @@ test("formal recommendation shortfalls trigger more review without lowering qual
   assert.equal(formalRecommendationRescueSize({ published: 2, reviewed: 12, maxReviews: 14, availableCandidates: 12 }), 2);
   assert.equal(formalRecommendationRescueSize({ published: 3, reviewed: 8, maxReviews: 14, availableCandidates: 12 }), 0);
   assert.equal(formalRecommendationRescueSize({ published: 0, reviewed: 14, maxReviews: 14, availableCandidates: 12 }), 0);
+});
+
+test("rescue waves cannot loop on candidates that still lack abstract evidence", () => {
+  const candidates = [
+    { canonicalId: "ready", evidenceReady: true },
+    { canonicalId: "missing", evidenceReady: false },
+    { canonicalId: "already-excluded", evidenceReady: true },
+  ];
+  const eligible = evidenceReadyRescueCandidates(candidates, ["already-excluded"]);
+  assert.deepEqual(eligible.map((candidate) => candidate.canonicalId), ["ready"]);
+  assert.equal(formalRecommendationRescueSize({
+    published: 1,
+    reviewed: 13,
+    maxReviews: 14,
+    availableCandidates: evidenceReadyRescueCandidates([
+      { canonicalId: "missing", evidenceReady: false },
+    ], []).length,
+  }), 0);
 });
 
 function allocationCandidate(canonicalId, overrides = {}) {
