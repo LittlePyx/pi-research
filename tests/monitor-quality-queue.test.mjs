@@ -4,12 +4,33 @@ import test from "node:test";
 
 import {
   MONITOR_QUALITY_QUEUE_CONTINUATION_MS,
+  monitorLastSourceScanAt,
   nextMonitorRunAt,
   shouldStartMonitorQualityQueueContinuation,
 } from "../lib/monitor-quality-queue.mjs";
 
 const now = Date.parse("2026-09-01T08:00:00.000Z");
 const cadenceMs = 24 * 60 * 60 * 1000;
+
+test("quality-only finalization preserves the source scan clock", () => {
+  const completedAt = "2026-09-01T08:00:00.000Z";
+  const previousLastRunAt = "2026-09-01T07:00:00.000Z";
+  assert.equal(monitorLastSourceScanAt({
+    scanMode: "quality_queue",
+    previousLastRunAt,
+    completedAt,
+  }), previousLastRunAt);
+  assert.equal(monitorLastSourceScanAt({
+    scanMode: "quality_queue",
+    previousLastRunAt: null,
+    completedAt,
+  }), null);
+  assert.equal(monitorLastSourceScanAt({
+    scanMode: "full",
+    previousLastRunAt,
+    completedAt,
+  }), completedAt);
+});
 
 test("a recent completed scan hands persisted backlog to a bounded quality-only continuation", () => {
   const base = {
@@ -61,5 +82,8 @@ test("the monitor persists quality-only work as a resumable job and marks bounde
   assert.match(route, /finalizeEvidenceExcludedCandidates/);
   assert.match(route, /Abstract evidence unavailable after bounded enrichment/);
   assert.match(route, /remainingQualityQueueCount/);
+  assert.match(route, /SELECT status, discovery_round, last_run_at, lock_token/);
+  assert.match(route, /monitorLastSourceScanAt\(\{[\s\S]*previousLastRunAt: validatedRun\?\.last_run_at/);
+  assert.doesNotMatch(route, /work\.scanMode === "quality_queue" \? previous\?\.last_run_at/);
   assert.match(route, /work\.scanMode === "quality_queue"[\s\S]*UPDATE monitor_runs SET status = 'ready', next_run_at/);
 });

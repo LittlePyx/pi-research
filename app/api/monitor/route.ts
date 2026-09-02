@@ -61,6 +61,7 @@ import { enqueueMonitorCandidates } from "../../../lib/monitor-candidate-queue";
 import { buildReliabilityProgram } from "../../../lib/monitor-reliability.mjs";
 import { buildMonitorBudgetDecision } from "../../../lib/monitor-budget-policy.mjs";
 import {
+  monitorLastSourceScanAt,
   nextMonitorRunAt,
   shouldStartMonitorQualityQueueContinuation,
 } from "../../../lib/monitor-quality-queue.mjs";
@@ -687,6 +688,7 @@ type MonitorLeaseHeartbeat = {
 type MonitorLeaseRun = {
   status: string;
   discovery_round: number;
+  last_run_at: string | null;
   lock_token: string | null;
   lock_expires_at: string | null;
   active_job_id: string | null;
@@ -6895,7 +6897,7 @@ export async function POST(request: Request) {
     let validatedRun: MonitorLeaseRun | null = null;
     if (action === "advance") {
       validatedRun = await database.prepare(
-        "SELECT status, discovery_round, lock_token, lock_expires_at, active_job_id, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
+        "SELECT status, discovery_round, last_run_at, lock_token, lock_expires_at, active_job_id, lease_generation FROM monitor_runs WHERE space_id = ? LIMIT 1",
       ).bind(space.id).first<MonitorLeaseRun>();
       if (!monitorLeaseCredentialsMatch(validatedRun, requestedLease)) {
         return Response.json(await readState(database, space, {
@@ -7156,7 +7158,11 @@ export async function POST(request: Request) {
       const compactResetAt = new Date(`${shanghaiDateKey(new Date(completedAt.getTime() + CADENCE_MS))}T00:00:00+08:00`).toISOString();
       const remainingQualityCandidates = await pendingCandidateQueue(database, space.id);
       const remainingQualityQueueCount = remainingQualityCandidates.length;
-      const lastSourceScanAt = work.scanMode === "quality_queue" ? previous?.last_run_at || null : completedAt.toISOString();
+      const lastSourceScanAt = monitorLastSourceScanAt({
+        scanMode: work.scanMode,
+        previousLastRunAt: validatedRun?.last_run_at || null,
+        completedAt: completedAt.toISOString(),
+      });
       const nextRunAt = nextMonitorRunAt({
         now: completedAt.getTime(),
         lastSourceScanAt,
