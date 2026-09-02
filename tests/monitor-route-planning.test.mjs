@@ -83,6 +83,17 @@ test("a prior-version control is stable, recoverable, and limited to one selecte
     routeRevisionId: "revision-1",
     routeVersion: 1,
   });
+  const baselineKey = researchRouteExperimentPlanKey({
+    experimentArm: "shadow",
+    routeRevisionId: "route-baseline:track-a",
+    routeVersion: 1,
+  }, "months-track-a");
+  assert.match(baselineKey, /route-baseline%3Atrack-a/);
+  assert.deepEqual(parseResearchRouteExperimentQueryKey(`${baselineKey}:abcdef`), {
+    experimentArm: "shadow",
+    routeRevisionId: "route-baseline:track-a",
+    routeVersion: 1,
+  });
   assert.equal(RESEARCH_ROUTE_SHADOW_MAX_ATTEMPTS, 2);
   assert.equal(RESEARCH_ROUTE_SHADOW_RESULT_LIMIT, 8);
   const selected = selectPrioritizedDiscoveryPlans([

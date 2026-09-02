@@ -208,8 +208,8 @@ export const RESEARCH_ROUTE_SHADOW_EXPERIMENT_SQL = `WITH version_pairs AS (
   coverage.source_key, coverage.query_key, COALESCE(coverage.attempt_count, 0) AS attempt_count
  FROM experiment_arms arm
  LEFT JOIN monitor_discovery_coverage coverage ON coverage.space_id = arm.space_id
-  AND substr(coverage.query_key, 1, length('research-route-version~' || arm.experiment_arm || '~' || arm.revision_id || '~' || arm.version || '~'))
-   = 'research-route-version~' || arm.experiment_arm || '~' || arm.revision_id || '~' || arm.version || '~'
+  AND substr(coverage.query_key, 1, length('research-route-version~' || arm.experiment_arm || '~' || replace(arm.revision_id, ':', '%3A') || '~' || arm.version || '~'))
+   = 'research-route-version~' || arm.experiment_arm || '~' || replace(arm.revision_id, ':', '%3A') || '~' || arm.version || '~'
 ), arm_candidates AS (
  SELECT DISTINCT coverage.track_id, coverage.experiment_arm, coverage.revision_id, candidate.paper_id
  FROM arm_coverage coverage

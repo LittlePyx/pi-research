@@ -21,8 +21,9 @@ export function researchRouteExperimentPlanKey(
   const revisionId = identity.routeRevisionId.trim();
   const routeVersion = Math.max(1, Math.floor(identity.routeVersion));
   const safeSuffix = suffix.trim().replace(/~/g, "-");
-  if (!/^[A-Za-z0-9._-]+$/.test(revisionId) || !safeSuffix) throw new Error("route experiment identity is incomplete");
-  return `research-route-version~${identity.experimentArm}~${revisionId}~${routeVersion}~${safeSuffix}`;
+  if (!/^[A-Za-z0-9._:-]+$/.test(revisionId) || !safeSuffix) throw new Error("route experiment identity is incomplete");
+  const encodedRevisionId = encodeURIComponent(revisionId).replace(/~/g, "%7E");
+  return `research-route-version~${identity.experimentArm}~${encodedRevisionId}~${routeVersion}~${safeSuffix}`;
 }
 
 export function parseResearchRouteExperimentQueryKey(queryKey: string): ResearchRouteExperimentIdentity | null {
@@ -31,7 +32,12 @@ export function parseResearchRouteExperimentQueryKey(queryKey: string): Research
   if (parts.length < 5 || parts[0] !== "research-route-version") return null;
   const experimentArm = parts[1];
   if (experimentArm !== "current" && experimentArm !== "shadow") return null;
-  const routeRevisionId = (parts[2] || "").trim();
+  let routeRevisionId = "";
+  try {
+    routeRevisionId = decodeURIComponent((parts[2] || "").trim());
+  } catch {
+    return null;
+  }
   const routeVersion = Number(parts[3]);
   if (!routeRevisionId || !Number.isInteger(routeVersion) || routeVersion < 1) return null;
   return { experimentArm, routeRevisionId, routeVersion };
