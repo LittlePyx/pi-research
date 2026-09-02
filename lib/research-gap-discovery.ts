@@ -43,8 +43,6 @@ type LearningDiscoveryJobRow = {
   updated_at: string;
 };
 
-type LearningDiscoveryCoverageRow = { query_key: string };
-
 type LearningDiscoveryCandidateRow = {
   paper_id: string;
   ever_recommended: number;
@@ -206,22 +204,8 @@ export async function readLearningGapDiscovery(
      FROM research_gap_discovery_jobs WHERE id = ? AND purpose = 'learning' LIMIT 1`,
   ).bind(jobId).first<LearningDiscoveryJobRow>();
   if (!job) return null;
-  const coverage = await database.prepare(
-    `SELECT DISTINCT query_key FROM monitor_discovery_coverage
-     WHERE space_id = ? AND route_id = ? AND source_key = 'research-route:learning' AND query_key LIKE ?
-     LIMIT 24`,
-  ).bind(job.space_id, job.track_id, `${job.track_id}:%:auto:${job.signal_revision}`).all<LearningDiscoveryCoverageRow>();
-  const queryKeys = coverage.results.map((row) => row.query_key);
-  if (!queryKeys.length) return {
-    id: job.id,
-    status: job.status,
-    attemptCount: job.attempt_count,
-    queuedCount: job.queued_count,
-    reviewPendingCount: 0,
-    reviewedCount: 0,
-    nextRetryAt: job.next_retry_at,
-    updatedAt: job.updated_at,
-  };
+  const queryKeys = ["crossref", "openalex", "arxiv", "shared-monitor-baseline"]
+    .map((source) => `${job.track_id}:${source}:auto:${job.signal_revision}`);
   const candidates = await database.prepare(
     `SELECT DISTINCT cs.paper_id, COALESCE(i.ever_recommended, 0) AS ever_recommended,
       COALESCE(i.analysis_source, 'metadata') AS analysis_source

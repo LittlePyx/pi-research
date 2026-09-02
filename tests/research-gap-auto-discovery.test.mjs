@@ -48,9 +48,6 @@ async function fixture() {
       space_id TEXT PRIMARY KEY, automation_paused_at TEXT, last_user_activity_at TEXT
     );
     CREATE TABLE monitor_query_plans (space_id TEXT, plan_date TEXT);
-    CREATE TABLE monitor_discovery_coverage (
-      id TEXT PRIMARY KEY, space_id TEXT, route_id TEXT, source_key TEXT, query_key TEXT
-    );
     CREATE TABLE monitor_candidate_sources (
       id TEXT PRIMARY KEY, space_id TEXT, paper_id TEXT, source_key TEXT, channel TEXT,
       query_key TEXT, appearances INTEGER, first_seen_at TEXT, last_seen_at TEXT
@@ -253,8 +250,6 @@ test("learning discovery counts its shared-queue candidates without a fragile co
       queryText: "KLS conjecture original formulation foundational paper",
     });
     sqlite.prepare("UPDATE research_gap_discovery_jobs SET status = 'ready', attempt_count = 1, queued_count = 3 WHERE id = ?").run(job.id);
-    sqlite.prepare("INSERT INTO monitor_discovery_coverage VALUES (?, 'space-a', 'track-a', 'research-route:learning', ?)")
-      .run("coverage-learning", `track-a:crossref:auto:${job.signalRevision}`);
     sqlite.prepare("INSERT INTO monitor_candidate_sources VALUES (?, 'space-a', ?, 'research-route:learning', 'topic', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
       .run("source-pending", "paper-pending", `track-a:crossref:auto:${job.signalRevision}`);
     sqlite.prepare("INSERT INTO monitor_candidate_sources VALUES (?, 'space-a', ?, 'research-route:learning', 'topic', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
