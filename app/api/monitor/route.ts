@@ -17,6 +17,7 @@ import {
   isGuardedFallbackDeepCandidate,
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
+  selectAgedProvenanceFairCandidates,
   selectBalancedByGroup,
   selectBudgetedDeepReviewCandidates,
   summarizeDeepSelectionOutcomes,
@@ -393,6 +394,8 @@ type Candidate = {
   source: "crossref" | "semantic_scholar" | "openalex" | "arxiv" | "datacite" | "research-route" | "research-synthesis" | "research-network";
   discoveryChannel: "topic" | "journal" | "author" | "semantic" | "preprint" | "citation";
   provenance: CandidateProvenance[];
+  qualityQueueLane?: "learning" | "gap" | "route" | "";
+  qualityQueueFirstSeenAt?: string | null;
 };
 type CandidateProvenance = {
   sourceKey: string;
@@ -4271,29 +4274,80 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
   // recommended; final reconciliation and job counts still need that record.
   const recommendationEligibility = explicitlyRestricted ? "1 = 1" : "COALESCE(i.ever_recommended, 0) = 0";
   const rows = await database.prepare(
-    `SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
-     p.citation_count, p.relevance_score, i.abstract_text, i.quality_score, i.priority_venue
-     FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
-     WHERE p.space_id = ? AND ${candidateCondition}
-       AND ${recommendationEligibility}
-       AND NOT EXISTS (
-         SELECT 1 FROM paper_feedback suppressed
-         WHERE suppressed.space_id = p.space_id AND suppressed.paper_id = p.id
-           AND suppressed.feedback = 'not_relevant'
-       )
-       AND ${activeResearchRouteSupplyPredicate("p")}
-     ORDER BY CASE WHEN i.analysis_source = 'deepseek_verification_pending' THEN 3
-       WHEN i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded'
-         AND (lower(i.screening_reason) LIKE '%timeout%' OR lower(i.screening_reason) LIKE '%aborted%' OR lower(i.screening_reason) LIKE '%temporarily unavailable%') THEN 2
-       WHEN i.analysis_source = 'deepseek_screened' THEN 1 ELSE 0 END DESC,
-       CASE WHEN i.analysis_source IN ('deepseek_screened', 'deepseek_verification_pending') THEN i.llm_relevance_score ELSE p.relevance_score END DESC,
-       p.relevance_score DESC,
-       CASE WHEN length(trim(i.abstract_text)) >= 120 THEN 1 ELSE 0 END DESC,
-       i.quality_score DESC, p.citation_count DESC, p.discovered_at DESC LIMIT 360`,
-  ).bind(spaceId, ...candidateParameters).all<{
+    `WITH quality_fairness AS (
+       SELECT cs.space_id, cs.paper_id,
+        CASE MAX(CASE
+          WHEN cs.source_key = 'research-route:learning' THEN 3
+          WHEN cs.source_key = 'research-route:gap' OR cs.source_key LIKE 'crossref:route-gap:%' THEN 2
+          WHEN cs.source_key LIKE 'research-route:%' OR cs.source_key LIKE 'crossref:route:%'
+            OR COALESCE(coverage.route_id, '') <> '' THEN 1
+          ELSE 0 END)
+         WHEN 3 THEN 'learning' WHEN 2 THEN 'gap' WHEN 1 THEN 'route' ELSE '' END AS quality_queue_lane,
+        MIN(CASE WHEN cs.source_key LIKE 'research-route:%' OR cs.source_key LIKE 'crossref:route:%'
+          OR cs.source_key LIKE 'crossref:route-gap:%' OR COALESCE(coverage.route_id, '') <> ''
+          THEN cs.first_seen_at END) AS quality_queue_first_seen_at
+       FROM monitor_candidate_sources cs
+       JOIN monitored_papers source_paper ON source_paper.id = cs.paper_id AND source_paper.space_id = cs.space_id
+       LEFT JOIN monitor_discovery_coverage coverage ON coverage.space_id = cs.space_id
+        AND coverage.horizon = source_paper.horizon AND coverage.source_key = cs.source_key AND coverage.query_key = cs.query_key
+       WHERE cs.space_id = ?
+        AND NOT EXISTS (
+         SELECT 1 FROM research_track_papers inactive_route_paper
+         WHERE inactive_route_paper.space_id = cs.space_id
+          AND inactive_route_paper.canonical_id = source_paper.canonical_id
+          AND inactive_route_paper.track_id = coverage.route_id
+          AND inactive_route_paper.curation_status = 'deactivated'
+        )
+       GROUP BY cs.space_id, cs.paper_id
+     ), eligible_candidates AS (
+       SELECT p.id AS paper_id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.source, p.horizon,
+        p.citation_count, p.relevance_score, p.discovered_at, i.abstract_text, i.quality_score, i.priority_venue,
+        i.analysis_source, i.verification_status, i.screening_reason, i.llm_relevance_score,
+        COALESCE(quality_fairness.quality_queue_lane, '') AS quality_queue_lane,
+        quality_fairness.quality_queue_first_seen_at
+       FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
+       LEFT JOIN quality_fairness ON quality_fairness.space_id = p.space_id AND quality_fairness.paper_id = p.id
+       WHERE p.space_id = ? AND ${candidateCondition}
+        AND ${recommendationEligibility}
+        AND NOT EXISTS (
+          SELECT 1 FROM paper_feedback suppressed
+          WHERE suppressed.space_id = p.space_id AND suppressed.paper_id = p.id
+            AND suppressed.feedback = 'not_relevant'
+        )
+        AND ${activeResearchRouteSupplyPredicate("p")}
+     ), ranked_candidates AS (
+       SELECT eligible_candidates.*,
+        ROW_NUMBER() OVER (PARTITION BY quality_queue_lane ORDER BY
+          datetime(quality_queue_first_seen_at) ASC,
+          CASE WHEN analysis_source IN ('deepseek_screened', 'deepseek_verification_pending') THEN llm_relevance_score ELSE relevance_score END DESC,
+          relevance_score DESC, citation_count DESC, datetime(discovered_at) DESC
+        ) AS quality_queue_lane_rank
+       FROM eligible_candidates
+     )
+     SELECT paper_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon,
+      citation_count, relevance_score, abstract_text, quality_score, priority_venue,
+      quality_queue_lane, quality_queue_first_seen_at
+     FROM ranked_candidates
+     ORDER BY CASE WHEN quality_queue_lane <> ''
+        AND quality_queue_lane_rank <= 8
+        AND datetime(quality_queue_first_seen_at) <= datetime('now', '-30 minutes') THEN 1 ELSE 0 END DESC,
+       CASE WHEN quality_queue_lane_rank <= 8
+         AND datetime(quality_queue_first_seen_at) <= datetime('now', '-30 minutes')
+         THEN CASE quality_queue_lane WHEN 'learning' THEN 3 WHEN 'gap' THEN 2 WHEN 'route' THEN 1 ELSE 0 END
+         ELSE 0 END DESC,
+       CASE WHEN analysis_source = 'deepseek_verification_pending' THEN 3
+       WHEN analysis_source = 'deepseek_rejected' AND verification_status = 'degraded'
+         AND (lower(screening_reason) LIKE '%timeout%' OR lower(screening_reason) LIKE '%aborted%' OR lower(screening_reason) LIKE '%temporarily unavailable%') THEN 2
+       WHEN analysis_source = 'deepseek_screened' THEN 1 ELSE 0 END DESC,
+       CASE WHEN analysis_source IN ('deepseek_screened', 'deepseek_verification_pending') THEN llm_relevance_score ELSE relevance_score END DESC,
+       relevance_score DESC,
+       CASE WHEN length(trim(abstract_text)) >= 120 THEN 1 ELSE 0 END DESC,
+       quality_score DESC, citation_count DESC, datetime(discovered_at) DESC LIMIT 360`,
+  ).bind(spaceId, spaceId, ...candidateParameters).all<{
     paper_id: string; canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
     published_at: string | null; source: string; horizon: Horizon; citation_count: number; relevance_score: number;
-    abstract_text: string; quality_score: number; priority_venue: number;
+    abstract_text: string; quality_score: number; priority_venue: number; quality_queue_lane: Candidate["qualityQueueLane"];
+    quality_queue_first_seen_at: string | null;
   }>();
   const provenanceByPaper = new Map<string, CandidateProvenance[]>();
   for (let start = 0; start < rows.results.length; start += 70) {
@@ -4351,6 +4405,8 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
     relevanceScore: row.relevance_score,
     qualityScore: row.quality_score,
     priorityVenue: Boolean(row.priority_venue),
+    qualityQueueLane: row.quality_queue_lane || "",
+    qualityQueueFirstSeenAt: row.quality_queue_first_seen_at,
     source: row.source === "semantic_scholar" ? "semantic_scholar" as const
       : row.source === "openalex" ? "openalex" as const
         : row.source === "arxiv" ? "arxiv" as const
@@ -4422,7 +4478,19 @@ function researchLeadLane(candidate: Candidate) {
 function selectResearchLeadScreeningCandidates(candidates: Candidate[], limit: number) {
   if (!limit) return [];
   const ranked = selectHorizonScreeningCandidates(candidates, candidates.length);
-  return selectBalancedByGroup(ranked, researchLeadLane, limit);
+  const aged = selectAgedProvenanceFairCandidates(ranked, {
+    limit: Math.min(2, limit),
+    canonicalId: (candidate) => candidate.canonicalId,
+    lane: (candidate) => candidate.qualityQueueLane || "",
+    firstSeenAt: (candidate) => candidate.qualityQueueFirstSeenAt,
+  });
+  const agedIds = new Set(aged.map((candidate) => candidate.canonicalId));
+  const fill = selectBalancedByGroup(
+    ranked.filter((candidate) => !agedIds.has(candidate.canonicalId)),
+    researchLeadLane,
+    limit - aged.length,
+  );
+  return [...aged, ...fill];
 }
 
 function selectFreshLaneScreeningCandidates(candidates: Candidate[], limit: number) {
@@ -6031,6 +6099,8 @@ function chooseBudgetedDeepCandidateIds(
       directionKey: candidateDirectionKey(candidate),
       evidenceReady: candidateHasReviewableEvidence(candidate),
       horizon: candidate.horizon,
+      qualityQueueLane: candidate.qualityQueueLane || "",
+      qualityQueueFirstSeenAt: candidate.qualityQueueFirstSeenAt || null,
     }];
   });
   return selectBudgetedDeepReviewCandidates(items, { limit, pinnedIds: pinned }).map((item) => item.canonicalId);

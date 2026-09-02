@@ -51,6 +51,14 @@ test("route candidates cannot starve and Today exposes explicit route provenance
   assert.match(monitor, /open-question-or-network/);
   assert.match(monitor, /route-structure/);
   assert.match(monitor, /candidate\.provenance\.some\(isMonitorRouteProvenance\)/);
+  assert.match(monitor, /WITH quality_fairness AS/);
+  assert.match(monitor, /WHEN cs\.source_key = 'research-route:learning' THEN 3/);
+  assert.match(monitor, /WHEN cs\.source_key = 'research-route:gap' OR cs\.source_key LIKE 'crossref:route-gap:%' THEN 2/);
+  assert.match(monitor, /ROW_NUMBER\(\) OVER \(PARTITION BY quality_queue_lane/);
+  assert.match(monitor, /quality_queue_lane_rank <= 8/);
+  assert.match(monitor, /datetime\(quality_queue_first_seen_at\) <= datetime\('now', '-30 minutes'\)/);
+  assert.match(monitor, /selectAgedProvenanceFairCandidates/);
+  assert.match(monitor, /qualityQueueFirstSeenAt: candidate\.qualityQueueFirstSeenAt \|\| null/);
   assert.match(monitor, /i\.llm_recommended = 1 AND i\.analysis_source = 'deepseek'/);
   assert.match(monitor, /discoveryOrigin/);
   assert.match(monitor, /discovery_route_impact_zh/);

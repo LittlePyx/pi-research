@@ -8,6 +8,7 @@ import {
   isGuardedFallbackDeepCandidate,
   isPrimaryDeepCandidate,
   isRescueDeepCandidate,
+  selectAgedProvenanceFairCandidates,
   selectBalancedByGroup,
   selectBudgetedDeepReviewCandidates,
   summarizeDeepSelectionOutcomes,
@@ -116,6 +117,67 @@ test("fresh discoveries and research routes cannot be starved by a stronger back
   assert.ok(selected.filter((item) => item.isCurrentDiscovery).length >= 5);
   assert.ok(selected.filter((item) => item.isRouteOrigin).length >= 2);
   assert.ok(selected.some((item) => !item.isCurrentDiscovery));
+});
+
+test("aged learning and gap provenance receive bounded evaluation opportunities", () => {
+  const now = Date.parse("2026-09-02T12:00:00.000Z");
+  const ranked = [
+    allocationCandidate("strong-route", {
+      score: 99,
+      isRouteOrigin: true,
+      qualityQueueLane: "route",
+      qualityQueueFirstSeenAt: "2026-09-02T11:50:00.000Z",
+    }),
+    allocationCandidate("old-route", {
+      score: 98,
+      isRouteOrigin: true,
+      qualityQueueLane: "route",
+      qualityQueueFirstSeenAt: "2026-09-01T06:00:00.000Z",
+    }),
+    allocationCandidate("old-learning", {
+      score: 55,
+      isRouteOrigin: true,
+      qualityQueueLane: "learning",
+      qualityQueueFirstSeenAt: "2026-09-01T10:00:00.000Z",
+    }),
+    allocationCandidate("old-gap", {
+      score: 54,
+      isRouteOrigin: true,
+      qualityQueueLane: "gap",
+      qualityQueueFirstSeenAt: "2026-09-01T09:00:00.000Z",
+    }),
+  ];
+  const protectedCandidates = selectAgedProvenanceFairCandidates(ranked, {
+    limit: 2,
+    now,
+    canonicalId: (candidate) => candidate.canonicalId,
+    lane: (candidate) => candidate.qualityQueueLane,
+    firstSeenAt: (candidate) => candidate.qualityQueueFirstSeenAt,
+  });
+  assert.deepEqual(protectedCandidates.map((candidate) => candidate.canonicalId), ["old-learning", "old-gap"]);
+
+  const selected = selectBudgetedDeepReviewCandidates([
+    ...Array.from({ length: 10 }, (_, index) => allocationCandidate(`backlog-${index}`, { score: 110 - index })),
+    ...ranked,
+  ], { limit: 8 });
+  assert.ok(selected.some((candidate) => candidate.canonicalId === "old-learning"));
+  assert.ok(selected.some((candidate) => candidate.canonicalId === "old-gap"));
+});
+
+test("fresh route provenance keeps normal quality ordering until it actually ages", () => {
+  const protectedCandidates = selectAgedProvenanceFairCandidates([
+    allocationCandidate("fresh-learning", {
+      qualityQueueLane: "learning",
+      qualityQueueFirstSeenAt: "2026-09-02T11:50:00.000Z",
+    }),
+  ], {
+    limit: 1,
+    now: Date.parse("2026-09-02T12:00:00.000Z"),
+    canonicalId: (candidate) => candidate.canonicalId,
+    lane: (candidate) => candidate.qualityQueueLane,
+    firstSeenAt: (candidate) => candidate.qualityQueueFirstSeenAt,
+  });
+  assert.deepEqual(protectedCandidates, []);
 });
 
 test("newest-horizon papers keep two deep-review opportunities without bypassing quality", () => {
