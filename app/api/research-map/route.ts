@@ -244,6 +244,15 @@ type TrackReviewQueueCountRow = {
   recommended_count: number;
   last_queued_at: string | null;
 };
+type TrackGapDiscoveryRow = {
+  track_id: string;
+  origin: "direction" | "synthesis" | "problem";
+  status: "pending" | "running" | "retryable" | "ready" | "degraded" | "superseded";
+  attempt_count: number;
+  queued_count: number;
+  next_retry_at: string | null;
+  updated_at: string;
+};
 type RoutePortfolioCountRow = {
   discovered_count: number;
   queued_count: number;
@@ -2054,7 +2063,7 @@ async function decideResearchRouteEvolution(
 
 async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
   await ensureResearchRouteBaselines(database, spaceId);
-  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, discoveryEffectsResult, routePortfolioCounts, routeRevisionsResult, routeEffectivenessResult, routeExperimentResult] = await Promise.all([
+  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, gapDiscoveryResult, discoveryEffectsResult, routePortfolioCounts, routeRevisionsResult, routeEffectivenessResult, routeExperimentResult] = await Promise.all([
     database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
       .bind(spaceId).all<TrackRow>(),
     database.prepare(
@@ -2094,6 +2103,13 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
     ).bind(spaceId).all<TrackLatestChangeRow>(),
     database.prepare(RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL)
       .bind(spaceId, spaceId).all<TrackReviewQueueCountRow>(),
+    database.prepare(
+      `SELECT track_id, origin, status, attempt_count, queued_count, next_retry_at, updated_at
+       FROM (
+        SELECT job.*, ROW_NUMBER() OVER (PARTITION BY track_id ORDER BY datetime(created_at) DESC, job.rowid DESC) AS job_rank
+        FROM research_gap_discovery_jobs job WHERE space_id = ?
+       ) WHERE job_rank = 1`,
+    ).bind(spaceId).all<TrackGapDiscoveryRow>(),
     database.prepare(RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL)
       .bind(spaceId, spaceId).all<TrackDiscoveryEffectRow>(),
     database.prepare(RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL)
@@ -2113,6 +2129,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   ]);
   const evidenceCountsByTrack = new Map(evidenceCountsResult.results.map((row) => [row.track_id, row]));
   const reviewQueueCountsByTrack = new Map(reviewQueueCountsResult.results.map((row) => [row.track_id, row]));
+  const gapDiscoveryByTrack = new Map(gapDiscoveryResult.results.map((row) => [row.track_id, row]));
   const discoveryEffectsByTrack = new Map(discoveryEffectsResult.results.map((row) => [row.track_id, row]));
   const latestChangeByTrack = new Map(latestChangesResult.results.map((row) => [row.track_id, row]));
   const effectivenessMetricsByTrack = new Map<string, ReturnType<typeof researchRouteEffectivenessMetrics>[]>();
@@ -2274,6 +2291,17 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
         summaryEn: change.summary_en,
         confidence: change.confidence,
         createdAt: change.created_at,
+      } : null;
+    })(),
+    gapDiscovery: (() => {
+      const job = gapDiscoveryByTrack.get(row.id);
+      return job ? {
+        origin: job.origin,
+        status: job.status,
+        attemptCount: Math.max(0, job.attempt_count || 0),
+        queuedCount: Math.max(0, job.queued_count || 0),
+        nextRetryAt: job.next_retry_at,
+        updatedAt: job.updated_at,
       } : null;
     })(),
     routeRevisions: routeRevisionsByTrack.get(row.id) || [],

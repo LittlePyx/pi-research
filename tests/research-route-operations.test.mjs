@@ -118,7 +118,7 @@ test("paused routes leave automatic guidance and confirmed-evidence retrieval wi
   }
 });
 
-test("route cards and narrow screens render one shared five-stage funnel source", async () => {
+test("route management keeps one shared five-stage funnel while route cards stay compact", async () => {
   const [client, styles, mapRoute, monitorRoute] = await Promise.all([
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -126,11 +126,13 @@ test("route cards and narrow screens render one shared five-stage funnel source"
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.equal(client.match(/<RoutePipelineFunnel track=/g)?.length, 2);
+  assert.equal(client.match(/<RoutePipelineFunnel track=/g)?.length, 1);
   for (const field of ["discoveredCount", "queued", "reviewing", "deepReviewedCount", "recommendedCount"]) {
     assert.match(client, new RegExp(field));
   }
   assert.match(client, /confirmedRouteEvidenceCount\(track\)/);
+  const routeCards = client.slice(client.indexOf('className="v2-route-grid"'), client.indexOf('view === "thread"'));
+  assert.doesNotMatch(routeCards, /RoutePipelineFunnel|RouteLearningNote|v2-direction-role-control/);
   assert.match(client, /暂停只停止新发现，不清除任何历史/);
   assert.match(client, /历史、候选、推荐和阅读记录全部保留/);
   assert.match(styles, /\.v2-route-pipeline\s*\{[^}]*grid-template-columns:\s*repeat\(5,/);

@@ -26,8 +26,8 @@ test("server-renders the Pi Research application", async () => {
   assert.match(html, /近 14 天/);
   assert.match(html, /三个时间窗，持续向前挖掘/);
   assert.match(html, /设置重点来源/);
-  assert.match(html, /先看今天最重要的变化/);
-  assert.match(html, /匿名浏览器工作区/);
+  assert.match(html, /今天先处理什么/);
+  assert.doesNotMatch(html, /class="v2-isolation"/);
 });
 
 test("ships live monitoring, deduplication, and readable type", async () => {
@@ -410,10 +410,10 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-route-workspace-tabs/);
   assert.match(css, /\.v2-route-evidence-chain/);
   assert.match(client, /v2-route-discovery-origin/);
-  assert.match(client, /研究路线深挖/);
+  assert.match(client, /当前优先事项/);
   assert.match(client, /历史奠基文献/);
   assert.match(client, /monitorPaperHorizonLabel/);
-  assert.match(client, /今日质量评估/);
+  assert.match(client, /篇候选正在质量评估/);
   assert.match(css, /traceable route discovery and quality-review handoff/);
   assert.match(css, /\.v2-route-quality-flow/);
   assert.match(worker, /runScheduledMonitorSweep/);
@@ -462,7 +462,8 @@ test("builds persistent personalized learning paths from real research papers", 
   assert.match(client, /按全空间重新规划/);
   assert.match(client, /activeLearningState\.path \? generateLearningPath\(activeLearningState\.path\.target, activeLearningState\.path\.targetTrackId\) : generateLearningPath\(learningTarget\)/);
   assert.match(client, /learningResourceSignals/);
-  assert.match(client, /真实学习材料/);
+  assert.match(client, /学习材料/);
+  assert.match(client, /<details className="v2-learning-guidance">/);
   assert.match(client, /完成检查/);
   assert.doesNotMatch(client, /Schrödinger’s Problem and Entropic Transport/);
   assert.doesNotMatch(client, /Mean-Field Schrödinger Problems: A Survey/);
@@ -562,11 +563,11 @@ test("keeps a durable, view-aware paper inbox with reversible decisions", async 
   assert.match(client, /returnPaperToInbox/);
   assert.match(client, /paperReturnView/);
   assert.match(client, /window\.history\.pushState/);
-  assert.match(client, /每篇论文都有明确去处/);
+  assert.doesNotMatch(client, /<section className="v2-library-overview"/);
   assert.match(ask, /const model = "deepseek-v4-pro"/);
   assert.match(spaces, /modelConfigured \? "deepseek-v4-pro"/);
   assert.match(css, /Pi Research V7 — durable reading inbox and calmer navigation/);
-  assert.match(css, /\.v2-library-overview/);
+  assert.match(css, /\.v2-library-paper-actions/);
   assert.match(css, /\.v2-library-paper-actions/);
 });
 

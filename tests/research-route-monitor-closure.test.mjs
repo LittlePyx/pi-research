@@ -26,8 +26,12 @@ test("route, gap, synthesis, and citation-network discoveries share the daily qu
   assert.match(mapRoute, /RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL/);
   assert.match(mapRoute, /RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL/);
   assert.match(queue, /dismissed\.feedback = 'not_relevant'/);
-  assert.match(app, /const inReview = pipeline\.queued \+ pipeline\.reviewing/);
-  assert.match(app, /累计 \$\{pipeline\.recommended\} 篇已通过/);
+  assert.match(app, /const pipeline = routeQualityPipeline\(track\)/);
+  assert.match(app, /pipeline\.queued \+ pipeline\.reviewing/);
+  assert.match(app, /ResearchGapDiscoveryStatus/);
+  assert.match(app, /queuedForReviewCount/);
+  assert.match(app, /reviewingForReviewCount/);
+  assert.match(app, /recommendedCandidateCount/);
   assert.match(app, /RouteDiscoveryLoop/);
   assert.match(app, /前沿追踪/);
   assert.match(app, /奠基补齐/);

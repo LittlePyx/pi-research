@@ -259,6 +259,15 @@ export type ResearchRouteMonitoringStatus = "active" | "paused";
 export type ResearchRouteOperationalStatus = "paused" | "retryable" | "degraded" | "learning" | "healthy" | "scheduled";
 export type ResearchRouteLearningSignal = "paused" | "reinforcing" | "awaiting_feedback" | "rebalancing" | "observing" | "neutral";
 
+export type ResearchGapDiscoveryProgress = {
+  origin: "direction" | "synthesis" | "problem";
+  status: "pending" | "running" | "retryable" | "ready" | "degraded" | "superseded";
+  attemptCount: number;
+  queuedCount: number;
+  nextRetryAt: string | null;
+  updatedAt: string;
+};
+
 export type ResearchRouteAttentionKind = "recover" | "today" | "quality_review" | "confirm_evidence" | "evidence_gap" | "maintain";
 
 export type ResearchRouteAttention = {
@@ -353,6 +362,7 @@ export type ResearchTrack = {
   lastQueuedAt: string | null;
   discoveryEffect: ResearchRouteDiscoveryEffect;
   latestChange: ResearchTrackLatestChange | null;
+  gapDiscovery: ResearchGapDiscoveryProgress | null;
   routeRevisions?: ResearchRouteRevision[];
   buildStatus: ResearchTrackBuildStatus;
   buildAttemptCount: number;

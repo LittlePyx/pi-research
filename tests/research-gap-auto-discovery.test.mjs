@@ -226,5 +226,6 @@ test("scheduler and API keep automatic gap discovery bounded and inside the shar
   assert.match(problem, /origin: "problem"/);
   assert.match(repository, /researchGapDiscoveryBootstrapSql/);
   assert.match(client, /有上限的后台补证/);
-  assert.match(client, /候选通过共享质量评估后才会进入今日/);
+  assert.match(client, /ResearchGapDiscoveryStatus/);
+  assert.match(client, /篇候选已进入质量评估/);
 });

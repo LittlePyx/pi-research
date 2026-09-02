@@ -53,12 +53,13 @@ test("quick-screened and retryable degraded candidates remain queued instead of 
   assert.ok(monitor.indexOf("THEN 'queued'") < monitor.indexOf("WHEN i.analysis_source LIKE 'deepseek%'"));
 });
 
-test("library overview counts the archive instead of repeating recommendation inbox metrics", () => {
-  assert.match(app, /const libraryArchiveCounts = useMemo/);
-  assert.match(app, /all: historyPapers\.length/);
-  assert.match(app, /libraryArchiveCounts\.all}<\/strong><b>{locale === "zh" \? "全部发现"/);
-  assert.match(app, /"已完成评审"/);
-  assert.match(app, /"待处理推荐"/);
+test("library tabs use durable archive counts without a duplicate overview", () => {
+  assert.match(app, /const historyPapers = useMemo/);
+  assert.match(app, /"全部发现" : "All discoveries"}<span>{historyPapers\.length}<\/span>/);
+  assert.match(app, /monitor\?\.historyCounts\?\.inbox \|\| 0/);
+  assert.match(app, /monitor\?\.historyCounts\?\.accepted \|\| 0/);
+  assert.match(app, /monitor\?\.historyCounts\?\.dismissed \|\| 0/);
+  assert.doesNotMatch(app, /<section className="v2-library-overview"/);
   assert.doesNotMatch(app, /monitor\?\.historyCounts\?\.unseen \|\| 0}<\/strong><b>{t\.unseen/);
 });
 
@@ -69,7 +70,8 @@ test("the sidebar and archive ranking cannot make retained papers look missing o
   assert.doesNotMatch(app, /item\.id === "today"[^\n]*monitor\?\.newCount/);
   assert.match(app, /qualityStageRank/);
   assert.match(app, /second\.relevanceScore - first\.relevanceScore/);
-  assert.match(app, /paper\.qualityStage === "recommended" && <span>{t\.qualityScore}/);
-  assert.match(app, /displayQualityScore\(paper\.qualityScore\)/);
+  const libraryList = app.slice(app.indexOf('<div className="v2-library-list">'), app.indexOf('{view === "memory"'));
+  assert.doesNotMatch(libraryList, /t\.qualityScore|displayQualityScore/);
+  assert.match(app, /displayQualityScore\(selectedMonitorPaper\.qualityScore\)/);
   assert.match(app, /Math\.min\(100, Math\.max\(0, Math\.round/);
 });

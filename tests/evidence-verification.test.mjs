@@ -286,7 +286,8 @@ test("verification is bounded to two content passes while one transport retry pr
   assert.match(client, /篇待处理/);
   assert.match(monitor, /BACKGROUND_VERIFICATION_RETRY_MS = 10 \* 60 \* 1000/);
   assert.match(monitor, /Pi 会在后台自动继续/);
-  assert.match(client, /正在完成最后的推荐判断/);
+  assert.match(client, /篇候选正在质量评估/);
+  assert.match(client, /通过后会自动进入今日；现在无需处理/);
   assert.match(client, /recommendationAuditPhaseLabel/);
   assert.match(client, /正在核对并修正/);
   assert.match(client, /正在核对/);

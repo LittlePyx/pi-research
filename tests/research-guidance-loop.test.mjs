@@ -72,19 +72,16 @@ test("today feedback refreshes direction intelligence and research memory", asyn
 test("the interface explains the research-route and daily-discovery loop", async () => {
   const app = await readFile(appPath, "utf8");
   assert.match(app, /研究线索驱动的今日检索/);
-  assert.match(app, /研究线索 → 今日发现 → 你的判断 → 路线更新/);
-  assert.match(app, /只有接受、保存或完成阅读后才确认进入路线/);
-  assert.match(app, /路线深挖候选统一进入共享质量队列/);
-  assert.match(app, /结构更新与通过推荐证据核对的变化分开记录/);
-  assert.match(app, /通过独立推荐核验后进入今日推荐，再由你决定是否纳入路线/);
+  assert.match(app, /SHOW_INTERNAL_QUALITY_UI && monitor\?\.queryPlan/);
+  assert.match(app, /ResearchGapDiscoveryStatus/);
+  assert.match(app, /篇候选正在质量评估/);
   assert.match(app, /discoveryOrigin/);
   assert.match(app, /RouteDiscoveryBadge/);
   assert.match(app, /if \(!origin && !\(track && paper\.discoveryType\)\) return null/);
-  assert.match(app, /研究路线深挖/);
   assert.match(app, /queuedForReviewCount/);
   assert.match(app, /reviewingForReviewCount/);
   assert.match(app, /recommendedCandidateCount/);
-  assert.match(app, /RouteQualityFlow/);
+  assert.doesNotMatch(app, /function RouteQualityFlow/);
   assert.match(app, /data\.reviewQueuedCount/);
   assert.doesNotMatch(app, /data\.addedCount \? `沿缺口发现/);
   assert.match(app, /action: origin === "problem" \? "expand-problem" : "expand-gap"/);

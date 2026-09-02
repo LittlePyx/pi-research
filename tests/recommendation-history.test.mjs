@@ -41,7 +41,7 @@ test("a zero-yield rescan cannot erase papers selected earlier the same day", ()
   assert.match(merged.headlineZh, /累计保留 2 篇/);
 });
 
-test("durable recommendation history protects prior results and exposes saved verification candidates", () => {
+test("durable recommendation history protects prior results and keeps saved verification candidates in a compact background state", () => {
   const route = fs.readFileSync(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
   const repository = fs.readFileSync(new URL("../db/repository.ts", import.meta.url), "utf8");
   const app = fs.readFileSync(new URL("../app/research-app.tsx", import.meta.url), "utf8");
@@ -57,9 +57,10 @@ test("durable recommendation history protects prior results and exposes saved ve
   assert.match(route, /if \(!value\) return 0/);
   assert.match(route, /databaseTime\(right\.last_recommended_at\) - databaseTime\(left\.last_recommended_at\)/);
   assert.match(route, /\(paper\) => paper\.horizon,\s*6,\s*1,/);
-  assert.match(app, /Pi 正在后台完成/);
-  assert.match(app, /通过后会直接进入今日推荐，不需要你确认/);
-  assert.match(app, /积压候选复评/);
+  assert.match(app, /v2-background-review-status/);
+  assert.match(app, /通过后会自动进入今日；现在无需处理/);
+  const reviewStatus = app.slice(app.indexOf("monitor?.savedCandidatePapers?.length"), app.indexOf("monitor?.weeklyReview"));
+  assert.doesNotMatch(reviewStatus, /savedCandidatePapers\.map|积压候选复评/);
   assert.match(app, /timeValue\(second\.recommendedAt\) - timeValue\(first\.recommendedAt\)/);
 });
 

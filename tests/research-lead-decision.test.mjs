@@ -113,20 +113,17 @@ test("route reads and proposals establish baselines before version evaluation", 
   assert.match(api, /INSERT INTO research_route_revisions[\s\S]*COALESCE\(MAX\(version\), 0\) \+ 1/);
 });
 
-test("research lead detail exposes one responsive decision panel backed by the shared route funnel", async () => {
+test("research lead detail exposes one responsive decision panel without repeating the route funnel", async () => {
   const [ui, css] = await Promise.all([readFile(uiUrl, "utf8"), readFile(cssUrl, "utf8")]);
   assert.match(ui, /function ResearchLeadDecisionPanel/);
-  assert.match(ui, /当前要决定/);
-  assert.match(ui, /证据发生了什么变化/);
-  assert.match(ui, /下一步行动/);
-  assert.match(ui, /track\.discoveryEffect\.discoveredCount/);
-  assert.match(ui, /track\.discoveryEffect\.deepReviewedCount/);
-  assert.match(ui, /track\.discoveryEffect\.recommendedCount/);
-  assert.match(ui, /track\.discoveryEffect\.acceptedCount/);
-  assert.match(ui, /只有通过共享质量评估的论文才会进入今日/);
-  assert.match(ui, /立即补齐关键证据/);
+  assert.match(ui, /当前研究判断/);
+  assert.match(ui, /关键不确定性/);
+  assert.match(ui, /ResearchGapDiscoveryStatus track=\{track\}/);
+  assert.match(ui, /立即提前检索/);
   assert.match(ui, /onScanGap\(actionableGap\.origin\)/);
   assert.match(ui, /ResearchLeadDecisionPanel track=\{selectedThread\}/);
+  const panel = ui.slice(ui.indexOf("function ResearchLeadDecisionPanel"), ui.indexOf("function routeManagementNeedsAttention"));
+  assert.doesNotMatch(panel, /v2-research-decision-funnel|证据发生了什么变化/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-research-decision-grid \{ grid-template-columns: 1fr; \}/);
   assert.doesNotMatch(css, /\.v2-research-decision-(?:panel|funnel)[^\n]*display:\s*none/);
 });
