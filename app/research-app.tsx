@@ -2,6 +2,7 @@
 
 import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import { emptyResearchMapState, researchLeadActionableGap, researchRouteLearningSignal, researchRouteOperationalStatus, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchLeadGapOrigin, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
 import { learningResourceHref, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
@@ -5667,6 +5668,7 @@ export default function ResearchApp({ user }: { user: User }) {
         </nav>
 
         <div className="v2-sidebar-bottom">
+          <Link className="v2-demo-entry" href="/demo"><span>◌</span><strong>{locale === "zh" ? "查看演示空间" : "View demo workspace"}</strong><b>↗</b></Link>
           <button className={`v2-openai-state ${modelConnectionState}`} type="button" onClick={() => setModelSettingsOpen(true)} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{modelConnectionCopy.title}</strong><small>{modelConnectionCopy.detail}</small></span><b>›</b></button>
           <button className="v2-account" type="button" onClick={() => navigate("memory")}><span>◎</span><span><strong>Pi Workspace</strong><small>{t.workspaceLabel}</small></span><b>•••</b></button>
         </div>

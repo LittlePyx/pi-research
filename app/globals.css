@@ -19,6 +19,12 @@
   --shadow: 0 12px 36px rgba(35, 34, 28, 0.08);
 }
 
+.v2-demo-entry { min-height: 38px; padding: 0 11px; border: 1px solid #d4ddd7; border-radius: 7px; background: rgba(255,255,255,.56); color: #53685d; display: flex; align-items: center; gap: 9px; font-size: 10px; text-decoration: none; }
+.v2-demo-entry > span { color: #527564; font: 16px Georgia,serif; }
+.v2-demo-entry > strong { flex: 1; font-weight: 720; }
+.v2-demo-entry > b { color: #87958d; font-size: 10px; }
+.v2-demo-entry:hover { border-color: #b7c9be; background: white; color: #315b48; }
+
 /* Pi Research V68 — quiet, source-grounded paper reading */
 .v2-evidence-badge { width: fit-content; min-height: 24px; padding: 0 8px; border: 1px solid #d4ddd8; border-radius: 999px; background: #f8faf8; color: #607168; display: inline-flex; align-items: center; gap: 6px; font-size: 9px; font-style: normal; font-weight: 760; letter-spacing: .01em; white-space: nowrap; }
 .v2-evidence-badge i { width: 6px; height: 6px; border-radius: 50%; background: #9aa69f; }
