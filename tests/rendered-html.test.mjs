@@ -24,9 +24,9 @@ test("server-renders the Pi Research application", async () => {
   assert.match(html, /Pi Research/);
   assert.match(html, /论文发现/);
   assert.match(html, /近 14 天/);
-  assert.match(html, /三个时间窗，持续向前挖掘/);
+  assert.match(html, /论文扫描/);
   assert.match(html, /设置重点来源/);
-  assert.match(html, /今天先处理什么/);
+  assert.match(html, />今日</);
   assert.doesNotMatch(html, /class="v2-isolation"/);
 });
 
@@ -232,7 +232,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.doesNotMatch(client, /action: "reconcile"/);
   assert.match(client, /action: origin === "problem" \? "expand-problem" : "expand-gap"/);
   assert.match(client, /mapBuildTrackId/);
-  assert.match(client, /先建立可浏览的方向骨架/);
+  assert.match(client, /正在建立研究路线/);
   assert.match(client, /已完成内容已经保存/);
   assert.match(client, /refreshDirectionIntelligence/);
   assert.match(client, /这条路线目前可以怎样判断/);

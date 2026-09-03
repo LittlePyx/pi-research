@@ -6,7 +6,7 @@ import styles from "./demo.module.css";
 
 export const metadata: Metadata = {
   title: "Pi Research 演示空间",
-  description: "打开一个已经积累基础论文、研究路线与学习路径的只读 Pi Research 工作区。",
+  description: "KLS 猜想、随机局部化与信息论基础文献演示。",
 };
 
 const roleLabel: Record<DemoPaperRole, string> = {
@@ -40,27 +40,27 @@ export default function DemoPage() {
       <nav aria-label="演示页导航">
         <a href="#today">今日</a><a href="#routes">研究路线</a><a href="#learn">学习路径</a><a href="#library">论文库</a>
       </nav>
-      <Link className={styles.workspaceLink} href="/">开始自己的研究 <span>→</span></Link>
+      <Link className={styles.workspaceLink} href="/">打开空白工作区 <span>→</span></Link>
     </header>
 
     <main>
       <section className={styles.intro}>
         <div>
-          <p className={styles.eyebrow}><i /> 只读演示空间</p>
-          <h1>不是从零开始，<br />先看一条研究路线如何长出来。</h1>
-          <p>这个演示空间已经整理了高维凸几何、KLS 猜想与信息论的基础论文。你可以直接查看 Pi 如何把论文变成今日判断、路线和学习次序。</p>
+          <p className={styles.eyebrow}><i /> 应用数学 · 高维凸几何</p>
+          <h1>KLS 猜想与<br />随机局部化</h1>
+          <p>14 篇基础与里程碑论文，覆盖等周不等式、谱隙、随机局部化及其与采样问题的联系。</p>
         </div>
         <dl>
-          <div><dt>已找到</dt><dd>{DEMO_PAPERS.length}<small>篇基础论文</small></dd></div>
-          <div><dt>研究路线</dt><dd>2<small>条持续方向</small></dd></div>
-          <div><dt>今日入选</dt><dd>{todayPapers.length}<small>篇优先阅读</small></dd></div>
+          <div><dt>收录论文</dt><dd>{DEMO_PAPERS.length}<small>篇</small></dd></div>
+          <div><dt>研究方向</dt><dd>2<small>条</small></dd></div>
+          <div><dt>当前待读</dt><dd>{todayPapers.length}<small>篇</small></dd></div>
         </dl>
       </section>
 
       <section className={styles.today} id="today">
         <header className={styles.sectionHeader}>
-          <div><p className={styles.eyebrow}>今日研究判断</p><h2>先补齐 KLS 路线的三个关键节点</h2></div>
-          <span>演示快照 · 已通过质量筛选</span>
+          <div><p className={styles.eyebrow}>当前待读</p><h2>KLS 路线的三个关键节点</h2></div>
+          <span>示例数据 · 只读</span>
         </header>
         <div className={styles.todayGrid}>
           {todayPapers.map((paper, index) => <article className={index === 0 ? styles.primaryPick : styles.pick} key={paper.id}>
@@ -74,8 +74,8 @@ export default function DemoPage() {
 
       <section className={styles.routes} id="routes">
         <header className={styles.sectionHeader}>
-          <div><p className={styles.eyebrow}>研究路线</p><h2>从问题定义到当前证据边界</h2></div>
-          <span>{geometryPapers.length} 篇路线论文 · 1 个待验证缺口</span>
+          <div><p className={styles.eyebrow}>研究路线</p><h2>关键文献脉络</h2></div>
+          <span>{geometryPapers.length} 篇 · 1 个证据缺口</span>
         </header>
         <div className={styles.routeRail}>
           {geometryPapers.map((paper, index) => <article key={paper.id}>
@@ -90,7 +90,7 @@ export default function DemoPage() {
       <div className={styles.lowerGrid}>
         <section className={styles.learning} id="learn">
           <header className={styles.sectionHeader}>
-            <div><p className={styles.eyebrow}>学习路径</p><h2>按研究依赖，而不是按年份堆论文</h2></div>
+            <div><p className={styles.eyebrow}>学习路径</p><h2>阅读顺序</h2></div>
           </header>
           <ol>
             {DEMO_LEARNING_STEPS.map((step, index) => <li className={index === 0 ? styles.activeStep : ""} key={step.number}>
@@ -101,7 +101,7 @@ export default function DemoPage() {
 
         <section className={styles.library} id="library">
           <header className={styles.sectionHeader}>
-            <div><p className={styles.eyebrow}>论文库</p><h2>基础论文不会因重扫消失</h2></div>
+            <div><p className={styles.eyebrow}>论文库</p><h2>基础文献</h2></div>
             <span>{DEMO_PAPERS.length} 篇</span>
           </header>
           <div className={styles.libraryGroup}>
@@ -112,14 +112,14 @@ export default function DemoPage() {
             <h3>信息论基础 <span>{informationPapers.length}</span></h3>
             {informationPapers.slice(0, 4).map((paper) => <PaperTitle paper={paper} compact key={paper.id} />)}
           </div>
-          <p className={styles.libraryNote}>演示只展示代表作。真实工作区会保留发现、推荐、稍后处理、接受、忽略和阅读记录。</p>
+          <p className={styles.libraryNote}>另有 {informationPapers.length - 4} 篇信息论论文。</p>
         </section>
       </div>
     </main>
 
     <footer className={styles.footer}>
-      <div><Image src="/pi-research-mark.png" width={28} height={24} alt="" /><span><strong>这是只读演示</strong><small>不会修改你的研究空间，也不会消耗模型额度。</small></span></div>
-      <Link href="/">创建独立研究空间 <span>→</span></Link>
+      <div><Image src="/pi-research-mark.png" width={28} height={24} alt="" /><span><strong>演示数据</strong><small>只读</small></span></div>
+      <Link href="/">打开空白工作区 <span>→</span></Link>
     </footer>
   </div>;
 }

@@ -40,7 +40,7 @@ test("each completed scan persists an evidence-grounded bilingual daily brief", 
   assert.match(monitor, /No paper cleared today's strict recommendation bar/);
   assert.match(client, /v2-ai-daily-brief/);
   assert.match(client, /最近一次研究判断/);
-  assert.match(client, /不计入当前“今日必读”数量/);
+  assert.match(client, /不计入今日数量/);
   assert.match(client, /monitor\.dailyBrief\.isCurrent/);
   assert.match(client, /正在从已保存检查点续跑/);
   assert.match(client, /自动监控/);
