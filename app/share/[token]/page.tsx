@@ -74,7 +74,7 @@ export default async function SharePage({ params }: SharePageProps) {
             <article className="share-paper" key={paper.id}>
               <div className="share-paper-number">{String(index + 1).padStart(2, "0")}</div>
               <div className="share-paper-body">
-                <div className="share-badges"><span>{horizonLabel(paper.horizon, locale)}</span>{paper.priorityVenue && <span className="priority">◆ {locale === "zh" ? "重点来源" : "Priority venue"}</span>}<span>Pi · DeepSeek Pro</span></div>
+                <div className="share-badges"><span>{horizonLabel(paper.horizon, locale)}</span>{paper.priorityVenue && <span className="priority">◆ {locale === "zh" ? "重点来源" : "Priority venue"}</span>}</div>
                 <h2>{paper.title}</h2>
                 <p className="share-meta">{[paper.authors, paper.venue, formatDate(paper.publishedAt, locale)].filter(Boolean).join(" · ")}</p>
                 <section><h3>{locale === "zh" ? "论文介绍" : "Paper introduction"}</h3><p>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p></section>
@@ -88,7 +88,7 @@ export default async function SharePage({ params }: SharePageProps) {
           ))}
         </div>
 
-        <footer className="share-page-footer"><span className="share-footer-mark"><Image src="/pi-research-mark.png" width={30} height={25} alt="" /></span><p>{locale === "zh" ? "由 Pi Research 生成的研究推荐快照" : "A research recommendation snapshot by Pi Research"}</p><span className="share-team-mark"><small>BY</small><Image src="/pi-lab-logo.png" width={94} height={30} alt="P&amp;I Lab" /></span><Link href="/">{locale === "zh" ? "打开 Pi Research" : "Open Pi Research"} →</Link></footer>
+        <footer className="share-page-footer"><span className="share-footer-mark"><Image src="/pi-research-mark.png" width={30} height={25} alt="" /></span><p>Pi Research</p><span className="share-team-mark"><small>BY</small><Image src="/pi-lab-logo.png" width={94} height={30} alt="P&amp;I Lab" /></span><Link href="/">{locale === "zh" ? "打开工作区" : "Open workspace"} →</Link></footer>
       </div>
     </main>
   );

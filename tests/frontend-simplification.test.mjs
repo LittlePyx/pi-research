@@ -25,6 +25,97 @@ test("primary pages use progressive disclosure instead of repeating internal pro
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-learning-now-guidance \{ grid-template-columns: 1fr/);
 });
 
+test("route workspace keeps one decision surface and moves supporting context behind calm navigation", async () => {
+  const [app, css] = await Promise.all([readFile(appUrl, "utf8"), readFile(cssUrl, "utf8")]);
+  const decisionPanel = app.slice(app.indexOf("function ResearchLeadDecisionPanel"), app.indexOf("function routeManagementNeedsAttention"));
+  const workspace = app.slice(app.indexOf('{view === "thread-detail"'), app.indexOf('{view === "learn"'));
+
+  assert.match(decisionPanel, /v2-research-decision-focus/);
+  assert.match(decisionPanel, /v2-research-uncertainty/);
+  assert.match(decisionPanel, /v2-research-decision-next/);
+  assert.doesNotMatch(decisionPanel, /v2-research-decision-grid/);
+  assert.match(workspace, /<details className="v2-route-summary">/);
+  assert.match(workspace, /<nav className="v2-route-workspace-tabs"/);
+  assert.doesNotMatch(workspace, /String\(tabIndex \+ 1\)/);
+  assert.match(app, /useState\(Boolean\(proposed \|\| track\.monitoringStatus === "paused"\)\)/);
+  assert.match(css, /@media \(max-width: 780px\)[\s\S]*\.v2-route-workspace-tabs \{ display: flex; overflow-x: auto;/);
+});
+
+test("route overview cards show one summary and one state-aware action", async () => {
+  const app = await readFile(appUrl, "utf8");
+  const routeOverview = app.slice(app.indexOf('{view === "threads"'), app.indexOf('{view === "thread-detail"'));
+  const routeCards = routeOverview.slice(routeOverview.indexOf('<section className="v2-route-groups">'), routeOverview.indexOf('<details className="v2-route-map-assist">'));
+
+  assert.match(routeCards, /const recoveryActionNeeded = \["queued", "retryable", "empty", "failed", "partial"\]/);
+  assert.match(routeCards, /v2-route-gap-link compact/);
+  assert.match(routeCards, /confirmedRouteEvidenceCount\(thread\)/);
+  assert.doesNotMatch(routeCards, /thread\.intelligence\.assessment/);
+  assert.doesNotMatch(routeCards, /v2-route-latest-change|<dl>/);
+  assert.doesNotMatch(routeOverview, /<section className="v2-route-explorer-entry">/);
+});
+
+test("Today leads with selected reading while scan detail and secondary lists stay expandable", async () => {
+  const app = await readFile(appUrl, "utf8");
+  const today = app.slice(app.indexOf('{view === "today"'), app.indexOf('{view === "threads"'));
+  const scanDetails = today.slice(today.indexOf('<details className="v2-scan-details">'), today.indexOf('</details>', today.indexOf('<details className="v2-scan-details">')));
+
+  assert.doesNotMatch(today, /v2-today-briefing|v2-daily-brief-metrics/);
+  assert.match(today, /v2-daily-paper-queue/);
+  assert.match(today, /v2-monitor-run-funnel/);
+  assert.match(scanDetails, /v2-monitor-run-funnel[\s\S]*v2-horizon-strip[\s\S]*v2-source-profile/);
+  assert.match(today, /<details className="v2-route-changes v2-route-changes-compact">/);
+  assert.match(today, /<details className="v2-today-more v2-today-more-compact">/);
+});
+
+test("library and paper detail keep reading primary while management and audit stay on demand", async () => {
+  const [app, css] = await Promise.all([readFile(appUrl, "utf8"), readFile(cssUrl, "utf8")]);
+  const library = app.slice(app.indexOf('{view === "library"'), app.indexOf('{view === "memory"'));
+  const paperDetail = app.slice(app.indexOf('{view === "paper-detail"'), app.indexOf('</main>', app.indexOf('{view === "paper-detail"')));
+  const paperHead = paperDetail.slice(paperDetail.indexOf('<section className="v2-paper-head">'), paperDetail.indexOf('<div className="v2-paper-detail-grid">'));
+
+  assert.match(library, /<details className="v2-library-export">/);
+  assert.match(library, /<details className="v2-library-paper-actions">/);
+  assert.match(paperHead, /v2-paper-primary-actions/);
+  assert.match(paperHead, /<details className="v2-paper-more-actions">/);
+  assert.doesNotMatch(paperHead, /askAboutMonitorPaper/);
+  assert.match(paperDetail, /v2-paper-fit-summary[\s\S]*<RouteImpactNote paper=\{selectedMonitorPaper\}[\s\S]*<details className="v2-paper-problem-impact">/);
+  assert.match(paperDetail, /<details className="v2-content-section v2-paper-record">/);
+  assert.doesNotMatch(paperDetail, /RouteImpactNote paper=\{selectedMonitorPaper\} locale=\{locale\} detail/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.v2-paper-top \{ align-items: flex-start; flex-wrap: wrap; \}/);
+});
+
+test("research memory separates explicit and inferred evidence while collapsing profile and note detail", async () => {
+  const app = await readFile(appUrl, "utf8");
+  const memory = app.slice(app.indexOf('{view === "memory"'), app.indexOf('{view === "paper-detail"'));
+  const importModal = app.slice(app.indexOf('{importOpen &&'), app.indexOf('{feedbackDialog &&'));
+
+  assert.match(memory, /你明确表达的/);
+  assert.match(memory, /Pi 推断的/);
+  assert.match(memory, /monitor\?\.readingMemories\?\.map[\s\S]*return <details className=\{memory\.analysisStatus\}/);
+  assert.match(memory, /<details className="v2-memory-profile-details">/);
+  assert.match(memory, /"建立你的研究画像" : "Build your research profile"/);
+  assert.doesNotMatch(memory, /v2-import-safety-inline/);
+  assert.match(importModal, /v2-import-warning[\s\S]*importSafetyTitle[\s\S]*v2-import-attestation/);
+});
+
+test("learning, demo, share, and modal copy keep product facts ahead of interface narration", async () => {
+  const [app, demo, share] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(new URL("../app/demo/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/share/[token]/page.tsx", import.meta.url), "utf8"),
+  ]);
+  const learning = app.slice(app.indexOf('{view === "learn"'), app.indexOf('{view === "library"'));
+
+  assert.match(app, /learnTitle: "学习路径"/);
+  assert.match(learning, /"当前路径" : "CURRENT PATH"/);
+  assert.doesNotMatch(learning, /证据驱动|Pi 正在规划|v2-learning-footer/);
+  assert.match(demo, /index === 0 && <p>\{step\.detail\}<\/p>/);
+  assert.match(demo, /公开演示 · 只读/);
+  assert.doesNotMatch(share, /Pi · DeepSeek Pro/);
+  assert.match(app, /"模型连接" : "MODEL CONNECTION"/);
+  assert.doesNotMatch(app, /浏览器自带密钥|完善研究记忆/);
+});
+
 test("primary product copy states research content, status, and actions without interface narration", async () => {
   const app = await readFile(appUrl, "utf8");
 

@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-html-link-for-pages */
 import type { Metadata } from "next";
 import Image from "next/image";
 import { DEMO_LEARNING_STEPS, DEMO_PAPERS, DEMO_TODAY_IDS, type DemoPaperRole } from "../../lib/demo-research";
@@ -58,7 +59,7 @@ export default function DemoPage() {
 
       <section className={styles.today} id="today">
         <header className={styles.sectionHeader}>
-          <div><p className={styles.eyebrow}>当前待读</p><h2>KLS 路线的三个关键节点</h2></div>
+          <div><p className={styles.eyebrow}>演示阅读队列</p><h2>KLS 路线的三个关键节点</h2></div>
           <span>示例数据 · 只读</span>
         </header>
         <div className={styles.todayGrid}>
@@ -93,7 +94,7 @@ export default function DemoPage() {
           </header>
           <ol>
             {DEMO_LEARNING_STEPS.map((step, index) => <li className={index === 0 ? styles.activeStep : ""} key={step.number}>
-              <span>{step.number}</span><div><strong>{step.title}</strong><p>{step.detail}</p><small>{step.paperIds.length} 篇核心阅读</small></div>
+              <span>{step.number}</span><div><strong>{step.title}</strong>{index === 0 && <p>{step.detail}</p>}<small>{step.paperIds.length} 篇核心阅读</small></div>
             </li>)}
           </ol>
         </section>
@@ -117,8 +118,8 @@ export default function DemoPage() {
     </main>
 
     <footer className={styles.footer}>
-      <div><Image src="/pi-research-mark.png" width={28} height={24} alt="" /><span><strong>演示数据</strong><small>只读</small></span></div>
-      <a href="/">进入工作区 <span>→</span></a>
+      <div><Image src="/pi-research-mark.png" width={28} height={24} alt="" /><span><strong>Pi Research</strong><small>公开演示 · 只读</small></span></div>
+      <a href="/">开始使用 <span>→</span></a>
     </footer>
   </div>;
 }

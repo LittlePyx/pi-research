@@ -21,7 +21,7 @@ test("the public demo opens a populated read-only research journey", async () =>
   assert.doesNotMatch(page, /不是从零开始|先看一条研究路线如何长出来|你可以直接查看 Pi 如何|不会修改你的研究空间/);
   assert.doesNotMatch(page, /from "next\/link"|<Link/);
   assert.match(page, /<a className=\{styles\.workspaceLink\} href="\/">进入工作区/);
-  assert.match(page, /<a href="\/">进入工作区/);
+  assert.match(page, /<a href="\/">开始使用/);
   assert.match(page, /id="today"/);
   assert.match(page, /id="routes"/);
   assert.match(page, /id="learn"/);

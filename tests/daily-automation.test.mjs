@@ -61,10 +61,11 @@ test("desktop and narrow layouts share one current-day count contract while stal
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
-  assert.match(client, /const mustReadCount = rankedMonitorPapers\.filter/);
   assert.match(client, /const todayNavigationCount = rankedMonitorPapers\.length/);
   assert.doesNotMatch(client, /todayNavigationCount\s*=.*dailyBrief/);
   assert.match(client, /dailyBriefEntryCount/);
-  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*?\.v2-today \.v2-today-briefing \{ grid-template-columns: 1fr; \}/);
-  assert.doesNotMatch(styles, /\.v2-today(?:\s+\.v2-today-briefing)?\s*\{[^}]*display:\s*none/);
+  assert.match(client, /今日入选/);
+  assert.doesNotMatch(client, /v2-today-briefing/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*?\.v2-today \.v2-today-hero \{ grid-template-areas: "copy" "actions"; \}/);
+  assert.doesNotMatch(styles, /\.v2-today\s*\{[^}]*display:\s*none/);
 });

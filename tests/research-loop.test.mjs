@@ -48,6 +48,6 @@ test("research memory stays visible while operational quality telemetry stays in
   assert.match(client, /const SHOW_INTERNAL_QUALITY_UI = false/);
   assert.match(client, /SHOW_INTERNAL_QUALITY_UI && monitor\?\.operationsDashboard/);
   assert.match(client, /v2-reading-memory/);
-  assert.match(client, /保存并沉淀到研究记忆/);
+  assert.match(client, /保存到研究记忆/);
   assert.match(styles, /Pi Research V16/);
 });
