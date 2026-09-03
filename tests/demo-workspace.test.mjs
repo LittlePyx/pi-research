@@ -19,6 +19,9 @@ test("the public demo opens a populated read-only research journey", async () =>
   assert.match(page, /KLS 猜想与/);
   assert.match(page, /示例数据 · 只读/);
   assert.doesNotMatch(page, /不是从零开始|先看一条研究路线如何长出来|你可以直接查看 Pi 如何|不会修改你的研究空间/);
+  assert.doesNotMatch(page, /from "next\/link"|<Link/);
+  assert.match(page, /<a className=\{styles\.workspaceLink\} href="\/">进入工作区/);
+  assert.match(page, /<a href="\/">进入工作区/);
   assert.match(page, /id="today"/);
   assert.match(page, /id="routes"/);
   assert.match(page, /id="learn"/);
@@ -28,7 +31,7 @@ test("the public demo opens a populated read-only research journey", async () =>
   assert.match(data, /Isoperimetric Problems for Convex Bodies and a Localization Lemma/);
   assert.match(data, /An Almost Constant Lower Bound of the Isoperimetric Coefficient/);
   assert.match(data, /Channel Coding Rate in the Finite Blocklength Regime/);
-  assert.match(app, /href="\/demo"/);
+  assert.match(app, /<a className="v2-demo-entry" href="\/demo">/);
   assert.match(app, /"演示空间" : "Demo workspace"/);
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /\.todayGrid \{ grid-template-columns: 1fr; \}/);

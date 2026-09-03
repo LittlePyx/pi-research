@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import Link from "next/link";
 import { DEMO_LEARNING_STEPS, DEMO_PAPERS, DEMO_TODAY_IDS, type DemoPaperRole } from "../../lib/demo-research";
 import styles from "./demo.module.css";
 
@@ -33,14 +32,14 @@ function PaperTitle({ paper, compact = false }: { paper: (typeof DEMO_PAPERS)[nu
 export default function DemoPage() {
   return <div className={styles.page}>
     <header className={styles.header}>
-      <Link className={styles.brand} href="/" aria-label="Pi Research 首页">
+      <a className={styles.brand} href="/" aria-label="Pi Research 首页">
         <Image src="/pi-research-mark.png" width={34} height={29} alt="" priority />
         <span><strong>Pi Research</strong><small>RESEARCH AGENT</small></span>
-      </Link>
+      </a>
       <nav aria-label="演示页导航">
         <a href="#today">今日</a><a href="#routes">研究路线</a><a href="#learn">学习路径</a><a href="#library">论文库</a>
       </nav>
-      <Link className={styles.workspaceLink} href="/">打开空白工作区 <span>→</span></Link>
+      <a className={styles.workspaceLink} href="/">进入工作区 <span>→</span></a>
     </header>
 
     <main>
@@ -119,7 +118,7 @@ export default function DemoPage() {
 
     <footer className={styles.footer}>
       <div><Image src="/pi-research-mark.png" width={28} height={24} alt="" /><span><strong>演示数据</strong><small>只读</small></span></div>
-      <Link href="/">打开空白工作区 <span>→</span></Link>
+      <a href="/">进入工作区 <span>→</span></a>
     </footer>
   </div>;
 }
