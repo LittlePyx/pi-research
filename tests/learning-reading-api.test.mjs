@@ -36,6 +36,8 @@ test("learning → reading → stage → route runs through the built Worker and
           return Response.json({ message: { items: [{ DOI: info ? "10.1234/fixture-shannon-original" : "10.1234/fixture-kls-original",
             title: [originalTitle], author: [{ given: info ? "Claude" : "Ravi", family: info ? "Shannon" : "Kannan" }],
             type: "journal-article", published: { "date-parts": [[info ? 1948 : 1995, 1, 1]] },
+            "published-online": { "date-parts": [[info ? 2013 : 1995, 7, 29]] },
+            "published-print": { "date-parts": [[info ? 1948 : 1995, 1, 1]] },
             URL: "https://example.org/fixture-original", "is-referenced-by-count": 100,
             // No fabricated abstract: quality must continue to treat this as a pending candidate.
           }] } });

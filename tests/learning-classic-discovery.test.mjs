@@ -2,10 +2,28 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { crossrefPublicationDate } from "../lib/discovery/crossref.ts";
 import { hasNamedResearchClassicQuery, learningClassicSearchQuery, matchesResearchClassicRecord, selectResearchClassicSeeds } from "../lib/research-classic-seeds.ts";
 
 const shannon = selectResearchClassicSeeds({ titleEn: "Shannon maximum entropy theorem Gaussian distribution covariance constraint", searchQueries: [] })[0];
 const kls = selectResearchClassicSeeds({ titleEn: "Foundations of the KLS Conjecture Isoperimetric Constants original paper", searchQueries: [] })[0];
+
+test("Crossref digitization dates cannot turn Shannon 1948 into a 2013 work", async () => {
+  const metadata = { published: { "date-parts": [[1948, 7]] }, "published-print": { "date-parts": [[1948, 7]] }, "published-online": { "date-parts": [[2013, 7, 29]] } };
+  assert.equal(crossrefPublicationDate(metadata), "1948-07-01");
+  assert.equal(matchesResearchClassicRecord(shannon, { title: shannon.title, authors: "C. E. Shannon", publishedAt: crossrefPublicationDate(metadata) }), true);
+  assert.equal(crossrefPublicationDate({ published: { "date-parts": [[2026, 9]] }, "published-online": { "date-parts": [[2026, 8, 3]] } }), "2026-08-03");
+  assert.equal(crossrefPublicationDate({ published: { "date-parts": [[2026]] } }), "2026-01-01");
+  assert.equal(crossrefPublicationDate({ published: { "date-parts": [[2026, 2, 30]] } }), null);
+  assert.equal(crossrefPublicationDate({}), null);
+  for (const api of ["research-map", "monitor"]) {
+    const source = await readFile(new URL(`../app/api/${api}/route.ts`, import.meta.url), "utf8");
+    const section = source.slice(source.indexOf("function publicationDate("), source.indexOf("\n}", source.indexOf("function publicationDate(")) + 2);
+    const compiled = ts.transpileModule(section, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    const date = new Function("crossrefPublicationDate", `${compiled}; return publicationDate;`)(crossrefPublicationDate);
+    assert.equal(date(metadata), "1948-07-01", `${api} must use the shared first-publication rule`);
+  }
+});
 
 test("missing original stages get stable exact queries without replacing frontier work or refinements", () => {
   for (const seed of [shannon, kls]) {

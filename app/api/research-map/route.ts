@@ -1,6 +1,7 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { buildArxivSearchQuery, parseArxivAtom } from "../../../lib/discovery/arxiv";
+import { crossrefPublicationDate } from "../../../lib/discovery/crossref";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { fetchExternalSource } from "../../../lib/external-source-throttle";
 import { enqueueMonitorCandidates, likelySameResearchWork, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
@@ -610,11 +611,7 @@ function parseStoredIntelligence(row: TrackRow): ResearchDirectionIntelligence |
 }
 
 function publicationDate(item: CrossrefItem) {
-  const parts = item["published-online"]?.["date-parts"]?.[0]
-    || item["published-print"]?.["date-parts"]?.[0]
-    || item.published?.["date-parts"]?.[0];
-  if (!parts?.[0]) return null;
-  return `${String(parts[0]).padStart(4, "0")}-${String(parts[1] || 1).padStart(2, "0")}-${String(parts[2] || 1).padStart(2, "0")}`;
+  return crossrefPublicationDate(item);
 }
 
 async function titleFingerprint(title: string) {

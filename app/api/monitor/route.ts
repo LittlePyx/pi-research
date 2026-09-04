@@ -2,6 +2,7 @@ import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../d
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
+import { crossrefPublicationDate } from "../../../lib/discovery/crossref";
 import {
   benchmarkCalibrationPrompt,
   discoveryCalibrationSignals,
@@ -813,11 +814,7 @@ function directionDiscoverySignal(value: string, updatedAt: string | null = null
 }
 
 function publicationDate(item: CrossrefItem) {
-  const parts = item["published-online"]?.["date-parts"]?.[0]
-    || item["published-print"]?.["date-parts"]?.[0]
-    || item.published?.["date-parts"]?.[0];
-  if (!parts?.[0]) return null;
-  return `${String(parts[0]).padStart(4, "0")}-${String(parts[1] || 1).padStart(2, "0")}-${String(parts[2] || 1).padStart(2, "0")}`;
+  return crossrefPublicationDate(item);
 }
 
 function parseVenues(value: string) {
