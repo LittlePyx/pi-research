@@ -22,13 +22,6 @@ function sqlConstant(source, name) {
   return quoted[1];
 }
 
-async function loadTargetDirectionCoverage(source) {
-  const functionSource = section(source, "function targetDirectionResourceCoverage", "function parseResources");
-  const output = ts.transpileModule(`export ${functionSource}`, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
-}
 
 async function loadLearningResourceHelpers(source) {
   const functionSource = section(source, "export function learningResourceHref", "export type LearningPathStep");
@@ -212,31 +205,16 @@ test("direction-scoped candidate context uses a target backbone and bounded brid
   assert.match(context, /daily-scan-bridge/);
   assert.match(draft, /targetDirection: context\.targetTrack/);
   assert.match(draft, /candidatePolicy: context\.candidatePolicy/);
-  assert.match(draft, /target-direction/);
+  assert.match(draft, /selectionRole: item\.selection_role/);
   assert.match(context, /i\.ever_recommended = 1/);
 });
 
-test("direction-scoped drafts enforce real target-paper coverage after model output", async () => {
+test("direction coverage cannot force papers into unsupported model stages", async () => {
   const route = await readFile(routePath, "utf8");
   const draft = section(route, "async function buildDraft", "async function queueRouteLearningCandidates");
-  const { targetDirectionResourceCoverage } = await loadTargetDirectionCoverage(route);
-  const candidates = [
-    { resource_id: "target-a", track_id: "track-a", selection_role: "target-direction" },
-    { resource_id: "target-b", track_id: "track-a", selection_role: "target-direction" },
-    { resource_id: "bridge", track_id: "track-b", selection_role: "cross-direction-bridge" },
-    { resource_id: "spoof", track_id: "track-b", selection_role: "target-direction" },
-  ];
-
-  assert.deepEqual(targetDirectionResourceCoverage(candidates, null, ["bridge"]), { available: 0, required: 0, used: 0, valid: true });
-  assert.deepEqual(targetDirectionResourceCoverage(candidates, "track-a", ["bridge", "spoof"]), { available: 2, required: 2, used: 0, valid: false });
-  assert.deepEqual(targetDirectionResourceCoverage(candidates, "track-a", ["target-a"]), { available: 2, required: 2, used: 1, valid: false });
-  assert.deepEqual(targetDirectionResourceCoverage(candidates, "track-a", ["target-a", "target-b"]), { available: 2, required: 2, used: 2, valid: true });
-  assert.deepEqual(targetDirectionResourceCoverage(candidates.slice(0, 1), "track-a", ["target-a"]), { available: 1, required: 1, used: 1, valid: true });
-
-  assert.match(draft, /targetDirectionResourceCoverage\(context\.candidates, context\.targetTrack\?\.id \|\| null, usedResourceIds\)/);
-  assert.match(draft, /missingTargetIds/);
-  assert.match(draft, /step\.resourceIds\.push\(candidate\.resource_id\)/);
-  assert.match(draft, /step\.evidenceQuery = ""/);
+  assert.doesNotMatch(draft, /missingTargetIds|step\.resourceIds\.push/);
+  assert.match(draft, /groundedStageEvidence/);
+  assert.match(draft, /stageFit\(paper, step, evidence\) < 45/);
 });
 
 test("learning resources preserve provenance, quality and reading state with legacy compatibility", async () => {
@@ -280,7 +258,7 @@ test("draft validation de-duplicates papers and leaves honest evidence queries f
 
   assert.match(draft, /const usedResourceIds = new Set<string>\(\)/);
   assert.match(draft, /!usedResourceIds\.has\(id\)/);
-  assert.match(draft, /for \(const id of resourceIds\) usedResourceIds\.add\(id\)/);
+  assert.match(draft, /usedResourceIds\.add\(id\)/);
   assert.match(draft, /LEARNING_STAGE_ORDER\.map/);
   assert.match(draft, /safeAutomaticResearchGapQuery\(raw\?\.evidenceQuery\) \|\| fallback\.evidenceQuery/);
   assert.match(draft, /resourceIds\.length \? ""/);

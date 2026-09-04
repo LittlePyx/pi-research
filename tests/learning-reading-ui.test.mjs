@@ -122,3 +122,12 @@ test("learning detail navigation returns to the path and retains original-resour
   assert.match(app, /paperReturnView === "learn" \? t\.learn/);
   assert.match(app, /<LearningResourceList resources=\{activeLearningStep\.resources\}/);
 });
+
+test("supplementary history remains readable without being presented as the required stage reading", () => {
+  const tree = LearningResourceList({ resources: [{ id: "monitor:history", title: "Preserved paper", url: "https://example.org/paper" }], locale: "zh", openingId: null, onOpen: () => {}, signals: () => [], supplementary: true });
+  const html = renderToStaticMarkup(tree);
+  assert.match(html, /Preserved paper/);
+  assert.match(html, /阅读与笔记/);
+  assert.doesNotMatch(html, /现在读/);
+  assert.match(app, /补充阅读（不计入本阶段）/);
+});

@@ -3,6 +3,7 @@ import { glob } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Miniflare } from "miniflare";
+import { groundedStageEvidence } from "../lib/learning-stage-match.ts";
 
 // The normal test command builds first. Run the same Worker, API handlers and
 // schema bootstrap as production, in an isolated in-memory D1 with no model key.
@@ -56,7 +57,7 @@ test("learning → reading → stage → route runs through the built Worker and
           insert("monitored_papers", { id: `paper-${id}`, space_id: id, canonical_id: resource.canonicalId, doi, title, url: resource.url, horizon: "years" }),
           insert("paper_insights", { paper_id: `paper-${id}`, space_id: id, quality_score: 90, ever_recommended: 1 }),
           insert("learning_paths", { id: `path-${id}`, space_id: id, target: id, target_track_id: `track-${id}`, title_zh: id, title_en: id, status: "active" }),
-          insert("learning_path_steps", { id: `step-${id}`, space_id: id, path_id: `path-${id}`, title_zh: id, title_en: id, resources_json: JSON.stringify([resource]), status: "active" }),
+          insert("learning_path_steps", { id: `step-${id}`, space_id: id, path_id: `path-${id}`, kind: "method", title_zh: id, title_en: title, resources_json: JSON.stringify([resource]), status: "active" }),
           insert("learning_path_steps", { id: `gap-${id}`, space_id: id, path_id: `path-${id}`, title_zh: "缺口", title_en: "Gap", kind: "project", position: 1 }),
         ];
       }),
@@ -125,6 +126,47 @@ test("learning → reading → stage → route runs through the built Worker and
       assert.ok(focused.monitor.historyPapers.some((paper) => paper.id === "paper-info" && paper.readingNote === "Keep this reading note"));
       const counts = await sql([{ sql: "SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = 'info'" }]);
       assert.equal(counts[0].results[0].count, 2002);
+    });
+    await t.test("legacy stage mismatch stays supplementary, queues a named gap and survives regeneration", async () => {
+      const resource = { id: "monitor:mismatch-paper", canonicalId: "doi:10.1016/j.jmaa.2026.130591", title: "On some Sobolev and Pólya-Szegö type inequalities with weights and applications", url: "https://doi.org/10.1016/j.jmaa.2026.130591", source: "daily-scan" };
+      await sql([
+        insert("research_spaces", { id: "mismatch", owner_user_id: "anonymous:learning-loop-test-00000001", name: "KLS", member_name: "Test" }),
+        insert("research_tracks", { id: "mismatch-track", space_id: "mismatch", title_zh: "KLS", title_en: "KLS", search_queries: '["functional inequalities"]' }),
+        insert("monitored_papers", { id: "mismatch-paper", space_id: "mismatch", canonical_id: resource.canonicalId, title: resource.title, url: resource.url, horizon: "years" }),
+        insert("paper_insights", { paper_id: "mismatch-paper", space_id: "mismatch", quality_score: 99, ever_recommended: 1 }),
+        insert("learning_paths", { id: "mismatch-path", space_id: "mismatch", target: "KLS", target_track_id: "mismatch-track", title_zh: "KLS", title_en: "KLS", status: "active" }),
+        insert("learning_path_steps", { id: "mismatch-step", space_id: "mismatch", path_id: "mismatch-path", title_zh: "Eldan 随机局部化与 KLS 界", title_en: "Eldan stochastic localization and KLS bounds", kind: "milestone", resources_json: JSON.stringify([resource]), status: "active" }),
+      ]);
+      const state = await request("/api/learning-path?spaceId=mismatch");
+      assert.equal(state.path.status, "waiting_evidence");
+      assert.equal(state.path.steps[0].resources.length, 0);
+      assert.equal(state.path.steps[0].supplementaryResources[0].id, "monitor:mismatch-paper");
+      assert.match(state.path.steps[0].evidenceQuery, /Eldan stochastic localization/);
+      assert.ok(state.path.steps[0].discovery);
+      await request("/api/learning-path", { spaceId: "mismatch", pathId: "mismatch-path", stepId: "mismatch-step", completed: true }, 409);
+      const raw = await sql([{ sql: "SELECT resources_json FROM learning_path_steps WHERE id = 'mismatch-step'" }]);
+      assert.equal(raw[0].results[0].resources_json, JSON.stringify([resource]));
+      const target = { kind: "milestone", titleZh: "Eldan 随机局部化与 KLS 界", titleEn: "Eldan stochastic localization and KLS bounds", goalZh: "", goalEn: "", readFocusZh: "", readFocusEn: "" };
+      const primaryTitle = "Eldan stochastic localization and KLS bounds";
+      const supported = { id: "monitor:matched-paper", canonicalId: "fixture:matched-paper", title: primaryTitle, url: "https://example.org/fixture", source: "daily-scan", stageEvidence: groundedStageEvidence(target, { title: primaryTitle, authors: "", abstractText: "" }, { role: "primary", quote: primaryTitle, reason: "This fixture directly represents the named primary milestone for persistence testing." }) };
+      await sql([
+        insert("monitored_papers", { id: "matched-paper", space_id: "mismatch", canonical_id: supported.canonicalId, title: primaryTitle, url: supported.url, horizon: "years" }),
+        insert("paper_insights", { paper_id: "matched-paper", space_id: "mismatch", quality_score: 90, ever_recommended: 1 }),
+        { sql: "UPDATE learning_path_steps SET resources_json = ? WHERE id = 'mismatch-step'", values: [JSON.stringify([resource, supported])] },
+      ]);
+      const matched = await request("/api/learning-path?spaceId=mismatch");
+      assert.equal(matched.path.steps[0].resources[0].id, "monitor:matched-paper");
+      assert.equal(matched.path.steps[0].supplementaryResources[0].id, "monitor:mismatch-paper");
+      assert.equal(matched.path.steps[0].evidenceStatus, "ready");
+      // A historical explicit completion is preserved, not erased by new matching rules.
+      await sql([{ sql: "UPDATE learning_path_steps SET status = 'completed', completed_at = '2026-09-01' WHERE id = 'mismatch-step'" }]);
+      const regenerated = await request("/api/learning-path", { spaceId: "mismatch", target: "KLS", trackId: "mismatch-track" }, 200, "POST");
+      const retained = regenerated.path.steps.find((step) => step.kind === "milestone");
+      assert.equal(retained.status, "completed");
+      assert.equal(retained.supplementaryResources[0].id, "monitor:mismatch-paper");
+      assert.equal(retained.completedAt, "2026-09-01");
+      const previous = await sql([{ sql: "SELECT status FROM learning_paths WHERE id = 'mismatch-path'" }]);
+      assert.equal(previous[0].results[0].status, "superseded");
     });
   } finally { await mf.dispose(); }
 });

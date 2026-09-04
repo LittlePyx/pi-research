@@ -4,15 +4,16 @@ import { learningResourceHref, learningResourcePaperId, type LearningResource } 
 
 type Locale = "zh" | "en";
 
-export function LearningResourceList({ resources, locale, openingId, onOpen, signals }: {
+export function LearningResourceList({ resources, locale, openingId, onOpen, signals, supplementary = false }: {
   resources: LearningResource[];
   locale: Locale;
   openingId: string | null;
   onOpen: (resource: LearningResource) => void;
   signals: (resource: LearningResource, locale: Locale) => string[];
+  supplementary?: boolean;
 }) {
   return <div className="v2-learning-resources v2-learning-reading-list">
-    <small>{locale === "zh" ? "现在读" : "READ NOW"}</small>
+    {!supplementary && <small>{locale === "zh" ? "现在读" : "READ NOW"}</small>}
     {resources.map((resource) => {
       const href = learningResourceHref(resource);
       const canOpen = Boolean(learningResourcePaperId(resource));

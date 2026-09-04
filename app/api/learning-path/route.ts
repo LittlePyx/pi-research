@@ -17,6 +17,7 @@ import { enqueueMonitorCandidates, type MonitorCandidateInput } from "../../../l
 import { researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { continueResearchGapDiscoveryAfterQualityShortfall, enqueueResearchGapDiscovery, readLearningGapDiscovery, safeAutomaticResearchGapQuery } from "../../../lib/research-gap-discovery";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { groundedStageEvidence, learningStageAccepts, learningStageSearchQuery, type LearningStageEvidence, type LearningStageTarget } from "../../../lib/learning-stage-match";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type PathRow = {
@@ -33,7 +34,7 @@ type StepRow = {
 type CandidateRow = {
   resource_id: string; canonical_id: string; source: LearningResourceSource; title: string; authors: string; venue: string; url: string; published_at: string | null;
   track_id: string | null; track_title: string; track_role: string; paper_role: string; citation_count: number;
-  summary_zh: string; summary_en: string; rationale_zh: string; rationale_en: string;
+  abstract_text: string; summary_zh: string; summary_en: string; rationale_zh: string; rationale_en: string;
   reading_focus_zh: string; reading_focus_en: string; quality_score: number | null; read_minutes: number | null; reading_status: LearningReadingStatus;
   selection_role: "target-direction" | "cross-direction-bridge" | "all-space" | "daily-scan-bridge";
 };
@@ -49,12 +50,13 @@ type RouteBaselineRow = {
 type DraftStep = {
   kind: LearningStepKind; titleZh: string; titleEn: string; goalZh: string; goalEn: string; whyZh: string; whyEn: string;
   readFocusZh: string; readFocusEn: string; checkpointZh: string; checkpointEn: string; estimatedMinutes: number;
-  resourceIds: string[]; evidenceQuery: string;
+  resourceIds: string[]; evidenceQuery: string; resourceEvidence?: Record<string, LearningStageEvidence>;
 };
 type DraftPath = { titleZh: string; titleEn: string; rationaleZh: string; rationaleEn: string; steps: DraftStep[] };
 type DeepSeekResponse = { choices?: Array<{ message?: { content?: string | null } }>; usage?: { prompt_tokens?: number; completion_tokens?: number }; error?: { message?: string } };
 type LiveResourceRow = {
-  id: string; canonical_id: string; title: string; quality_score: number; ever_recommended: number; reading_status: string; dismissed: number;
+  id: string; canonical_id: string; title: string; authors: string; abstract_text: string; route_role: string | null;
+  quality_score: number; ever_recommended: number; reading_status: string; dismissed: number;
 };
 function unboundedDevelopmentRetries() {
   return developmentUnboundedEnabled(getRuntimeEnv().PI_DEVELOPMENT_UNBOUNDED);
@@ -101,19 +103,6 @@ function parseJsonStrings(value: string) {
   }
 }
 
-function targetDirectionResourceCoverage(
-  candidates: Array<Pick<CandidateRow, "resource_id" | "track_id" | "selection_role">>,
-  targetTrackId: string | null,
-  usedResourceIds: Iterable<string>,
-) {
-  if (!targetTrackId) return { available: 0, required: 0, used: 0, valid: true };
-  const targetResourceIds = new Set(candidates
-    .filter((candidate) => candidate.selection_role === "target-direction" && candidate.track_id === targetTrackId)
-    .map((candidate) => candidate.resource_id));
-  const required = Math.min(2, targetResourceIds.size);
-  const used = Array.from(new Set(usedResourceIds)).filter((resourceId) => targetResourceIds.has(resourceId)).length;
-  return { available: targetResourceIds.size, required, used, valid: required === 0 || used >= required };
-}
 
 function parseResources(value: string): LearningResource[] {
   try {
@@ -133,6 +122,7 @@ function parseResources(value: string): LearningResource[] {
       ...(typeof item.readingStatus === "string" ? { readingStatus: readingStatus(item.readingStatus) } : {}),
       ...(typeof item.suggestedMinutes === "number" && Number.isFinite(item.suggestedMinutes) ? { suggestedMinutes: item.suggestedMinutes } : item.suggestedMinutes === null ? { suggestedMinutes: null } : {}),
       ...(item.qualification === "quality_approved" ? { qualification: "quality_approved" as const } : {}),
+      ...(item.stageEvidence && typeof item.stageEvidence === "object" ? { stageEvidence: item.stageEvidence as LearningStageEvidence } : {}),
     }));
   } catch {
     return [];
@@ -143,7 +133,7 @@ function resourceIdentity(resource: Pick<LearningResource, "canonicalId" | "titl
   return resource.canonicalId?.trim().toLocaleLowerCase() || `title:${learningResourceTitleKey(resource.title)}`;
 }
 
-function candidateResource(item: CandidateRow): LearningResource {
+function candidateResource(item: CandidateRow, stageEvidence?: LearningStageEvidence): LearningResource {
   return {
     id: item.resource_id,
     canonicalId: item.canonical_id,
@@ -158,6 +148,7 @@ function candidateResource(item: CandidateRow): LearningResource {
     readingStatus: readingStatus(item.reading_status),
     suggestedMinutes: item.read_minutes,
     qualification: "quality_approved",
+    ...(stageEvidence ? { stageEvidence } : {}),
   };
 }
 
@@ -172,15 +163,18 @@ async function ownedSpace(request: Request, spaceId: string) {
   return { database, space, user };
 }
 
-async function liveResourceRows(database: D1Database, spaceId: string) {
+async function liveResourceRows(database: D1Database, spaceId: string, trackId: string | null) {
   return database.prepare(
-    `SELECT p.id, p.canonical_id, p.title, i.quality_score, i.ever_recommended,
+    `SELECT p.id, p.canonical_id, p.title, p.authors, i.abstract_text, i.quality_score, i.ever_recommended,
+      (SELECT rp.role FROM research_track_papers rp WHERE rp.space_id = p.space_id
+        AND lower(rp.canonical_id) = lower(p.canonical_id) AND rp.curation_status = 'active'
+        AND (? IS NULL OR rp.track_id = ?) ORDER BY rp.id LIMIT 1) AS route_role,
       COALESCE(r.status, 'unread') AS reading_status,
       CASE WHEN EXISTS (SELECT 1 FROM paper_feedback f WHERE f.space_id = p.space_id AND f.paper_id = p.id AND f.feedback = 'not_relevant') THEN 1 ELSE 0 END AS dismissed
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
      LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
      WHERE p.space_id = ? ORDER BY i.ever_recommended DESC, i.quality_score DESC LIMIT 2000`,
-  ).bind(spaceId).all<LiveResourceRow>();
+  ).bind(trackId, trackId, spaceId).all<LiveResourceRow>();
 }
 
 async function readPath(database: D1Database, spaceId: string): Promise<LearningPath | null> {
@@ -192,7 +186,7 @@ async function readPath(database: D1Database, spaceId: string): Promise<Learning
     database.prepare(
       "SELECT id, kind, title_zh, title_en, goal_zh, goal_en, why_zh, why_en, read_focus_zh, read_focus_en, checkpoint_zh, checkpoint_en, estimated_minutes, status, position, resources_json, evidence_query, discovery_job_id, completed_at FROM learning_path_steps WHERE path_id = ? ORDER BY position",
     ).bind(path.id).all<StepRow>(),
-    liveResourceRows(database, spaceId),
+    liveResourceRows(database, spaceId, path.target_track_id),
   ]);
   const liveByCanonical = new Map<string, LiveResourceRow>();
   const liveByTitle = new Map<string, LiveResourceRow | null>();
@@ -204,18 +198,25 @@ async function readPath(database: D1Database, spaceId: string): Promise<Learning
   }
   const discoveries = await Promise.all(steps.results.map((step) => readLearningGapDiscovery(database, step.discovery_job_id)));
   const hydratedSteps = steps.results.map((step, index) => {
+    const supplementaryResources: LearningResource[] = [];
+    const target: LearningStageTarget = { kind: step.kind, titleZh: step.title_zh, titleEn: step.title_en, goalZh: step.goal_zh, goalEn: step.goal_en, readFocusZh: step.read_focus_zh, readFocusEn: step.read_focus_en };
     const resources = parseResources(step.resources_json).flatMap((resource) => {
       const canonical = resource.canonicalId?.trim().toLocaleLowerCase() || "";
       const live = (canonical ? liveByCanonical.get(canonical) : undefined) || liveByTitle.get(learningResourceTitleKey(resource.title));
       if (!live || !live.ever_recommended || live.dismissed) return [];
-      return [{
+      const hydrated: LearningResource = {
         ...resource,
         id: `monitor:${live.id}`,
         canonicalId: live.canonical_id,
         qualityScore: live.quality_score,
         readingStatus: readingStatus(live.reading_status),
         qualification: "quality_approved" as const,
-      }];
+      };
+      if (!learningStageAccepts(target, { title: live.title, authors: live.authors, abstractText: live.abstract_text, routeRole: live.route_role || "" }, resource.stageEvidence)) {
+        supplementaryResources.push(hydrated);
+        return [];
+      }
+      return [hydrated];
     });
     const discovery = discoveries[index];
     return {
@@ -235,6 +236,7 @@ async function readPath(database: D1Database, spaceId: string): Promise<Learning
       status: step.status,
       position: step.position,
       resources,
+      supplementaryResources,
       evidenceStatus: learningEvidenceStatus({ resourceCount: resources.length, discovery }),
       evidenceQuery: step.evidence_query,
       discovery,
@@ -271,7 +273,7 @@ async function contextForSpace(database: D1Database, space: SpaceRow, targetTrac
   const routePaperSelect = `SELECT 'monitor:' || mp.id AS resource_id, mp.canonical_id, 'research-map' AS source,
    mp.title, mp.authors, mp.venue, mp.url, mp.published_at, p.track_id,
    COALESCE(NULLIF(t.title_en, ''), t.title_zh) AS track_title, t.user_role AS track_role, p.role AS paper_role,
-   mp.citation_count, COALESCE(NULLIF(p.summary_zh, ''), i.summary_zh) AS summary_zh,
+   mp.citation_count, i.abstract_text, COALESCE(NULLIF(p.summary_zh, ''), i.summary_zh) AS summary_zh,
    COALESCE(NULLIF(p.summary_en, ''), i.summary_en) AS summary_en,
    COALESCE(NULLIF(p.rationale_zh, ''), i.why_read_zh) AS rationale_zh,
    COALESCE(NULLIF(p.rationale_en, ''), i.why_read_en) AS rationale_en,
@@ -313,8 +315,8 @@ async function contextForSpace(database: D1Database, space: SpaceRow, targetTrac
     targetPaperQuery,
     crossDirectionQuery,
     database.prepare(`SELECT 'monitor:' || p.id AS resource_id, p.canonical_id, 'daily-scan' AS source, p.title, p.authors, p.venue, p.url, p.published_at,
-      NULL AS track_id, '' AS track_title, 'explore' AS track_role, CASE p.horizon WHEN 'years' THEN 'foundation' ELSE 'frontier' END AS paper_role,
-      p.citation_count, i.summary_zh, i.summary_en, i.why_read_zh AS rationale_zh, i.why_read_en AS rationale_en,
+      NULL AS track_id, '' AS track_title, 'explore' AS track_role, 'unclassified' AS paper_role,
+      p.citation_count, i.abstract_text, i.summary_zh, i.summary_en, i.why_read_zh AS rationale_zh, i.why_read_en AS rationale_en,
       i.reading_focus_zh, i.reading_focus_en, i.quality_score, i.read_minutes, COALESCE(r.status, 'unread') AS reading_status,
       '${targetTrackId ? "daily-scan-bridge" : "all-space"}' AS selection_role
      FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
@@ -351,6 +353,7 @@ async function contextForSpace(database: D1Database, space: SpaceRow, targetTrac
     candidateMap.set(existingKey!, {
       ...existing,
       source: combinedSource,
+      abstract_text: richer(existing.abstract_text, item.abstract_text),
       summary_zh: richer(existing.summary_zh, item.summary_zh),
       summary_en: richer(existing.summary_en, item.summary_en),
       rationale_zh: richer(existing.rationale_zh, item.rationale_zh),
@@ -393,9 +396,10 @@ async function contextForSpace(database: D1Database, space: SpaceRow, targetTrac
 
 async function sourceRevisionFor(context: Awaited<ReturnType<typeof contextForSpace>>, targetTrackId: string | null) {
   const stable = JSON.stringify({
+    stageMatchPolicy: "stage-match-v1",
     targetTrackId,
     tracks: context.tracks.map((track) => [track.id, track.title_zh, track.title_en, track.summary_zh, track.summary_en, track.search_queries]),
-    papers: context.approvedCandidates.map((item) => [item.canonical_id, item.quality_score, item.reading_status, item.track_id]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    papers: context.approvedCandidates.map((item) => [item.canonical_id, item.quality_score, item.reading_status, item.track_id, item.title, item.authors, item.abstract_text, item.paper_role]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
   });
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(stable));
   return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
@@ -471,7 +475,9 @@ function stageTemplate(kind: LearningStepKind, target: string, baseQuery: string
   return { kind, ...template, resourceIds: [], evidenceQuery: stageEvidenceQuery(baseQuery, kind) };
 }
 
-function stageFit(candidate: CandidateRow, kind: LearningStepKind) {
+function stageFit(candidate: CandidateRow, step: LearningStageTarget, evidence?: LearningStageEvidence) {
+  if (!learningStageAccepts(step, { title: candidate.title, authors: candidate.authors, abstractText: candidate.abstract_text, routeRole: candidate.source === "daily-scan" ? "" : candidate.paper_role }, evidence)) return -1;
+  const kind = step.kind;
   const roleScores: Record<string, Record<string, number>> = {
     foundation: { foundation: 100, milestone: 35, frontier: 5 },
     method: { milestone: 95, foundation: 75, frontier: 45 },
@@ -479,7 +485,7 @@ function stageFit(candidate: CandidateRow, kind: LearningStepKind) {
     frontier: { frontier: 100, milestone: 50, foundation: 5 },
     project: { frontier: 90, milestone: 55, foundation: 10 },
   };
-  return (roleScores[kind]?.[candidate.paper_role] || 0)
+  return (roleScores[kind]?.[candidate.paper_role] || 45)
     + (candidate.selection_role === "target-direction" ? 30 : candidate.selection_role === "cross-direction-bridge" ? 5 : 0)
     + Math.round((candidate.quality_score || 0) / 10);
 }
@@ -489,8 +495,8 @@ function evidenceSkeleton(context: Awaited<ReturnType<typeof contextForSpace>>, 
   const steps = LEARNING_STAGE_ORDER.map((kind) => stageTemplate(kind, target, baseQuery));
   const unused = new Set(context.candidates.map((candidate) => candidate.resource_id));
   for (const step of steps) {
-    const candidate = context.candidates.filter((item) => unused.has(item.resource_id)).sort((left, right) => stageFit(right, step.kind) - stageFit(left, step.kind))[0];
-    if (!candidate || stageFit(candidate, step.kind) < 45) continue;
+    const candidate = context.candidates.filter((item) => unused.has(item.resource_id)).sort((left, right) => stageFit(right, step) - stageFit(left, step))[0];
+    if (!candidate || stageFit(candidate, step) < 45) continue;
     step.resourceIds = [candidate.resource_id];
     step.evidenceQuery = "";
     unused.delete(candidate.resource_id);
@@ -525,10 +531,11 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
   const date = new Date().toISOString().slice(0, 10);
   const workspaceScope = "learning-path-workspace:" + workspaceId;
   const [globalCount, workspaceCount] = await Promise.all([usageCount(database, "learning-path:global", date), usageCount(database, workspaceScope, date)]);
-  if (globalCount >= GLOBAL_DAILY_LIMIT || workspaceCount >= WORKSPACE_DAILY_LIMIT) throw new Error("Learning-path analysis budget reached for today");
+  if (!unboundedDevelopmentRetries() && (globalCount >= GLOBAL_DAILY_LIMIT || workspaceCount >= WORKSPACE_DAILY_LIMIT)) throw new Error("Learning-path analysis budget reached for today");
   const sources = context.candidates.map((item) => ({
     id: item.resource_id, canonicalId: item.canonical_id, source: item.source, selectionRole: item.selection_role, title: item.title, authors: item.authors, venue: item.venue, publishedAt: item.published_at,
     citations: item.citation_count, direction: item.track_title, directionRole: item.track_role, routeRole: item.paper_role,
+    abstractText: item.abstract_text.slice(0, 5000),
     summaryZh: cleanText(item.summary_zh, 420), summaryEn: cleanText(item.summary_en, 420), routeRationaleZh: cleanText(item.rationale_zh, 320), routeRationaleEn: cleanText(item.rationale_en, 320),
     existingReadingFocusZh: cleanText(item.reading_focus_zh, 260), existingReadingFocusEn: cleanText(item.reading_focus_en, 260),
     qualityScore: item.quality_score, suggestedMinutes: item.read_minutes, readingStatus: item.reading_status,
@@ -541,8 +548,8 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
       messages: [
         { role: "system", content: "You are Pi Research's curriculum architect. Build a compact bilingual path grounded only in supplied quality-approved paper IDs. Never invent papers or bibliographic facts. If a stage lacks suitable evidence, leave resourceIds empty and provide one safe ASCII scholarly search query without Boolean operators. Return JSON only." },
         { role: "user", content: JSON.stringify({
-          task: "Create exactly five ordered stages: foundation, method, milestone, frontier, project. Use 1-3 unique supplied IDs when evidence fits. A paper may appear in only one stage. Empty evidence is allowed only with an ASCII evidenceQuery. Read/mastered/cited work is prior knowledge, not repeated core work. The project stage must end in a falsifiable research question. Include concise why-now, reading focus, and a verifiable checkpoint.",
-          outputSchema: { titleZh: "string", titleEn: "string", rationaleZh: "string", rationaleEn: "string", steps: [{ kind: "foundation|method|milestone|frontier|project", titleZh: "string", titleEn: "string", goalZh: "string", goalEn: "string", whyZh: "string", whyEn: "string", readFocusZh: "string", readFocusEn: "string", checkpointZh: "string", checkpointEn: "string", estimatedMinutes: 90, resourceIds: ["exact supplied id"], evidenceQuery: "safe ASCII query when resourceIds is empty" }] },
+          task: "Create exactly five ordered stages: foundation, method, milestone, frontier, project. Give each stage a specific subject in its English and Chinese title. Use 1-3 unique supplied IDs only when the paper directly supports that stage, not merely the broad research route. A paper may appear in only one stage. For EVERY assigned ID supply resourceEvidence[id]: {role:'primary',quote,reason}; quote 35-700 characters exactly from its title or abstractText and explain why it is primary evidence for this stage. Route labels, recency, citation counts and quality scores do not prove foundational or milestone status. A paper merely discussing a classic or citing a breakthrough cannot replace that original work. Leave unsuitable stages empty with a specific ASCII evidenceQuery naming the missing work, author, theorem or method. Never fill a quota. Read/mastered/cited work is prior knowledge. The project stage must end in a falsifiable question. Include concise reading focus and a verifiable checkpoint.",
+          outputSchema: { titleZh: "string", titleEn: "string", rationaleZh: "string", rationaleEn: "string", steps: [{ kind: "foundation|method|milestone|frontier|project", titleZh: "string", titleEn: "string", goalZh: "string", goalEn: "string", whyZh: "string", whyEn: "string", readFocusZh: "string", readFocusEn: "string", checkpointZh: "string", checkpointEn: "string", estimatedMinutes: 90, resourceIds: ["exact supplied id"], resourceEvidence: { "exact supplied id": { role: "primary", quote: "exact title or abstract excerpt", reason: "specific reason this paper supports the stage" } }, evidenceQuery: "specific safe ASCII query" }] },
           target, targetDirection: context.targetTrack, candidatePolicy: context.candidatePolicy, space: { name: space.name, description: space.description }, researchDirections: context.tracks, confirmedResearchMemory: context.memory || "No confirmed import", qualityApprovedPaperPool: sources,
         }) },
       ],
@@ -558,15 +565,15 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
   const parsed = extractJson(content) as Partial<DraftPath>;
   const skeleton = evidenceSkeleton(context, target);
   const allowedIds = new Set(context.candidates.map((item) => item.resource_id));
+  const candidateById = new Map(context.candidates.map((item) => [item.resource_id, item]));
   const usedResourceIds = new Set<string>();
   const rawSteps = Array.isArray(parsed.steps) ? parsed.steps : [];
   const steps = LEARNING_STAGE_ORDER.map((kind, index) => {
     const raw = rawSteps.find((step) => step?.kind === kind) as Partial<DraftStep> | undefined;
     const fallback = skeleton.steps[index];
     const resourceIds = Array.isArray(raw?.resourceIds) ? Array.from(new Set(raw.resourceIds.filter((id) => typeof id === "string" && allowedIds.has(id) && !usedResourceIds.has(id)))).slice(0, 3) : [];
-    for (const id of resourceIds) usedResourceIds.add(id);
     const text = (value: unknown, fallbackValue: string, max = 900) => cleanText(value, max) || fallbackValue;
-    return {
+    const step: DraftStep = {
       kind,
       titleZh: text(raw?.titleZh, fallback.titleZh, 180), titleEn: text(raw?.titleEn, fallback.titleEn, 180),
       goalZh: text(raw?.goalZh, fallback.goalZh), goalEn: text(raw?.goalEn, fallback.goalEn),
@@ -575,20 +582,22 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
       checkpointZh: text(raw?.checkpointZh, fallback.checkpointZh), checkpointEn: text(raw?.checkpointEn, fallback.checkpointEn),
       estimatedMinutes: boundedMinutes(raw?.estimatedMinutes),
       resourceIds,
-      evidenceQuery: resourceIds.length ? "" : safeAutomaticResearchGapQuery(raw?.evidenceQuery) || fallback.evidenceQuery,
+      evidenceQuery: safeAutomaticResearchGapQuery(raw?.evidenceQuery) || fallback.evidenceQuery,
     };
+    const resourceEvidence: Record<string, LearningStageEvidence> = {};
+    step.resourceIds = resourceIds.filter((id) => {
+      const paper = candidateById.get(id)!;
+      const evidence = groundedStageEvidence(step, { title: paper.title, authors: paper.authors, abstractText: paper.abstract_text }, raw?.resourceEvidence?.[id]);
+      if (!evidence || stageFit(paper, step, evidence) < 45) return false;
+      resourceEvidence[id] = evidence;
+      usedResourceIds.add(id);
+      return true;
+    });
+    step.resourceEvidence = resourceEvidence;
+    step.evidenceQuery = step.resourceIds.length ? "" : safeAutomaticResearchGapQuery(learningStageSearchQuery(step, step.evidenceQuery || fallback.evidenceQuery)) || fallback.evidenceQuery;
+    return step;
   });
-  const targetCoverage = targetDirectionResourceCoverage(context.candidates, context.targetTrack?.id || null, usedResourceIds);
-  if (!targetCoverage.valid) {
-    const missingTargetIds = context.candidates.filter((item) => item.selection_role === "target-direction" && !usedResourceIds.has(item.resource_id));
-    for (const candidate of missingTargetIds.slice(0, targetCoverage.required - targetCoverage.used)) {
-      const step = [...steps].sort((left, right) => stageFit(candidate, right.kind) - stageFit(candidate, left.kind)).find((item) => item.resourceIds.length < 3);
-      if (!step) continue;
-      step.resourceIds.push(candidate.resource_id);
-      step.evidenceQuery = "";
-      usedResourceIds.add(candidate.resource_id);
-    }
-  }
+  // Target-direction coverage must not override the model's evidence gaps.
   await Promise.all([
     recordUsage(database, "learning-path:global", date, body.usage?.prompt_tokens || 0, body.usage?.completion_tokens || 0),
     recordUsage(database, workspaceScope, date, body.usage?.prompt_tokens || 0, body.usage?.completion_tokens || 0),
@@ -647,7 +656,7 @@ async function queueRouteLearningCandidates(database: D1Database, spaceId: strin
 
 function candidatesForStep(candidates: CandidateRow[], step: LearningPath["steps"][number], used: Set<string>) {
   return candidates.filter((candidate) => !used.has(candidate.canonical_id.toLocaleLowerCase()))
-    .sort((left, right) => stageFit(right, step.kind) - stageFit(left, step.kind));
+    .sort((left, right) => stageFit(right, step) - stageFit(left, step));
 }
 
 async function advanceLearningPath(database: D1Database, space: SpaceRow, context: Awaited<ReturnType<typeof contextForSpace>>) {
@@ -672,7 +681,7 @@ async function advanceLearningPath(database: D1Database, space: SpaceRow, contex
   const attachmentStatements: D1PreparedStatement[] = [];
   for (const step of path.steps) {
     if (step.status === "completed" || step.resources.length > 0) continue;
-    const match = candidatesForStep(context.candidates, step, used).find((candidate) => stageFit(candidate, step.kind) >= 45);
+    const match = candidatesForStep(context.candidates, step, used).find((candidate) => stageFit(candidate, step) >= 45);
     if (!match) continue;
     const resource = candidateResource(match);
     used.add(resourceIdentity(resource));
@@ -712,13 +721,15 @@ async function advanceLearningPath(database: D1Database, space: SpaceRow, contex
     if (!path) return null;
   }
   const currentBlocked = path.steps.find((step) => step.status !== "completed" && step.resources.length === 0);
-  if (currentBlocked && !currentBlocked.discovery) {
+  const fallbackQuery = currentBlocked ? safeAutomaticResearchGapQuery(currentBlocked.evidenceQuery)
+    || stageEvidenceQuery(baseLearningQuery(context, path.target), currentBlocked.kind) : "";
+  const requiredQuery = currentBlocked ? safeAutomaticResearchGapQuery(learningStageSearchQuery(currentBlocked, fallbackQuery)) || fallbackQuery : "";
+  if (currentBlocked && (!currentBlocked.discovery || currentBlocked.evidenceQuery !== requiredQuery)) {
     const discoveryTrack = path.targetTrackId
       ? context.tracks.find((track) => track.id === path.targetTrackId) || null
       : context.tracks.find((track) => track.user_role === "core") || context.tracks[0] || null;
     if (discoveryTrack) {
-      const query = safeAutomaticResearchGapQuery(currentBlocked.evidenceQuery)
-        || stageEvidenceQuery(baseLearningQuery(context, path.target), currentBlocked.kind);
+      const query = requiredQuery;
       const queued = await enqueueResearchGapDiscovery(database, {
         spaceId: space.id,
         trackId: discoveryTrack.id,
@@ -794,11 +805,13 @@ export async function POST(request: Request) {
   const previousByKind = new Map((sameScope ? previous?.steps : [])?.map((step) => [step.kind, step]) || []);
   const persistedSteps = draft.steps.map((step) => {
     const previousStep = previousByKind.get(step.kind);
-    const resources = step.resourceIds.map((id) => candidateMap.get(id)).filter((item): item is CandidateRow => Boolean(item)).map(candidateResource);
+    const resources = step.resourceIds.map((id) => candidateMap.get(id)).filter((item): item is CandidateRow => Boolean(item)).map((item) => candidateResource(item, step.resourceEvidence?.[item.resource_id]));
     const resourceMap = new Map(resources.map((resource) => [resourceIdentity(resource), resource]));
-    for (const resource of previousStep?.resources || []) resourceMap.set(resourceIdentity(resource), resource);
-    const mergedResources = Array.from(resourceMap.values()).slice(0, 4);
-    const carriesCompletion = previousStep?.status === "completed" && (previousStep.resources.length > 0 || mergedResources.length > 0);
+    for (const resource of [...(previousStep?.resources || []), ...(previousStep?.supplementaryResources || [])]) {
+      if (!resourceMap.has(resourceIdentity(resource))) resourceMap.set(resourceIdentity(resource), resource);
+    }
+    const mergedResources = Array.from(resourceMap.values());
+    const carriesCompletion = previousStep?.status === "completed";
     return {
       ...(carriesCompletion ? {
         ...step,

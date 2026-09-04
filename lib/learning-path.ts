@@ -23,6 +23,8 @@ export type LearningResource = {
   suggestedMinutes?: number | null;
   /** Formal learning material is admitted only after the shared quality queue has approved it. */
   qualification?: "quality_approved";
+  /** Internal stage-specific grounding; never a replacement for shared quality approval. */
+  stageEvidence?: import("./learning-stage-match").LearningStageEvidence;
 };
 
 export type LearningEvidenceDiscovery = {
@@ -84,6 +86,8 @@ export type LearningPathStep = {
   status: LearningStepStatus;
   position: number;
   resources: LearningResource[];
+  /** Previously attached papers remain accessible without claiming to fill this stage. */
+  supplementaryResources?: LearningResource[];
   evidenceStatus: LearningEvidenceStatus;
   evidenceQuery: string;
   discovery: LearningEvidenceDiscovery | null;
