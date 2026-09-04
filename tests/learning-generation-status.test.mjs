@@ -8,6 +8,7 @@ test("generation messages count attached unique papers, not considered or supple
   const path = { model: "deepseek-v4-pro", steps: [{ resources: [{ id: "a", canonicalId: "doi:a" }], supplementaryResources: [{ id: "b" }] }, { resources: [{ id: "a2", canonicalId: "doi:a" }] }] };
   assert.match(learningPathResultMessage(path, "zh"), /1 篇/);
   assert.match(learningPathResultMessage(path, "en"), /1 reading papers/);
+  assert.match(learningPathResultMessage({ ...path, steps: [{ resources: [{ id: "a" }], guidanceStatus: "reading-task" }] }, "zh"), /讲解尚未完成/);
   assert.match(learningPathResultMessage({ ...path, steps: [] }, "zh"), /待补齐/);
   assert.match(learningPathResultMessage({ ...path, model: "evidence-structure-v1" }, "zh"), /模型规划尚未完成/);
 });

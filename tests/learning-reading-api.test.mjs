@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Miniflare } from "miniflare";
 import { groundedStageEvidence } from "../lib/learning-stage-match.ts";
+import { groundedGuidanceReview } from "../lib/learning-guidance.ts";
 
 // The normal test command builds first. Run the same Worker, API handlers and
 // schema bootstrap as production, in an isolated in-memory D1 with no model key.
@@ -167,6 +168,55 @@ test("learning → reading → stage → route runs through the built Worker and
       assert.equal(retained.completedAt, "2026-09-01");
       const previous = await sql([{ sql: "SELECT status FROM learning_paths WHERE id = 'mismatch-path'" }]);
       assert.equal(previous[0].results[0].status, "superseded");
+    });
+    await t.test("empty-stage guidance remains guarded across shared-quality admission and persisted review", async () => {
+      for (const direction of ["math", "info"]) {
+        const space = `guidance-${direction}`;
+        const title = direction === "math" ? "Chen KLS isoperimetric coefficient lower bound" : "Gaussian information theory rate distortion bounds";
+        // Deliberately synthetic source text: this tests persistence, not the
+        // scholarly truth of a model result or a live recommendation funnel.
+        const abstract = `Fixture abstract for ${title}: evidence for a stage reading task, not an actual scientific finding.`;
+        const wrong = "Unverified stage conclusion must not be shown";
+        const target = { kind: "milestone", titleZh: title, titleEn: title, goalZh: "", goalEn: "", whyZh: wrong, whyEn: wrong, readFocusZh: "", readFocusEn: "", checkpointZh: "", checkpointEn: "" };
+        const canonicalId = `fixture:${space}`;
+        const paper = { canonicalId, title, authors: "Fixture", abstractText: abstract };
+        await sql([
+          insert("research_spaces", { id: space, owner_user_id: "anonymous:learning-loop-test-00000001", name: space, member_name: "Test" }),
+          insert("research_tracks", { id: `${space}-track`, space_id: space, title_zh: title, title_en: title, search_queries: JSON.stringify([`${title} original paper`]) }),
+          insert("monitored_papers", { id: `${space}-paper`, space_id: space, canonical_id: canonicalId, title, authors: "Fixture", url: "https://example.org/fixture", horizon: "years" }),
+          insert("paper_insights", { paper_id: `${space}-paper`, space_id: space, abstract_text: abstract, quality_score: 90, ever_recommended: 0 }),
+          insert("research_track_papers", { id: `${space}-route-paper`, space_id: space, track_id: `${space}-track`, canonical_id: canonicalId, title, authors: "Fixture", url: "https://example.org/fixture", role: "milestone" }),
+          insert("learning_paths", { id: `${space}-path`, space_id: space, target: title, target_track_id: `${space}-track`, title_zh: title, title_en: title, status: "waiting_evidence" }),
+          insert("learning_path_steps", { id: `${space}-step`, space_id: space, path_id: `${space}-path`, kind: target.kind, title_zh: title, title_en: title, why_zh: wrong, why_en: wrong, evidence_query: `${title} original paper` }),
+        ]);
+        let state = await request(`/api/learning-path?spaceId=${space}`);
+        assert.equal(state.path.steps[0].guidanceStatus, "reading-task");
+        assert.equal(state.path.steps[0].resources.length, 0);
+        assert.doesNotMatch(JSON.stringify(state), new RegExp(wrong));
+        assert.match(state.path.steps[0].evidenceQuery, direction === "math" ? /Chen KLS/ : /Gaussian information/);
+        assert.ok(state.path.steps[0].discovery?.id, "the original specific search target still feeds discovery");
+        await sql([{ sql: "UPDATE paper_insights SET ever_recommended = 1 WHERE paper_id = ?", values: [`${space}-paper`] }]);
+        state = await request(`/api/learning-path?spaceId=${space}`);
+        assert.equal(state.path.steps[0].resources.length, 1);
+        assert.equal(state.path.steps[0].guidanceStatus, "reading-task", "quality approval is not approval of old prose");
+        assert.doesNotMatch(JSON.stringify(state), new RegExp(wrong));
+        const rows = await sql([{ sql: "SELECT why_zh, resources_json FROM learning_path_steps WHERE id = ?", values: [`${space}-step`] }]);
+        assert.equal(rows[0].results[0].why_zh, wrong, "public projection must not rewrite saved history");
+        const approvedTarget = { ...target, whyZh: "核对列出的摘要依据。", whyEn: "Check the supplied abstract evidence." };
+        const certificate = groundedGuidanceReview(approvedTarget, [paper], { verdict: "supported", citations: [{ canonicalId, quote: abstract }] });
+        const resources = JSON.parse(rows[0].results[0].resources_json).map((resource) => ({ ...resource, guidanceReview: certificate }));
+        await sql([{ sql: "UPDATE learning_path_steps SET why_zh = ?, why_en = ?, resources_json = ? WHERE id = ?", values: [approvedTarget.whyZh, approvedTarget.whyEn, JSON.stringify(resources), `${space}-step`] }]);
+        state = await request(`/api/learning-path?spaceId=${space}`);
+        assert.equal(state.path.steps[0].guidanceStatus, "grounded");
+        assert.equal(state.path.steps[0].whyZh, approvedTarget.whyZh);
+        await sql([{ sql: "UPDATE paper_insights SET abstract_text = ? WHERE paper_id = ?", values: [`${abstract} Changed.`, `${space}-paper`] }]);
+        state = await request(`/api/learning-path?spaceId=${space}`);
+        assert.equal(state.path.steps[0].guidanceStatus, "reading-task", "changed source invalidates the review");
+        assert.equal(state.path.steps[0].resources.length, 1);
+        const history = await sql([{ sql: "SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?", values: [space] }, { sql: "SELECT COUNT(*) AS count FROM paper_reading_progress WHERE space_id = ?", values: [space] }]);
+        assert.equal(history[0].results[0].count, 1);
+        assert.equal(history[1].results[0].count, 0, "no user reading was invented");
+      }
     });
     await t.test("failed model replans preserve prior paths and fallback retries bypass the evidence cache", async () => {
       await sql([

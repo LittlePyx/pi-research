@@ -4,6 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 import { LEARNING_STAGE_ORDER } from "../lib/learning-path.ts";
 import { groundedStageEvidence, learningStageAccepts, learningStageSearchQuery } from "../lib/learning-stage-match.ts";
+import { groundedGuidanceReview, learningGuidanceText } from "../lib/learning-guidance.ts";
 
 const stage = (kind, titleEn) => ({ kind, titleEn, titleZh: titleEn, goalZh: "", goalEn: titleEn, readFocusZh: "", readFocusEn: titleEn });
 const milestone = stage("milestone", "Eldan stochastic localization and KLS bounds");
@@ -60,7 +61,7 @@ test("the real model-output parser keeps unsupported stages empty and does not f
   const modelStep = (id, quote) => ({ ...milestone, resourceIds: [id], resourceEvidence: { [id]: { role: "primary", quote, reason: "A primary contribution directly proving the stage's named breakthrough." } } });
   let response = { steps: [modelStep(wrong.resource_id, wrong.title)] };
   const dependencies = {
-    LEARNING_STAGE_ORDER, groundedStageEvidence, learningStageAccepts, learningStageSearchQuery,
+    LEARNING_STAGE_ORDER, groundedStageEvidence, learningStageAccepts, learningStageSearchQuery, groundedGuidanceReview, learningGuidanceText,
     safeAutomaticResearchGapQuery: (value) => typeof value === "string" ? value : "", baseLearningQuery: () => "Eldan stochastic localization KLS bounds",
     cleanText: (value, max = 900) => String(value || "").trim().slice(0, max), boundedMinutes: () => 90,
     unboundedDevelopmentRetries: () => true, MODEL: "test-model", GLOBAL_DAILY_LIMIT: 120, WORKSPACE_DAILY_LIMIT: 8,

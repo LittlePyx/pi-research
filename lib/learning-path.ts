@@ -25,6 +25,8 @@ export type LearningResource = {
   qualification?: "quality_approved";
   /** Internal stage-specific grounding; never a replacement for shared quality approval. */
   stageEvidence?: import("./learning-stage-match").LearningStageEvidence;
+  /** Independent abstract-level review, bound to exact stage prose and sources. */
+  guidanceReview?: import("./learning-guidance").LearningGuidanceReview;
 };
 
 export type LearningEvidenceDiscovery = {
@@ -88,6 +90,7 @@ export type LearningPathStep = {
   resources: LearningResource[];
   /** Previously attached papers remain accessible without claiming to fill this stage. */
   supplementaryResources?: LearningResource[];
+  guidanceStatus?: "grounded" | "reading-task";
   evidenceStatus: LearningEvidenceStatus;
   evidenceQuery: string;
   discovery: LearningEvidenceDiscovery | null;
@@ -130,6 +133,9 @@ export function learningPathResultMessage(path: LearningPath, locale: "zh" | "en
     : "Reading outline saved; model planning is not complete.";
   const count = new Set(path.steps.flatMap((step) => step.resources.map((resource) => resource.canonicalId || resource.id))).size;
   if (!count) return locale === "zh" ? "路径已保存，阅读材料待补齐。" : "Path saved; reading materials are still missing.";
+  if (path.steps.some((step) => step.resources.length && step.guidanceStatus === "reading-task")) return locale === "zh"
+    ? `已保留 ${count} 篇阅读材料；部分阶段讲解尚未完成。`
+    : `${count} reading papers saved; some stage explanations are not yet complete.`;
   return locale === "zh" ? `路径已更新，含 ${count} 篇阅读材料。` : `Path updated with ${count} reading papers.`;
 }
 
