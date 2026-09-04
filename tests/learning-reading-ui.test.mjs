@@ -5,6 +5,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import * as learningHelpers from "../lib/learning-path.ts";
+import { shouldWakeLearningQualityQueue } from "../lib/monitor-quality-queue.mjs";
 
 const app = await readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8");
 const component = await readFile(new URL("../app/components/learning-resource-list.tsx", import.meta.url), "utf8");
@@ -41,7 +42,7 @@ test("the production learning continuation effect respects visibility, path swit
   const end = app.indexOf("\n  }, [activeSpace.id, learningAction,", marker);
   assert.ok(start > 0 && end > marker);
   const effect = app.slice(start, app.indexOf("]);", end) + 3);
-  function mount({ visible = true, action = null, fetcher } = {}) {
+  function mount({ visible = true, action = null, fetcher, monitoring = false, monitor = null } = {}) {
     let cleanup, wake = 0, reload = 0;
     const timers = new Map(), states = [], calls = [];
     let sequence = 0;
@@ -50,6 +51,7 @@ test("the production learning continuation effect respects visibility, path swit
       useEffect: (callback) => { cleanup = callback(); }, view: "learn", researchMapMode: "papers", paperNetworkMode: "path",
       learningLoadedSpaceId: "space-a", activeSpace: { id: "space-a" }, learningLoading: false, learningAction: action,
       learningState: { path }, learningDiscoveryDelay: learningHelpers.learningDiscoveryDelay,
+      monitor, monitoring, shouldWakeLearningQualityQueue,
       document: { visibilityState: visible ? "visible" : "hidden" },
       window: { setTimeout: (callback, delay) => { timers.set(++sequence, { callback, delay }); return sequence; }, clearTimeout: (id) => timers.delete(id) },
       fetch: async (_url, request) => { calls.push(JSON.parse(request.body)); return fetcher ? fetcher() : Response.json({ path, discoveryAdvance: { queuedCount: 2 } }); },
@@ -65,6 +67,15 @@ test("the production learning continuation effect respects visibility, path swit
   await normal.tick();
   assert.deepEqual(normal.calls, [{ spaceId: "space-a", pathId: "path-a", action: "advance-evidence" }]);
   assert.equal(normal.wake(), 1, "new candidates wake the existing Today pipeline");
+  const inFlight = mount({ monitoring: true });
+  await inFlight.tick(); assert.equal(inFlight.wake(), 0, "new candidates must not cancel an ongoing pass");
+  const readyPath = { id: "path-a", status: "waiting_evidence", steps: [{ status: "pending", resources: [], discovery: { status: "ready", reviewPendingCount: 2 } }] };
+  const overdue = mount({ monitor: { status: "ready", nextRunAt: "2020-01-01 00:00:00" },
+    fetcher: () => Response.json({ path: readyPath, discoveryAdvance: { queuedCount: 0 } }) });
+  await overdue.tick(); assert.equal(overdue.wake(), 1, "persisted candidates resume after nextRunAt even without newly enqueued papers");
+  const notDue = mount({ monitor: { status: "ready", nextRunAt: "2099-01-01 00:00:00" },
+    fetcher: () => Response.json({ path: readyPath, discoveryAdvance: { queuedCount: 0 } }) });
+  await notDue.tick(); assert.equal(notDue.wake(), 0);
   const hidden = mount({ visible: false });
   await hidden.tick(); assert.equal(hidden.calls.length, 0); assert.equal(hidden.timers.size, 1);
   hidden.stop(); assert.equal(hidden.timers.size, 0);

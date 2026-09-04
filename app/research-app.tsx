@@ -8,6 +8,7 @@ import { LearningResourceList } from "./components/learning-resource-list";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import { emptyResearchMapState, researchLeadActionableGap, researchRouteLearningSignal, researchRouteOperationalStatus, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchLeadGapOrigin, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
 import { learningDiscoveryDelay, learningPathResultMessage, learningResourceHref, learningResourcePaperId, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
+import { monitorScanCompletionLabel, shouldWakeLearningQualityQueue } from "../lib/monitor-quality-queue.mjs";
 import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
 import { archiveQualityStagePresentation, isRecommendationQualityStage, routeDiscoveryPresentation } from "../lib/discovery-archive-semantics.mjs";
@@ -3438,12 +3439,7 @@ export default function ResearchApp({ user }: { user: User }) {
     } satisfies Record<ResearchDirectionRole, ResearchTrack[]>;
   }, [researchMap.tracks]);
   const routePortfolio = researchMap.routePortfolio;
-  const routeQualityBacklogCount = routePortfolio.queuedCount + routePortfolio.reviewingCount;
-  const monitorReadyLabel = routeQualityBacklogCount > 0
-    ? (locale === "zh"
-      ? `来源扫描已完成 · ${routeQualityBacklogCount} 篇路线候选等待或正在质量评估`
-      : `Source scan complete · ${routeQualityBacklogCount} route candidates awaiting or in quality review`)
-    : (locale === "zh" ? "今日扫描与当前质量队列已完成" : "Today's scan and current quality queue are complete");
+  const monitorReadyLabel = monitorScanCompletionLabel(monitor, locale);
   const routeTodayPaperCount = useMemo(() => rankedMonitorPapers.filter((paper) => Boolean(
     paper.discoveryOrigin || (paper.discoveryTrack && paper.discoveryType),
   )).length, [rankedMonitorPapers]);
@@ -4206,7 +4202,10 @@ export default function ResearchApp({ user }: { user: User }) {
         if (response.ok && data.path?.id === path.id) {
           setLearningState(data);
           // Reuse Today's existing leased pipeline; never approve or confirm here.
-          if ((data.discoveryAdvance?.queuedCount || 0) > 0) setLearningMonitorWake((value) => value + 1);
+          if (!monitoring && ((data.discoveryAdvance?.queuedCount || 0) > 0
+            || shouldWakeLearningQualityQueue({ path: data.path, monitor: { status: monitor?.status, nextRunAt: monitor?.nextRunAt }, monitoring }))) {
+            setLearningMonitorWake((value) => value + 1);
+          }
           return;
         }
         if (response.status === 409) { setLearningReloadNonce((value) => value + 1); return; }
@@ -4215,7 +4214,7 @@ export default function ResearchApp({ user }: { user: User }) {
     };
     timer = window.setTimeout(run, delay);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [activeSpace.id, learningAction, learningLoadedSpaceId, learningLoading, learningState.path, paperNetworkMode, researchMapMode, view]);
+  }, [activeSpace.id, learningAction, learningLoadedSpaceId, learningLoading, learningState.path, monitor?.status, monitor?.nextRunAt, monitoring, paperNetworkMode, researchMapMode, view]);
 
   useEffect(() => {
     if (view !== "today" || !monitor?.papers.length || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
