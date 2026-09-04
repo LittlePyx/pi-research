@@ -1,9 +1,12 @@
 import type { ResearchTrackRole } from "./research-map";
+import { learningStageSearchQuery } from "./learning-stage-match.ts";
 
 export type ResearchClassicSeed = {
   id: string;
   title: string;
   aliases?: string[];
+  publicationYear?: number;
+  authorSignal?: string;
   role: Exclude<ResearchTrackRole, "frontier">;
   signals: string[];
 };
@@ -24,6 +27,8 @@ export const RESEARCH_CLASSIC_SEEDS: readonly ResearchClassicSeed[] = Object.fre
   {
     id: "kls-localization-lemma",
     title: "Isoperimetric problems for convex bodies and a localization lemma",
+    publicationYear: 1995,
+    authorSignal: "Kannan",
     role: "foundation",
     signals: ["kls conjecture", "kannan lovasz simonovits", "stochastic localization", "isoperimetric coefficient", "log concave"],
   },
@@ -44,6 +49,14 @@ export const RESEARCH_CLASSIC_SEEDS: readonly ResearchClassicSeed[] = Object.fre
     title: "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
     role: "milestone",
     signals: ["kls conjecture", "stochastic localization", "isoperimetric coefficient", "log concave", "chen"],
+  },
+  {
+    id: "shannon-mathematical-communication",
+    title: "A Mathematical Theory of Communication",
+    publicationYear: 1948,
+    authorSignal: "Shannon",
+    role: "foundation",
+    signals: ["shannon maximum entropy", "shannon gaussian", "shannon information theory", "mathematical theory of communication"],
   },
   {
     id: "shannon-fidelity-criterion",
@@ -102,6 +115,12 @@ function signalScore(corpus: string, signal: string) {
   return 4 + Math.min(6, wordCount);
 }
 
+export function hasNamedResearchClassicQuery(query: string) {
+  const normalized = normalizeResearchClassicTitle(query);
+  return RESEARCH_CLASSIC_SEEDS.some((seed) => [seed.title, ...(seed.aliases || [])]
+    .some((title) => normalized.includes(normalizeResearchClassicTitle(title))));
+}
+
 export function selectResearchClassicSeeds(
   topic: ResearchClassicSeedTopic,
   limit = 4,
@@ -111,6 +130,10 @@ export function selectResearchClassicSeeds(
     topic.summaryEn || "",
     ...topic.searchQueries,
   ].join(" "));
+  // A named original work is narrower than the surrounding route topic.
+  const named = RESEARCH_CLASSIC_SEEDS.filter((seed) => [seed.title, ...(seed.aliases || [])]
+    .some((title) => corpus.includes(normalizeResearchClassicTitle(title))));
+  if (named.length) return named.slice(0, Math.max(0, Math.floor(limit)));
   return RESEARCH_CLASSIC_SEEDS.map((seed, index) => ({
     seed,
     index,
@@ -119,6 +142,29 @@ export function selectResearchClassicSeeds(
     .sort((left, right) => right.score - left.score || left.index - right.index)
     .slice(0, Math.max(0, Math.floor(limit)))
     .map((item) => item.seed);
+}
+
+/** Scope exact searches to missing original-work stages, not to the whole route. */
+export function learningClassicSearchQuery(stage: { kind: string; titleEn: string }, query: string) {
+  if (stage.kind !== "foundation" && stage.kind !== "milestone") return null;
+  // Keep an already named work (including quality-feedback suffixes) stable.
+  const existing = RESEARCH_CLASSIC_SEEDS.find((seed) => seed.role === stage.kind
+    && [seed.title, ...(seed.aliases || [])].some((title) => normalizeResearchClassicTitle(query).includes(normalizeResearchClassicTitle(title))));
+  if (existing) return query;
+  const focusedQuery = learningStageSearchQuery({ kind: stage.kind, titleEn: stage.titleEn }, query);
+  const seeds = selectResearchClassicSeeds({ titleEn: stage.titleEn, searchQueries: [focusedQuery] }, RESEARCH_CLASSIC_SEEDS.length)
+    .filter((seed) => seed.role === stage.kind);
+  const seed = seeds[0];
+  if (!seed) return null;
+  return seed.title;
+}
+
+export function matchesResearchClassicRecord(seed: ResearchClassicSeed, candidate: {
+  title: string; authors: string; publishedAt: string | null;
+}) {
+  return matchesResearchClassicSeedTitle(seed, candidate.title)
+    && (!seed.publicationYear || candidate.publishedAt?.slice(0, 4) === String(seed.publicationYear))
+    && (!seed.authorSignal || normalizeResearchClassicTitle(candidate.authors).includes(normalizeResearchClassicTitle(seed.authorSignal)));
 }
 
 /**

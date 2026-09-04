@@ -32,6 +32,9 @@ export type ResearchTrackSourceReport = {
   role: ResearchTrackRole | "baseline";
   status: ResearchTrackSourceStatus;
   candidateCount: number;
+  candidateCanonicalIds?: string[];
+  /** Whole-job queue identities after deduplication, recorded on the first report only. */
+  jobReviewCanonicalIds?: string[];
   error?: string;
 };
 

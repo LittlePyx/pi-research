@@ -29,6 +29,17 @@ test("learning → reading → stage → route runs through the built Worker and
     outboundService: async (request) => {
       const url = new URL(request.url);
       if (url.hostname === "api.crossref.org") {
+        const originalTitle = url.searchParams.get("query.title");
+        if (originalTitle) {
+          const info = originalTitle === "A Mathematical Theory of Communication";
+          assert.equal(url.searchParams.has("filter"), false, "original-work lookup must not exclude 1948 or older milestones");
+          return Response.json({ message: { items: [{ DOI: info ? "10.1234/fixture-shannon-original" : "10.1234/fixture-kls-original",
+            title: [originalTitle], author: [{ given: info ? "Claude" : "Ravi", family: info ? "Shannon" : "Kannan" }],
+            type: "journal-article", published: { "date-parts": [[info ? 1948 : 1995, 1, 1]] },
+            URL: "https://example.org/fixture-original", "is-referenced-by-count": 100,
+            // No fabricated abstract: quality must continue to treat this as a pending candidate.
+          }] } });
+        }
         const info = url.search.includes("Shannon");
         return Response.json({ message: { items: [{ DOI: info ? "10.1234/fixture-shannon" : "10.1234/fixture-kls",
           title: [info ? "Shannon maximum entropy Gaussian covariance theorem" : "KLS conjecture isoperimetric constants foundational paper"],
@@ -157,7 +168,7 @@ test("learning → reading → stage → route runs through the built Worker and
       assert.equal(state.path.status, "waiting_evidence");
       assert.equal(state.path.steps[0].resources.length, 0);
       assert.equal(state.path.steps[0].supplementaryResources[0].id, "monitor:mismatch-paper");
-      assert.match(state.path.steps[0].evidenceQuery, /Eldan stochastic localization/);
+      assert.equal(state.path.steps[0].evidenceQuery, "Thin shell implies spectral gap up to polylog via a stochastic localization scheme");
       assert.ok(state.path.steps[0].discovery);
       await request("/api/learning-path", { spaceId: "mismatch", pathId: "mismatch-path", stepId: "mismatch-step", completed: true }, 409);
       const raw = await sql([{ sql: "SELECT resources_json FROM learning_path_steps WHERE id = 'mismatch-step'" }]);
@@ -208,7 +219,7 @@ test("learning → reading → stage → route runs through the built Worker and
         assert.equal(state.path.steps[0].guidanceStatus, "reading-task");
         assert.equal(state.path.steps[0].resources.length, 0);
         assert.doesNotMatch(JSON.stringify(state), new RegExp(wrong));
-        assert.match(state.path.steps[0].evidenceQuery, direction === "math" ? /Chen KLS/ : /Gaussian information/);
+        assert.match(state.path.steps[0].evidenceQuery, direction === "math" ? /An Almost Constant Lower Bound/ : /Gaussian information/);
         assert.ok(state.path.steps[0].discovery?.id, "the original specific search target still feeds discovery");
         await sql([{ sql: "UPDATE paper_insights SET ever_recommended = 1 WHERE paper_id = ?", values: [`${space}-paper`] }]);
         state = await request(`/api/learning-path?spaceId=${space}`);
@@ -243,9 +254,14 @@ test("learning → reading → stage → route runs through the built Worker and
           insert("monitor_runs", { id: `${space}-run`, space_id: space, last_user_activity_at: new Date().toISOString(), status: "ready" }),
           insert("learning_paths", { id: `${space}-path`, space_id: space, target: query, target_track_id: `${space}-track`, title_zh: query, title_en: query, status: "waiting_evidence" }),
           insert("learning_path_steps", { id: `${space}-step`, space_id: space, path_id: `${space}-path`, title_zh: query, title_en: query, kind: "foundation", evidence_query: query }),
+          insert("research_gap_discovery_jobs", { id: `${space}-old-job`, space_id: space, track_id: `${space}-track`, purpose: "learning", origin: "direction", signal_revision: `${space}-old-signal`, query_text: query, status: "ready", attempt_count: 1, queued_count: 2 }),
+          { sql: "UPDATE learning_path_steps SET discovery_job_id = ? WHERE id = ?", values: [`${space}-old-job`, `${space}-step`] },
         ]);
         const before = await request(`/api/learning-path?spaceId=${space}`);
         const jobId = before.path.steps[0].discovery.id;
+        assert.notEqual(jobId, `${space}-old-job`, "missing stage gets a new query version, not a history reset");
+        assert.equal(before.path.steps[0].evidenceQuery, info
+          ? "A Mathematical Theory of Communication" : "Isoperimetric problems for convex bodies and a localization lemma");
         const body = { spaceId: space, pathId: `${space}-path`, action: "advance-evidence" };
         await request("/api/learning-path", { ...body, pathId: "stale-path" }, 409, "POST");
         const after = await request("/api/learning-path", body, 200, "POST");
@@ -261,10 +277,27 @@ test("learning → reading → stage → route runs through the built Worker and
           { sql: "SELECT COUNT(*) AS n FROM learning_paths WHERE space_id = ?", values: [space] },
         ])).map((row) => row.results[0].n);
         assert.ok(counts[0] > 0); assert.deepEqual(counts.slice(1), [0, 0, 1]);
+        const lineage = (await sql([
+          { sql: `SELECT DISTINCT mp.canonical_id, mp.title, i.ever_recommended, cs.source_key, cs.query_key
+            FROM monitor_candidate_sources cs JOIN monitored_papers mp ON mp.id = cs.paper_id
+            JOIN paper_insights i ON i.paper_id = mp.id WHERE cs.space_id = ?`, values: [space] },
+          { sql: "SELECT signal_revision, source_status_json FROM research_gap_discovery_jobs WHERE id = ?", values: [jobId] },
+        ])).map((row) => row.results);
+        assert.equal(lineage[0].length, 1, "the original is not replaced by broad contemporary matches");
+        assert.equal(lineage[0][0].title, before.path.steps[0].evidenceQuery);
+        assert.equal(lineage[0][0].ever_recommended, 0);
+        assert.equal(lineage[0][0].source_key, "research-route:learning");
+        assert.equal(lineage[0][0].query_key, `${space}-track:crossref:auto:${lineage[1][0].signal_revision}`);
+        const sources = JSON.parse(lineage[1][0].source_status_json);
+        assert.deepEqual(sources[0].jobReviewCanonicalIds, [lineage[0][0].canonical_id]);
+        assert.ok(sources.some((source) => source.status === "failed"), "failed enrichment remains visible in durable job health");
         const repeat = await request("/api/learning-path", body, 200, "POST");
         assert.equal(repeat.discoveryAdvance.attempted, false, "respect the retry date after partial source failure");
         assert.equal(repeat.path.steps[0].discovery.id, jobId);
         assert.equal(repeat.path.steps[0].discovery.queuedCount, after.path.steps[0].discovery.queuedCount);
+        const history = (await sql([{ sql: "SELECT id, status, queued_count FROM research_gap_discovery_jobs WHERE space_id = ? ORDER BY id", values: [space] }]))[0].results;
+        assert.equal(history.length, 2, "revisiting cannot endlessly create replacement jobs");
+        assert.deepEqual(history.find((row) => row.id === `${space}-old-job`), { id: `${space}-old-job`, status: "ready", queued_count: 2 });
       }
       await request("/api/learning-path", { spaceId: "not-owned", pathId: "wake-math-path", action: "advance-evidence" }, 404, "POST");
     });

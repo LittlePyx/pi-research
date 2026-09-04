@@ -18,6 +18,7 @@ import { researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { continueResearchGapDiscoveryAfterQualityShortfall, enqueueResearchGapDiscovery, readLearningGapDiscovery, safeAutomaticResearchGapQuery } from "../../../lib/research-gap-discovery";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { groundedStageEvidence, learningStageAccepts, learningStageSearchQuery, type LearningStageEvidence, type LearningStageTarget } from "../../../lib/learning-stage-match";
+import { learningClassicSearchQuery } from "../../../lib/research-classic-seeds";
 import { LEARNING_GUIDANCE_POLICY, groundedGuidanceReview, guidanceReviewIsCurrent, learningGuidanceText, presentLearningGuidance, type LearningGuidanceReview, type LearningGuidanceSource } from "../../../lib/learning-guidance";
 import { advanceLearningDiscovery } from "../../../lib/learning-discovery";
 import { POST as expandResearchMap } from "../research-map/route";
@@ -776,7 +777,8 @@ async function advanceLearningPath(database: D1Database, space: SpaceRow, contex
   const currentBlocked = path.steps.find((step) => step.status !== "completed" && step.resources.length === 0);
   const fallbackQuery = currentBlocked ? safeAutomaticResearchGapQuery(currentBlocked.evidenceQuery)
     || stageEvidenceQuery(baseLearningQuery(context, path.target), currentBlocked.kind) : "";
-  const requiredQuery = currentBlocked ? safeAutomaticResearchGapQuery(learningStageSearchQuery(currentBlocked, fallbackQuery)) || fallbackQuery : "";
+  const requiredQuery = currentBlocked ? safeAutomaticResearchGapQuery(learningClassicSearchQuery(currentBlocked, fallbackQuery)
+    ?? learningStageSearchQuery(currentBlocked, fallbackQuery)) || fallbackQuery : "";
   if (currentBlocked && (!currentBlocked.discovery || currentBlocked.evidenceQuery !== requiredQuery)) {
     const discoveryTrack = path.targetTrackId
       ? context.tracks.find((track) => track.id === path.targetTrackId) || null

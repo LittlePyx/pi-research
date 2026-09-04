@@ -14,7 +14,7 @@ import { claimResearchTrackIntelligence, completeResearchTrackIntelligence, defe
 import { applyStoredResearchRoutePrecisionAudits, RESEARCH_ROUTE_PRECISION_GATE_VERSION, researchRoutePrecisionAuditProgress, routePrecisionAcceptedForActiveNode, routePrecisionAutoDeactivates, routePrecisionJudgmentIdentity, sanitizeResearchRoutePrecisionJudgments } from "../../../lib/research-map-precision";
 import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
 import { enqueueResearchGapDiscovery, settleMatchingResearchGapDiscoveries } from "../../../lib/research-gap-discovery";
-import { matchesResearchClassicSeedTitle, preferredResearchClassicCandidate, selectResearchClassicSeeds } from "../../../lib/research-classic-seeds";
+import { hasNamedResearchClassicQuery, matchesResearchClassicRecord, preferredResearchClassicCandidate, selectResearchClassicSeeds } from "../../../lib/research-classic-seeds";
 import {
   evaluateResearchRouteEffectiveness,
   evaluateResearchRouteShadowExperiment,
@@ -790,7 +790,7 @@ async function generateDirections(database: D1Database, workspaceId: string, spa
 
 function roleDates(role: ResearchTrackRole) {
   const year = new Date().getUTCFullYear();
-  if (role === "foundation") return { from: "1950-01-01", until: `${year - 10}-12-31` };
+  if (role === "foundation") return { from: "1000-01-01", until: `${year - 10}-12-31` };
   if (role === "milestone") return { from: `${year - 15}-01-01`, until: `${year - 5}-12-31` };
   return { from: `${year - 5}-01-01`, until: new Date().toISOString().slice(0, 10) };
 }
@@ -844,11 +844,9 @@ async function fetchOpenAlex(database: D1Database, query: string, role: Research
   return (await response.json() as OpenAlexResponse).results || [];
 }
 
-async function fetchCrossrefClassic(title: string, role: ResearchTrackRole, rows = 6) {
-  const dates = roleDates(role);
+async function fetchCrossrefClassic(title: string, rows = 6) {
   const endpoint = new URL("https://api.crossref.org/works");
   endpoint.searchParams.set("query.title", cleanText(title).slice(0, 420));
-  endpoint.searchParams.set("filter", `from-pub-date:${dates.from},until-pub-date:${dates.until}`);
   endpoint.searchParams.set("rows", String(rows));
   endpoint.searchParams.set("mailto", "pi-research@qiudao-pika.chatgpt.site");
   const options: RequestInit = {
@@ -864,11 +862,10 @@ async function fetchCrossrefClassic(title: string, role: ResearchTrackRole, rows
   return (await response.json() as CrossrefResponse).message?.items || [];
 }
 
-async function fetchOpenAlexClassic(database: D1Database, title: string, role: ResearchTrackRole, rows = 6) {
-  const dates = roleDates(role);
+async function fetchOpenAlexClassic(database: D1Database, title: string, rows = 6) {
   const endpoint = new URL("https://api.openalex.org/works");
   endpoint.searchParams.set("search", cleanText(title).slice(0, 420));
-  endpoint.searchParams.set("filter", `from_publication_date:${dates.from},to_publication_date:${dates.until},is_paratext:false`);
+  endpoint.searchParams.set("filter", "is_paratext:false");
   endpoint.searchParams.set("per-page", String(rows));
   endpoint.searchParams.set("sort", "relevance_score:desc");
   endpoint.searchParams.set("select", "id,doi,title,display_name,relevance_score,publication_date,cited_by_count,authorships,primary_location,abstract_inverted_index");
@@ -944,50 +941,37 @@ function routeSourceError(error: unknown) {
 
 async function discoverClassicRescueCandidates(database: D1Database, direction: DirectionDraft, limit = 4) {
   const seeds = selectResearchClassicSeeds(direction, limit);
-  const tasks = seeds.map((seed, index) => ({
-    seed,
-    provider: (index % 2 === 0 ? "crossref" : "openalex") as Extract<ResearchTrackDiscoveryProvider, "crossref" | "openalex">,
-  }));
-  const settled = await Promise.allSettled(tasks.map(async ({ seed, provider }) => {
-    const normalized = provider === "crossref"
-      ? await Promise.all((await fetchCrossrefClassic(seed.title, seed.role)).map((item) => normalizeItem(item, direction.key, seed.role)))
-      : await Promise.all((await fetchOpenAlexClassic(database, seed.title, seed.role)).map((item) => normalizeOpenAlexItem(item, direction.key, seed.role)));
-    const records = normalized.filter((item): item is MapCandidate => Boolean(item));
-    const exact = records.filter((candidate) => matchesResearchClassicSeedTitle(seed, candidate.title));
-    return {
-      candidates: exact.map((candidate) => ({
-        ...candidate,
-        classicRescueSeedId: seed.id,
-        classicRescueSeedTitle: seed.title,
-      })),
-      rejectedCount: records.length - exact.length,
-    };
-  }));
-  const candidates: MapCandidate[] = [];
-  const sources: ResearchTrackSourceReport[] = [];
-  let topicalRejectedCount = 0;
-  for (let index = 0; index < tasks.length; index += 1) {
-    const task = tasks[index];
-    const result = settled[index];
-    const source = `${task.provider}:classic-rescue:${task.seed.id}`;
-    if (result.status === "fulfilled") {
-      candidates.push(...result.value.candidates);
-      topicalRejectedCount += result.value.rejectedCount;
-      sources.push({
-        source,
-        role: task.seed.role,
-        status: result.value.candidates.length ? "ok" : "empty",
-        candidateCount: result.value.candidates.length,
-      });
-    } else {
-      sources.push({ source, role: task.seed.role, status: "failed", candidateCount: 0, error: routeSourceError(result.reason) });
+  const batches = await Promise.all(seeds.map(async (seed, index) => {
+    const candidates: MapCandidate[] = [];
+    const sources: ResearchTrackSourceReport[] = [];
+    let topicalRejectedCount = 0;
+    // At most two providers for the SAME work; keep partial evidence and the
+    // failed-source status if the second provider cannot fill its abstract.
+    for (const provider of index % 2 === 0 ? ["crossref", "openalex"] : ["openalex", "crossref"]) {
+      const source = `${provider}:classic-rescue:${seed.id}`;
+      try {
+        const normalized = provider === "crossref"
+          ? await Promise.all((await fetchCrossrefClassic(seed.title)).map((item) => normalizeItem(item, direction.key, seed.role)))
+          : await Promise.all((await fetchOpenAlexClassic(database, seed.title)).map((item) => normalizeOpenAlexItem(item, direction.key, seed.role)));
+        const records = normalized.filter((item): item is MapCandidate => Boolean(item));
+        const exact = records.filter((candidate) => matchesResearchClassicRecord(seed, candidate));
+        topicalRejectedCount += records.length - exact.length;
+        candidates.push(...exact.map((candidate) => ({ ...candidate, classicRescueSeedId: seed.id, classicRescueSeedTitle: seed.title })));
+        sources.push({ source, role: seed.role, status: exact.length ? "ok" : "empty", candidateCount: exact.length,
+          candidateCanonicalIds: exact.map((candidate) => candidate.canonicalId) });
+        if (exact.some((candidate) => candidate.abstractText.length >= 180)) break;
+      } catch (error) {
+        sources.push({ source, role: seed.role, status: "failed", candidateCount: 0, error: routeSourceError(error) });
+      }
     }
-  }
+    return { candidates, sources, topicalRejectedCount };
+  }));
+  const sources = batches.flatMap((batch) => batch.sources);
   return {
-    candidates,
+    candidates: batches.flatMap((batch) => batch.candidates),
     sources,
     errors: sources.flatMap((source) => source.error ? [source.error] : []),
-    topicalRejectedCount,
+    topicalRejectedCount: batches.reduce((sum, batch) => sum + batch.topicalRejectedCount, 0),
     seedCount: seeds.length,
   };
 }
@@ -2773,8 +2757,10 @@ export async function POST(request: Request) {
     const offset = hydrating ? Math.max(0, track.build_attempt_count) * 14
       : automaticGapJob ? (automaticAttemptIndex * 16) % 608
         : ((track.expansion_count + 1) * 16) % 608;
-    const classicRescueDiscovery = hydrating && track.build_attempt_count >= RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT - 1
-      ? await discoverClassicRescueCandidates(database, direction)
+    const classicRescueDiscovery = automaticGapJob?.purpose === "learning" && hasNamedResearchClassicQuery(targetedQuery)
+      ? await discoverClassicRescueCandidates(database, { ...direction, titleEn: targetedQuery, summaryEn: "", searchQueries: [targetedQuery] }, 2)
+      : hydrating && track.build_attempt_count >= RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT - 1
+        ? await discoverClassicRescueCandidates(database, direction)
       : null;
     const discovery = classicRescueDiscovery?.seedCount
       ? classicRescueDiscovery
@@ -2846,10 +2832,10 @@ export async function POST(request: Request) {
     const queueCandidates = candidates.filter((candidate) => !routePrecisionAutoDeactivates(
       precisionByCandidate.get(`${candidate.directionKey}:${candidate.canonicalId}`),
     )).slice(0, 24).map((candidate) => {
-      const sourceKind = candidate.classicRescueSeedId ? "classic-rescue"
-        : automaticGapExpanding ? automaticSourceKind : actionExpanding ? "action" : problemExpanding ? "problem" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
-      const querySuffix = candidate.classicRescueSeedId ? `classic:${candidate.classicRescueSeedId}`
-        : automaticGapExpanding ? `auto:${automaticGapJob?.signal_revision}` : actionExpanding ? `action:${payload.actionRunId}` : problemExpanding ? `problem:${problemSignal?.assessmentRevision}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
+      const sourceKind = automaticGapExpanding ? automaticSourceKind : candidate.classicRescueSeedId ? "classic-rescue"
+        : actionExpanding ? "action" : problemExpanding ? "problem" : synthesisExpanding ? "synthesis" : gapExpanding ? "gap" : candidate.proposedRole;
+      const querySuffix = automaticGapExpanding ? `auto:${automaticGapJob?.signal_revision}` : candidate.classicRescueSeedId ? `classic:${candidate.classicRescueSeedId}`
+        : actionExpanding ? `action:${payload.actionRunId}` : problemExpanding ? `problem:${problemSignal?.assessmentRevision}` : synthesisExpanding ? `synthesis:${track.expansion_count + 1}`
         : gapExpanding ? `gap:${track.expansion_count + 1}` : `route:${track.expansion_count + 1}:${candidate.proposedRole}`;
       return {
         canonicalId: candidate.canonicalId,
@@ -2878,6 +2864,9 @@ export async function POST(request: Request) {
       };
     });
     const queueResult = await enqueueMonitorCandidates(database, space.id, queueCandidates, { recordDiscoveryCoverage: true });
+    // Persist this job's bounded lineage alongside source health, not as a
+    // user-facing quality audit. Membership is not a recommendation decision.
+    if (sourceStatuses[0]) sourceStatuses[0].jobReviewCanonicalIds = queueResult.canonicalIds.slice(0, 24);
     const classicRescueCandidateCount = candidates.filter((candidate) => candidate.classicRescueSeedId).length;
     const classicRescuePendingReviewCount = Math.min(classicRescueCandidateCount, queueResult.queuedForReviewCount);
     const targetedDegraded = discovery.errors.length > 0 || Boolean(selectionError);

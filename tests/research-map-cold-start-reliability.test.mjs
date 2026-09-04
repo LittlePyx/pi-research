@@ -251,7 +251,7 @@ test("cold-start API code persists degraded state and queues retrieved candidate
   assert.match(route, /Promise\.allSettled/);
   assert.match(route, /protectedBaselineCandidates/);
   assert.match(route, /discoverClassicRescueCandidates/);
-  assert.match(route, /matchesResearchClassicSeedTitle/);
+  assert.match(route, /matchesResearchClassicRecord/);
   assert.match(route, /classicRescueSeedId/);
   assert.match(route, /sourceKey: `research-route:\$\{sourceKind\}`/);
   assert.match(route, /classic_rescue_pending_review/);
