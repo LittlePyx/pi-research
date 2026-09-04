@@ -9,6 +9,8 @@ import {
   monitorSchedulerBucketId,
   monitorSchedulerSecretMatches,
   shouldWakeMonitorScheduler,
+  VISIT_SCHEDULER_ORDINAL_SQL,
+  visitSchedulerTaskOrder,
 } from "../lib/monitor-scheduler.mjs";
 import {
   MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL,
@@ -583,16 +585,12 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
 
   try {
     recoveredJobCount = await recoverStaleMonitorJobs(env);
-    routeIntelligence = await runScheduledResearchRouteIntelligence(env, ctx);
-    if (!routeIntelligence.attempted) routeEvolution = await runScheduledResearchRouteEvolution(env, ctx);
-    if (!routeIntelligence.attempted && !routeEvolution?.attempted) {
-      routeRetry = await runScheduledResearchRouteRetry(env, ctx);
-    }
-    if (trigger === "visit_backstop") {
-      if (!routeIntelligence.attempted && !routeEvolution?.attempted && !routeRetry?.attempted) {
-        gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx, "due");
+    if (trigger !== "visit_backstop") {
+      routeIntelligence = await runScheduledResearchRouteIntelligence(env, ctx);
+      if (!routeIntelligence.attempted) routeEvolution = await runScheduledResearchRouteEvolution(env, ctx);
+      if (!routeIntelligence.attempted && !routeEvolution?.attempted) {
+        routeRetry = await runScheduledResearchRouteRetry(env, ctx);
       }
-    } else {
       gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx, "due");
       gapRecovery = await runScheduledResearchGapDiscovery(env, ctx, "stalled");
     }
@@ -603,9 +601,41 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
       .first<{ id: string; owner_user_id: string }>();
     const scheduledSpaces = mergeScheduledMonitorSpaces(due.results, stalledRecoverySpace);
     dueSpaceCount = scheduledSpaces.length;
-    const monitorSpaces = trigger === "visit_backstop"
-      && (routeIntelligence.attempted || routeEvolution?.attempted || routeRetry?.attempted || gapDiscovery?.attempted)
-      ? [] : scheduledSpaces;
+    let monitorSpaces = scheduledSpaces;
+    if (trigger === "visit_backstop") {
+      const ordinal = await env.DB.prepare(VISIT_SCHEDULER_ORDINAL_SQL).first<{ count: number }>();
+      monitorSpaces = [];
+      for (const lane of visitSchedulerTaskOrder(ordinal?.count)) {
+        let attempted = false;
+        switch (lane) {
+          case "gapDiscovery":
+            gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx, "due");
+            attempted = gapDiscovery.attempted;
+            break;
+          case "gapRecovery":
+            gapRecovery = await runScheduledResearchGapDiscovery(env, ctx, "stalled");
+            attempted = gapRecovery.attempted;
+            break;
+          case "routeIntelligence":
+            routeIntelligence = await runScheduledResearchRouteIntelligence(env, ctx);
+            attempted = routeIntelligence.attempted;
+            break;
+          case "routeEvolution":
+            routeEvolution = await runScheduledResearchRouteEvolution(env, ctx);
+            attempted = routeEvolution.attempted;
+            break;
+          case "routeRetry":
+            routeRetry = await runScheduledResearchRouteRetry(env, ctx);
+            attempted = routeRetry.attempted;
+            break;
+          case "monitor":
+            monitorSpaces = scheduledSpaces;
+            attempted = monitorSpaces.length > 0;
+            break;
+        }
+        if (attempted) break;
+      }
+    }
     const results = await Promise.allSettled(monitorSpaces.map(async (space) => {
       const workspaceId = space.owner_user_id.startsWith("anonymous:") ? space.owner_user_id.slice("anonymous:".length) : "";
       if (!workspaceId) throw new Error("Scheduled workspace identity is unavailable");
@@ -679,7 +709,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     const unresolvedOperationalSpace = await env.DB.prepare(MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL)
       .first<{ space_id: string }>();
     const sentinelSpaceId = unresolvedOperationalSpace?.space_id || stalledRecoverySpace?.id || due.results[0]?.id
-      || gapRecovery?.spaceId || gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence.spaceId || routeRetry?.spaceId || null;
+      || gapRecovery?.spaceId || gapDiscovery?.spaceId || routeEvolution?.spaceId || routeIntelligence?.spaceId || routeRetry?.spaceId || null;
     routeSentinel = await runScheduledResearchRouteSentinel(env, sentinelSpaceId);
     operationalSentinel = await runScheduledMonitorOperationalSentinel(
       env,
