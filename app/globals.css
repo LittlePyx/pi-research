@@ -119,6 +119,19 @@
 .v2-learning-resources strong { font: 14px/1.35 Georgia, serif; font-weight: 400; display: block; }
 .v2-learning-resources > a small { margin-top: 4px; color: #818880; display: block; font-size: 10px; }
 .v2-learning-resources > a > b { color: var(--v2-blue); font-size: 14px; }
+.v2-learning-reading-list > article { padding: 10px 0; border-top: 1px solid var(--v2-line); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; }
+.v2-learning-reading-list > article > button { min-width: 0; padding: 4px 0; border: 0; background: transparent; color: inherit; display: flex; align-items: center; gap: 16px; text-align: left; cursor: pointer; }
+.v2-learning-reading-list > article > button > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.v2-learning-reading-list > article > button:hover strong { color: var(--v2-blue); }
+.v2-learning-reading-list > article > button:disabled { cursor: wait; opacity: .65; }
+.v2-learning-reading-list > article > button > b, .v2-learning-reading-list > article > a { flex-shrink: 0; color: var(--v2-blue); font-size: 11px; font-weight: 600; }
+.v2-learning-reading-list > article small { margin-top: 4px; color: #818880; display: block; font-size: 10px; }
+.v2-learning-reading-list > article > a { padding: 12px 0; text-decoration: none; }
+.v2-learning-reading-list > article > a:hover { text-decoration: underline; }
+@media (max-width: 600px) {
+  .v2-learning-reading-list > article { gap: 8px; }
+  .v2-learning-reading-list > article > button { align-items: flex-start; flex-direction: column; gap: 8px; }
+}
 .v2-learning-footer { margin: 2px 0 0 72px; padding: 18px 0 0; border-top: 1px solid var(--v2-line); display: flex; justify-content: space-between; align-items: center; gap: 18px; }
 .v2-learning-footer span { color: #788078; font-size: 11px; }
 .v2-learning-footer button, .v2-learning-empty button { min-height: 37px; padding: 0 14px; border: 1px solid #294f6e; border-radius: 5px; background: transparent; color: #294f6e; font-size: 11px; font-weight: 750; }

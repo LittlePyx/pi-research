@@ -11,7 +11,8 @@ const monitor = readFileSync(new URL("../app/api/monitor/route.ts", import.meta.
 const app = readFileSync(new URL("../app/research-app.tsx", import.meta.url), "utf8");
 
 test("the paper library keeps the discovery archive separate from the recommendation inbox", () => {
-  assert.match(monitor, /WHERE p\.space_id = \?\s+ORDER BY p\.discovered_at DESC, i\.quality_score DESC LIMIT 2000/);
+  assert.match(monitor, /WHERE p\.space_id = \?\s+ORDER BY CASE WHEN p\.id = \? THEN 0 ELSE 1 END, p\.discovered_at DESC, i\.quality_score DESC LIMIT 2000/);
+  assert.match(monitor, /\.bind\(space\.id, focusPaperId\)\.all<PaperRow>/);
   assert.match(monitor, /const historyPapers = papers\.results\.map\(\(paper\) => toPaper\(paper, now\)\)/);
   assert.match(monitor, /const recommendationHistoryPapers = historyPapers\.filter/);
   assert.match(monitor, /all: recommendationHistoryPapers\.length/);

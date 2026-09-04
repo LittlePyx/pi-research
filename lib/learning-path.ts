@@ -62,6 +62,11 @@ export function learningResourceTitleKey(value: string) {
   return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
+/** Use the hydrated paper identity; never open another paper just by title. */
+export function learningResourcePaperId(resource: Pick<LearningResource, "id">): string | null {
+  return resource.id.startsWith("monitor:") ? resource.id.slice("monitor:".length).trim() || null : null;
+}
+
 export type LearningPathStep = {
   id: string;
   kind: LearningStepKind;

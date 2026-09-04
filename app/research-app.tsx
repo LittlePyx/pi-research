@@ -3,9 +3,10 @@
 import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { RouteEvolutionWorkbench } from "./components/route-evolution-workbench";
+import { LearningResourceList } from "./components/learning-resource-list";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import { emptyResearchMapState, researchLeadActionableGap, researchRouteLearningSignal, researchRouteOperationalStatus, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchLeadGapOrigin, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
-import { learningResourceHref, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
+import { learningResourceHref, learningResourcePaperId, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
 import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
 import { archiveQualityStagePresentation, isRecommendationQualityStage, routeDiscoveryPresentation } from "../lib/discovery-archive-semantics.mjs";
@@ -3218,9 +3219,13 @@ export default function ResearchApp({ user }: { user: User }) {
   const [librarySearch, setLibrarySearch] = useState("");
   const [librarySort, setLibrarySort] = useState<LibrarySort>("priority");
   const [libraryVisibleCount, setLibraryVisibleCount] = useState(60);
-  const [paperReturnView, setPaperReturnView] = useState<"today" | "library">("today");
+  const [paperReturnView, setPaperReturnView] = useState<"today" | "library" | "learn">("today");
   const [paperNoteDraft, setPaperNoteDraft] = useState("");
   const [readingMemoryAnalyzing, setReadingMemoryAnalyzing] = useState(false);
+  const [readingSaving, setReadingSaving] = useState(false);
+  const readingWriteRef = useRef<object | null>(null);
+  const learningPaperRequestRef = useRef(0);
+  const [openingLearningResourceId, setOpeningLearningResourceId] = useState<string | null>(null);
   const [notificationsExpanded, setNotificationsExpanded] = useState(false);
   const [sharingSnapshot, setSharingSnapshot] = useState<string | null>(null);
   const [researchImports, setResearchImports] = useState<ResearchImportRecord[]>([]);
@@ -4324,6 +4329,11 @@ export default function ResearchApp({ user }: { user: User }) {
   const switchSpace = (space: Space) => {
     paperNetworkSpaceRef.current = space.id;
     learningRequestRef.current += 1;
+    learningPaperRequestRef.current += 1;
+    readingWriteRef.current = null;
+    setReadingSaving(false);
+    setReadingMemoryAnalyzing(false);
+    setOpeningLearningResourceId(null);
     resetResearchNetworkExpansion([], space.id);
     setActiveSpaceId(space.id);
     // Fail closed at the workspace boundary. If the target workspace cannot be
@@ -4695,26 +4705,35 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const updateReadingProgress = async (paper: MonitorPaper, status: MonitorPaper["readingStatus"], note = paper.readingNote || "", analyze = false) => {
+    if (readingWriteRef.current) return;
+    const write = {};
+    readingWriteRef.current = write;
+    const spaceId = activeSpace.id;
+    const isCurrent = () => readingWriteRef.current === write && paperNetworkSpaceRef.current === spaceId;
+    setReadingSaving(true);
     const updatePaper = (item: MonitorPaper): MonitorPaper => item.id === paper.id ? { ...item, readingStatus: status, readingNote: note } : item;
-    setSelectedMonitorPaper((current) => current?.id === paper.id ? updatePaper(current) : current);
-    setMonitor((current) => {
-      if (!current) return current;
-      const papers = current.papers.map(updatePaper);
-      const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
-      return { ...current, papers, historyPapers, historyCounts: historyCountsFor(historyPapers) };
-    });
     if (analyze) setReadingMemoryAnalyzing(true);
     try {
       const response = await fetch("/api/library", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, status, note, analyze }),
+        body: JSON.stringify({ spaceId, paperId: paper.id, status, note, analyze }),
       });
       if (!response.ok) throw new Error("reading progress update failed");
       const result = await response.json() as { memoryAnalysis?: { status?: string } | null };
+      if (!isCurrent()) return;
+      setSelectedMonitorPaper((current) => current?.id === paper.id ? updatePaper(current) : current);
+      setMonitor((current) => {
+        if (!current) return current;
+        const papers = current.papers.map(updatePaper);
+        const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
+        return { ...current, papers, historyPapers, historyCounts: historyCountsFor(historyPapers) };
+      });
+      setLearningReloadNonce((current) => current + 1);
       if (analyze) {
-        const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(activeSpace.id)}`);
-        const data = refreshed.ok ? await refreshed.json() as { monitor?: MonitorState } : null;
+        const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}`).catch(() => null);
+        const data = refreshed?.ok ? await refreshed.json().catch(() => null) as { monitor?: MonitorState } | null : null;
+        if (!isCurrent()) return;
         if (data?.monitor) setMonitor(data.monitor);
         setToast(result.memoryAnalysis?.status === "ready"
           ? (locale === "zh" ? "阅读笔记已由 Pi 沉淀到研究记忆" : "Pi added this note to research memory")
@@ -4725,18 +4744,20 @@ export default function ResearchApp({ user }: { user: User }) {
         setToast(locale === "zh" ? `阅读状态已更新为“${readingStatusLabel(status, locale)}”` : `Reading status updated to ${readingStatusLabel(status, locale)}`);
       }
     } catch {
-      const response = await fetch(`/api/monitor?spaceId=${encodeURIComponent(activeSpace.id)}`).catch(() => null);
-      const data = response?.ok ? await response.json() as { monitor?: MonitorState } : null;
-      if (data?.monitor) setMonitor(data.monitor);
+      if (!isCurrent()) return;
       setToast(locale === "zh" ? "阅读状态保存失败，请重试" : "Could not save reading status");
     } finally {
-      if (analyze) setReadingMemoryAnalyzing(false);
+      if (isCurrent()) {
+        readingWriteRef.current = null;
+        setReadingSaving(false);
+        if (analyze) setReadingMemoryAnalyzing(false);
+      }
     }
   };
 
-  const openMonitorPaper = (paper: MonitorPaper) => {
+  const openMonitorPaper = (paper: MonitorPaper, returnView: "today" | "library" | "learn" = view === "learn" ? "learn" : view === "library" ? "library" : "today") => {
     const openedPaper = { ...paper, openedAt: new Date().toISOString(), userState: paper.userState === "unseen" ? "seen" as const : paper.userState };
-    setPaperReturnView(view === "library" ? "library" : "today");
+    setPaperReturnView(returnView);
     setSelectedMonitorPaper(openedPaper);
     setPaperNoteDraft(paper.readingNote || "");
     setMonitor((current) => {
@@ -4754,10 +4775,36 @@ export default function ResearchApp({ user }: { user: User }) {
         kind: "open",
         value: true,
         eventKey: engagementEventKey(paper.id, "detail_open"),
-        context: view === "library" ? "library" : "today",
+        context: returnView,
       }),
     }).catch(() => undefined);
     navigate("paper-detail");
+  };
+
+  const openLearningResource = async (resource: LearningResource) => {
+    const paperId = learningResourcePaperId(resource);
+    if (!paperId || openingLearningResourceId) return;
+    const spaceId = activeSpace.id;
+    const requestId = ++learningPaperRequestRef.current;
+    setOpeningLearningResourceId(resource.id);
+    try {
+      let paper = historyPapers.find((item) => item.id === paperId);
+      if (!paper) {
+        const response = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}&paperId=${encodeURIComponent(paperId)}`);
+        if (!response.ok) throw new Error("paper unavailable");
+        const data = await response.json() as { monitor?: MonitorState };
+        paper = data.monitor?.historyPapers?.find((item) => item.id === paperId);
+      }
+      if (requestId !== learningPaperRequestRef.current || paperNetworkSpaceRef.current !== spaceId) return;
+      if (!paper) throw new Error("paper unavailable");
+      openMonitorPaper(paper, "learn");
+    } catch {
+      if (requestId === learningPaperRequestRef.current && paperNetworkSpaceRef.current === spaceId) {
+        setToast(locale === "zh" ? "论文记录暂时无法打开，可重试或查看原文" : "The paper record is unavailable. Retry or open the original.");
+      }
+    } finally {
+      if (requestId === learningPaperRequestRef.current && paperNetworkSpaceRef.current === spaceId) setOpeningLearningResourceId(null);
+    }
   };
 
   const shareSnapshot = async (kind: "daily" | "paper", papers: MonitorPaper[]) => {
@@ -5939,7 +5986,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 {activeLearningPathDirectionMismatch && <div className="v2-reading-order-warning direction" role="status"><span>↔</span><p>{!learningTargetTrackId && learningScopeDirty ? (locale === "zh" ? `下面的旧路径限定于“${activeLearningState.path.target}”；你已切换为从全空间论文中规划。重新规划前，旧进度不会被冒充为全空间结果。` : `The saved path below is scoped to “${activeLearningState.path.target}”; you have switched to planning from the full workspace. Existing progress will not be presented as a workspace-wide result before replanning.`) : (locale === "zh" ? `下面是此前保存的“${activeLearningState.path.target}”路径；你现在准备规划“${activeLearningTargetTrack?.titleZh || learningTarget}”。点击重新规划前，旧进度不会被冒充为当前范围。` : `The path below was saved for “${activeLearningState.path.target}”; you are now preparing “${activeLearningTargetTrack?.titleEn || learningTarget}”. Existing progress will not be presented as the selected scope before replanning.`)}</p><button type="button" disabled={Boolean(learningAction)} onClick={() => void generateLearningPath(undefined, learningTargetTrackId)}>{learningTargetTrackId ? (locale === "zh" ? "按当前方向重新规划" : "Replan this direction") : (locale === "zh" ? "按全空间重新规划" : "Replan across the workspace")}</button></div>}
                 {activeLearningError && <div className="v2-reading-order-warning" role="status"><span>!</span><p>{locale === "zh" ? "上次更新没有完成；下面仍是当前空间中已保存的版本。" : "The last update did not finish; the saved version for this space remains below."} {activeLearningError}</p><button type="button" onClick={() => setLearningReloadNonce((current) => current + 1)}>{locale === "zh" ? "重新载入" : "Reload"}</button></div>}
                 <header className="v2-learning-summary"><div><p className="v2-kicker">{locale === "zh" ? "当前路径" : "CURRENT PATH"}</p><h2>{locale === "zh" ? activeLearningState.path.titleZh : activeLearningState.path.titleEn}</h2><p>{activeLearningStep ? (locale === "zh" ? `现在：${activeLearningStep.titleZh}` : `Now: ${activeLearningStep.titleEn}`) : (locale === "zh" ? "全部阶段已完成" : "All stages are complete")}</p></div><div><strong>{activeLearningState.path.completedSteps}<small>/{activeLearningState.path.steps.length}</small></strong><span>{locale === "zh" ? "阶段完成" : "stages complete"}</span><i><b style={{ width: `${activeLearningState.path.steps.length ? Math.round(activeLearningState.path.completedSteps / activeLearningState.path.steps.length * 100) : 0}%` }} /></i><small>{activeLearningState.path.steps.reduce((sum, step) => sum + step.resources.length, 0)} {locale === "zh" ? "篇论文" : "papers"}</small></div></header>
-                {activeLearningStep && <section className={`v2-learning-now page ${activeLearningStep.evidenceStatus}`}><header><span>{learningKindLabel(activeLearningStep.kind, locale)}</span><b>{learningEvidenceLabel(activeLearningStep, locale)}</b></header><h3>{locale === "zh" ? activeLearningStep.titleZh : activeLearningStep.titleEn}</h3><p className="v2-learning-goal">{locale === "zh" ? activeLearningStep.goalZh : activeLearningStep.goalEn}</p>{activeLearningStep.resources.length ? <div className="v2-learning-resources"><small>{locale === "zh" ? "现在读" : "READ NOW"}</small>{activeLearningStep.resources.map((resource) => { const href = learningResourceHref(resource); const content = <><span><strong>{resource.title}</strong><small>{[resource.authors, resource.venue, resource.publishedAt?.slice(0, 4)].filter(Boolean).join(" · ")}</small><em className="v2-learning-resource-signals">{learningResourceSignals(resource, locale).map((signal) => <i key={signal}>{signal}</i>)}</em></span><b>{href ? "↗" : "—"}</b></>; return href ? <a key={resource.id} href={href} target="_blank" rel="noreferrer">{content}</a> : <div className="unavailable" key={resource.id}>{content}</div>; })}</div> : <div className="v2-learning-evidence-gap"><strong>{locale === "zh" ? "这个阶段还缺少可靠论文" : "This stage still lacks reliable papers"}</strong><p>{locale === "zh" ? "已自动按缺口检索。来源失败会重试；候选通过共享质量评估后才会出现在这里。" : "Evidence search is automatic. Source failures retry; candidates appear here only after shared quality review."}</p></div>}<div className="v2-learning-now-guidance"><article><small>{locale === "zh" ? "为什么" : "WHY"}</small><p>{locale === "zh" ? activeLearningStep.whyZh : activeLearningStep.whyEn}</p></article><article><small>{locale === "zh" ? "读什么" : "READ"}</small><p>{locale === "zh" ? activeLearningStep.readFocusZh : activeLearningStep.readFocusEn}</p></article><article><small>{locale === "zh" ? "如何决定" : "DECIDE"}</small><p>{locale === "zh" ? activeLearningStep.checkpointZh : activeLearningStep.checkpointEn}</p></article></div><footer><span>{learningTime(activeLearningStep.estimatedMinutes, locale)}</span><button type="button" disabled={Boolean(learningAction) || (!activeLearningStep.resources.length && activeLearningStep.status !== "completed")} onClick={() => void updateLearningStep(activeLearningStep)}>{learningAction === activeLearningStep.id ? "…" : activeLearningStep.status === "completed" ? (locale === "zh" ? "恢复" : "Restore") : (locale === "zh" ? "完成本阶段" : "Complete stage")}</button></footer></section>}
+                {activeLearningStep && <section className={`v2-learning-now page ${activeLearningStep.evidenceStatus}`}><header><span>{learningKindLabel(activeLearningStep.kind, locale)}</span><b>{learningEvidenceLabel(activeLearningStep, locale)}</b></header><h3>{locale === "zh" ? activeLearningStep.titleZh : activeLearningStep.titleEn}</h3><p className="v2-learning-goal">{locale === "zh" ? activeLearningStep.goalZh : activeLearningStep.goalEn}</p>{activeLearningStep.resources.length ? <LearningResourceList resources={activeLearningStep.resources} locale={locale} openingId={openingLearningResourceId} onOpen={(resource) => void openLearningResource(resource)} signals={learningResourceSignals} /> : <div className="v2-learning-evidence-gap"><strong>{locale === "zh" ? "这个阶段还缺少可靠论文" : "This stage still lacks reliable papers"}</strong><p>{locale === "zh" ? "已自动按缺口检索。来源失败会重试；候选通过共享质量评估后才会出现在这里。" : "Evidence search is automatic. Source failures retry; candidates appear here only after shared quality review."}</p></div>}<div className="v2-learning-now-guidance"><article><small>{locale === "zh" ? "为什么" : "WHY"}</small><p>{locale === "zh" ? activeLearningStep.whyZh : activeLearningStep.whyEn}</p></article><article><small>{locale === "zh" ? "读什么" : "READ"}</small><p>{locale === "zh" ? activeLearningStep.readFocusZh : activeLearningStep.readFocusEn}</p></article><article><small>{locale === "zh" ? "如何决定" : "DECIDE"}</small><p>{locale === "zh" ? activeLearningStep.checkpointZh : activeLearningStep.checkpointEn}</p></article></div><footer><span>{learningTime(activeLearningStep.estimatedMinutes, locale)}</span><button type="button" disabled={Boolean(learningAction) || (!activeLearningStep.resources.length && activeLearningStep.status !== "completed")} onClick={() => void updateLearningStep(activeLearningStep)}>{learningAction === activeLearningStep.id ? "…" : activeLearningStep.status === "completed" ? (locale === "zh" ? "恢复" : "Restore") : (locale === "zh" ? "完成本阶段" : "Complete stage")}</button></footer></section>}
                 <div className="v2-learning-roadmap page">{activeLearningState.path.steps.map((step, index) => <article className={`${step.status} ${step.evidenceStatus}`} key={step.id}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{locale === "zh" ? step.titleZh : step.titleEn}</strong><small>{learningEvidenceLabel(step, locale)} · {step.resources.length} {locale === "zh" ? "篇" : "papers"}</small></div>{step.status === "completed" ? <button type="button" disabled={Boolean(learningAction)} onClick={() => void updateLearningStep(step)}>{locale === "zh" ? "恢复" : "Restore"}</button> : <b>{step.status === "active" ? (locale === "zh" ? "现在" : "Now") : ""}</b>}</article>)}</div>
               </section>
             ) : <section className="v2-learning-empty"><span>◎</span><h2>{locale === "zh" ? "还没有学习路径" : "No learning path yet"}</h2><p>{locale === "zh" ? "输入研究方向，生成分阶段阅读计划。缺少可靠论文的阶段会保留为空。" : "Enter a direction to build a staged reading plan. Stages without reliable papers remain empty."}</p></section>}
@@ -5971,7 +6018,7 @@ export default function ResearchApp({ user }: { user: User }) {
                     <footer><b>{t.viewAnalysis} →</b></footer>
                   </button>
                   <details className="v2-library-paper-actions"><summary>{locale === "zh" ? "管理" : "Manage"} ＋</summary><div>
-                    <select value={paper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(paper, event.target.value as MonitorPaper["readingStatus"])} aria-label={locale === "zh" ? "阅读状态" : "Reading status"}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select>
+                    <select disabled={readingSaving} value={paper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(paper, event.target.value as MonitorPaper["readingStatus"])} aria-label={locale === "zh" ? "阅读状态" : "Reading status"}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select>
                     {!["accepted", "dismissed"].includes(paper.userState) ? <><button type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {t.notRelevant}</button></> : <button type="button" onClick={() => returnPaperToInbox(paper)}>↶ {t.returnPending}</button>}
                     <button type="button" onClick={() => shareSnapshot("paper", [paper])} disabled={Boolean(sharingSnapshot)}>↗ {t.sharePaper}</button>
                   </div></details>
@@ -6008,7 +6055,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
-            <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "library" ? t.library : t.paperBack}</button>
+            <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "learn" ? t.learn : paperReturnView === "library" ? t.library : t.paperBack}</button>
             <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.qualityStage === "recommended" ? selectedMonitorPaper.recommendationTier || "browse" : selectedMonitorPaper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{selectedMonitorPaper.qualityStage === "recommended" ? recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale) : selectedMonitorPaper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(selectedMonitorPaper, locale) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</span>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>}<PaperDiscoverySourceBadge paper={selectedMonitorPaper} locale={locale} /><RecommendationVerificationBadge paper={selectedMonitorPaper} locale={locale} /></div><h1>{selectedMonitorPaper.title}</h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div className="v2-paper-primary-actions"><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a><details className="v2-paper-more-actions"><summary>{locale === "zh" ? "更多" : "More"} ＋</summary><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button></div></details></div></section>
             <div className="v2-paper-detail-grid">
               <div>
@@ -6023,7 +6070,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 </div>{Boolean((locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn)?.length) && <footer><small>{locale === "zh" ? "可以继续追问" : "Questions to pursue"}</small><ol>{(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn).map((question) => <li key={question}>{question}</li>)}</ol></footer>}</section>}
                 <details className="v2-content-section v2-paper-record"><summary><span>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? t.recommendationSignals : locale === "zh" ? "发现与评审记录" : "Discovery & review record"}</span><b>＋</b></summary><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div>{selectedMonitorPaper.qualityStage === "recommended" && <div><dt>{t.qualityScore}</dt><dd>{displayQualityScore(selectedMonitorPaper.qualityScore)}</dd></div>}{selectedMonitorPaper.qualityStage === "reviewed" && selectedMonitorPaper.screeningReason && <div><dt>{locale === "zh" ? "未入选原因" : "Why it was not selected"}</dt><dd>{selectedMonitorPaper.screeningReason}</dd></div>}<div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.discoverySources?.length ? selectedMonitorPaper.discoverySources.map((source) => locale === "zh" ? source.labelZh : source.labelEn).join(" · ") : selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></details>
               </div>
-              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{locale === "zh" ? "保存后提取可复用结论、方法、问题与研究连接；相同笔记不会重复分析。" : "Saving extracts reusable conclusions, methods, questions, and research links. Identical notes are not analyzed twice."}</small><button className="v2-save-note" type="button" disabled={readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "正在整理…" : "Synthesizing…") : (locale === "zh" ? "保存到研究记忆" : "Save to research memory")}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</dd></div>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? <div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div> : <div><dt>{locale === "zh" ? "评审状态" : "Review state"}</dt><dd>{archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</dd></div>}<div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
+              <aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select disabled={readingSaving} value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea value={paperNoteDraft} maxLength={3000} onChange={(event) => setPaperNoteDraft(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{locale === "zh" ? "保存后提取可复用结论、方法、问题与研究连接；相同笔记不会重复分析。" : "Saving extracts reusable conclusions, methods, questions, and research links. Identical notes are not analyzed twice."}</small><button className="v2-save-note" type="button" disabled={readingSaving || readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "正在整理…" : "Synthesizing…") : (locale === "zh" ? "保存到研究记忆" : "Save to research memory")}</button><dl><div><dt>{t.currentSpaceFit}</dt><dd>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</dd></div>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? <div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div> : <div><dt>{locale === "zh" ? "评审状态" : "Review state"}</dt><dd>{archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</dd></div>}<div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside>
             </div>
           </main>
         )}

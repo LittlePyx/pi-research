@@ -4810,7 +4810,7 @@ function toPaper(paper: PaperRow, now: number) {
   };
 }
 
-async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}) {
+async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}, focusPaperId: string | null = null) {
   const preference = await ensurePreference(database, space);
   const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, active_job_id, lease_generation, lock_expires_at, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
@@ -4946,8 +4946,8 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         ON route_track.id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
         AND route_track.space_id = p.space_id
         WHERE p.space_id = ?
-        ORDER BY p.discovered_at DESC, i.quality_score DESC LIMIT 2000`,
-    ).bind(space.id).all<PaperRow>(),
+        ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.discovered_at DESC, i.quality_score DESC LIMIT 2000`,
+    ).bind(space.id, focusPaperId).all<PaperRow>(),
     database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
     database.prepare(
       `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
@@ -5711,12 +5711,13 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
 
 export async function GET(request: Request) {
   const spaceId = new URL(request.url).searchParams.get("spaceId")?.trim() || "";
+  const focusPaperId = new URL(request.url).searchParams.get("paperId")?.trim().slice(0, 100) || null;
   if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
   try {
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
     await recordMonitorVisitActivity(context.database, context.space.id);
-    return Response.json(await readState(context.database, context.space));
+    return Response.json(await readState(context.database, context.space, {}, focusPaperId));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to load monitoring state" }, { status: 500 });
   }

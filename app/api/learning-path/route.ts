@@ -653,12 +653,18 @@ function candidatesForStep(candidates: CandidateRow[], step: LearningPath["steps
 async function advanceLearningPath(database: D1Database, space: SpaceRow, context: Awaited<ReturnType<typeof contextForSpace>>) {
   let path = await readPath(database, space.id);
   if (!path) return null;
-  const masteredSteps = path.steps.filter((step) => step.status !== "completed" && step.resources.length > 0
+  // A restored stage is an explicit choice to revisit it. Keep its first
+  // completion timestamp so mastery cannot immediately override that choice.
+  const masteredSteps = path.steps.filter((step) => step.status !== "completed" && !step.completedAt && step.resources.length > 0
     && step.resources.every((resource) => resource.readingStatus === "mastered" || resource.readingStatus === "cited"));
   if (masteredSteps.length) {
-    await database.batch(masteredSteps.map((step) => database.prepare(
-      "UPDATE learning_path_steps SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ?",
-    ).bind(step.id, path!.id)));
+    await database.batch(masteredSteps.flatMap((step) => [
+      ...(path!.targetTrackId ? [database.prepare(LEARNING_PATH_STAGE_ROUTE_SIGNAL_SQL)
+        .bind(path!.targetTrackId, space.id, step.id, path!.id, space.id)] : []),
+      database.prepare(
+        "UPDATE learning_path_steps SET status = 'completed', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ? AND space_id = ? AND EXISTS (SELECT 1 FROM learning_paths p WHERE p.id = ? AND p.space_id = ? AND p.status != 'superseded')",
+      ).bind(step.id, path!.id, space.id, path!.id, space.id),
+    ]));
     path = await readPath(database, space.id);
     if (!path) return null;
   }
