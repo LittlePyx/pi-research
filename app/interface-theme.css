@@ -1,0 +1,200 @@
+/* Shared visual roles. Layout, data visualization and business state stay in
+   their owning components; this file is intentionally presentation-only. */
+:root {
+  --pi-canvas: #fafafa;
+  --pi-surface: #ffffff;
+  --pi-surface-subtle: #f3f4f5;
+  --pi-ink: #252a30;
+  --pi-muted: #626a73;
+  --pi-line: #dfe2e6;
+  --pi-accent: #355c78;
+  --pi-accent-soft: #edf2f6;
+  --pi-warning: #805a27;
+  --pi-warning-soft: #faf7f1;
+  --pi-error: #a13c39;
+  --pi-error-soft: #fcf5f5;
+  --pi-label-radius: 0;
+  --pi-control-radius: 3px;
+  --pi-panel-radius: 5px;
+}
+
+/* Neutral metadata: identity is written out, not encoded as a rainbow. */
+.v2-app .v2-freshness-badge,
+.v2-app .v2-paper-discovery-source,
+.v2-app .v2-history-state,
+.v2-app .v2-status-pill,
+.v2-app .v2-priority,
+.v2-app .v2-real-badge,
+.v2-app .v2-thread-chip,
+.v2-app .v2-research-card-badges > span,
+.v2-app .v2-library-paper-flags > span:not(.v2-history-state, .v2-freshness-badge, .v2-paper-discovery-source),
+.v2-app .v2-daily-freshness-summary > span,
+.v2-app .v2-horizons > span,
+.v2-app .v2-tags > i,
+.v2-app .v2-source-profile p > i,
+.v2-app .v2-source-profile p > b,
+.v2-app .v2-layered-memory h3 > span,
+.v2-app .v2-learning-resource-signals > i,
+.v2-app .v2-reading-memory :is(article, details) dd > i,
+.v2-app .v2-daily-paper-queue > header > span,
+.v2-app .v2-route-portfolio > header > span,
+.v2-app .v2-route-brief > header > span,
+.v2-app .v2-route-latest-change span,
+.v2-app .v2-route-workspace-meta > span:not(.v2-direction-heat),
+.v2-app .v2-route-stage-counts span,
+.v2-app .v2-route-provenance,
+.v2-app .v2-route-effectiveness > header > span,
+.v2-app .v2-synthesis-sources article > div > span,
+.v2-app .v2-learning-stage-body > header > b,
+.v2-app .v2-learning-now > header > b {
+  border-radius: var(--pi-label-radius);
+  border-color: var(--pi-line);
+  background: var(--pi-surface-subtle);
+  color: var(--pi-muted);
+  box-shadow: none;
+  font-style: normal;
+  font-weight: 500;
+}
+
+/* Geometry also applies to status badges whose semantic colors remain local. */
+.v2-app :is(.v2-evidence-badge, .v2-evidence-promotion, .v2-network-origin-chip,
+  .v2-paper-drawer-state span, .v2-paper-discovery-select > span,
+  .v2-research-network-source-state dl > div, .v2-research-problem > header > span,
+  .v2-network-node > header > b, .v2-direction-profile > div:first-child span,
+  .v2-reading-stage-list > section > header > b, .v2-route-management > summary em,
+  .v2-alert-link b, .v2-notification-trigger > b, .v2-route-workspace-tabs button > b,
+  .v2-exploration-ledger article > header b) { border-radius: var(--pi-label-radius); }
+.v2-app .v2-tier-badge {
+  border-radius: var(--pi-label-radius);
+  background: var(--pi-surface-subtle);
+  color: var(--pi-muted);
+}
+.v2-app .v2-tier-badge.must_read { background: var(--pi-ink); color: var(--pi-surface); }
+.v2-app .v2-tier-badge.reserve { background: transparent; }
+
+/* Source and date read as metadata, not as competing buttons. */
+.v2-app :is(span.v2-freshness-badge, span.v2-paper-discovery-source) {
+  padding-inline: 0;
+  border: 0;
+  background: transparent;
+}
+.v2-app .v2-paper-discovery-source > i { background: var(--pi-muted); box-shadow: none; }
+.v2-app .v2-daily-paper-flags { column-gap: 12px; }
+.v2-app .v2-library-paper::before { background: var(--pi-line); }
+.v2-app .v2-library-paper.unseen::before { background: var(--pi-accent); }
+.v2-app :is(.v2-space-avatar, .v2-nav > button > b) {
+  background: var(--pi-surface-subtle);
+  color: var(--pi-ink);
+  border-radius: var(--pi-control-radius);
+}
+
+/* Interactive choices keep hover, selection and focus distinct. */
+.v2-app :is(.v2-library-tabs button, .v2-direction-role-control button,
+  .v2-learning-target-scope, .v2-learning-target-scope button,
+  .v2-author-suggestions button, .v2-multi-origin-intents button,
+  .v2-ai-daily-brief > footer button) {
+  border-radius: var(--pi-control-radius);
+  border-color: var(--pi-line);
+  background: var(--pi-surface);
+  color: var(--pi-muted);
+  box-shadow: none;
+}
+.v2-app :is(.v2-library-tabs button.active, .v2-direction-role-control button.active) {
+  color: var(--pi-accent);
+  background: var(--pi-accent-soft);
+  border-color: var(--pi-accent);
+}
+.v2-app :is(.v2-library-tabs button, .v2-direction-role-control button):hover:not(:disabled) {
+  color: var(--pi-ink);
+  border-color: var(--pi-muted);
+}
+.v2-app :is(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--pi-accent);
+  outline-offset: 3px;
+}
+.v2-app .v2-nav > button.active { background: #e7e9ec; color: var(--pi-ink); box-shadow: none; }
+.v2-app .v2-nav > button:hover { background: #eceef0; transform: none; }
+.v2-app .v2-kicker { color: var(--pi-muted); }
+.v2-app .v2-route-workspace-tabs button { border-radius: var(--pi-control-radius); }
+.v2-app .v2-route-workspace-tabs button.active {
+  background: var(--pi-accent-soft);
+  color: var(--pi-accent);
+  box-shadow: inset 0 -2px var(--pi-accent);
+}
+
+/* Main work surfaces share one paper-like neutral treatment. */
+.v2-app :is(.v2-ai-daily-brief, .v2-daily-brief-lead, .v2-daily-paper-queue,
+  .v2-today-briefing, .v2-monitor-panel, .v2-library-overview, .v2-library-paper,
+  .v2-route-role-strip, .v2-research-decision-panel, .v2-research-decision-main,
+  .v2-route-workspace-panel, .v2-learning-summary, .v2-learning-now,
+  .v2-learning-roadmap, .v2-import-memory-card, .v2-layered-memory,
+  .v2-reading-memory, .v2-memory-profile-details, .v2-paper-fit-summary,
+  .v2-paper-analysis, .v2-answer, .v2-route-portfolio, .v2-weekly-review,
+  .v2-today .v2-today-hero, .v2-evidence-grounding,
+  .v2-research-decision-panel > header, .v2-route-evolution > header) {
+  background: var(--pi-surface);
+  border-color: var(--pi-line);
+  border-radius: var(--pi-panel-radius);
+  box-shadow: none;
+}
+.v2-app :is(.v2-learning-now-guidance article, .v2-learning-guidance,
+  .v2-learning-roadmap > article.active, .v2-thinking,
+  .v2-route-learning-note, .v2-draft-status, .v2-import-progress,
+  .v2-paper-horizon > header, .v2-isolation-card, .v2-demo-entry) {
+  background: var(--pi-surface-subtle);
+  border-color: var(--pi-line);
+  color: var(--pi-muted);
+}
+.v2-app :is(.v2-learning-now h3, .v2-learning-now h4,
+  .v2-learning-now-guidance small, .v2-learning-now-guidance p,
+  .v2-learning-roadmap strong, .v2-paper-fit-summary > h2,
+  .v2-research-decision-main > header h2, .v2-research-decision-next h3,
+  .v2-route-role-strip strong, .v2-route-role-strip dd) { color: var(--pi-ink); }
+.v2-app :is(.v2-learning-now > footer button, .v2-learning-target-form > button,
+  .v2-daily-brief-lead > footer > button:not(.secondary),
+  .v2-research-decision-next > button, .v2-import-memory-card > button) {
+  border-color: var(--pi-accent);
+  background: var(--pi-accent);
+  color: var(--pi-surface);
+  border-radius: var(--pi-control-radius);
+}
+
+/* Status exceptions must follow neutral metadata. Never hide degraded states. */
+.v2-app :is(.v2-route-operational, .v2-verification-badge) {
+  border-radius: var(--pi-label-radius);
+  border-color: var(--pi-line);
+  background: transparent;
+  color: var(--pi-muted);
+  box-shadow: none;
+}
+.v2-app :is(.v2-route-operational, .v2-verification-badge) > i { background: currentColor; }
+.v2-app :is(.v2-route-operational.retryable, .v2-route-operational.degraded,
+  .v2-verification-badge.revised,
+  .v2-learning-now.retryable > header > b, .v2-learning-now.degraded > header > b,
+  .v2-learning-now.insufficient > header > b, .v2-learning-now.missing > header > b) {
+  color: var(--pi-warning);
+  background: var(--pi-warning-soft);
+  border-color: var(--pi-warning);
+}
+.v2-app :is(.v2-learning-evidence-gap, .v2-scan-budget-note, .v2-scan-cooldown-note) {
+  background: var(--pi-warning-soft);
+  border-color: var(--pi-line);
+  border-inline-start: 2px solid var(--pi-warning);
+  border-radius: var(--pi-control-radius);
+}
+.v2-app :is(.v2-learning-empty.error, .v2-scan-failure) {
+  color: var(--pi-error);
+  background: var(--pi-error-soft);
+  border-color: var(--pi-line);
+  border-inline-start: 2px solid var(--pi-error);
+}
+.v2-app .v2-monitor-status.error { color: var(--pi-error); }
+.v2-app .v2-monitor-status.error > i { background: var(--pi-error); box-shadow: none; }
+
+/* Shared snapshots use the same neutral base, without changing their content. */
+.share-page { background: var(--pi-canvas); color: var(--pi-ink); }
+.share-page .share-badges > span {
+  border-radius: var(--pi-label-radius);
+  background: var(--pi-surface-subtle);
+  color: var(--pi-muted);
+}

@@ -931,16 +931,16 @@ main { min-width: 0; }
 
 /* Pi Research V2 */
 .v2-app {
-  --v2-sidebar: #f1f0ea;
-  --v2-canvas: #f9f8f4;
-  --v2-ink: #1d211d;
-  --v2-muted: #70766e;
-  --v2-line: #d9dbd4;
-  --v2-blue: #315f88;
-  --v2-blue-soft: #e8eff4;
-  --v2-warm: #965334;
-  --v2-sage: #607765;
-  --v2-icon: #52697c;
+  --v2-sidebar: var(--pi-surface-subtle);
+  --v2-canvas: var(--pi-canvas);
+  --v2-ink: var(--pi-ink);
+  --v2-muted: var(--pi-muted);
+  --v2-line: var(--pi-line);
+  --v2-blue: var(--pi-accent);
+  --v2-blue-soft: var(--pi-accent-soft);
+  --v2-warm: var(--pi-ink);
+  --v2-sage: var(--pi-muted);
+  --v2-icon: var(--pi-muted);
   min-height: 100vh;
   background: var(--v2-canvas);
   color: var(--v2-ink);
@@ -2978,9 +2978,9 @@ main { min-width: 0; }
 .v2-today-briefing > button b { color: #3e4941; font-size: 13px; }
 .v2-today-briefing > button small { margin-top: 5px; color: #7b847d; font-size: 10px; line-height: 1.4; }
 .v2-today-briefing > button > i { color: #7c8980; font-style: normal; }
-.v2-tier-badge { width: fit-content; padding: 4px 7px !important; border: 0 !important; border-radius: 999px; background: #e8edf0; color: #526d80 !important; font-size: 10px !important; font-weight: 800; letter-spacing: .03em; text-transform: none; white-space: nowrap; }
-.v2-tier-badge.must_read { background: #f0e3d9; color: #8a5336 !important; }
-.v2-tier-badge.reserve { background: #eceeea; color: #707970 !important; }
+.v2-tier-badge { width: fit-content; padding: 3px 6px; border: 0; border-radius: var(--pi-label-radius); background: var(--pi-surface-subtle); color: var(--pi-muted); font-size: 12px; font-weight: 600; letter-spacing: .01em; text-transform: none; white-space: nowrap; }
+.v2-tier-badge.must_read { background: var(--pi-ink); color: var(--pi-surface); }
+.v2-tier-badge.reserve { background: transparent; color: var(--pi-muted); }
 .v2-discovery-performance { margin-top: 12px; padding: 12px; border: 1px solid #d8dfd9; border-radius: 7px; background: rgba(255,255,255,.45); }
 .v2-discovery-performance header { margin-bottom: 7px; display: flex; justify-content: space-between; gap: 10px; }
 .v2-discovery-performance header strong { color: #4f5c53; font-size: 11px; }
