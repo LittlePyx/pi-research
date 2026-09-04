@@ -83,3 +83,36 @@ test("the existing app, demo and share surfaces use the same documented visual t
     for (const [, name] of value.matchAll(/var\((--pi-[\w-]+)/g)) assert.ok(name in tokens, `Undefined token ${name}`);
   }
 });
+
+test("Today brief pairs its light surface with readable text and secondary actions", () => {
+  // Check the component's actual declarations, not just a palette that the
+  // component may never use. This is a CSS contract, not browser visual QA.
+  const localRules = [];
+  postcss.parse(globals).walkRules((rule) => localRules.push(rule));
+  const styleFor = (selector) => Object.assign({}, ...localRules
+    .filter((rule) => rule.selectors.includes(selector)).map(declarations));
+  const resolve = (value) => tokens[value?.match(/^var\((--pi-[\w-]+)\)$/)?.[1]] || value;
+  const lead = styleFor(".v2-daily-brief-lead");
+  assert.equal(lead.background, "var(--pi-surface)");
+  assert.equal(lead.color, "var(--pi-ink)");
+  for (const [selector, background] of [
+    [".v2-daily-brief-lead > h2", lead.background],
+    [".v2-daily-brief-lead > header .v2-kicker", lead.background],
+    [".v2-daily-brief-lead > header > span", lead.background],
+    [".v2-daily-brief-lead .v2-daily-brief-overview", lead.background],
+    [".v2-daily-brief-lead .v2-daily-brief-stale", "var(--pi-warning-soft)"],
+    [".v2-daily-brief-lead > footer button.secondary", lead.background],
+    [".v2-daily-paper-queue > aside", "var(--pi-surface-subtle)"],
+    [".v2-daily-paper-publication > span", "var(--pi-surface-subtle)"],
+  ]) {
+    const style = styleFor(selector);
+    const foreground = resolve(style.color);
+    const a = luminance(foreground), b = luminance(resolve(background));
+    const contrast = (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+    assert.ok(contrast >= 4.5, `${selector}: ${contrast.toFixed(2)}`);
+    if (style.background && style.background !== "transparent") assert.equal(style.background, background);
+  }
+  assert.equal(styleFor(".v2-daily-brief-lead .v2-daily-brief-stale").color, "var(--pi-warning)");
+  assert.equal(styleFor(".v2-daily-paper-publication > span")["border-radius"], "var(--pi-label-radius)");
+  assert.match(globals, /\.v2-daily-brief-lead > footer button:disabled\s*\{[^}]*opacity:/);
+});
