@@ -542,6 +542,8 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
   }));
   const response = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
+    // A request deadline, not a usage budget. Explicit retries remain available.
+    signal: AbortSignal.timeout(240_000),
     headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: MODEL,
@@ -786,7 +788,8 @@ export async function POST(request: Request) {
   const previous = await readPath(owned.database, spaceId);
   const sourceRevision = await sourceRevisionFor(context, targetTrackId);
   const sameScope = Boolean(previous && previous.targetTrackId === targetTrackId && previous.target.trim().toLocaleLowerCase() === target.trim().toLocaleLowerCase());
-  if (sameScope && previous?.sourceRevision && previous.sourceRevision === sourceRevision) {
+  if (sameScope && previous?.sourceRevision && previous.sourceRevision === sourceRevision
+    && (previous.model === MODEL || context.candidates.length < 3)) {
     return Response.json(await stateFor(owned.database, owned.space));
   }
   let draft = evidenceSkeleton(context, target);
@@ -796,7 +799,10 @@ export async function POST(request: Request) {
       draft = await buildDraft(owned.database, owned.user.userId, owned.space, target, context, resolveDeepSeekCredential(request).apiKey);
       analysisModel = MODEL;
     } catch {
-      // Evidence structure remains usable and honest when the model is unavailable.
+      // A failed replan must not supersede an existing model path or cache a
+      // failed retry as a new revision. Never expose provider messages/secrets.
+      if (previous) return Response.json({ error: "Learning-path planning did not finish. The saved path is unchanged; please retry.", code: "learning_model_retryable" }, { status: 503 });
+      // First-time evidence-only structure is labeled separately from model work.
     }
   }
   const pathId = crypto.randomUUID();

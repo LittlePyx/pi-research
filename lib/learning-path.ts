@@ -123,6 +123,16 @@ export type LearningPathState = {
   model: string;
 };
 
+/** Count attached primary papers, not the larger pool considered by the model. */
+export function learningPathResultMessage(path: LearningPath, locale: "zh" | "en") {
+  if (path.model === "evidence-structure-v1") return locale === "zh"
+    ? "已保存阅读框架，模型规划尚未完成。"
+    : "Reading outline saved; model planning is not complete.";
+  const count = new Set(path.steps.flatMap((step) => step.resources.map((resource) => resource.canonicalId || resource.id))).size;
+  if (!count) return locale === "zh" ? "路径已保存，阅读材料待补齐。" : "Path saved; reading materials are still missing.";
+  return locale === "zh" ? `路径已更新，含 ${count} 篇阅读材料。` : `Path updated with ${count} reading papers.`;
+}
+
 export function learningEvidenceStatus(input: {
   resourceCount: number;
   discovery: LearningEvidenceDiscovery | null;

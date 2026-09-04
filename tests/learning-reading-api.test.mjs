@@ -168,5 +168,31 @@ test("learning → reading → stage → route runs through the built Worker and
       const previous = await sql([{ sql: "SELECT status FROM learning_paths WHERE id = 'mismatch-path'" }]);
       assert.equal(previous[0].results[0].status, "superseded");
     });
+    await t.test("failed model replans preserve prior paths and fallback retries bypass the evidence cache", async () => {
+      await sql([
+        insert("research_spaces", { id: "retry-model", owner_user_id: "anonymous:learning-loop-test-00000001", name: "KLS retry fixture", member_name: "Test" }),
+        ...[1, 2, 3].flatMap((n) => [
+          insert("monitored_papers", { id: `retry-${n}`, space_id: "retry-model", canonical_id: `retry:${n}`, title: `KLS stochastic localization result ${n}`, url: `https://example.org/fixture-${n}`, horizon: "years" }),
+          insert("paper_insights", { paper_id: `retry-${n}`, space_id: "retry-model", quality_score: 90, ever_recommended: 1 }),
+        ]),
+      ]);
+      const body = { spaceId: "retry-model", target: "KLS" };
+      const first = await request("/api/learning-path", body, 200, "POST");
+      assert.equal(first.path.model, "evidence-structure-v1");
+      const before = await sql([{ sql: "SELECT * FROM learning_paths WHERE space_id = 'retry-model'" }, { sql: "SELECT * FROM learning_path_steps WHERE space_id = 'retry-model'" }]);
+      const failed = await request("/api/learning-path", body, 503, "POST");
+      assert.equal(failed.code, "learning_model_retryable", "same source revision must not hide a retry behind HTTP 200");
+      assert.deepEqual((await sql([{ sql: "SELECT * FROM learning_paths WHERE space_id = 'retry-model'" }, { sql: "SELECT * FROM learning_path_steps WHERE space_id = 'retry-model'" }])).map((r) => r.results), before.map((r) => r.results));
+      // A successful model revision remains cacheable; a changed target that
+      // cannot be planned must not replace it with an evidence-only skeleton.
+      await sql([{ sql: "UPDATE learning_paths SET analysis_model = 'deepseek-v4-pro' WHERE id = ?", values: [first.path.id] }]);
+      const reused = await request("/api/learning-path", body, 200, "POST");
+      assert.equal(reused.path.id, first.path.id);
+      await request("/api/learning-path", { ...body, target: "A different KLS research target" }, 503, "POST");
+      const retained = await request("/api/learning-path?spaceId=retry-model");
+      assert.equal(retained.path.id, first.path.id);
+      assert.equal(retained.path.target, "KLS");
+      assert.equal((await sql([{ sql: "SELECT COUNT(*) AS count FROM learning_paths WHERE space_id = 'retry-model'" }]))[0].results[0].count, 1);
+    });
   } finally { await mf.dispose(); }
 });
