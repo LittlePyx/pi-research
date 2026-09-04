@@ -9,10 +9,34 @@ import {
   shouldStartMonitorQualityQueueContinuation,
   shouldWakeLearningQualityQueue,
   monitorScanCompletionLabel,
+  shouldYieldVerificationCarryover,
 } from "../lib/monitor-quality-queue.mjs";
 
 const now = Date.parse("2026-09-01T08:00:00.000Z");
 const cadenceMs = 24 * 60 * 60 * 1000;
+
+test("aged new research candidates can enter the shared queue after a completed verification retry", () => {
+  const candidate = { canonicalId: "new-foundation", qualityQueueLane: "learning", qualityQueueFirstSeenAt: "2026-09-01 07:00:00" };
+  const input = { trigger: "visit", previousJobStatus: "ready", pipelineOutdated: false,
+    verificationCarryover: true, incompleteDraftCarryover: false, previousAttempt: 14,
+    previousCandidateIds: ["old-pending"], pendingCandidates: [candidate], now };
+  const original = structuredClone(input);
+  assert.equal(shouldYieldVerificationCarryover(input), true);
+  assert.deepEqual(input, original, "handoff does not mutate frozen work or candidate records");
+  for (const qualityQueueLane of ["gap", "route"]) assert.equal(shouldYieldVerificationCarryover({ ...input, pendingCandidates: [{ ...candidate, qualityQueueLane }] }), true);
+  for (const override of [
+    { trigger: "manual" }, { previousJobStatus: "deep_reviewing" }, { previousJobStatus: "error" },
+    { pipelineOutdated: true }, { incompleteDraftCarryover: true }, { verificationCarryover: false },
+    { previousAttempt: 1 }, { pendingCandidates: [] }, { previousCandidateIds: [candidate.canonicalId] },
+  ]) assert.equal(shouldYieldVerificationCarryover({ ...input, ...override }), false);
+  assert.equal(shouldYieldVerificationCarryover({ ...input, trigger: "scheduled" }), true);
+  for (const override of [
+    { qualityQueueFirstSeenAt: "2026-09-01T07:30:01Z" }, { qualityQueueFirstSeenAt: null },
+    { qualityQueueFirstSeenAt: "bad-date" }, { qualityQueueFirstSeenAt: "2026-09-01T09:00:00Z" },
+    { qualityQueueLane: "" }, { canonicalId: "" },
+  ]) assert.equal(shouldYieldVerificationCarryover({ ...input, pendingCandidates: [{ ...candidate, ...override }] }), false);
+  assert.equal(shouldYieldVerificationCarryover({ ...input, pendingCandidates: [{ ...candidate, qualityQueueFirstSeenAt: "2026-09-01T07:30:00Z" }] }), true);
+});
 
 test("quality-only finalization preserves the source scan clock", () => {
   const completedAt = "2026-09-01T08:00:00.000Z";
