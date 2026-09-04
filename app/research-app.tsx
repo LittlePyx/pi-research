@@ -7,7 +7,7 @@ import { RouteEvolutionWorkbench } from "./components/route-evolution-workbench"
 import { LearningResourceList } from "./components/learning-resource-list";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import { emptyResearchMapState, researchLeadActionableGap, researchRouteLearningSignal, researchRouteOperationalStatus, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchLeadGapOrigin, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
-import { learningPathResultMessage, learningResourceHref, learningResourcePaperId, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
+import { learningDiscoveryDelay, learningPathResultMessage, learningResourceHref, learningResourcePaperId, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
 import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
 import { archiveQualityStagePresentation, isRecommendationQualityStage, routeDiscoveryPresentation } from "../lib/discovery-archive-semantics.mjs";
@@ -3177,6 +3177,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [, setMapBuildErrors] = useState<Record<string, boolean>>({});
   const [mapIntelligenceTrackId, setMapIntelligenceTrackId] = useState<string | null>(null);
   const [learningState, setLearningState] = useState<LearningPathState>({ path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-v4-pro" });
+  const [learningMonitorWake, setLearningMonitorWake] = useState(0);
   const [learningTarget, setLearningTarget] = useState("");
   const [learningTargetTrackId, setLearningTargetTrackId] = useState<string | null>(null);
   const [learningScopeDirty, setLearningScopeDirty] = useState(false);
@@ -3845,7 +3846,7 @@ export default function ResearchApp({ user }: { user: User }) {
         });
     }, 0);
     return () => { cancelled = true; stopPolling(); window.clearTimeout(timer); };
-  }, [activeSpace.id]);
+  }, [activeSpace.id, learningMonitorWake]);
 
   useEffect(() => {
     if (!toast) return;
@@ -4183,6 +4184,38 @@ export default function ResearchApp({ user }: { user: User }) {
     }, 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [activeSpace.id, learningReloadNonce, locale, paperNetworkMode, researchMapMode, view]);
+
+  useEffect(() => {
+    const needsLearningPath = view === "learn" || (view === "threads" && researchMapMode === "papers" && paperNetworkMode === "path");
+    if (!needsLearningPath || learningLoadedSpaceId !== activeSpace.id || learningLoading || learningAction) return;
+    const path = learningState.path;
+    const delay = learningDiscoveryDelay(path);
+    if (!path || delay === null) return;
+    let cancelled = false;
+    let timer: number;
+    const run = async () => {
+      if (cancelled) return;
+      if (document.visibilityState !== "visible") { timer = window.setTimeout(run, 30_000); return; }
+      try {
+        const response = await fetch("/api/learning-path", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spaceId: activeSpace.id, pathId: path.id, action: "advance-evidence" }),
+        });
+        const data = await response.json() as LearningPathState & { discoveryAdvance?: { queuedCount?: number } };
+        if (cancelled) return;
+        if (response.ok && data.path?.id === path.id) {
+          setLearningState(data);
+          // Reuse Today's existing leased pipeline; never approve or confirm here.
+          if ((data.discoveryAdvance?.queuedCount || 0) > 0) setLearningMonitorWake((value) => value + 1);
+          return;
+        }
+        if (response.status === 409) { setLearningReloadNonce((value) => value + 1); return; }
+      } catch { /* Keep the visible path and retry later; do not clear history. */ }
+      if (!cancelled) timer = window.setTimeout(run, 60_000);
+    };
+    timer = window.setTimeout(run, delay);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeSpace.id, learningAction, learningLoadedSpaceId, learningLoading, learningState.path, paperNetworkMode, researchMapMode, view]);
 
   useEffect(() => {
     if (view !== "today" || !monitor?.papers.length || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;

@@ -15,6 +15,8 @@ import {
   supersedeResearchGapDiscovery,
 } from "../lib/research-gap-discovery.ts";
 import { researchProblemInputRevision } from "../lib/research-problem.ts";
+import { advanceLearningDiscovery } from "../lib/learning-discovery.ts";
+import { learningDiscoveryDelay } from "../lib/learning-path.ts";
 
 function d1Database(sqlite) {
   const database = {
@@ -97,6 +99,83 @@ test("automatic gap queries fail closed on unsafe syntax", () => {
   assert.equal(safeAutomaticResearchGapQuery("KLS conjecture stochastic localization"), "KLS conjecture stochastic localization");
   assert.equal(safeAutomaticResearchGapQuery("KLS AND Cheeger"), "");
   assert.equal(safeAutomaticResearchGapQuery("猜想"), "");
+});
+
+test("current learning work bypasses unrelated backlog but shares scheduler leases and quality boundaries", async () => {
+  const { sqlite, database } = await fixture();
+  try {
+    sqlite.exec(`CREATE TABLE learning_paths (id TEXT PRIMARY KEY, space_id TEXT, status TEXT);
+      CREATE TABLE learning_path_steps (path_id TEXT, space_id TEXT, discovery_job_id TEXT, status TEXT);`);
+    const older = await enqueueResearchGapDiscovery(database, { spaceId: "space-a", trackId: "track-a", origin: "direction", sourceRevision: "older", queryText: "KLS stochastic localization" });
+    const current = await enqueueResearchGapDiscovery(database, { spaceId: "space-a", trackId: "track-a", purpose: "learning", origin: "direction", sourceRevision: "current", queryText: "KLS foundational original paper" });
+    sqlite.prepare("INSERT INTO learning_paths VALUES ('path-a', 'space-a', 'waiting_evidence')").run();
+    sqlite.prepare("INSERT INTO learning_path_steps VALUES ('path-a', 'space-a', ?, 'pending')").run(current.id);
+    const path = { id: "path-a", status: "waiting_evidence", steps: [{ status: "pending", resources: [], discovery: { id: current.id, status: "pending" } }] };
+    const input = { database, spaceId: "space-a", path, unboundedRetries: true };
+    let dispatches = 0, release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const dispatch = async (body) => {
+      dispatches++;
+      assert.equal(body.gapJobId, current.id);
+      assert.equal(body.action, "expand-auto-gap");
+      await gate;
+      return Response.json({ reviewQueuedCount: 2, discoveredRouteCandidateCount: 3, routeSourceStatuses: [{ status: "ok" }, { status: "failed" }] });
+    };
+    const first = advanceLearningDiscovery({ ...input, dispatch });
+    // Both callers can observe pending, but only one wins the durable claim.
+    const second = await advanceLearningDiscovery({ ...input, dispatch });
+    assert.equal(second.attempted, false);
+    assert.equal(dispatches, 1);
+    release();
+    assert.equal((await first).status, "retryable");
+    assert.equal(sqlite.prepare("SELECT attempt_count FROM research_gap_discovery_jobs WHERE id = ?").get(older.id).attempt_count, 0);
+    let job = sqlite.prepare("SELECT * FROM research_gap_discovery_jobs WHERE id = ?").get(current.id);
+    assert.equal(job.attempt_count, 1);
+    assert.equal(job.queued_count, 2, "partial source failure retains queued candidates");
+    assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM paper_insights").get().n, 0, "dispatch cannot approve papers");
+    path.steps[0].discovery.status = "retryable";
+    assert.equal((await advanceLearningDiscovery({ ...input, dispatch })).attempted, false, "backoff is respected");
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET next_retry_at = NULL WHERE id = ?").run(current.id);
+    sqlite.exec("UPDATE learning_paths SET status = 'superseded'");
+    assert.equal((await advanceLearningDiscovery({ ...input, dispatch })).attempted, false, "old path cannot start work");
+    sqlite.exec("UPDATE learning_paths SET status = 'waiting_evidence'");
+    assert.equal((await advanceLearningDiscovery({ ...input, spaceId: "foreign-space", dispatch })).attempted, false);
+    sqlite.exec("UPDATE research_tracks SET monitoring_status = 'paused'");
+    assert.equal((await advanceLearningDiscovery({ ...input, dispatch })).attempted, false);
+    sqlite.exec("UPDATE research_tracks SET monitoring_status = 'active'");
+    await advanceLearningDiscovery({ ...input, dispatch: async () => { throw new Error("transport unavailable"); } });
+    job = sqlite.prepare("SELECT * FROM research_gap_discovery_jobs WHERE id = ?").get(current.id);
+    assert.equal(job.status, "retryable");
+    assert.equal(job.queued_count, 2, "failed retries never erase prior progress");
+    assert.equal(job.error, "learning_discovery_unavailable");
+    sqlite.prepare("UPDATE research_gap_discovery_jobs SET status = 'running', lock_expires_at = datetime('now','-1 minute') WHERE id = ?").run(current.id);
+    path.steps[0].discovery.status = "running";
+    assert.equal((await advanceLearningDiscovery({ ...input, dispatch: async () => Response.json({ discoveredRouteCandidateCount: 1, reviewQueuedCount: 1 }) })).status, "ready");
+    assert.equal(sqlite.prepare("SELECT queued_count FROM research_gap_discovery_jobs WHERE id = ?").get(current.id).queued_count, 3);
+    path.steps[0].resources = [{ id: "approved-paper" }];
+    assert.equal((await advanceLearningDiscovery({ ...input, dispatch })).attempted, false, "filled stages need no retrieval");
+  } finally { sqlite.close(); }
+});
+
+test("learning continuation polling stops for completed work and respects retry dates", () => {
+  const now = Date.parse("2026-09-04T07:00:00Z");
+  const job = { status: "pending", updatedAt: "2026-09-04T07:00:00Z", nextRetryAt: null };
+  const path = { status: "waiting_evidence", steps: [{ status: "pending", resources: [], discovery: job }] };
+  assert.equal(learningDiscoveryDelay(path, now), 30000);
+  job.status = "retryable"; job.nextRetryAt = "2026-09-04T09:00:00Z";
+  assert.equal(learningDiscoveryDelay(path, now), 7200000);
+  job.status = "running";
+  assert.equal(learningDiscoveryDelay(path, now), 125000);
+  job.updatedAt = "2026-09-04 07:00:00";
+  assert.equal(learningDiscoveryDelay(path, now), 125000, "D1 timestamps are UTC, not browser local time");
+  job.status = "ready";
+  assert.equal(learningDiscoveryDelay(path, now), 30000);
+  job.status = "degraded";
+  assert.equal(learningDiscoveryDelay(path, now), null);
+  job.status = "pending"; path.steps[0].status = "completed";
+  assert.equal(learningDiscoveryDelay(path, now), null);
+  path.steps[0].status = "pending"; path.status = "superseded";
+  assert.equal(learningDiscoveryDelay(path, now), null);
 });
 
 test("a new gap revision supersedes pending work without deleting history", async () => {

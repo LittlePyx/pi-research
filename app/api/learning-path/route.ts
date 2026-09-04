@@ -19,6 +19,8 @@ import { continueResearchGapDiscoveryAfterQualityShortfall, enqueueResearchGapDi
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { groundedStageEvidence, learningStageAccepts, learningStageSearchQuery, type LearningStageEvidence, type LearningStageTarget } from "../../../lib/learning-stage-match";
 import { LEARNING_GUIDANCE_POLICY, groundedGuidanceReview, guidanceReviewIsCurrent, learningGuidanceText, presentLearningGuidance, type LearningGuidanceReview, type LearningGuidanceSource } from "../../../lib/learning-guidance";
+import { advanceLearningDiscovery } from "../../../lib/learning-discovery";
+import { POST as expandResearchMap } from "../research-map/route";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
 type PathRow = {
@@ -821,11 +823,28 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({})) as { spaceId?: string; target?: string; trackId?: string | null };
+  const body = await request.json().catch(() => ({})) as { spaceId?: string; target?: string; trackId?: string | null; action?: string; pathId?: string };
   const spaceId = cleanText(body.spaceId, 100);
   const targetTrackId = cleanText(body.trackId, 100) || null;
   const owned = await ownedSpace(request, spaceId);
   if ("error" in owned) return owned.error;
+  if (body.action === "advance-evidence") {
+    const path = await readPath(owned.database, spaceId);
+    if (!path || path.id !== body.pathId) return Response.json({ error: "Learning path changed" }, { status: 409 });
+    const discoveryAdvance = await advanceLearningDiscovery({
+      database: owned.database, spaceId, path, unboundedRetries: unboundedDevelopmentRetries(),
+      dispatch: (payload) => {
+        const headers = new Headers(request.headers);
+        headers.set("Content-Type", "application/json");
+        headers.set("x-pi-scheduled-gap-discovery", "1");
+        return expandResearchMap(new Request(new URL("/api/research-map", request.url), {
+          method: "POST", headers, body: JSON.stringify(payload),
+        }));
+      },
+    });
+    return Response.json({ ...await stateFor(owned.database, owned.space), discoveryAdvance });
+  }
+  if (body.action) return Response.json({ error: "Unsupported learning action" }, { status: 400 });
   const requestedTrack = targetTrackId ? await owned.database.prepare(
     "SELECT id, title_zh, title_en, summary_zh, summary_en, user_role, depth_score + interaction_score AS depth_score, support_score, search_queries, updated_at FROM research_tracks WHERE id = ? AND space_id = ? LIMIT 1",
   ).bind(targetTrackId, spaceId).first<TrackContext>() : null;

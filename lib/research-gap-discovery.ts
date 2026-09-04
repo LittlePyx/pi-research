@@ -281,6 +281,7 @@ export async function claimResearchGapDiscovery(
   now = new Date(),
   unboundedRetries = false,
   mode: ResearchGapDiscoveryClaimMode = "due",
+  learningScope?: { spaceId: string; pathId: string; jobId: string },
 ): Promise<ResearchGapDiscoveryClaim | null> {
   for (let raceAttempt = 0; raceAttempt < 3; raceAttempt += 1) {
     const eligibility = mode === "stalled"
@@ -298,6 +299,10 @@ export async function claimResearchGapDiscovery(
        JOIN research_spaces space ON space.id = job.space_id
        JOIN monitor_runs run ON run.space_id = job.space_id
        WHERE ${mode === "due" && !unboundedRetries ? "job.attempt_count < ? AND" : ""} (${eligibility})
+        ${learningScope ? `AND job.space_id = ? AND job.id = ? AND job.purpose = 'learning'
+         AND EXISTS (SELECT 1 FROM learning_path_steps step JOIN learning_paths path ON path.id = step.path_id
+          WHERE step.discovery_job_id = job.id AND step.space_id = job.space_id AND path.space_id = job.space_id
+           AND path.id = ? AND path.status != 'superseded' AND step.status != 'completed')` : ""}
         AND (track.build_status IN ('ready', 'partial')
           OR (job.purpose = 'learning' AND track.build_status IN ('queued', 'retryable', 'empty', 'failed')))
         AND COALESCE(track.monitoring_status, 'active') = 'active'
@@ -305,9 +310,9 @@ export async function claimResearchGapDiscovery(
         AND run.last_user_activity_at IS NOT NULL AND datetime(run.last_user_activity_at) > datetime('now', '-7 days')
        ORDER BY ${ordering} LIMIT 1`,
     );
-    const row = await (mode === "due" && !unboundedRetries
-      ? claim.bind(RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS).first<ClaimRow>()
-      : claim.first<ClaimRow>());
+    const bindings: (string | number)[] = mode === "due" && !unboundedRetries ? [RESEARCH_GAP_DISCOVERY_MAX_ATTEMPTS] : [];
+    if (learningScope) bindings.push(learningScope.spaceId, learningScope.jobId, learningScope.pathId);
+    const row = await (bindings.length ? claim.bind(...bindings) : claim).first<ClaimRow>();
     if (!row) return null;
     const lockToken = crypto.randomUUID();
     const lockExpiresAt = new Date(now.getTime() + RESEARCH_GAP_DISCOVERY_LEASE_MS).toISOString();

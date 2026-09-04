@@ -25,6 +25,21 @@ test("learning → reading → stage → route runs through the built Worker and
     compatibilityDate: "2026-05-15", compatibilityFlags: ["nodejs_compat"],
     modulesRoot: serverDir,
     modules: [{ type: "ESModule", path: `${serverDir}learning-test-entry.js`, contents: entry }, ...modules],
+    // Deterministic public-source responses, never a model credential or live recommendation.
+    outboundService: async (request) => {
+      const url = new URL(request.url);
+      if (url.hostname === "api.crossref.org") {
+        const info = url.search.includes("Shannon");
+        return Response.json({ message: { items: [{ DOI: info ? "10.1234/fixture-shannon" : "10.1234/fixture-kls",
+          title: [info ? "Shannon maximum entropy Gaussian covariance theorem" : "KLS conjecture isoperimetric constants foundational paper"],
+          author: [{ given: "Fixture", family: "Author" }], type: "journal-article",
+          "container-title": ["Fixture journal"], published: { "date-parts": [[1995, 1, 1]] },
+          abstract: info ? "We study Shannon maximum entropy for Gaussian distributions under a covariance constraint." : "We study the KLS conjecture for isoperimetric constants of log-concave distributions.",
+          URL: "https://example.org/fixture-source", "is-referenced-by-count": 100,
+        }] } });
+      }
+      return new Response("source temporarily unavailable", { status: 503 });
+    },
   });
   const cookie = "pi_anonymous_workspace=learning-loop-test-00000001";
   async function request(path, body, expected = 200, method = body ? "PATCH" : "GET") {
@@ -217,6 +232,41 @@ test("learning → reading → stage → route runs through the built Worker and
         assert.equal(history[0].results[0].count, 1);
         assert.equal(history[1].results[0].count, 0, "no user reading was invented");
       }
+    });
+    await t.test("current-path continuation executes source discovery without approving papers or replacing history", async () => {
+      for (const space of ["wake-math", "wake-info"]) {
+        const info = space.endsWith("info");
+        const query = info ? "Shannon maximum entropy Gaussian covariance theorem" : "KLS conjecture isoperimetric constants foundational paper";
+        await sql([
+          insert("research_spaces", { id: space, owner_user_id: "anonymous:learning-loop-test-00000001", name: space, member_name: "Test" }),
+          insert("research_tracks", { id: `${space}-track`, space_id: space, title_zh: query, title_en: query, build_status: "partial", search_queries: JSON.stringify([query]) }),
+          insert("monitor_runs", { id: `${space}-run`, space_id: space, last_user_activity_at: new Date().toISOString(), status: "ready" }),
+          insert("learning_paths", { id: `${space}-path`, space_id: space, target: query, target_track_id: `${space}-track`, title_zh: query, title_en: query, status: "waiting_evidence" }),
+          insert("learning_path_steps", { id: `${space}-step`, space_id: space, path_id: `${space}-path`, title_zh: query, title_en: query, kind: "foundation", evidence_query: query }),
+        ]);
+        const before = await request(`/api/learning-path?spaceId=${space}`);
+        const jobId = before.path.steps[0].discovery.id;
+        const body = { spaceId: space, pathId: `${space}-path`, action: "advance-evidence" };
+        await request("/api/learning-path", { ...body, pathId: "stale-path" }, 409, "POST");
+        const after = await request("/api/learning-path", body, 200, "POST");
+        assert.equal(after.discoveryAdvance.attempted, true);
+        assert.equal(after.path.id, before.path.id);
+        assert.equal(after.path.steps[0].discovery.attemptCount, 1);
+        assert.ok(after.path.steps[0].discovery.queuedCount > 0, "real API dispatch must reach the shared queue");
+        assert.equal(after.path.steps[0].resources.length, 0, "source retrieval cannot bypass shared quality");
+        const counts = (await sql([
+          { sql: "SELECT COUNT(*) AS n FROM monitor_candidate_sources WHERE space_id = ? AND source_key = 'research-route:learning'", values: [space] },
+          { sql: "SELECT COUNT(*) AS n FROM paper_insights WHERE space_id = ? AND ever_recommended = 1", values: [space] },
+          { sql: "SELECT COUNT(*) AS n FROM research_track_papers WHERE space_id = ?", values: [space] },
+          { sql: "SELECT COUNT(*) AS n FROM learning_paths WHERE space_id = ?", values: [space] },
+        ])).map((row) => row.results[0].n);
+        assert.ok(counts[0] > 0); assert.deepEqual(counts.slice(1), [0, 0, 1]);
+        const repeat = await request("/api/learning-path", body, 200, "POST");
+        assert.equal(repeat.discoveryAdvance.attempted, false, "respect the retry date after partial source failure");
+        assert.equal(repeat.path.steps[0].discovery.id, jobId);
+        assert.equal(repeat.path.steps[0].discovery.queuedCount, after.path.steps[0].discovery.queuedCount);
+      }
+      await request("/api/learning-path", { spaceId: "not-owned", pathId: "wake-math-path", action: "advance-evidence" }, 404, "POST");
     });
     await t.test("failed model replans preserve prior paths and fallback retries bypass the evidence cache", async () => {
       await sql([

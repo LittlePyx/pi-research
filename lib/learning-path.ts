@@ -40,6 +40,22 @@ export type LearningEvidenceDiscovery = {
   updatedAt: string;
 };
 
+/** Poll only unfinished material work, respecting provider backoff and leases. */
+export function learningDiscoveryDelay(path: LearningPath | null, now = Date.now()): number | null {
+  if (!path || path.status === "completed" || path.status === "superseded") return null;
+  const timestamp = (value: string | null) => Date.parse(value && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(value) ? value.replace(" ", "T") + "Z" : value || "") || now;
+  const delays = path.steps.filter((step) => step.status !== "completed" && !step.resources.length).flatMap((step) => {
+    const job = step.discovery;
+    if (!job) return [];
+    if (job.status === "pending") return [30_000];
+    if (job.status === "retryable") return [Math.max(30_000, timestamp(job.nextRetryAt) - now)];
+    if (job.status === "running") return [Math.max(30_000, timestamp(job.updatedAt) + 125_000 - now)];
+    if (job.status === "ready") return [30_000]; // Refresh shared-quality results and next refinements.
+    return [];
+  });
+  return delays.length ? Math.min(...delays) : null;
+}
+
 /**
  * Return a safe, usable original-paper URL for both current and legacy paths.
  * Old saved resources can lack a URL but still carry a DOI canonical ID.

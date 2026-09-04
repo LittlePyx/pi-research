@@ -35,6 +35,51 @@ function render(locale, openingId = null) {
   return { html: renderToStaticMarkup(tree), buttons, events };
 }
 
+test("the production learning continuation effect respects visibility, path switches and queue wakeups", async () => {
+  const marker = app.indexOf("const delay = learningDiscoveryDelay(path)");
+  const start = app.lastIndexOf("  useEffect(() => {", marker);
+  const end = app.indexOf("\n  }, [activeSpace.id, learningAction,", marker);
+  assert.ok(start > 0 && end > marker);
+  const effect = app.slice(start, app.indexOf("]);", end) + 3);
+  function mount({ visible = true, action = null, fetcher } = {}) {
+    let cleanup, wake = 0, reload = 0;
+    const timers = new Map(), states = [], calls = [];
+    let sequence = 0;
+    const path = { id: "path-a", status: "waiting_evidence", steps: [{ status: "pending", resources: [], discovery: { status: "pending" } }] };
+    const scope = {
+      useEffect: (callback) => { cleanup = callback(); }, view: "learn", researchMapMode: "papers", paperNetworkMode: "path",
+      learningLoadedSpaceId: "space-a", activeSpace: { id: "space-a" }, learningLoading: false, learningAction: action,
+      learningState: { path }, learningDiscoveryDelay: learningHelpers.learningDiscoveryDelay,
+      document: { visibilityState: visible ? "visible" : "hidden" },
+      window: { setTimeout: (callback, delay) => { timers.set(++sequence, { callback, delay }); return sequence; }, clearTimeout: (id) => timers.delete(id) },
+      fetch: async (_url, request) => { calls.push(JSON.parse(request.body)); return fetcher ? fetcher() : Response.json({ path, discoveryAdvance: { queuedCount: 2 } }); },
+      setLearningState: (state) => states.push(state), setLearningMonitorWake: (update) => { wake = update(wake); },
+      setLearningReloadNonce: (update) => { reload = update(reload); },
+    };
+    new Function(...Object.keys(scope), compile(effect))(...Object.values(scope));
+    return { scope, timers, states, calls, stop: () => cleanup?.(), wake: () => wake, reload: () => reload,
+      tick: () => { const [id, timer] = timers.entries().next().value; timers.delete(id); return timer.callback(); } };
+  }
+  const normal = mount();
+  assert.equal([...normal.timers.values()][0].delay, 30000);
+  await normal.tick();
+  assert.deepEqual(normal.calls, [{ spaceId: "space-a", pathId: "path-a", action: "advance-evidence" }]);
+  assert.equal(normal.wake(), 1, "new candidates wake the existing Today pipeline");
+  const hidden = mount({ visible: false });
+  await hidden.tick(); assert.equal(hidden.calls.length, 0); assert.equal(hidden.timers.size, 1);
+  hidden.stop(); assert.equal(hidden.timers.size, 0);
+  assert.equal(mount({ action: "generate" }).timers.size, 0);
+  let finish;
+  const switched = mount({ fetcher: () => new Promise((resolve) => { finish = resolve; }) });
+  const pending = switched.tick(); switched.stop();
+  finish(Response.json({ path: { id: "path-a" }, discoveryAdvance: { queuedCount: 2 } }));
+  await pending; assert.equal(switched.states.length, 0); assert.equal(switched.wake(), 0);
+  const stale = mount({ fetcher: () => Response.json({}, { status: 409 }) });
+  await stale.tick(); assert.equal(stale.reload(), 1);
+  const failed = mount({ fetcher: () => { throw new Error("offline"); } });
+  await failed.tick(); assert.equal(failed.states.length, 0); assert.equal([...failed.timers.values()][0].delay, 60000);
+});
+
 test("learning papers expose exact internal identities and separate safe original links in both languages", () => {
   for (const locale of ["zh", "en"]) {
     const { html, buttons, events } = render(locale);
