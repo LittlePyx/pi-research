@@ -185,7 +185,7 @@ test("route effectiveness is read-only, visible, and keeps every count on narrow
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/monitor-candidate-queue.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/route-evolution-workbench.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
   assert.doesNotMatch(effectiveness, /\b(?:DELETE|UPDATE|INSERT)\s+(?:FROM|INTO|research_)/i);

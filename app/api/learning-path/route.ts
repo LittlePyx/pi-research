@@ -277,13 +277,22 @@ async function contextForSpace(database: D1Database, space: SpaceRow, targetTrac
    COALESCE(NULLIF(p.rationale_en, ''), i.why_read_en) AS rationale_en,
    i.reading_focus_zh, i.reading_focus_en, i.quality_score, i.read_minutes,
    COALESCE(r.status, 'unread') AS reading_status`;
+  // D1 cannot resolve an outer column in a correlated subquery's ORDER BY.
+  // Separate lookups preserve identity priority without depending on that syntax.
   const routePaperJoin = ` FROM research_track_papers p JOIN research_tracks t ON t.id = p.track_id
-   JOIN monitored_papers mp ON mp.id = (SELECT candidate.id FROM monitored_papers candidate
-    WHERE candidate.space_id = p.space_id AND (
-     (p.canonical_id != '' AND lower(candidate.canonical_id) = lower(p.canonical_id))
-     OR (p.doi IS NOT NULL AND p.doi != '' AND lower(candidate.doi) = lower(p.doi))
-     OR lower(trim(candidate.title)) = lower(trim(p.title)))
-    ORDER BY CASE WHEN lower(candidate.canonical_id) = lower(p.canonical_id) THEN 0 ELSE 1 END LIMIT 1)
+   JOIN monitored_papers mp ON mp.id = COALESCE(
+    (SELECT candidate.id FROM monitored_papers candidate
+     WHERE candidate.space_id = p.space_id AND p.canonical_id != ''
+      AND lower(candidate.canonical_id) = lower(p.canonical_id)
+     ORDER BY candidate.id LIMIT 1),
+    (SELECT candidate.id FROM monitored_papers candidate
+     WHERE candidate.space_id = p.space_id AND p.doi IS NOT NULL AND p.doi != ''
+      AND lower(candidate.doi) = lower(p.doi)
+     ORDER BY candidate.id LIMIT 1),
+    (SELECT candidate.id FROM monitored_papers candidate
+     WHERE candidate.space_id = p.space_id AND trim(p.title) != ''
+      AND lower(trim(candidate.title)) = lower(trim(p.title))
+     ORDER BY candidate.id LIMIT 1))
    JOIN paper_insights i ON i.paper_id = mp.id AND i.space_id = mp.space_id AND i.ever_recommended = 1
    LEFT JOIN paper_reading_progress r ON r.paper_id = mp.id AND r.space_id = mp.space_id`;
   const visibleRouteWhere = ` AND p.curation_status = 'active' AND NOT EXISTS (

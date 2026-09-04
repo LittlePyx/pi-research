@@ -188,7 +188,10 @@ test("runtime bootstrap and the route revision migration are safe in either orde
 });
 
 test("the route workbench keeps proposals provisional and labels inference separately", async () => {
-  const [api, ui, css] = await Promise.all([readFile(apiUrl, "utf8"), readFile(uiUrl, "utf8"), readFile(cssUrl, "utf8")]);
+  const [api, ui, css, component] = await Promise.all([
+    readFile(apiUrl, "utf8"), readFile(uiUrl, "utf8"), readFile(cssUrl, "utf8"),
+    readFile(new URL("../app/components/route-evolution-workbench.tsx", import.meta.url), "utf8"),
+  ]);
   assert.match(api, /insight\.ever_recommended = 1/);
   assert.match(api, /insight\.verification_status IN \('verified', 'revised'\)/);
   assert.match(api, /action === "propose-evolution"/);
@@ -196,8 +199,8 @@ test("the route workbench keeps proposals provisional and labels inference separ
   assert.match(api, /UPDATE research_tracks SET title_zh = \?, title_en = \?, summary_zh = \?, summary_en = \?, search_queries = \?/);
   assert.match(api, /status = 'dismissed'.*updated_at = CURRENT_TIMESTAMP/s);
   assert.match(ui, /确认前不会改变正式路线/);
-  assert.match(ui, /Pi 跨论文综合（推断）/);
-  assert.match(ui, /驳回并保留记录/);
+  assert.match(component, /Pi 跨论文综合（推断）/);
+  assert.match(component, /驳回并保留记录/);
   assert.match(ui, /RouteEvolutionWorkbench track=\{selectedThread\}/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-route-evolution-diff \{ grid-template-columns: 1fr; \}/);
   assert.doesNotMatch(css, /\.v2-route-evolution[^\n]*display:\s*none/);
