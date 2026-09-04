@@ -10,7 +10,13 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 const componentModule = { exports: {} };
-new Function("require", "module", "exports", compiled)(createRequire(import.meta.url), componentModule, componentModule.exports);
+const require = createRequire(import.meta.url);
+const icons = { exports: {} };
+const iconSource = await readFile(new URL("../app/components/interface-icon.tsx", import.meta.url), "utf8");
+new Function("require", "module", "exports", ts.transpileModule(iconSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText)(require, icons, icons.exports);
+new Function("require", "module", "exports", compiled)((name) => name === "./interface-icon" ? icons.exports : require(name), componentModule, componentModule.exports);
 const { RouteEvolutionWorkbench } = componentModule.exports;
 
 function revision(status, version) {
