@@ -39,8 +39,13 @@ npm run test:live
 
 `npm test` runs the production build and deterministic product tests. `npm run test:live` checks the public contracts of Crossref, OpenAlex, DataCite, arXiv, and Semantic Scholar; the shared quality pipeline keeps healthy-source evidence when any optional public endpoint rate-limits anonymous requests.
 
+GitHub Actions separates code regressions from production operations:
+
+- **Pi code checks** runs on pushes to `main`, pull requests and manual dispatch. It uses Node 24, `npm ci`, lint, the build/product tests and the offline discovery benchmark, in sequence. It needs no application secrets and does not deploy or scan production papers.
+- **Pi background research scheduler** wakes production and checks persistent incidents. A failed run here is an operational signal, not necessarily a build or test failure. Public-provider probes (`test:live`, `test:discovery:live`) remain separate from deterministic code checks.
+
 ## Data model
 
 Pi Research stores structured research state in D1. Scan jobs, source/query coverage, candidate provenance, AI decisions, delivery state, feedback, research tracks, paper edges, learning paths, imports, and share snapshots are durable and scoped to one anonymous workspace and research space.
 
-The scheduled worker checks due research spaces every 10 minutes. Each space normally completes one scan every 24 hours; failed jobs preserve discovered candidates and completed AI review batches so retries do not start from zero.
+The scheduled worker is configured to check due research spaces every 10 minutes; actual wake intervals must be verified from runtime records. Each space normally completes one scan every 24 hours; failed jobs preserve discovered candidates and completed AI review batches so retries do not start from zero.
