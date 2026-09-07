@@ -19,7 +19,7 @@ test("the monitor verifies recommendation content without a full-text verificati
   assert.doesNotMatch(client, /\/api\/paper-evidence/);
   assert.doesNotMatch(client, /开放全文已核验/);
   assert.match(client, /正在核对推荐依据/);
-  assert.match(client, /monitor\.dailyBrief\.metrics\.recommended \|\| 0/);
+  assert.match(client, /runFunnel\.recommended \?\? "—"/);
   assert.doesNotMatch(client, /recommended \|\| 0\) - \(monitor\.dailyBrief\.metrics\.verificationPending/);
   assert.match(client, /推荐内容已核验/);
   assert.match(schema, /proposedRecommendationTier/);

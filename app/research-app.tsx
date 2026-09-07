@@ -16,6 +16,7 @@ import { shouldReclaimMonitorLease } from "../lib/monitor-follower-control.mjs";
 import { shouldBlockManualMonitorStart } from "../lib/monitor-runtime-control.mjs";
 import { modelConnectionFailureState, modelConnectionProblemCopy } from "../lib/model-connection-state";
 import { activateModalFocus } from "../lib/modal-focus";
+import { briefPaperEntries, coverageIdentity, scanDisplayProgress, scanFunnel } from "../lib/today-presentation.mjs";
 
 type Locale = "zh" | "en";
 type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid" | "balance" | "rate_limited" | "unavailable";
@@ -3342,9 +3343,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const compactScanAvailable = Boolean(!scanIsActive
     && monitor?.analysisBudget?.recommendedMode === "fresh_only"
     && !resumeAvailable);
-  const scanProgress = scanIsActive
-    ? Math.max(monitorProgressByStatus[effectiveScanStatus], activeScanJob?.progress || 0)
-    : monitor?.status === "ready" ? 100 : 0;
+  const scanProgress = scanDisplayProgress(scanIsActive, monitor?.status === "ready", monitorProgressByStatus[effectiveScanStatus], activeScanJob?.progress);
+  const scanProgressLabel = verificationInProgress ? (locale === "zh" ? "核对中" : "Checking") : `${scanProgress}%`;
   const baseScanPhase = verificationInProgress
     ? (locale === "zh" ? "正在核对推荐依据" : "Checking recommendation evidence")
     : monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
@@ -3358,7 +3358,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const restoredOldScan = scanElapsedSeconds > 3_600;
   const scanHorizonStats = (["days", "months", "years"] as const).map((horizon) => monitor?.scanJob?.horizonStats?.find((item) => item.horizon === horizon) || {
     horizon,
-    status: monitor?.status === "ready" || monitor?.status === "error" ? "complete" as const : monitor?.scanJob?.currentHorizon === horizon ? "searching" as const : "pending" as const,
+    status: monitor?.scanJob?.currentHorizon === horizon ? "searching" as const : "pending" as const,
     candidates: null,
     rawCandidates: null,
     newCandidates: null,
@@ -3366,25 +3366,22 @@ export default function ResearchApp({ user }: { user: User }) {
     screened: 0,
   });
   const todayNavigationCount = rankedMonitorPapers.length;
-  const dailyBriefPapers = useMemo(() => {
-    const ids = new Set(monitor?.dailyBrief?.paperIds || []);
-    const byId = new Map(historyPapers.filter((paper) => ids.has(paper.id)).map((paper) => [paper.id, paper]));
-    return (monitor?.dailyBrief?.paperIds || []).flatMap((id) => {
-      const paper = byId.get(id);
-      return paper ? [paper] : [];
-    });
-  }, [historyPapers, monitor?.dailyBrief?.paperIds]);
+  const dailyBriefEntries = useMemo(() => briefPaperEntries(monitor?.dailyBrief?.paperIds, historyPapers), [historyPapers, monitor?.dailyBrief?.paperIds]);
+  const dailyBriefPapers: MonitorPaper[] = dailyBriefEntries.map((entry) => entry.paper);
+  const visibleBriefEntries = dailyBriefEntries.slice(0, 6);
   const dailyFreshnessCounts = useMemo(() => ({
-    days: dailyBriefPapers.filter((paper) => paper.horizon === "days").length,
-    months: dailyBriefPapers.filter((paper) => paper.horizon === "months").length,
-    years: dailyBriefPapers.filter((paper) => !["days", "months"].includes(paper.horizon || "")).length,
+    days: dailyBriefPapers.slice(0, 6).filter((paper) => paper.horizon === "days").length,
+    months: dailyBriefPapers.slice(0, 6).filter((paper) => paper.horizon === "months").length,
+    years: dailyBriefPapers.slice(0, 6).filter((paper) => !["days", "months"].includes(paper.horizon || "")).length,
   }), [dailyBriefPapers]);
   const dailySignals = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.signalsZh : monitor.dailyBrief.signalsEn) : [];
   const dailyReadingPlan = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.readingPlanZh : monitor.dailyBrief.readingPlanEn) : [];
-  const dailyBriefEntryCount = Math.min(6, Math.max(dailyBriefPapers.length, dailySignals.length, dailyReadingPlan.length));
-  const latestQuickScreenedCount = monitor?.scanJob?.reviewedCount || monitor?.dailyBrief?.metrics.screened || monitor?.dailyBrief?.metrics.reviewed || 0;
-  const latestDeepReviewedCount = monitor?.scanJob?.deepCompletedCount || monitor?.dailyBrief?.metrics.deepReviewed || Math.min(monitor?.dailyBrief?.metrics.reviewed || 0, 8);
-  const latestDeepDeferredCount = monitor?.scanJob?.deepDeferredCount || monitor?.dailyBrief?.metrics.deepDeferred || 0;
+  const dailyBriefEntryCount = visibleBriefEntries.length;
+  const runFunnel = scanFunnel(monitor?.scanJob, monitor?.dailyBrief);
+  const briefFunnel = scanFunnel(null, monitor?.dailyBrief);
+  const latestQuickScreenedCount = briefFunnel.screened ?? "—";
+  const latestDeepReviewedCount = briefFunnel.deepReviewed ?? "—";
+  const latestDeepDeferredCount = monitor?.dailyBrief?.metrics.deepDeferred ?? 0;
   const dailyBriefPaperIds = new Set(monitor?.dailyBrief?.paperIds || []);
   const additionalTodayPapers = rankedMonitorPapers.filter((paper) => !dailyBriefPaperIds.has(paper.id)).slice(0, 6);
   const pendingActionNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => ACTION_NOTIFICATION_KINDS.has(notification.kind) && !notification.readAt), [monitor?.notifications]);
@@ -5733,20 +5730,19 @@ export default function ResearchApp({ user }: { user: User }) {
                 {Boolean(dailyBriefPapers.length) && <footer><button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button><button className="secondary" type="button" onClick={() => shareSnapshot("daily", dailyBriefPapers)} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily}</button></footer>}
               </div>
               <div className="v2-daily-paper-queue">
-                <header><div><strong>{monitor.dailyBrief.isCurrent ? (locale === "zh" ? "今日入选" : "Selected today") : (locale === "zh" ? `${monitor.dailyBrief.date} 入选` : `Selected on ${monitor.dailyBrief.date}`)}</strong><small>{locale === "zh" ? "按阅读优先级排序" : "Ordered by reading priority"}</small></div><span>{dailyBriefEntryCount} {locale === "zh" ? "篇" : "papers"}</span></header>
+                <header><div><strong>{monitor.dailyBrief.isCurrent ? (locale === "zh" ? "今日入选" : "Selected today") : (locale === "zh" ? `${monitor.dailyBrief.date} 入选` : `Selected on ${monitor.dailyBrief.date}`)}</strong><small>{locale === "zh" ? `显示 ${dailyBriefEntryCount} / ${dailyBriefPaperIds.size} 篇 · 按阅读优先级排序` : `Showing ${dailyBriefEntryCount} / ${dailyBriefPaperIds.size} · Reading priority`}</small></div><span>{dailyBriefEntryCount} {locale === "zh" ? "篇" : "papers"}</span></header>
                 {Boolean(dailyBriefPapers.length) && <div className="v2-daily-freshness-summary"><span className="days">{locale === "zh" ? "近 14 天新论文" : "New · 14 days"} <b>{dailyFreshnessCounts.days}</b></span><span className="months">{locale === "zh" ? "近期优质" : "Recent quality"} <b>{dailyFreshnessCounts.months}</b></span><span className="years">{locale === "zh" ? "核心补读" : "Core catch-up"} <b>{dailyFreshnessCounts.years}</b></span></div>}
                 <div className="v2-daily-brief-list">
-                  {Array.from({ length: dailyBriefEntryCount }, (_, index) => {
-                    const paper = dailyBriefPapers[index];
-                    const signal = dailySignals[index];
-                    const readingAction = dailyReadingPlan[index];
+                  {visibleBriefEntries.map(({ paper, briefIndex }, index) => {
+                    const signal = dailySignals[briefIndex];
+                    const readingAction = dailyReadingPlan[briefIndex];
                     return <details key={paper?.id || `${index}:${signal || readingAction}`}>
                       <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /></div>}<h3>{paper?.title || (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{paper && <><p className="v2-daily-paper-authors"><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span>{formatPaperDate(paper.publishedAt, locale)}</span><span>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span>{paper.citationCount || 0} {locale === "zh" ? "被引" : "citations"}</span><span>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
                       <div className="v2-daily-paper-analysis">{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{paper && <RouteImpactNote paper={paper} locale={locale} />}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看解读" : "Open analysis"} →</button><button className="positive" type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {locale === "zh" ? "适合" : "Useful"}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {locale === "zh" ? "不相关" : "Not relevant"}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant", "duplicate_known")}><InterfaceIcon name="check" /> {locale === "zh" ? "已掌握" : "Mastered"}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {locale === "zh" ? "稍后" : "Later"}</button></footer>}</div>
                     </details>;
                   })}
                 </div>
-                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "今天暂无入选" : "No selections today"}</strong><p>{locale === "zh" ? `${latestQuickScreenedCount} 篇完成初筛，${latestDeepReviewedCount} 篇完成深评${latestDeepDeferredCount ? `，${latestDeepDeferredCount} 篇延后` : ""}；暂无论文通过全部质量门槛。` : `${latestQuickScreenedCount} screened, ${latestDeepReviewedCount} deeply reviewed${latestDeepDeferredCount ? `, ${latestDeepDeferredCount} deferred` : ""}; none cleared every quality gate.`}</p></div>}
+                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{dailyBriefPaperIds.size ? (locale === "zh" ? "论文详情暂未加载" : "Paper details unavailable") : (locale === "zh" ? "本简报暂无入选" : "No selections in this brief")}</strong><p>{dailyBriefPaperIds.size ? (locale === "zh" ? "已保留入选记录，请稍后刷新查看。" : "Selections are preserved. Refresh to load their details.") : locale === "zh" ? `${latestQuickScreenedCount} 篇完成初筛，${latestDeepReviewedCount} 篇完成深评${latestDeepDeferredCount ? `，${latestDeepDeferredCount} 篇延后` : ""}；暂无论文通过全部质量门槛。` : `${latestQuickScreenedCount} screened, ${latestDeepReviewedCount} deeply reviewed${latestDeepDeferredCount ? `, ${latestDeepDeferredCount} deferred` : ""}; none cleared every quality gate.`}</p></div>}
                 {Boolean((locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).length) && <aside><strong>{locale === "zh" ? "继续观察" : "Keep watching"}</strong><ul>{(locale === "zh" ? monitor.dailyBrief.watchlistZh : monitor.dailyBrief.watchlistEn).map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ul></aside>}
               </div>
             </section>}
@@ -5765,7 +5761,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? monitorReadyLabel : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
-                  <button type="button" onClick={runManualMonitor} disabled={scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgress}%` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
+<button type="button" onClick={runManualMonitor} disabled={scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgressLabel}` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
                 </div>
               </div>
               {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><InterfaceIcon name="clock" /><p>{locale === "zh" ? "今天的完整扫描额度已用完；Pi 会在刷新后继续，现有论文、偏好与断点均已保留。" : "Today's full-scan budget is exhausted. Pi will continue after the reset; papers, preferences, and checkpoints are preserved."}</p></div>}
@@ -5796,8 +5792,8 @@ export default function ResearchApp({ user }: { user: User }) {
                 </details>
               )}
               {scanIsActive && (
-                <div className="v2-scan-progress" role="status" aria-live="polite" aria-label={`${scanPhase} ${scanProgress}%`}>
-                  <div><span>{scanPhase}</span><strong>{scanProgress}%</strong></div>
+                <div className="v2-scan-progress" role="status" aria-live="polite" aria-label={`${scanPhase} ${scanProgressLabel}`}>
+                  <div><span>{scanPhase}</span><strong>{scanProgressLabel}</strong></div>
                   <i><b style={{ width: `${scanProgress}%` }} /></i>
                   <small>
                     {activeScanJob?.discoveredCount || 0} {locale === "zh" ? "条候选" : "candidates"}
@@ -5818,7 +5814,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-monitor-meta"><button className="v2-inbox-summary" type="button" onClick={() => { setLibraryFilter("inbox"); setLibraryStageFilter("all"); setInboxFilter("all"); navigate("library"); }}><span>{monitor?.historyCounts?.inbox || 0} {t.inbox}</span><small>{monitor?.historyCounts?.unseen || 0} {t.unseen} · {locale === "zh" ? "未处理内容会保留" : "Unresolved papers stay here"}</small><b>→</b></button>
               <details className="v2-scan-details">
                 <summary>{locale === "zh" ? "扫描范围与来源" : "Scan scope & sources"}<b>＋</b></summary>
-                <dl className="v2-monitor-run-funnel"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{monitor?.dailyBrief?.metrics.scanned || 0}</dd></div><div><dt>{locale === "zh" ? "筛选" : "Screened"}</dt><dd>{latestQuickScreenedCount}</dd></div><div><dt>{locale === "zh" ? "深评" : "Deep review"}</dt><dd>{latestDeepReviewedCount}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{monitor?.dailyBrief?.metrics.recommended || 0}</dd></div></dl>
+                <p>{monitor?.scanJob ? (locale === "zh" ? "最近任务" : "Latest task") : (locale === "zh" ? "本简报" : "This brief")}</p><dl className="v2-monitor-run-funnel"><div><dt>{locale === "zh" ? "候选" : "Candidates"}</dt><dd>{runFunnel.scanned ?? "—"}</dd></div><div><dt>{locale === "zh" ? "筛选" : "Screened"}</dt><dd>{runFunnel.screened ?? "—"}</dd></div><div><dt>{locale === "zh" ? "深评" : "Deep review"}</dt><dd>{runFunnel.deepReviewed ?? "—"}</dd></div><div><dt>{locale === "zh" ? "入选" : "Selected"}</dt><dd>{runFunnel.recommended ?? "—"}</dd></div></dl>
                 <div className="v2-horizon-strip" aria-label={locale === "zh" ? "本轮三个时间窗的实际检索状态" : "Actual retrieval status for the three horizons"}>
                   {scanHorizonStats.map((item) => {
                     const label = item.horizon === "days" ? t.daysHorizon : item.horizon === "months" ? t.monthsHorizon : t.yearsHorizon;
@@ -5850,7 +5846,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 {SHOW_INTERNAL_QUALITY_UI && monitor?.qualityMetrics && <dl className="v2-quality-metrics"><div><dt>{locale === "zh" ? "7日入选率" : "7-day selection yield"}</dt><dd>{monitor.qualityMetrics.recommendationYield}%</dd></div><div><dt>{locale === "zh" ? "用户接受率" : "User acceptance"}</dt><dd>{monitor.qualityMetrics.acceptanceRate}%</dd></div><div><dt>{locale === "zh" ? "候选 / 深度评审" : "Candidates / reviewed"}</dt><dd>{monitor.qualityMetrics.candidates} / {monitor.qualityMetrics.reviewed}</dd></div><div><dt>{locale === "zh" ? "7日智能用量" : "7-day AI usage"}</dt><dd>{Math.round((monitor.qualityMetrics.inputTokens + monitor.qualityMetrics.outputTokens) / 1000)}k tokens</dd></div></dl>}
                 {SHOW_INTERNAL_QUALITY_UI && Boolean(monitor?.discoveryPerformance?.sources.length) && <div className="v2-discovery-performance"><header><strong>{locale === "zh" ? "发现来源表现" : "Discovery performance"}</strong><small>{locale === "zh" ? "依据真实入选与反馈持续调整" : "Updated from real selections and feedback"}</small></header>{monitor?.discoveryPerformance?.sources.slice(0, 6).map((source) => <div key={`${source.channel}:${source.sourceKey}`}><span>{source.sourceKey.replace(/_/g, " ")}</span><i>{source.channel}</i><b>{source.papers}</b><em>{source.acceptanceRate}%</em></div>)}</div>}
                 {SHOW_INTERNAL_QUALITY_UI && Boolean(monitor?.discoveryPerformance?.tracks.length) && <div className="v2-track-performance"><span>{locale === "zh" ? "研究方向命中" : "Research-track fit"}</span><div>{monitor?.discoveryPerformance?.tracks.slice(0, 6).map((track) => <i key={track.trackId}><b>{locale === "zh" ? track.titleZh : track.titleEn}</b><small>{track.papers} {locale === "zh" ? "篇" : "papers"} · {track.acceptanceRate}%</small></i>)}</div></div>}
-                {!!monitor?.coverage?.length && <div className="v2-coverage-ledger"><span>{locale === "zh" ? "探索覆盖" : "Discovery coverage"}</span><div>{monitor.coverage.slice(0, 8).map((source) => <i className={source.healthy ? "healthy" : "degraded"} key={source.sourceKey}><b />{source.sourceKey.replace(/_/g, " ")}<small>+{source.newCandidates}</small></i>)}</div></div>}
+                {!!monitor?.coverage?.length && <div className="v2-coverage-ledger"><span>{locale === "zh" ? "探索覆盖" : "Discovery coverage"}</span><div>{monitor.coverage.slice(0, 8).map((source) => <i className={source.healthy ? "healthy" : "degraded"} key={coverageIdentity(source)} title={source.channel}><b />{source.sourceKey.replace(/_/g, " ")}<small>+{source.newCandidates}</small></i>)}</div></div>}
                 <p>{t.autoVisit}</p>
               </details>
               </div>
@@ -5862,7 +5858,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 {pendingActionNotifications.slice(0, 4).map((notification) => <article className={notification.kind} key={notification.id}><span>{notification.kind === "weekly_review" ? "7D" : notification.kind === "route_change" ? "↗" : notification.kind === "must_read" ? "!" : "◷"}</span><div><small>{notification.kind === "must_read" ? (locale === "zh" ? "优先阅读" : "Priority reading") : notification.kind === "route_change" ? (locale === "zh" ? "路线变化" : "Route change") : notification.kind === "weekly_review" ? (locale === "zh" ? "阶段回顾" : "Research review") : (locale === "zh" ? "阅读提醒" : "Reading reminder")} · {formatNotificationTime(notification.createdAt, locale)}</small><strong>{locale === "zh" ? notification.titleZh : notification.titleEn}</strong><p>{locale === "zh" ? notification.bodyZh : notification.bodyEn}</p></div><button type="button" onClick={() => openResearchNotification(notification)}>{notificationActionLabel(notification.kind, locale)} →</button></article>)}
                 {!pendingActionNotifications.length && <div className="v2-action-inbox-empty"><span>✓</span><p>{locale === "zh" ? "新的必读论文、路线变化和阅读提醒会出现在这里。" : "New must-reads, route changes, and reading reminders will appear here."}</p></div>}
               </div>
-              {Boolean(activityGroups.length) && <details className="v2-activity-log" open={notificationsExpanded} onToggle={(event) => setNotificationsExpanded(event.currentTarget.open)}><summary><span><strong>{locale === "zh" ? "Pi 运行记录" : "Pi activity"}</strong><small>{locale === "zh" ? "扫描和恢复信息，不计入待处理" : "Scan activity, not an action item"}</small></span><b>{notificationsExpanded ? (locale === "zh" ? "收起" : "Close") : (locale === "zh" ? "查看" : "View")} ＋</b></summary><div>{activityGroups.slice(0, 7).map((activity, index) => <article key={activity.key}><span>✓</span><div><strong>{locale === "zh" ? "扫描完成" : "Scan complete"}{activity.recovered ? (locale === "zh" ? " · 已从断点续跑" : " · resumed from checkpoint") : ""}</strong><p>{index === 0 && monitor?.dailyBrief ? (locale === "zh" ? `${monitor.dailyBrief.metrics.scanned || 0} 篇候选 → ${latestQuickScreenedCount} 篇快筛 → ${latestDeepReviewedCount} 篇深度解读 → ${monitor.dailyBrief.metrics.recommended || 0} 篇入选` : `${monitor.dailyBrief.metrics.scanned || 0} candidates → ${latestQuickScreenedCount} screened → ${latestDeepReviewedCount} deeply reviewed → ${monitor.dailyBrief.metrics.recommended || 0} selected`) : (locale === "zh" ? activity.primary.bodyZh : activity.primary.bodyEn)}</p><small>{formatNotificationTime(activity.primary.createdAt, locale)}</small></div><button type="button" onClick={() => document.querySelector(".v2-monitor-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{locale === "zh" ? "扫描详情" : "Scan details"} →</button></article>)}</div></details>}
+              {Boolean(activityGroups.length) && <details className="v2-activity-log" open={notificationsExpanded} onToggle={(event) => setNotificationsExpanded(event.currentTarget.open)}><summary><span><strong>{locale === "zh" ? "Pi 运行记录" : "Pi activity"}</strong><small>{locale === "zh" ? "扫描和恢复信息，不计入待处理" : "Scan activity, not an action item"}</small></span><b>{notificationsExpanded ? (locale === "zh" ? "收起" : "Close") : (locale === "zh" ? "查看" : "View")} ＋</b></summary><div>{activityGroups.slice(0, 7).map((activity) => <article key={activity.key}><span>✓</span><div><strong>{locale === "zh" ? "扫描完成" : "Scan complete"}{activity.recovered ? (locale === "zh" ? " · 已从断点续跑" : " · resumed from checkpoint") : ""}</strong><p>{locale === "zh" ? activity.primary.bodyZh : activity.primary.bodyEn}</p><small>{formatNotificationTime(activity.primary.createdAt, locale)}</small></div><button type="button" onClick={() => document.querySelector(".v2-monitor-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{locale === "zh" ? "扫描详情" : "Scan details"} →</button></article>)}</div></details>}
             </section>}
             </div>
 
