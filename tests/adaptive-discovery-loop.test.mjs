@@ -262,7 +262,7 @@ test("accepted-paper token efficiency uses private audit allocations", async () 
   assert.match(client, /const SHOW_INTERNAL_QUALITY_UI = false/);
 });
 
-test("the model connection uses verified four-state browser key setup", async () => {
+test("the model connection verifies browser keys without exposing credentials", async () => {
   const [client, styles, credentials, settingsRoute] = await Promise.all([
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -274,7 +274,7 @@ test("the model connection uses verified four-state browser key setup", async ()
   assert.match(client, /type ModelConnectionState = "unconfigured" \| "checking" \| "connected" \| "invalid"/);
   assert.match(client, /\/api\/model-settings\?verify=1/);
   assert.match(client, /AI 模型待检测/);
-  assert.match(client, /AI 模型连接失效/);
+  assert.match(client, /AI 模型认证失败/);
   assert.match(client, /saveModelCredential/);
   assert.match(client, /type=\{showModelApiKey \? "text" : "password"\}/);
   assert.match(client, /测试并保存/);

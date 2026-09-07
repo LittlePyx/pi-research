@@ -14,9 +14,11 @@ import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchN
 import { archiveQualityStagePresentation, isRecommendationQualityStage, routeDiscoveryPresentation } from "../lib/discovery-archive-semantics.mjs";
 import { shouldReclaimMonitorLease } from "../lib/monitor-follower-control.mjs";
 import { shouldBlockManualMonitorStart } from "../lib/monitor-runtime-control.mjs";
+import { modelConnectionFailureState, modelConnectionProblemCopy } from "../lib/model-connection-state";
+import { activateModalFocus } from "../lib/modal-focus";
 
 type Locale = "zh" | "en";
-type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid";
+type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid" | "balance" | "rate_limited" | "unavailable";
 type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
 type LibraryFilter = "inbox" | "accepted" | "all" | "dismissed";
 type InboxFilter = "all" | "unseen" | "seen" | "snoozed";
@@ -1714,8 +1716,7 @@ function monitorErrorText(error: unknown) {
 }
 
 function isModelCredentialFailure(error: unknown) {
-  const message = monitorErrorText(error);
-  return /deepseek_insufficient_balance|deepseek_credential_invalid|insufficient\s+balance|invalid\s+(?:api\s*)?key|authentication|unauthorized/i.test(message);
+  return ["invalid", "balance"].includes(modelConnectionFailureState(error));
 }
 
 function monitorFailureMessage(error: unknown, locale: Locale) {
@@ -1725,7 +1726,7 @@ function monitorFailureMessage(error: unknown, locale: Locale) {
       ? "DeepSeek 账户余额不足。候选论文和已完成的筛选进度都已保存；充值或更换可用 Key 后可以从断点继续。"
       : "The DeepSeek account has insufficient balance. Candidates and completed screening progress are saved; top up or use another key to resume.";
   }
-  if (/deepseek_credential_invalid|invalid\s+(?:api\s*)?key|authentication|unauthorized/i.test(message)) {
+  if (modelConnectionFailureState(error) === "invalid") {
     return locale === "zh"
       ? "当前 DeepSeek API Key 已失效。更换可用 Key 后可以从已保存的断点继续。"
       : "The current DeepSeek API key is no longer valid. Replace it to resume from the saved checkpoint.";
@@ -3773,14 +3774,14 @@ export default function ResearchApp({ user }: { user: User }) {
               setModelCredentialSource(status.source || null);
             })
             .catch((error) => {
-              setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
+              setModelConnectionState(modelConnectionFailureState(error));
             })
             .finally(() => setCheckingModel(false));
         }
       })
       .catch(() => {
         setSpaces(fallbackSpaces);
-        setModelConnectionState("checking");
+        setModelConnectionState("unavailable");
       });
 
     return () => window.clearTimeout(hydrationTimer);
@@ -4337,6 +4338,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (document.querySelector("[data-pi-dialog]")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setAskOpen(true);
@@ -4502,8 +4504,9 @@ export default function ResearchApp({ user }: { user: User }) {
       const message = monitorFailureMessage(error, locale);
       setToast(message);
       if (isModelCredentialFailure(error)) {
-        setModelConnectionState("invalid");
+        setModelConnectionState(modelConnectionFailureState(error));
         setModelSettingsError(message);
+        setMobileNav(false);
         setModelSettingsOpen(true);
       }
     };
@@ -5571,8 +5574,8 @@ export default function ResearchApp({ user }: { user: User }) {
         ? (locale === "zh" ? "DeepSeek Pro 已连接" : "DeepSeek Pro is connected")
         : (locale === "zh" ? "当前浏览器还没有可用的 API Key" : "This browser does not have a usable API key yet"));
     } catch (error) {
-      const message = monitorFailureMessage(error, locale);
-      setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
+      const message = modelConnectionProblemCopy(modelConnectionFailureState(error), locale)?.title || (locale === "zh" ? "模型认证失败，请重新检测或更换 Key。" : "Model authentication failed. Check again or replace the key.");
+      setModelConnectionState(modelConnectionFailureState(error));
       setModelSettingsError(message);
     } finally {
       setCheckingModel(false);
@@ -5600,8 +5603,8 @@ export default function ResearchApp({ user }: { user: User }) {
       setShowModelApiKey(false);
       setToast(locale === "zh" ? "API Key 已验证并保存到当前浏览器" : "The API key was verified and saved in this browser");
     } catch (error) {
-      setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
-      setModelSettingsError(monitorFailureMessage(error, locale));
+      setModelConnectionState(modelConnectionFailureState(error));
+      setModelSettingsError(modelConnectionProblemCopy(modelConnectionFailureState(error), locale)?.title || (locale === "zh" ? "模型认证失败，请检查输入的 Key。" : "Model authentication failed. Check the entered key."));
     } finally {
       setCheckingModel(false);
     }
@@ -5619,26 +5622,27 @@ export default function ResearchApp({ user }: { user: User }) {
       setModelApiKey("");
       setShowModelApiKey(false);
       const statusResponse = await fetch("/api/model-settings?verify=1", { cache: "no-store" });
-      const status = await statusResponse.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null };
+      const status = await statusResponse.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
+      if (!statusResponse.ok) throw new Error(status.error || "model status unavailable");
       setModelConnectionState(status.configured ? "connected" : "unconfigured");
       setConnectedModel(status.model || null);
       setModelCredentialSource(status.source || null);
       setToast(locale === "zh" ? "当前浏览器保存的 API Key 已删除" : "The browser-stored API key was removed");
     } catch (error) {
-      setModelConnectionState(isModelCredentialFailure(error) ? "invalid" : "checking");
+      setModelConnectionState(modelConnectionFailureState(error));
       setModelSettingsError(error instanceof Error ? error.message : (locale === "zh" ? "暂时无法删除 API Key" : "Could not remove the API key"));
     } finally {
       setCheckingModel(false);
     }
   };
 
-  const modelConnectionCopy = modelConnectionState === "connected"
+  const modelConnectionCopy = modelConnectionProblemCopy(modelConnectionState, locale) || (modelConnectionState === "connected"
     ? { title: t.connected, detail: modelDisplayName(connectedModel), modal: locale === "zh" ? "已验证" : "Verified" }
     : modelConnectionState === "checking"
       ? { title: locale === "zh" ? "AI 模型待检测" : "AI model check pending", detail: checkingModel ? (locale === "zh" ? "正在验证当前 Key" : "Verifying the current key") : (locale === "zh" ? "正在确认连接可用性" : "Confirming availability"), modal: checkingModel ? (locale === "zh" ? "检测中" : "Checking") : (locale === "zh" ? "待检测" : "Check pending") }
       : modelConnectionState === "invalid"
-        ? { title: locale === "zh" ? "AI 模型连接失效" : "AI model connection expired", detail: locale === "zh" ? "打开更换或重新检测" : "Open to replace or check", modal: locale === "zh" ? "已失效" : "Invalid" }
-        : { title: t.setupRequired, detail: locale === "zh" ? "打开配置" : "Open setup", modal: locale === "zh" ? "尚未连接" : "Not connected" };
+        ? { title: locale === "zh" ? "AI 模型认证失败" : "AI model authentication failed", detail: locale === "zh" ? "打开重新检测或更换 Key" : "Open to check or replace key", modal: locale === "zh" ? "认证失败" : "Authentication failed" }
+        : { title: t.setupRequired, detail: locale === "zh" ? "打开配置" : "Open setup", modal: locale === "zh" ? "尚未连接" : "Not connected" });
   const credentialFailureRecovered = Boolean(modelConnectionState === "connected" && monitor?.status === "error" && isModelCredentialFailure(failedScanError));
   const closeModelSettings = () => {
     setModelSettingsOpen(false);
@@ -5658,11 +5662,24 @@ export default function ResearchApp({ user }: { user: User }) {
     else void expandResearchTrack(routeAttentionTrack);
   };
 
+  useEffect(() => {
+    if (!spaceDialog && !modelSettingsOpen) return;
+    const dialog = document.querySelector<HTMLElement>(modelSettingsOpen ? "[data-pi-dialog='model']" : "[data-pi-dialog='space']");
+    if (!dialog) return;
+    return activateModalFocus(dialog, () => {
+      setSpaceDialog(false);
+      setModelSettingsOpen(false);
+      setModelApiKey("");
+      setModelSettingsError("");
+      setShowModelApiKey(false);
+    }, document.querySelector<HTMLElement>(".v2-mobile-menu"));
+  }, [spaceDialog, modelSettingsOpen]);
+
   return (
     <div className="v2-app">
       <aside className={"v2-sidebar " + (mobileNav ? "open" : "")}>
         <div className="v2-logo"><span className="v2-product-mark"><Image src="/pi-research-mark.png" width={38} height={32} alt="Pi Research logo" priority /></span><div><strong>Pi Research</strong><small>RESEARCH AGENT</small></div><button type="button" aria-label={t.close} onClick={() => setMobileNav(false)}>×</button></div>
-        <button className="v2-space-switch" type="button" onClick={() => setSpaceDialog(true)}>
+        <button className="v2-space-switch" type="button" onClick={() => { setMobileNav(false); setSpaceDialog(true); }}>
           <span className={"v2-space-avatar " + activeSpace.accent}>{initials(activeSpace.name)}</span>
           <span><small>{t.currentSpace}</small><strong>{defaultSpaceName(activeSpace.name, locale)}</strong><em>{activeSpace.memberName}</em></span>
           <b>⌄</b>
@@ -5684,7 +5701,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         <div className="v2-sidebar-bottom">
           <a className="v2-demo-entry" href="/demo"><InterfaceIcon name="demo" /><strong>{locale === "zh" ? "演示空间" : "Demo workspace"}</strong><b>↗</b></a>
-          <button className={`v2-openai-state ${modelConnectionState}`} type="button" onClick={() => setModelSettingsOpen(true)} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{modelConnectionCopy.title}</strong><small>{modelConnectionCopy.detail}</small></span><b>›</b></button>
+          <button className={`v2-openai-state ${modelConnectionState}`} type="button" onClick={() => { setMobileNav(false); setModelSettingsOpen(true); }} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{modelConnectionCopy.title}</strong><small>{modelConnectionCopy.detail}</small></span><b>›</b></button>
           <button className="v2-account" type="button" onClick={() => navigate("memory")}><InterfaceIcon name="workspace" /><span><strong>Pi Workspace</strong><small>{t.workspaceLabel}</small></span><b>•••</b></button>
         </div>
       </aside>
@@ -6112,7 +6129,7 @@ export default function ResearchApp({ user }: { user: User }) {
       </div>
 
       {spaceDialog && (
-        <div className="v2-modal" role="dialog" aria-modal="true" aria-label={t.spaceDialogTitle}>
+        <div className="v2-modal" data-pi-dialog="space" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.spaceDialogTitle}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)} />
           <div className="v2-space-modal">
             <div className="v2-modal-head"><div><p className="v2-kicker">{t.workspaceLabel}</p><h2>{t.spaceDialogTitle}</h2><p>{t.spaceDialogIntro}</p></div><button type="button" onClick={() => setSpaceDialog(false)}>×</button></div>
@@ -6153,7 +6170,7 @@ export default function ResearchApp({ user }: { user: User }) {
       )}
 
       {modelSettingsOpen && (
-        <div className="v2-modal" role="dialog" aria-modal="true" aria-label={locale === "zh" ? "AI 模型设置" : "AI model settings"}>
+        <div className="v2-modal" data-pi-dialog="model" tabIndex={-1} role="dialog" aria-modal="true" aria-label={locale === "zh" ? "AI 模型设置" : "AI model settings"}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={closeModelSettings} />
           <div className="v2-model-settings">
             <div className="v2-modal-head"><div><p className="v2-kicker">{locale === "zh" ? "模型连接" : "MODEL CONNECTION"}</p><h2>{locale === "zh" ? "连接 DeepSeek" : "Connect DeepSeek"}</h2></div><button type="button" onClick={closeModelSettings}>×</button></div>

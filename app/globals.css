@@ -1727,7 +1727,7 @@ main { min-width: 0; }
 .v2-real-detail-aside { height: fit-content; margin-top: 33px; padding: 20px; border: 1px solid #cfdae0; border-radius: 7px; background: var(--v2-blue-soft); }
 .v2-real-detail-aside .v2-original-link.wide, .v2-real-detail-aside > button { width: 100%; margin-top: 12px; }
 .v2-real-detail-aside > button { min-height: 36px; border: 1px solid #a9becb; border-radius: 4px; background: rgba(255,255,255,.5); color: var(--v2-blue); font-size: 12px; font-weight: 800; }
-.v2-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; }
+.v2-modal { position: fixed; inset: 0; z-index: 180; display: grid; place-items: center; padding: 24px; }
 .v2-modal-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(28,32,28,.45); backdrop-filter: blur(4px); cursor: default; }
 .v2-space-modal, .v2-ask-panel {
   position: relative;

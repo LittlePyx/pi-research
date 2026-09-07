@@ -191,6 +191,18 @@
 .v2-app .v2-monitor-status.error { color: var(--pi-error); }
 .v2-app .v2-monitor-status.error > i { background: var(--pi-error); box-shadow: none; }
 
+/* Connection uncertainty and provider limits are not a verified connection. */
+.v2-app :is(.v2-openai-state, .v2-model-status-card):is(.balance, .rate_limited, .unavailable) {
+  background: var(--pi-surface-subtle);
+  border-color: var(--pi-line);
+  color: var(--pi-ink);
+}
+.v2-app .v2-openai-state:is(.balance, .rate_limited, .unavailable) > i,
+.v2-app .v2-model-status-card:is(.balance, .rate_limited, .unavailable) > span i {
+  background: var(--pi-muted);
+  box-shadow: none;
+}
+
 /* Shared snapshots use the same neutral base, without changing their content. */
 .share-page { background: var(--pi-canvas); color: var(--pi-ink); }
 .share-page .share-badges > span {
