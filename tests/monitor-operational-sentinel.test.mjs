@@ -98,13 +98,13 @@ test("operational sentinel detects duplicate jobs, a mismatched lease, and a sta
   ]);
 });
 
-test("operational sentinel reports a recovered scheduler heartbeat gap", () => {
+test("a recovered scheduler heartbeat gap is history, not a current incident", () => {
   const result = evaluateMonitorOperationalSentinel(snapshot({
     schedulerGapMinutes: 42,
     schedulerHealthStatus: "recovered_gap",
   }), [], NOW);
-  assert.equal(result.outcome, "failed");
-  assert.deepEqual(result.issues, ["scheduler_heartbeat_gap"]);
+  assert.equal(result.outcome, "success");
+  assert.deepEqual(result.issues, []);
 });
 
 test("operational sentinel distinguishes source degradation from a legitimate zero yield", () => {

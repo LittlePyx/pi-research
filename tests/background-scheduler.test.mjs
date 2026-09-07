@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   MONITOR_SCHEDULER_BUCKET_MS,
+  SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
   SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
   SCHEDULED_MONITOR_SPACE_SQL,
   mergeScheduledMonitorSpaces,
@@ -55,6 +56,8 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /SCHEDULED_SPACE_BATCH_SIZE = 1/);
   assert.match(worker, /SCHEDULED_MONITOR_RECOVERY_SPACE_SQL/);
   assert.match(worker, /mergeScheduledMonitorSpaces\(due\.results, stalledRecoverySpace\)/);
+  assert.match(worker, /SCHEDULED_MONITOR_INCIDENT_SPACE_SQL/);
+  assert.match(worker, /incidentRecoverySpace/);
   assert.match(worker, /SCHEDULED_ROUTE_RETRY_BATCH_SIZE = 1/);
   assert.match(worker, /SCHEDULED_ROUTE_INTELLIGENCE_BATCH_SIZE = 1/);
   assert.match(worker, /SCHEDULED_ROUTE_EVOLUTION_BATCH_SIZE = 1/);
@@ -109,7 +112,7 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(repository, /PRAGMA table_info\(monitor_scheduler_ticks\)/);
   assert.match(repository, /CREATE INDEX IF NOT EXISTS idx_monitor_reliability_kind_outcome_created/);
   assert.match(worker, /gapMinutes > 25 \? "recovered_gap" : "healthy"/);
-  assert.match(workflow, /cron: "17,47 \* \* \* \*"/);
+  assert.match(workflow, /cron: "7,17,27,37,47,57 \* \* \* \*"/);
   assert.match(workflow, /--max-time 240/);
   assert.match(workflow, /jq -e '\(\.acquired == true\) or \(\.acquired == false\)'/);
   assert.match(workflow, /secrets\.PI_SCHEDULER_SECRET/);
@@ -162,6 +165,53 @@ test("a stale active checkpoint receives a recovery slot without replacing norma
       mergeScheduledMonitorSpaces([recovery], recovery).map((space) => space.id),
       ["stalled-space"],
     );
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("an unresolved critical workspace receives a repair slot ahead of newer due work", () => {
+  const sqlite = new DatabaseSync(":memory:");
+  try {
+    sqlite.exec(`
+      CREATE TABLE research_spaces (id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL);
+      CREATE TABLE monitor_runs (
+        space_id TEXT PRIMARY KEY, status TEXT NOT NULL, next_run_at TEXT,
+        last_run_at TEXT, updated_at TEXT, last_user_activity_at TEXT,
+        lock_expires_at TEXT, automation_paused_at TEXT
+      );
+      CREATE TABLE monitor_reliability_events (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, kind TEXT NOT NULL,
+        outcome TEXT NOT NULL, error_code TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      INSERT INTO research_spaces VALUES
+        ('incident-space', 'anonymous:incident'),
+        ('newer-space', 'anonymous:newer');
+      INSERT INTO monitor_runs VALUES
+        ('incident-space', 'ready', datetime('now', '-2 hours'), datetime('now', '-1 day'),
+         datetime('now', '-2 hours'), datetime('now', '-2 days'), NULL, NULL),
+        ('newer-space', 'ready', datetime('now', '-1 minute'), datetime('now', '-1 hour'),
+         datetime('now', '-1 minute'), datetime('now'), NULL, NULL);
+      INSERT INTO monitor_reliability_events VALUES
+        ('alert-a', 'incident-space', 'monitor_operational_alert', 'failed',
+         'quality_queue_stalled', datetime('now', '-2 hours'));
+    `);
+    const normal = sqlite.prepare(SCHEDULED_MONITOR_SPACE_SQL).get(1);
+    const incident = sqlite.prepare(SCHEDULED_MONITOR_INCIDENT_SPACE_SQL).get();
+    assert.equal(normal.id, "newer-space");
+    assert.equal(incident.id, "incident-space");
+    assert.deepEqual(
+      mergeScheduledMonitorSpaces(
+        mergeScheduledMonitorSpaces([normal], null),
+        incident,
+      ).map((space) => space.id),
+      ["incident-space", "newer-space"],
+    );
+
+    sqlite.exec(`INSERT INTO monitor_reliability_events VALUES
+      ('recovery-a', 'incident-space', 'monitor_operational_recovery', 'success',
+       'quality_queue_stalled', datetime('now'))`);
+    assert.equal(sqlite.prepare(SCHEDULED_MONITOR_INCIDENT_SPACE_SQL).get(), undefined);
   } finally {
     sqlite.close();
   }

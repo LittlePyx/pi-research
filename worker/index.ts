@@ -3,6 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import {
   MONITOR_SCHEDULER_BUCKET_MS,
+  SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
   SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
   SCHEDULED_MONITOR_SPACE_SQL,
   mergeScheduledMonitorSpaces,
@@ -596,10 +597,15 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     }
     const due = await env.DB.prepare(SCHEDULED_MONITOR_SPACE_SQL)
       .bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
+    const incidentRecoverySpace = await env.DB.prepare(SCHEDULED_MONITOR_INCIDENT_SPACE_SQL)
+      .first<{ id: string; owner_user_id: string }>();
     const stalledRecoverySpace = trigger === "visit_backstop" ? null : await env.DB
       .prepare(SCHEDULED_MONITOR_RECOVERY_SPACE_SQL)
       .first<{ id: string; owner_user_id: string }>();
-    const scheduledSpaces = mergeScheduledMonitorSpaces(due.results, stalledRecoverySpace);
+    const scheduledSpaces = mergeScheduledMonitorSpaces(
+      mergeScheduledMonitorSpaces(due.results, stalledRecoverySpace),
+      incidentRecoverySpace,
+    );
     dueSpaceCount = scheduledSpaces.length;
     let monitorSpaces = scheduledSpaces;
     if (trigger === "visit_backstop") {

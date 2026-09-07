@@ -178,9 +178,10 @@ export function evaluateMonitorOperationalSentinel(
   const oldestActiveUpdatedAt = databaseTimestamp(snapshot.oldestActiveUpdatedAt);
   const qualityQueue = monitorQualityQueueHealth(snapshot, now);
 
-  if (snapshot.schedulerGapMinutes > 25 || snapshot.schedulerHealthStatus.startsWith("recovered_")) {
-    issues.push("scheduler_heartbeat_gap");
-  }
+  // The current tick is itself the recovery from an earlier heartbeat gap.
+  // Keeping recovered_gap as an active incident makes every later health
+  // check fail until a second perfectly timed tick arrives. Current heartbeat
+  // staleness is evaluated independently by monitor-reliability-health.
   if (snapshot.activeJobCount > 1) issues.push("duplicate_active_jobs");
   if (
     (snapshot.runActiveJobId && snapshot.boundActiveJobCount === 0)

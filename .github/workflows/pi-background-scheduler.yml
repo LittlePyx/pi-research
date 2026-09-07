@@ -2,9 +2,9 @@ name: Pi background research scheduler
 
 on:
   schedule:
-    # Twice hourly, away from the high-contention start of the hour. A visit
-    # still provides a 25-minute backstop for an actively used workspace.
-    - cron: "17,47 * * * *"
+    # Match the ten-minute durable scheduler bucket, away from the
+    # high-contention start of the hour. Worker leases deduplicate overlaps.
+    - cron: "7,17,27,37,47,57 * * * *"
   workflow_dispatch:
 
 concurrency:

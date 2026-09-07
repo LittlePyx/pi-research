@@ -5,6 +5,7 @@ import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 import {
+  SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
   SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
   SCHEDULED_MONITOR_SPACE_SQL,
   VISIT_SCHEDULER_ORDINAL_SQL,
@@ -37,7 +38,9 @@ function harness({ available = visitSchedulerTaskOrder(1), fail = null } = {}) {
       },
       async first() {
         if (sql === VISIT_SCHEDULER_ORDINAL_SQL) return { count: state.ordinal };
-        if (sql === SCHEDULED_MONITOR_RECOVERY_SPACE_SQL || sql === "sentinel-target") return null;
+        if (sql === SCHEDULED_MONITOR_INCIDENT_SPACE_SQL
+          || sql === SCHEDULED_MONITOR_RECOVERY_SPACE_SQL
+          || sql === "sentinel-target") return null;
         assert.fail(`Unexpected read: ${sql}`);
       },
       async run() {
@@ -49,7 +52,8 @@ function harness({ available = visitSchedulerTaskOrder(1), fail = null } = {}) {
   } };
   const context = vm.createContext({
     Request, Response, Date, JSON, Promise,
-    SCHEDULED_MONITOR_SPACE_SQL, SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
+    SCHEDULED_MONITOR_SPACE_SQL, SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
+    SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
     VISIT_SCHEDULER_ORDINAL_SQL, visitSchedulerTaskOrder, mergeScheduledMonitorSpaces,
     SCHEDULED_SPACE_BATCH_SIZE: 1, SCHEDULED_ADVANCE_STEPS: 1,
     MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL: "sentinel-target",
