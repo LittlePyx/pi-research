@@ -28,9 +28,16 @@ test("missing secret and public requests cannot trigger research", async () => {
   assert.equal(worker.fetch().status, 404);
 });
 test("failures never expose upstream content or retry requests", async () => {
-  for (const fetcher of [async () => { throw new Error("private upstream value"); }, async () => new Response("private", { status: 401 }), async () => new Response("not json")]) {
+  for (const [fetcher, message] of [
+    [async () => { throw new Error("private upstream value"); }, "scheduler_network_failed"],
+    [async () => { throw new DOMException("private timeout", "TimeoutError"); }, "scheduler_request_timeout"],
+    [async () => new Response("private", { status: 401 }), "scheduler_http_401"],
+    [async () => new Response("private", { status: 403 }), "scheduler_http_403"],
+    [async () => new Response("private", { status: 502 }), "scheduler_http_502"],
+    [async () => new Response("not json"), "scheduler_invalid_json"],
+  ]) {
     let calls = 0;
-    await assert.rejects(wakeResearch(env, (...args) => { calls++; return fetcher(...args); }), { message: "scheduler_request_failed" });
+    await assert.rejects(wakeResearch(env, (...args) => { calls++; return fetcher(...args); }), { message });
     assert.equal(calls, 1);
   }
 });
