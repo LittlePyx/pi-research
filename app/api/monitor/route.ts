@@ -1,5 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
+import { researchGapQuestion } from "../../../lib/research-gap-scope.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
 import { crossrefPublicationDate } from "../../../lib/discovery/crossref";
@@ -801,7 +802,7 @@ function directionDiscoverySignal(value: string, updatedAt: string | null = null
     const signal = {
       opportunityEn: cleanText(String(parsed.opportunityEn || "")).slice(0, 700),
       watchSignalEn: cleanText(String(parsed.watchSignalEn || "")).slice(0, 700),
-      evidenceGapEn: cleanText(String(parsed.evidenceGapEn || "")).slice(0, 700),
+      evidenceGapEn: researchGapQuestion(parsed.evidenceGapEn, parsed.nextSearchQuery, "en"),
       nextSearchQuery: cleanText(String(parsed.nextSearchQuery || "")).slice(0, 220),
       confidence,
       evidenceCanonicalIds,
