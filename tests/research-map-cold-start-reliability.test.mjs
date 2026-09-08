@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import ts from "typescript";
 
 import {
   matchesResearchClassicSeedTitle,
@@ -30,6 +31,42 @@ test("duplicate route records never trade an available abstract for higher citat
     assert.equal(preferredResearchClassicCandidate(metadataOnly, evidence), evidence);
     const tied = { ...identity, abstractText: evidence.abstractText, citationCount: 901 };
     assert.equal(preferredResearchClassicCandidate(evidence, tied), tied);
+  }
+});
+
+test("actual route discovery retains duplicate evidence when a sibling source fails", async () => {
+  const route = await readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8");
+  const start = route.indexOf("async function discoverCandidates(");
+  const end = route.indexOf("function baselineRole(", start);
+  assert.ok(start >= 0 && end > start);
+  const compiled = ts.transpileModule(route.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+  }).outputText;
+  const fixture = { directionKey: "route-a", canonicalId: "doi:10.1000/same", proposedRole: "foundation",
+    title: "An exact same research paper", abstractText: "Structured abstract from the healthy source.", citationCount: 1 };
+  const metadata = { ...fixture, abstractText: "", citationCount: 1000 };
+  for (const reversed of [false, true]) {
+    const dependencies = {
+      researchTrackSourcePlan: () => [
+        { provider: "crossref", role: "foundation" }, { provider: "openalex", role: "foundation" },
+        { provider: "arxiv", role: "frontier" },
+      ],
+      fetchCrossref: async () => [reversed ? metadata : fixture],
+      fetchOpenAlex: async () => [reversed ? fixture : metadata],
+      fetchArxiv: async () => { throw new Error("upstream unavailable"); },
+      normalizeItem: async value => value,
+      normalizeOpenAlexItem: async value => value,
+      normalizeArxivItem: async value => value,
+      researchTrackTopicalFit: () => ({ accepted: true }),
+      mergeResearchTrackSourceBatches, preferredResearchClassicCandidate,
+    };
+    const discover = new Function(...Object.keys(dependencies), `${compiled}; return discoverCandidates;`)(...Object.values(dependencies));
+    const result = await discover({}, [{ key: "route-a", searchQueries: ["exact work"] }], 0, 4, 1);
+    assert.deepEqual(result.candidates, [fixture]);
+    assert.equal(result.sources.filter(source => source.status === "failed").length, 1);
+    assert.equal(result.errors.length, 1);
+    assert.equal(metadata.abstractText, "");
+    assert.equal(fixture.citationCount, 1);
   }
 });
 
