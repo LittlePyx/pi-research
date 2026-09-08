@@ -51,7 +51,7 @@ test("the screenshot empty and loading states retain honest bilingual text witho
     assert.match(loadingHtml, /role="status"/);
     assert.match(loadingHtml, /data-icon="loading"/);
     assert.match(emptyHtml, /data-icon="reading"/);
-    assert.match(loadingHtml, locale === "zh" ? /正在生成学习路径/ : /Building the learning path/);
+    assert.match(loadingHtml, locale === "zh" ? /正在载入学习路径/ : /Loading the learning path/);
     assert.match(emptyHtml, locale === "zh" ? /还没有学习路径/ : /No learning path yet/);
     assert.doesNotMatch(emptyHtml + loadingHtml, /π|◎|<span>/);
   }
