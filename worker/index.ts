@@ -40,6 +40,7 @@ interface Env {
   DEEPSEEK_MODEL?: string;
   PI_DEVELOPMENT_UNBOUNDED?: string;
   MONITOR_SCHEDULER_SECRET?: string;
+  MONITOR_INDEPENDENT_SCHEDULER_SECRET?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -769,8 +770,9 @@ const worker = {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/internal/scheduler" && request.method === "POST") {
-      if (!env.MONITOR_SCHEDULER_SECRET) return Response.json({ error: "scheduler_not_configured" }, { status: 503 });
-      if (!monitorSchedulerSecretMatches(request.headers.get("Authorization"), env.MONITOR_SCHEDULER_SECRET)) {
+      if (!env.MONITOR_SCHEDULER_SECRET && !env.MONITOR_INDEPENDENT_SCHEDULER_SECRET) return Response.json({ error: "scheduler_not_configured" }, { status: 503 });
+      if (!monitorSchedulerSecretMatches(request.headers.get("Authorization"), env.MONITOR_SCHEDULER_SECRET)
+        && !monitorSchedulerSecretMatches(request.headers.get("Authorization"), env.MONITOR_INDEPENDENT_SCHEDULER_SECRET)) {
         return Response.json({ error: "unauthorized" }, { status: 401 });
       }
       const result = await runScheduledMonitorSweep(env, ctx, "external_watchdog");

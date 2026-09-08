@@ -34,6 +34,20 @@
 
 ### 2026-09-08 实测后改序（本节优先于下方历史排序）
 
+#### P1-3E 专用鉴权接入（2026-09-08，实施中）
+
+- 用户已完成 Workers 子域名初始化；复用同一独立 Worker，空定时配置部署成功，10063 阻塞解除。
+- 网站新增专用唤醒凭据，仅授权 scheduler 入口，不授权 reliability 接口；原 GitHub 凭据不变。新调度凭据在内存生成，经服务 Secret 通道配置，不写源码/配置文件、不输出明文，不读取任何模型 Key。
+- 网站完整构建及 513 项测试通过、lint 通过；新增实际 scheduler 路由鉴权测试覆盖双凭据、缺失、错误与独立撤销，后台恢复资格/质量门槛未改变。
+- 后续顺序：发布网站鉴权支持，受控唤醒验证，再启用独立自然 Cron；部署/领取/论文进展分别验收，六空间仍不提前标完成。
+
+#### P1-3D 账户授权与首次部署（2026-09-08 05:09 UTC，平台初始化阻塞）
+
+- 用户已完成 Cloudflare OAuth 授权；只申请 account:read、user:read、workers_scripts:write，不追加数据库、模型或域名管理权限。
+- 只读确认 `pi-research-independent-scheduler` 不存在后执行独立配置部署；Worker 脚本上传成功，但 schedules 配置阶段返回 Cloudflare 10063：账户尚未初始化 workers.dev 子域名，要求用户首次打开 Workers 控制台完成初始化。
+- 属于部分成功，不标记完整部署或定时启用。配置仍为空 crons、workers_dev=false、preview_urls=false；未配置调度 Secret，未调用生产扫描，未改动网站或 GitHub。
+- 当前需要用户进入 Cloudflare 的 Workers 菜单完成首次初始化，免费方案即可。随后复用刚创建的同一 Worker 继续部署，不新建第二个；再完成专用调度凭据接入、受控验证和定时启用。六空间及自然运行验收仍未完成。
+
 #### P1-3C 独立唤醒器准备（2026-09-08，待账户连接）
 
 - 用户已同意新增独立定时服务。已在 `infra/scheduler/` 准备独立 Cloudflare Cron Worker、禁用状态的部署配置和启用/回退说明；不纳入 Sites 网站部署，不改变数据库、页面或 GitHub 备用任务。
