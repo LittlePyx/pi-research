@@ -22,7 +22,6 @@ const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_MAX_INLINE_WAIT_MS = 1_500;
 const DEFAULT_SUCCESS_SPACING_MS = 400;
 const DEFAULT_REQUEST_LEASE_MS = 25_000;
-const MAX_COOLDOWN_MS = 4 * 60 * 60 * 1000;
 
 const sourceGates = new Map<string, Promise<void>>();
 
@@ -72,9 +71,13 @@ function retryAfterMilliseconds(response: Response, failureCount: number, now: n
   const value = response.headers.get("retry-after")?.trim() || "";
   if (value) {
     const seconds = Number(value);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(MAX_COOLDOWN_MS, Math.max(1_000, seconds * 1_000));
+    // Retry-After is a provider deadline, not our exponential-backoff budget.
+    // Shortening it can repeatedly hit an upstream that is still rate limited.
+    if (Number.isFinite(seconds) && seconds >= 0 && Number.isFinite(new Date(now + seconds * 1_000).getTime())) {
+      return Math.max(1_000, seconds * 1_000);
+    }
     const date = Date.parse(value);
-    if (Number.isFinite(date)) return Math.min(MAX_COOLDOWN_MS, Math.max(1_000, date - now));
+    if (Number.isFinite(date)) return Math.max(1_000, date - now);
   }
   return Math.min(60 * 60 * 1_000, 60_000 * (2 ** Math.min(5, Math.max(0, failureCount))));
 }

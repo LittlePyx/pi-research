@@ -114,6 +114,37 @@ test("one cooling provider does not block a healthy provider", async () => {
   }
 });
 
+test("provider retry deadlines beyond four hours are preserved without premature network requests", async () => {
+  for (const dateHeader of [false, true]) {
+    const sqlite = throttleDatabase();
+    const originalFetch = globalThis.fetch;
+    let now = Date.parse("2026-09-08T10:00:00Z");
+    const deadline = now + 24 * 60 * 60 * 1000;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response(null, { status: 429, headers: {
+        "Retry-After": dateHeader ? new Date(deadline).toUTCString() : "86400",
+      } });
+    };
+    try {
+      const context = { database: d1Database(sqlite), sourceKey: "openalex", maxInlineWaitMs: 0, now: () => now };
+      await assert.rejects(fetchExternalSource("https://api.openalex.org/works", {}, context), error => {
+        assert.equal(error.retryAfterSeconds, 86400); return true;
+      });
+      assert.equal(sqlite.prepare("SELECT next_allowed_at FROM external_source_throttles").get().next_allowed_at, new Date(deadline).toISOString());
+      now += 5 * 60 * 60 * 1000;
+      await assert.rejects(fetchExternalSource("https://api.openalex.org/works", {}, context), ExternalSourceCooldownError);
+      assert.equal(calls, 1);
+      assert.equal(sqlite.prepare("SELECT failure_count FROM external_source_throttles").get().failure_count, 1);
+      now = deadline;
+      globalThis.fetch = async () => { calls += 1; return Response.json({ results: [] }); };
+      assert.equal((await fetchExternalSource("https://api.openalex.org/works", {}, context)).status, 200);
+      assert.equal(calls, 2);
+    } finally { globalThis.fetch = originalFetch; sqlite.close(); }
+  }
+});
+
 test("retryable server failures use a bounded retry and then recover", async () => {
   const sqlite = throttleDatabase();
   const originalFetch = globalThis.fetch;
@@ -137,6 +168,24 @@ test("retryable server failures use a bounded retry and then recover", async () 
     globalThis.fetch = originalFetch;
     sqlite.close();
   }
+});
+
+test("unrepresentable provider retry deadlines use safe finite fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const header of ["1e999", "1000000000000000", "not-a-deadline"]) {
+      const sqlite = throttleDatabase();
+      try {
+        const now = Date.parse("2026-09-08T10:00:00Z");
+        globalThis.fetch = async () => new Response(null, { status: 429, headers: { "Retry-After": header } });
+        await assert.rejects(fetchExternalSource("https://api.openalex.org/works", {}, {
+          database: d1Database(sqlite), sourceKey: "openalex", maxInlineWaitMs: 0, now: () => now,
+        }), error => { assert.ok(error instanceof ExternalSourceCooldownError); return true; });
+        assert.equal(sqlite.prepare("SELECT next_allowed_at FROM external_source_throttles").get().next_allowed_at,
+          new Date(now + 60000).toISOString());
+      } finally { sqlite.close(); }
+    }
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test("every production OpenAlex path uses the shared D1 source circuit", async () => {
