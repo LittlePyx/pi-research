@@ -1,7 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { briefPaperEntries, coverageIdentity, scanDisplayProgress, scanFunnel } from '../lib/today-presentation.mjs';
+import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel } from '../lib/today-presentation.mjs';
+
+test('Historical brief prose uses its own date in both languages without changing stored history', () => {
+  const brief = {date:'2026-09-07',isCurrent:false,headlineZh:'今天累计 4 篇',overviewEn:"Earlier today. Today's results."};
+  const before = structuredClone(brief);
+  assert.equal(datedBriefText(brief.headlineZh,brief),'2026-09-07累计 4 篇');
+  assert.equal(datedBriefText(brief.overviewEn,brief),'Earlier on 2026-09-07. the 2026-09-07 results.');
+  assert.equal(datedBriefText('今天 0 篇',{...brief,isCurrent:true}),'今天 0 篇');
+  assert.deepEqual(brief,before);
+});
+
+test('Brief status uses one saved metrics snapshot, not the union of historical watchlists', () => {
+  const brief = {watchlistZh:['7 篇待核对','2 篇未通过','8 篇待核对','1 篇未通过'],
+    metrics:{verificationPending:8,verificationFailed:1,deepDeferred:0}};
+  const before=structuredClone(brief);
+  assert.deepEqual(briefRunStatus(brief,'zh'),['8 篇待核对','1 篇证据未通过']);
+  assert.deepEqual(briefRunStatus({...brief,metrics:{verificationPending:0}},'zh'),[]);
+  assert.deepEqual(briefRunStatus({...brief,metrics:{}},'en'),[]);
+  assert.deepEqual(briefRunStatus({...brief,metrics:{verificationPending:-1,deepDeferred:1}},'en'),['1 deferred for retry']);
+  assert.deepEqual(brief,before);
+});
 
 test('Today keeps a zero-valued current job separate from the saved brief', () => {
   const brief = { metrics: { scanned: 360, screened: 59, deepReviewed: 14, recommended: 9 } };
