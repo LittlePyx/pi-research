@@ -11,7 +11,8 @@ export async function wakeResearch(env, fetcher = fetch) {
     response = await fetcher(TARGET, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.MONITOR_SCHEDULER_SECRET}` },
-      redirect: "error",
+      // Observe redirects as HTTP failures without following them or forwarding credentials.
+      redirect: "manual",
       signal: AbortSignal.timeout(240_000),
     });
   } catch (error) {

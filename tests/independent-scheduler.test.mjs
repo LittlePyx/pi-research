@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import worker, { TARGET, wakeResearch } from "../infra/scheduler/worker.mjs";
 
 const env = { MONITOR_SCHEDULER_SECRET: "synthetic-test-secret" };
@@ -10,13 +11,26 @@ test("independent scheduler uses one fixed authenticated request and allowlisted
     calls++;
     assert.equal(url, TARGET);
     assert.equal(options.method, "POST");
-    assert.equal(options.redirect, "error");
+    assert.equal(options.redirect, "manual");
     assert.equal(options.headers.Authorization, "Bearer synthetic-test-secret");
     assert.ok(options.signal instanceof AbortSignal);
     return reply({ acquired: true, startedCount: 2, advancedCount: 1, completedCount: 0, failedCount: 0, privateData: "omit" });
   });
   assert.equal(calls, 1);
   assert.deepEqual(result, { outcome: "sweep_finished", startedCount: 2, advancedCount: 1, completedCount: 0 });
+});
+test("scheduler uses public Worker routing without exposing a public trigger", async () => {
+  const config = JSON.parse(await readFile(new URL('../infra/scheduler/wrangler.jsonc', import.meta.url), 'utf8'));
+  assert.ok(config.compatibility_flags.includes('global_fetch_strictly_public'));
+  assert.equal(config.workers_dev, false);
+  assert.equal(config.preview_urls, false);
+  let calls = 0;
+  await assert.rejects(wakeResearch(env, async (_url, options) => {
+    calls++;
+    assert.equal(options.redirect, 'manual');
+    return new Response('private redirect body', { status: 302, headers: { Location: 'https://example.invalid/private' } });
+  }), { message: 'scheduler_http_302' });
+  assert.equal(calls, 1);
 });
 test("lease contention is not reported as completed work", async () => {
   assert.deepEqual(await wakeResearch(env, async () => reply({ acquired: false })), { outcome: "lease_not_acquired" });
