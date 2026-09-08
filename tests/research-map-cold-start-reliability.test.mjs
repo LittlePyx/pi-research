@@ -21,6 +21,18 @@ import {
 } from "../lib/research-map-reliability.ts";
 import { developmentUnboundedEnabled, retryAttemptAllowed } from "../lib/development-policy.mjs";
 
+test("duplicate route records never trade an available abstract for higher citation counts", () => {
+  for (const rescue of [false, true]) {
+    const identity = rescue ? { classicRescueSeedId: "same-classic" } : {};
+    const evidence = { ...identity, abstractText: "A substantive abstract retained from a healthy provider.", citationCount: 2 };
+    const metadataOnly = { ...identity, abstractText: "", citationCount: 900 };
+    assert.equal(preferredResearchClassicCandidate(evidence, metadataOnly), evidence);
+    assert.equal(preferredResearchClassicCandidate(metadataOnly, evidence), evidence);
+    const tied = { ...identity, abstractText: evidence.abstractText, citationCount: 901 };
+    assert.equal(preferredResearchClassicCandidate(evidence, tied), tied);
+  }
+});
+
 test("partial source failure keeps successful route candidates and reports the failed sibling", () => {
   const kept = { canonicalId: "doi:10.1000/kept" };
   const merged = mergeResearchTrackSourceBatches([

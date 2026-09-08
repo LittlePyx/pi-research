@@ -1010,7 +1010,7 @@ async function discoverCandidates(database: D1Database, directions: DirectionDra
   for (const candidate of discovered) {
     const key = candidate.directionKey + ":" + candidate.canonicalId;
     const previous = unique.get(key);
-    if (!previous || candidate.abstractText.length > previous.abstractText.length || candidate.citationCount > previous.citationCount) unique.set(key, candidate);
+    unique.set(key, preferredResearchClassicCandidate(previous, candidate));
   }
   const values = Array.from(unique.values());
   const capped: MapCandidate[] = [];

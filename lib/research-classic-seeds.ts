@@ -188,6 +188,10 @@ export function preferredResearchClassicCandidate<T extends {
   // provider copy happens to contain a longer abstract.
   if (current.classicRescueSeedId && !incoming.classicRescueSeedId) return incoming;
   if (!current.classicRescueSeedId && incoming.classicRescueSeedId) return current;
-  return incoming.abstractText.length > current.abstractText.length
-    || incoming.citationCount > current.citationCount ? incoming : current;
+  // Citation metadata cannot replace evidence supplied by a healthy source.
+  // Use popularity only to break an equal-evidence tie, never to erase text.
+  if (incoming.abstractText.length !== current.abstractText.length) {
+    return incoming.abstractText.length > current.abstractText.length ? incoming : current;
+  }
+  return incoming.citationCount > current.citationCount ? incoming : current;
 }
