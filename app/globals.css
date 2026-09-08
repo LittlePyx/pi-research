@@ -5426,3 +5426,12 @@ button:disabled { cursor: not-allowed; }
   .v2-reading-memory > header { grid-template-columns: minmax(0,1fr) auto; gap: 12px; }
   .v2-memory-profile-body { padding-inline: 12px; }
 }
+.pi-learning-stage-nav { display: grid; gap: 0; border-block: 1px solid #cbd2d5; margin: 20px 0; }
+.pi-learning-stage-nav > button { display: grid; grid-template-columns: 2rem minmax(0,1fr) auto; gap: 12px; align-items: center; text-align: left; padding: 12px; min-height: 56px; border: 0; border-bottom: 1px solid #e2e5e7; border-radius: 0; background: transparent; color: #293f4b; font: inherit; cursor: pointer; }
+.pi-learning-stage-nav > button[aria-pressed="true"] { background: #edf2f5; box-shadow: inset 3px 0 #315b76; }
+.pi-learning-stage-nav strong, .pi-learning-stage-nav small { display: block; overflow-wrap: anywhere; }
+.pi-learning-stage-nav small, .pi-learning-stage-nav em { font-size: .875rem; font-style: normal; color: #4d5e66; }
+.pi-learning-stage-nav button:focus-visible, .pi-learning-browse-note button:focus-visible { outline: 2px solid #315b76; outline-offset: 2px; }
+.pi-learning-browse-note { font-size: .875rem; color: #4d5e66; }
+.pi-learning-browse-note button { margin-left: 12px; background: none; border: 0; text-decoration: underline; color: #315b76; font: inherit; cursor: pointer; }
+@media(max-width: 600px) { .pi-learning-stage-nav > button { grid-template-columns: 1.5rem minmax(0,1fr); } .pi-learning-stage-nav em { grid-column: 2; } }
