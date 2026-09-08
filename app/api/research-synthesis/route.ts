@@ -1,5 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { scopedSynthesisGap, RESEARCH_GAP_SCOPE_PROMPT } from "../../../lib/research-gap-scope.mjs";
 import { enqueueResearchGapDiscovery } from "../../../lib/research-gap-discovery";
 import {
   primaryResearchSynthesisGap,
@@ -166,7 +167,7 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
       source_paper_ids, position FROM research_synthesis_statements WHERE synthesis_id = ? ORDER BY position`,
   ).bind(synthesis.id).all<StatementRow>() : { results: [] as StatementRow[] };
   const claimById = new Map(claims.map((claim) => [claim.claim_id, claim]));
-  const statements = statementRows.results.map((statement) => ({
+  const statements = statementRows.results.map((statement) => scopedSynthesisGap({
     id: statement.id,
     kind: statement.kind,
     titleZh: statement.title_zh,
@@ -314,6 +315,8 @@ export async function POST(request: Request) {
             `Direction scope: ${context.track.summary_zh} / ${context.track.summary_en}`,
             "Return {questionZh,questionEn,overviewZh,overviewEn,changeSummaryZh,changeSummaryEn,nextSearchQuery,confidence,statements:[...]}",
             "Each statement must contain kind=consensus|disagreement|qualification|method_lineage|evidence_gap, titleZh/En, textZh/En, confidence, sourceClaimIds.",
+            RESEARCH_GAP_SCOPE_PROMPT,
+            "For each evidence_gap, titleZh/En must name its own short neutral topic (at most 96 characters), not a field-wide absence claim. Each gap has its own sourceClaimIds. Only nextSearchQuery targets the strongest gap; do not reuse that query as every gap's topic.",
             "Use only exact supplied claim IDs. consensus, disagreement, and method_lineage must compare at least two papers. Distinguish a real contradiction from different assumptions, datasets, metrics, regimes, or goals; use qualification when the apparent conflict is conditional. Never treat absence from supplied papers as proof of absence from the field.",
             "Explain what is stable, what remains disputed, how methods evolve or substitute for each other, and which evidence would most change the current view. nextSearchQuery must be one concise English scholarly query aimed at the strongest evidence gap, without dates or Boolean syntax.",
             "Every factual statement must be traceable through sourceClaimIds to the supplied exact quote and locator. Your cross-paper conclusion is synthesis, not a quote from any one paper. Lower confidence when evidence is abstract-only or source coverage is thin.",

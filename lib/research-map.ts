@@ -136,6 +136,9 @@ export function selectResearchPaperCoverage(
 }
 
 export type ResearchDirectionIntelligence = {
+  evidenceScope?: "current_materials";
+  gapSubjectZh?: string;
+  gapSubjectEn?: string;
   assessmentZh: string;
   assessmentEn: string;
   opportunityZh: string;

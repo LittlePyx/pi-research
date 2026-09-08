@@ -802,7 +802,7 @@ function directionDiscoverySignal(value: string, updatedAt: string | null = null
     const signal = {
       opportunityEn: cleanText(String(parsed.opportunityEn || "")).slice(0, 700),
       watchSignalEn: cleanText(String(parsed.watchSignalEn || "")).slice(0, 700),
-      evidenceGapEn: researchGapQuestion(parsed.evidenceGapEn, parsed.nextSearchQuery, "en"),
+      evidenceGapEn: researchGapQuestion(parsed.evidenceGapEn, parsed.gapSubjectEn, "en"),
       nextSearchQuery: cleanText(String(parsed.nextSearchQuery || "")).slice(0, 220),
       confidence,
       evidenceCanonicalIds,

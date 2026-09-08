@@ -1,3 +1,5 @@
+import { scopedSynthesisGap } from "./research-gap-scope.mjs";
+
 export type ResearchSynthesisKind = "consensus" | "disagreement" | "qualification" | "method_lineage" | "evidence_gap";
 
 export type ResearchSynthesisSourceClaim = {
@@ -68,7 +70,7 @@ export function sanitizeResearchSynthesisStatements(
     if (!titleZh || !titleEn || !textZh || !textEn) continue;
     const fulltextCount = sourceClaimIds.filter((id) => claimSources.get(id)?.evidenceLevel === "fulltext").length;
     const cap = fulltextCount >= 2 ? 92 : fulltextCount === 1 ? 78 : 64;
-    output.push({
+    output.push(scopedSynthesisGap({
       kind,
       titleZh,
       titleEn,
@@ -77,7 +79,7 @@ export function sanitizeResearchSynthesisStatements(
       confidence: Math.min(score(draft.confidence), kind === "evidence_gap" ? Math.min(cap, 80) : cap),
       sourceClaimIds,
       sourcePaperIds,
-    });
+    }));
   }
   return output;
 }
