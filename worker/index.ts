@@ -4,6 +4,9 @@ import handler from "vinext/server/app-router-entry";
 import {
   MONITOR_SCHEDULER_BUCKET_MS,
   SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
+  SCHEDULED_MONITOR_ERROR_SPACE_SQL,
+  RECORD_MONITOR_ERROR_ATTEMPT_SQL,
+  scheduledMonitorProgressSnapshot,
   SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
   SCHEDULED_MONITOR_SPACE_SQL,
   mergeScheduledMonitorSpaces,
@@ -599,12 +602,14 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
       .bind(SCHEDULED_SPACE_BATCH_SIZE).all<{ id: string; owner_user_id: string }>();
     const incidentRecoverySpace = await env.DB.prepare(SCHEDULED_MONITOR_INCIDENT_SPACE_SQL)
       .first<{ id: string; owner_user_id: string }>();
+    const savedErrorRecoverySpace = incidentRecoverySpace ? null : await env.DB
+      .prepare(SCHEDULED_MONITOR_ERROR_SPACE_SQL).first<{ id: string; owner_user_id: string }>();
     const stalledRecoverySpace = trigger === "visit_backstop" ? null : await env.DB
       .prepare(SCHEDULED_MONITOR_RECOVERY_SPACE_SQL)
       .first<{ id: string; owner_user_id: string }>();
     const scheduledSpaces = mergeScheduledMonitorSpaces(
       mergeScheduledMonitorSpaces(due.results, stalledRecoverySpace),
-      incidentRecoverySpace,
+      incidentRecoverySpace || savedErrorRecoverySpace,
     );
     dueSpaceCount = scheduledSpaces.length;
     let monitorSpaces = scheduledSpaces;
@@ -643,6 +648,21 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
       }
     }
     const results = await Promise.allSettled(monitorSpaces.map(async (space) => {
+      if (space.id === savedErrorRecoverySpace?.id) {
+        // Persist before attempting, so even a failed start yields to another
+        // saved error next time. Never mark the monitor row recovered here.
+        await env.DB.prepare(RECORD_MONITOR_ERROR_ATTEMPT_SQL)
+          .bind(`monitor-error-attempt:${tickId}:${space.id}`, space.id).run();
+      }
+      const recordProgress = async (phase: string, job: unknown) => {
+        const snapshot = scheduledMonitorProgressSnapshot(job);
+        if (!snapshot) return;
+        await env.DB.prepare(`INSERT INTO monitor_reliability_events
+          (id, space_id, kind, stage, source, outcome, metadata_json)
+          VALUES (?, ?, 'monitor_scheduled_progress', ?, 'background-scheduler', 'info', ?)`)
+          .bind(crypto.randomUUID(), space.id, phase, JSON.stringify({ tickId, trigger, ...snapshot }))
+          .run().catch(() => undefined);
+      };
       const workspaceId = space.owner_user_id.startsWith("anonymous:") ? space.owner_user_id.slice("anonymous:".length) : "";
       if (!workspaceId) throw new Error("Scheduled workspace identity is unavailable");
       const headers = { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${workspaceId}` };
@@ -665,6 +685,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
         };
       };
       if (!state.monitor) throw new Error(`Scheduled monitor start returned ${response.status}`);
+      await recordProgress("start", state.monitor.scanJob);
       if (state.monitor.automation?.paused || state.monitor.automationDeferred) {
         return { paused: Boolean(state.monitor.automation?.paused), deferred: Boolean(state.monitor.automationDeferred), advanced: 0, completed: false };
       }
@@ -688,6 +709,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
         }), env, ctx);
         state = await response.json().catch(() => ({})) as typeof state;
         if (!response.ok || !state.monitor) throw new Error(`Scheduled monitor advance returned ${response.status}`);
+        await recordProgress("advance", state.monitor.scanJob);
         if (state.monitor.leaseOwner === false || state.monitor.alreadyAdvancing) {
           return { paused: false, deferred: false, advanced, completed: false, following: true };
         }

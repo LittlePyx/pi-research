@@ -6,6 +6,9 @@ import test from "node:test";
 import ts from "typescript";
 import {
   SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
+  SCHEDULED_MONITOR_ERROR_SPACE_SQL,
+  RECORD_MONITOR_ERROR_ATTEMPT_SQL,
+  scheduledMonitorProgressSnapshot,
   SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
   SCHEDULED_MONITOR_SPACE_SQL,
   VISIT_SCHEDULER_ORDINAL_SQL,
@@ -20,8 +23,8 @@ const compiled = ts.transpileModule(sweepSource, { compilerOptions: {
 } }).outputText;
 
 // Execute the production sweep, replacing only external workers and D1 I/O.
-function harness({ available = visitSchedulerTaskOrder(1), fail = null } = {}) {
-  const calls = [], finalizations = [];
+function harness({ available = visitSchedulerTaskOrder(1), fail = null, savedError = false, progress = false, failSavedStart = false } = {}) {
+  const calls = [], finalizations = [], attempts = [], snapshots = [];
   const state = { ordinal: 0, acquired: true };
   const has = new Set(available);
   const task = async (lane) => {
@@ -38,12 +41,15 @@ function harness({ available = visitSchedulerTaskOrder(1), fail = null } = {}) {
       },
       async first() {
         if (sql === VISIT_SCHEDULER_ORDINAL_SQL) return { count: state.ordinal };
+        if (sql === SCHEDULED_MONITOR_ERROR_SPACE_SQL) return savedError ? { id: "saved-error", owner_user_id: "anonymous:saved" } : null;
         if (sql === SCHEDULED_MONITOR_INCIDENT_SPACE_SQL
           || sql === SCHEDULED_MONITOR_RECOVERY_SPACE_SQL
           || sql === "sentinel-target") return null;
         assert.fail(`Unexpected read: ${sql}`);
       },
       async run() {
+        if (sql === RECORD_MONITOR_ERROR_ATTEMPT_SQL) { attempts.push(this.values); return { meta: { changes: 1 } }; }
+        if (sql.includes("'monitor_scheduled_progress'")) { snapshots.push({ phase: this.values[2], ...JSON.parse(this.values[3]) }); return { meta: { changes: 1 } }; }
         assert.match(sql, /UPDATE monitor_scheduler_ticks SET completed_at/);
         finalizations.push(this.values);
         return { meta: { changes: 1 } };
@@ -51,7 +57,8 @@ function harness({ available = visitSchedulerTaskOrder(1), fail = null } = {}) {
     };
   } };
   const context = vm.createContext({
-    Request, Response, Date, JSON, Promise,
+    Request, Response, Date, JSON, Promise, crypto,
+    SCHEDULED_MONITOR_ERROR_SPACE_SQL, RECORD_MONITOR_ERROR_ATTEMPT_SQL, scheduledMonitorProgressSnapshot,
     SCHEDULED_MONITOR_SPACE_SQL, SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
     SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
     VISIT_SCHEDULER_ORDINAL_SQL, visitSchedulerTaskOrder, mergeScheduledMonitorSpaces,
@@ -72,14 +79,42 @@ function harness({ available = visitSchedulerTaskOrder(1), fail = null } = {}) {
     runScheduledMonitorOperationalSentinel: async () => ({ status: "healthy" }),
     handler: { async fetch(request) {
       assert.equal(new URL(request.url).pathname, "/api/monitor");
-      assert.deepEqual(await request.json(), { spaceId: "space-a", trigger: "scheduled", action: "start" });
+      const payload = await request.json();
+      assert.ok(["space-a", "saved-error"].includes(payload.spaceId));
+      if (failSavedStart && payload.spaceId === "saved-error") throw new Error("fixture start failed");
+      if (payload.action === "advance") {
+        assert.equal(payload.jobId, `job:${payload.spaceId}`);
+        return Response.json({ monitor: { status: "ready", scanJob: { id: payload.jobId, checkpoint: "complete", discoveredCount: 10, reviewedCount: 2, recommendedCount: 0 } } });
+      }
+      assert.deepEqual(payload, { spaceId: payload.spaceId, trigger: "scheduled", action: "start" });
       calls.push("monitor");
+      if (progress) return Response.json({ monitor: { status: "deep_reviewing", leaseOwner: true, scanJob: { id: `job:${payload.spaceId}`, checkpoint: "deep_reviewing", discoveredCount: 10, reviewedCount: 0, recommendedCount: 0 } } });
       return Response.json({ monitor: { status: "ready", leaseOwner: true } });
     } },
   });
   vm.runInContext(compiled, context);
-  return { calls, finalizations, state, run: (trigger = "visit_backstop") => context.runScheduledMonitorSweep({ DB: database }, {}, trigger) };
+  return { calls, finalizations, state, attempts, snapshots, run: (trigger = "visit_backstop") => context.runScheduledMonitorSweep({ DB: database }, {}, trigger) };
 }
+
+test("saved-error repair does not claim unused visits or block healthy work after a failed start", async () => {
+  const visit = harness({ savedError: true });
+  await visit.run();
+  assert.equal(visit.attempts.length, 0, "a different visit lane ran; no repair was attempted");
+  const failed = harness({ available: ["monitor"], savedError: true, failSavedStart: true });
+  const result = await failed.run("external_watchdog");
+  assert.equal(failed.attempts.length, 1);
+  assert.equal(result.failedCount, 1);
+  assert.equal(result.startedCount, 1, "normal space still ran");
+  const healthy = harness({ available: ["monitor"], savedError: true, progress: true });
+  const success = await healthy.run("external_watchdog");
+  assert.equal(success.failedCount, 0);
+  assert.equal(success.advancedCount, 2);
+  for (const jobId of ["job:space-a", "job:saved-error"]) {
+    const snapshots = healthy.snapshots.filter(s => s.jobId === jobId);
+    assert.deepEqual(snapshots.map(s => [s.phase, s.reviewedCount, s.recommendedCount]), [["start", 0, 0], ["advance", 2, 0]]);
+    assert.ok(snapshots.every(s => s.trigger === "external_watchdog"));
+  }
+});
 
 test("persisted visit ordinal ignores clock gaps and non-visit scheduler ticks", () => {
   const db = new DatabaseSync(":memory:");
