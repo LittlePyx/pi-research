@@ -18,7 +18,7 @@ test("primary pages use progressive disclosure instead of repeating internal pro
   assert.doesNotMatch(routeCards, /RoutePipelineFunnel|RouteLearningNote|v2-route-review-policy|<label><span>\{locale === "zh" \? "定位"/);
   assert.doesNotMatch(decisionPanel, /v2-research-decision-funnel|证据发生了什么变化/);
   assert.doesNotMatch(app, /<details className="v2-learning-guidance">/);
-  assert.match(app, /v2-learning-now-guidance/);
+  assert.match(app, /<LearningStageGuidance /);
   assert.match(app, /learningEvidenceLabel/);
   assert.match(app, /<details className="v2-gap-query">/);
   assert.match(css, /\.v2-gap-discovery-status/);

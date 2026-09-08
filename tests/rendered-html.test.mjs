@@ -389,8 +389,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.doesNotMatch(client, /model\.ledger\.slice\(0, 16\)/);
   assert.match(client, /function ReadingOrderWorkbench/);
   assert.match(client, /learningState: LearningPathState/);
-  assert.match(client, /v2-learning-now-guidance/);
-  assert.match(client, /如何决定/);
+  assert.match(client, /<LearningStageGuidance /);
+  assert.match(await readFile(new URL("../app/components/learning-stage-guidance.tsx", import.meta.url), "utf8"), /如何决定/);
   assert.match(client, /v2-learning-roadmap/);
   assert.match(client, /pathDirectionMismatch/);
   assert.match(client, /nodeByCanonicalId/);
@@ -466,8 +466,8 @@ test("builds persistent personalized learning paths from real research papers", 
   assert.match(client, /activeLearningState\.path \? generateLearningPath\(activeLearningState\.path\.target, activeLearningState\.path\.targetTrackId\) : generateLearningPath\(learningTarget\)/);
   assert.match(client, /learningResourceSignals/);
   assert.match(client, /质量已通过/);
-  assert.match(client, /v2-learning-now-guidance/);
-  assert.match(client, /如何决定/);
+  assert.match(client, /<LearningStageGuidance /);
+  assert.match(await readFile(new URL("../app/components/learning-stage-guidance.tsx", import.meta.url), "utf8"), /如何决定/);
   assert.match(route, /purpose: "learning"/);
   assert.match(route, /visibleStep\.resources\.length === 0/);
   assert.doesNotMatch(client, /Schrödinger’s Problem and Entropic Transport/);
