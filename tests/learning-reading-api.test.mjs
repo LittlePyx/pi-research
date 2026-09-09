@@ -303,6 +303,34 @@ test("learning → reading → stage → route runs through the built Worker and
       }
       await request("/api/learning-path", { spaceId: "not-owned", pathId: "wake-math-path", action: "advance-evidence" }, 404, "POST");
     });
+    await t.test("quality-approved surveys remain optional reading without filling original-work gaps", async () => {
+      for (const [space, topic] of [["bridge-info", "Gaussian rate distortion"], ["bridge-math", "KLS stochastic localization"]]) {
+        await sql([
+          insert("research_spaces", { id: space, owner_user_id: "anonymous:learning-loop-test-00000001", name: topic, member_name: "QA" }),
+          insert("learning_paths", { id: space, space_id: space, target: topic, title_zh: topic, title_en: topic, status: "waiting_evidence" }),
+          insert("learning_path_steps", { id: space, path_id: space, space_id: space, kind: "foundation", title_en: topic, title_zh: topic, status: "active" }),
+          ...["approved", "pending", "dismissed"].flatMap((state) => [
+            insert("monitored_papers", { id: `${space}-${state}`, space_id: space, canonical_id: `${space}:${state}`, title: `${topic}: a survey ${state}`, url: "https://example.org/qa", horizon: "years" }),
+            insert("paper_insights", { paper_id: `${space}-${state}`, space_id: space, quality_score: 90, ever_recommended: state === "pending" ? 0 : 1 }),
+          ]),
+          insert("paper_feedback", { id: space, space_id: space, paper_id: `${space}-dismissed`, feedback: "not_relevant" }),
+        ]);
+        const result = await request(`/api/learning-path?spaceId=${space}`);
+        assert.equal(result.path.steps[0].resources.length, 0);
+        assert.deepEqual(result.path.steps[0].supplementaryResources.map(item => item.id), [`monitor:${space}-approved`]);
+        assert.equal(result.path.completedSteps, 0);
+        assert.equal(result.path.status, "waiting_evidence");
+        const details = await request(`/api/monitor?spaceId=${space}&paperId=${space}-approved`);
+        assert.ok(details.monitor.historyPapers.some(item => item.id === `${space}-approved`));
+        const after = await request(`/api/learning-path?spaceId=${space}`);
+        assert.equal(after.path.steps[0].status, result.path.steps[0].status);
+        assert.notEqual(after.path.steps[0].status, "completed");
+        assert.equal(after.path.steps[0].resources.length, 0);
+        assert.deepEqual((await sql([{ sql: "SELECT resources_json FROM learning_path_steps WHERE id = ?", values: [space] }]))[0].results, [{ resources_json: "[]" }]);
+        assert.deepEqual((await sql([{ sql: "SELECT status FROM paper_reading_progress WHERE space_id = ?", values: [space] }]))[0].results, []);
+        assert.deepEqual((await sql([{ sql: "SELECT id FROM research_track_papers WHERE space_id = ?", values: [space] }]))[0].results, []);
+      }
+    });
     await t.test("failed model replans preserve prior paths and fallback retries bypass the evidence cache", async () => {
       await sql([
         insert("research_spaces", { id: "retry-model", owner_user_id: "anonymous:learning-loop-test-00000001", name: "KLS retry fixture", member_name: "Test" }),

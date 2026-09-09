@@ -21,6 +21,7 @@ import { groundedStageEvidence, learningStageAccepts, learningStageSearchQuery, 
 import { learningClassicSearchQuery } from "../../../lib/research-classic-seeds";
 import { LEARNING_GUIDANCE_POLICY, groundedGuidanceReview, guidanceReviewIsCurrent, learningGuidanceText, presentLearningGuidance, type LearningGuidanceReview, type LearningGuidanceSource } from "../../../lib/learning-guidance";
 import { advanceLearningDiscovery } from "../../../lib/learning-discovery";
+import { withSupplementaryReading } from "../../../lib/learning-supplementary";
 import { POST as expandResearchMap } from "../research-map/route";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -809,7 +810,10 @@ async function stateFor(database: D1Database, space: SpaceRow): Promise<Learning
     path = await advanceLearningPath(database, space, context);
   }
   return {
-    path: path ? presentLearningGuidance(path) : null,
+    path: path ? presentLearningGuidance(withSupplementaryReading(path, context.candidates.map((candidate) => ({
+      resource: candidateResource(candidate),
+      paper: { title: candidate.title, authors: candidate.authors, abstractText: candidate.abstract_text },
+    })))) : null,
     suggestedTarget: context.suggestedTarget,
     availablePaperCount: context.candidates.length,
     waitingQualityCount: context.waitingQualityCount,
