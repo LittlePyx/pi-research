@@ -1603,13 +1603,13 @@ main { min-width: 0; }
 .v2-path-marker { position: relative; display: flex; justify-content: center; }
 .v2-path-marker > span { position: relative; z-index: 1; width: 30px; height: 30px; border: 1px solid #cbd0c8; border-radius: 50%; background: var(--v2-canvas); display: grid; place-items: center; color: #677067; font: 9px Georgia, serif; }
 .v2-path-marker > i { position: absolute; top: 30px; bottom: 0; width: 1px; background: #d7d9d3; }
-.v2-learning-path article > div:nth-child(2) { padding: 3px 0 31px; }
-.v2-learning-path article > div:nth-child(2) > p { margin: 0 0 6px; color: var(--v2-blue); font-size: 6px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.v2-learning-path > article > div:nth-child(2) { padding: 3px 0 31px; }
+.v2-learning-path > article > div:nth-child(2) > p { margin: 0 0 6px; color: var(--v2-blue); font-size: 6px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
 .v2-learning-path h3 { margin: 0 0 11px; font: 15px Georgia, serif; font-weight: 400; }
-.v2-learning-path article > div:nth-child(2) > div { padding: 12px 14px; border: 1px solid #dfe1db; border-radius: 5px; background: rgba(255,255,255,.48); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.v2-learning-path article > div:nth-child(2) > div span { color: #697069; font: 9px/1.45 Georgia, serif; }
-.v2-learning-path article > div:nth-child(2) > div b { margin-right: 5px; color: #464d46; font: 7px var(--font-geist-sans), sans-serif; }
-.v2-learning-path article > button { width: 22px; height: 22px; margin-top: 5px; border: 1px solid #ccd0c9; border-radius: 50%; background: transparent; color: #8b9088; font-size: 8px; }
+.v2-learning-path > article > div:nth-child(2) > div { padding: 12px 14px; border: 1px solid #dfe1db; border-radius: 5px; background: rgba(255,255,255,.48); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.v2-learning-path > article > div:nth-child(2) > div span { color: #697069; font: 9px/1.45 Georgia, serif; }
+.v2-learning-path > article > div:nth-child(2) > div b { margin-right: 5px; color: #464d46; font: 7px var(--font-geist-sans), sans-serif; }
+.v2-learning-path > article > button { width: 22px; height: 22px; margin-top: 5px; border: 1px solid #ccd0c9; border-radius: 50%; background: transparent; color: #8b9088; font-size: 8px; }
 .v2-start-path { float: right; min-height: 36px; padding: 0 14px; border: 1px solid #294f6e; border-radius: 5px; background: #294f6e; color: white; font-size: 8px; font-weight: 750; }
 .v2-library-tabs { height: 57px; border-bottom: 1px solid var(--v2-line); display: flex; align-items: flex-end; gap: 27px; }
 .v2-library-tabs button { height: 42px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #777e76; font-size: 8px; }
@@ -1926,7 +1926,7 @@ main { min-width: 0; }
   .v2-understanding { grid-template-columns: 1fr; }
   .v2-development-row { grid-template-columns: 70px 1fr 15px; }
   .v2-development-row > small { display: none; }
-  .v2-learning-path article > div:nth-child(2) > div { grid-template-columns: 1fr; }
+  .v2-learning-path > article > div:nth-child(2) > div { grid-template-columns: 1fr; }
   .v2-library-tabs { gap: 15px; overflow-x: auto; }
   .v2-library-list > button { padding: 14px 2px; grid-template-columns: 24px 1fr 15px; }
   .v2-library-list > button > span:nth-child(3), .v2-library-list > button > span:nth-child(5), .v2-library-list > button .v2-real-badge { grid-column: 2; }
