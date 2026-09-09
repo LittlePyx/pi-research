@@ -45,6 +45,13 @@
 
 ### 2026-09-08 实测后改序（本节优先于下方历史排序）
 
+#### 部分来源失败的共享队列持久化验收（2026-09-09 04:50 UTC起）
+
+- 只读确认Shannon缺口03:03:32自然执行到attempt7，queued_count仍5，保持retryable/source_unavailable，下一次15:03:33 UTC；不是上一轮刚到期后卡死。KLS仍attempt5/queued4，06:43重试尚未到期。不把来源任务次数或累计queued_count当独立论文/通过数，不人工唤醒。
+- 新增本地Miniflare D1集成回归，直接调用生产enqueueMonitorCandidates和completeResearchGapDiscovery，并复用repository里的候选、洞察、来源、反馈、阅读及monitor表定义与唯一索引。不是仅检查提示文字或用Node SQLite假装D1；没有连接生产数据库、使用Key或请求外部论文。
+- 实际覆盖：空摘要原候选先入队但不推荐→健康来源补充摘要、另一来源失败→缺口retryable且释放锁→重复发现仍复用同一paper ID、两份来源均保留、短/空摘要不覆盖较完整证据。旧已评审摘要、忽略反馈和reading笔记跨重复入队保留；未评审原候选的llm_recommended与ever_recommended仍0。任务累计queued_count可增而独立论文数不增，测试明确区分两者。
+- 专项、变更测试文件lint及完整528/528回归通过；此包只新增测试与落实记录，业务源码/已验证构建不变，没有重复执行实时来源测试，不因生产来源等待而扩展检索或前端。生产逐篇筛选、深评与今日可见性仍未知，不能用隔离用例代替。GitHub最新自然schedule仍00:42:31成功；24小时观察按06:24后首次运行总结，未提前关闭，也未再增加调度器。保留用户docs/，未部署，线上仍v202。
+
 #### 六个原异常任务完成验收（2026-09-09 02:48–02:54 UTC，24小时观察未关闭）
 
 - 用已记录的六个确切任务ID进行有界单行查找，并核对space_id；六个任务均ready/checkpoint=complete、error=null且completed_at非空。它们不是重新生成的替代任务，至此“恢复执行→原任务完成”子项通过。记录的是任务持久化计数，reviewed_count不冒充深评数，recommended_count不冒充今日可见/用户接受数，也不跨空间合计成去重论文数。
