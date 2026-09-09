@@ -4620,13 +4620,50 @@ async function fetchOpenAlexAbstracts(database: D1Database, candidates: Candidat
   return abstracts;
 }
 
+async function fetchCrossrefAbstracts(database: D1Database, candidates: Candidate[]) {
+  const abstracts = new Map<string, string>();
+  // One deadline for the whole fallback, not a fresh timeout for every DOI.
+  // All requests still use the shared source cooldown and lease.
+  const signal = AbortSignal.timeout(15_000);
+  for (const candidate of candidates) {
+    if (signal.aborted) break;
+    const doi = candidate.doi?.trim().toLocaleLowerCase();
+    if (!doi) continue;
+    try {
+      const response = await fetchExternalSource(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
+        headers: { Accept: "application/json", "User-Agent": "PiResearch/1.0 (mailto:pi-research@qiudao-pika.chatgpt.site)" },
+        signal,
+      }, { database, sourceKey: "crossref", maxRetries: 1 });
+      if (!response.ok) {
+        if (response.status === 404) continue;
+        break;
+      }
+      const data = await response.json() as { message?: { DOI?: string; abstract?: string } };
+      if (data.message?.DOI?.trim().toLocaleLowerCase() !== doi) continue;
+      const abstractText = cleanText(data.message.abstract || "").slice(0, 2200);
+      if (abstractText) abstracts.set(candidate.canonicalId, abstractText);
+    } catch {
+      // A shared source outage must not erase successful earlier DOI lookups.
+      break;
+    }
+  }
+  return abstracts;
+}
+
 async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, candidates: Candidate[]) {
   const missing = candidates.filter((candidate) => candidate.abstractText.trim().length < 120);
   if (!missing.length) return { requested: 0, enriched: 0 };
   const abstracts = await fetchSemanticScholarAbstracts(database, spaceId, missing);
-  const unresolved = missing.filter((candidate) => !abstracts.has(candidate.canonicalId) && candidate.doi);
+  const unresolved = missing.filter((candidate) => (abstracts.get(candidate.canonicalId)?.trim().length || 0) < 120 && candidate.doi);
   const openAlexAbstracts = await fetchOpenAlexAbstracts(database, unresolved);
-  for (const [canonicalId, abstractText] of openAlexAbstracts) abstracts.set(canonicalId, abstractText);
+  const mergeAbstracts = (incoming: Map<string, string>) => {
+    for (const [canonicalId, abstractText] of incoming) {
+      if (abstractText.trim().length > (abstracts.get(canonicalId)?.trim().length || 0)) abstracts.set(canonicalId, abstractText);
+    }
+  };
+  mergeAbstracts(openAlexAbstracts);
+  const crossrefMissing = missing.filter((candidate) => (abstracts.get(candidate.canonicalId)?.trim().length || 0) < 120 && candidate.doi);
+  if (crossrefMissing.length) mergeAbstracts(await fetchCrossrefAbstracts(database, crossrefMissing));
   const statements = Array.from(abstracts.entries()).map(([canonicalId, abstractText]) => database.prepare(
     `UPDATE paper_insights SET abstract_text = CASE WHEN length(?) > length(abstract_text) THEN ? ELSE abstract_text END,
      updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = (
