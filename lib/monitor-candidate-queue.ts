@@ -563,7 +563,21 @@ export async function enqueueMonitorCandidates(
         llm_recommended = CASE WHEN paper_insights.analysis_source = 'route-gap' THEN 0 ELSE paper_insights.llm_recommended END,
         updated_at = CURRENT_TIMESTAMP
        WHERE paper_insights.analysis_source IN ('metadata', 'route-gap')`,
-    ).bind(paperId, spaceId, candidate.abstractText, boundedScore(candidate.qualityScore), candidate.priorityVenue ? 1 : 0)];
+    ).bind(paperId, spaceId, candidate.abstractText, boundedScore(candidate.qualityScore), candidate.priorityVenue ? 1 : 0),
+    // Pending reviews still need source evidence. Preserve their decision and
+    // review clock; enrichment alone is neither a new review nor a recommendation.
+    database.prepare(
+      `UPDATE paper_insights SET abstract_text = ?
+       WHERE paper_id = ? AND space_id = ?
+        AND analysis_source IN ('deepseek_screened', 'deepseek_verification_pending')
+        AND COALESCE(ever_recommended, 0) = 0
+        AND LENGTH(TRIM(?)) > LENGTH(TRIM(COALESCE(abstract_text, '')))
+        AND NOT EXISTS (
+         SELECT 1 FROM paper_feedback dismissed
+         WHERE dismissed.space_id = paper_insights.space_id AND dismissed.paper_id = paper_insights.paper_id
+          AND dismissed.feedback = 'not_relevant'
+        )`,
+    ).bind(candidate.abstractText, paperId, spaceId, candidate.abstractText)];
   });
   for (let start = 0; start < insightStatements.length; start += MAX_BATCH_SIZE) {
     await database.batch(insightStatements.slice(start, start + MAX_BATCH_SIZE));

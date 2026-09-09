@@ -73,3 +73,48 @@ test('partial source failure retains real D1 candidates, evidence, provenance an
     assert.equal((await db.prepare("SELECT note FROM paper_reading_progress WHERE id='reading'").first()).note, 'Keep this note');
   } finally { await mf.dispose(); }
 });
+
+test('rediscovery enriches pending reviews without rewriting decisions or dismissed history', { timeout: 30000 }, async () => {
+  const repository = await readFile(new URL('../db/repository.ts', import.meta.url), 'utf8');
+  const tables = ['monitored_papers', 'paper_insights', 'monitor_candidate_sources', 'monitor_runs', 'paper_feedback'];
+  const statements = [...repository.matchAll(/database\.prepare\("(CREATE (?:TABLE|UNIQUE INDEX) IF NOT EXISTS [^"]*)"\)/g)]
+    .map((match) => match[1]).filter((sql) => tables.some((table) => sql.startsWith(`CREATE TABLE IF NOT EXISTS ${table} `) || sql.includes(` ON ${table}(`)));
+  const mf = new Miniflare({ host: '127.0.0.1', cf: false, modules: true, d1Databases: ['DB'],
+    script: 'export default { fetch() { return new Response("isolated test"); } };' });
+  try {
+    const db = await mf.getD1Database('DB');
+    await db.batch([db.prepare('CREATE TABLE research_spaces (id TEXT PRIMARY KEY)'),
+      ...statements.map((sql) => db.prepare(sql)), db.prepare("INSERT INTO research_spaces VALUES ('fixture-space')")]);
+    const base = { doi: null, authors: 'Fixture author', venue: 'Fixture venue', url: 'https://example.org/fixture',
+      publishedAt: '1995-01-01', source: 'crossref', horizon: 'years', citationCount: 10, relevanceScore: 60,
+      abstractText: '', qualityScore: 60, priorityVenue: false,
+      provenance: [{ sourceKey: 'research-route:learning', channel: 'topic', queryKey: 'fixture-gap' }] };
+    const cases = [
+      ['screened', 'deepseek_screened', false, false, true],
+      ['pending', 'deepseek_verification_pending', false, false, true],
+      ['reviewed', 'deepseek', true, false, false],
+      ['rejected', 'deepseek_rejected', false, false, false],
+      ['dismissed', 'deepseek_screened', false, true, false],
+      ['historical', 'deepseek_verification_pending', true, false, false],
+    ];
+    for (const [name, source, everRecommended, dismissed, shouldEnrich] of cases) {
+      const candidate = { ...base, canonicalId: `fixture:${name}`, title: `Fixture ${name}` };
+      const queued = await enqueueMonitorCandidates(db, 'fixture-space', [candidate]);
+      const { id } = await db.prepare('SELECT id FROM monitored_papers WHERE canonical_id=?').bind(queued.canonicalIds[0]).first();
+      await db.prepare(`UPDATE paper_insights SET analysis_source=?,analysis_model='fixture-model',
+        verification_status='degraded',ever_recommended=?,quality_score=61,updated_at='2026-09-01 00:00:00' WHERE paper_id=?`)
+        .bind(source, Number(everRecommended), id).run();
+      if (dismissed) await db.prepare("INSERT INTO paper_feedback (id,space_id,paper_id,feedback) VALUES (?,'fixture-space',?,'not_relevant')").bind(name, id).run();
+      const before = await db.prepare('SELECT * FROM paper_insights WHERE paper_id=?').bind(id).first();
+      const abstract = 'Structured abstract from a healthy source; this fixture is not a real paper or a recommendation.';
+      await enqueueMonitorCandidates(db, 'fixture-space', [{ ...candidate, abstractText: abstract, qualityScore: 99,
+        provenance: [{ sourceKey: 'openalex:classic-rescue', channel: 'topic', queryKey: 'fixture-gap' }] }]);
+      const after = await db.prepare('SELECT * FROM paper_insights WHERE paper_id=?').bind(id).first();
+      assert.equal(after.abstract_text, shouldEnrich ? abstract : '', name);
+      assert.deepEqual({ ...after, abstract_text: before.abstract_text }, before, `${name}: all decisions and review timestamps stay intact`);
+      await enqueueMonitorCandidates(db, 'fixture-space', [candidate]);
+      assert.deepEqual(await db.prepare('SELECT * FROM paper_insights WHERE paper_id=?').bind(id).first(), after, 'empty rediscovery cannot undo enrichment');
+      assert.equal((await db.prepare('SELECT count(*) n FROM monitor_candidate_sources WHERE paper_id=?').bind(id).first()).n, 2);
+    }
+  } finally { await mf.dispose(); }
+});
