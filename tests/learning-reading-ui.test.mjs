@@ -16,8 +16,8 @@ const compile = (source) => ts.transpileModule(source, { compilerOptions: {
 const mod = { exports: {} };
 const require = createRequire(import.meta.url);
 const mathModule = { exports: {} };
-new Function("require", "module", "exports", compile(await readFile(new URL("../app/components/math-text.tsx", import.meta.url), "utf8")))
-  ((name) => name.endsWith("lib/math-text") ? mathHelpers : require(name), mathModule, mathModule.exports);
+const loadMathComponent = new Function("require", "module", "exports", compile(await readFile(new URL("../app/components/math-text.tsx", import.meta.url), "utf8")));
+loadMathComponent((name) => name.endsWith("lib/math-text") ? mathHelpers : require(name), mathModule, mathModule.exports);
 new Function("require", "module", "exports", compile(component))((name) => name.endsWith("lib/learning-path") ? learningHelpers : name === './math-text' ? mathModule.exports : require(name), mod, mod.exports);
 const { LearningResourceList } = mod.exports;
 
