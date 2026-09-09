@@ -54,6 +54,31 @@ test('saved errors remain recoverable after alerts expire and failed attempts ro
   } finally { db.close(); }
 });
 
+test('saved provider timeout receives a recovery slot while healthy active work continues', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE research_spaces (id TEXT PRIMARY KEY, owner_user_id TEXT);
+      CREATE TABLE monitor_runs (space_id TEXT, status TEXT, error TEXT, active_job_id TEXT,
+        automation_paused_at TEXT, last_user_activity_at TEXT, next_run_at TEXT,
+        lock_expires_at TEXT, updated_at TEXT, last_run_at TEXT);
+      CREATE TABLE monitor_reliability_events (id TEXT, space_id TEXT, kind TEXT, created_at TEXT);
+      INSERT INTO research_spaces VALUES ('busy', 'anonymous:busy'), ('timeout', 'anonymous:timeout');
+      INSERT INTO monitor_runs VALUES ('busy', 'deep_reviewing', NULL, 'job', NULL,
+        CURRENT_TIMESTAMP, datetime('now','-1 minute'), NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      INSERT INTO monitor_runs VALUES ('timeout', 'error', 'The operation was aborted due to timeout', NULL, NULL,
+        CURRENT_TIMESTAMP, datetime('now','-1 minute'), NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);`);
+    const normal = db.prepare(SCHEDULED_MONITOR_SPACE_SQL).all(1);
+    assert.equal(normal[0].id, 'busy');
+    const recovery = db.prepare(SCHEDULED_MONITOR_ERROR_SPACE_SQL).get();
+    assert.equal(recovery?.id, 'timeout');
+    assert.deepEqual(mergeScheduledMonitorSpaces(normal, recovery).map(row => row.id), ['timeout', 'busy']);
+    for (const error of ['deepseek_credential_invalid', 'deepseek_insufficient_balance', 'unexpected error']) {
+      db.prepare("UPDATE monitor_runs SET error = ? WHERE space_id = 'timeout'").run(error);
+      assert.equal(db.prepare(SCHEDULED_MONITOR_ERROR_SPACE_SQL).get(), undefined);
+    }
+  } finally { db.close(); }
+});
+
 test('progress snapshots retain job identity and unknown counts without lease or response data', () => {
   assert.equal(scheduledMonitorProgressSnapshot(null), null);
   const job = { id: 'job-a', checkpoint: 'deep_reviewing', discoveredCount: 320, reviewedCount: 4, recommendedCount: 0, leaseToken: 'fixture-private-value' };

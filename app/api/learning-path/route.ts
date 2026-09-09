@@ -22,6 +22,8 @@ import { learningClassicSearchQuery } from "../../../lib/research-classic-seeds"
 import { LEARNING_GUIDANCE_POLICY, groundedGuidanceReview, guidanceReviewIsCurrent, learningGuidanceText, presentLearningGuidance, type LearningGuidanceReview, type LearningGuidanceSource } from "../../../lib/learning-guidance";
 import { advanceLearningDiscovery } from "../../../lib/learning-discovery";
 import { withSupplementaryReading } from "../../../lib/learning-supplementary";
+import { reviewLearningStageBatches } from "../../../lib/learning-stage-review-job";
+import { stageReviewKey, type StageReviewInput } from "../../../lib/learning-stage-review";
 import { POST as expandResearchMap } from "../research-map/route";
 
 type SpaceRow = { id: string; name: string; description: string; owner_user_id: string };
@@ -821,6 +823,71 @@ async function stateFor(database: D1Database, space: SpaceRow): Promise<Learning
   };
 }
 
+async function reviewCurrentLearningStage(database: D1Database, space: SpaceRow, request: Request) {
+  const path = await readPath(database, space.id);
+  const step = path?.steps.find(item => item.status !== "completed" && !item.resources.length);
+  if (!path || !step) return { status: "empty" };
+  const credential = resolveDeepSeekCredential(request);
+  if (!credential.apiKey) return { status: "unconfigured" };
+  const inputFor = (current: LearningPath, currentStep: LearningPath["steps"][number], candidates: CandidateRow[]): StageReviewInput => ({
+    pathId: current.id, stepId: currentStep.id, stage: {
+      kind: currentStep.kind, titleZh: currentStep.titleZh, titleEn: currentStep.titleEn,
+      goalZh: currentStep.goalZh, goalEn: currentStep.goalEn, readFocusZh: currentStep.readFocusZh, readFocusEn: currentStep.readFocusEn,
+    },
+    candidates: candidatesForStep(candidates, currentStep, new Set(current.steps.flatMap(s => s.resources.map(resourceIdentity))))
+      .filter(paper => learningStageAccepts({ ...currentStep, kind: "method" }, { title: paper.title, authors: paper.authors, abstractText: paper.abstract_text }))
+      .map(paper => ({ canonicalId: paper.canonical_id, title: paper.title, authors: paper.authors,
+        abstractText: paper.abstract_text, qualityApproved: true, dismissed: false })),
+  });
+  const context = await contextForSpace(database, space, path.targetTrackId);
+  const input = inputFor(path, step, context.candidates);
+  const result = await reviewLearningStageBatches({ database, spaceId: space.id, input, judge: async prompt => {
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST", signal: AbortSignal.timeout(120_000),
+      headers: { Authorization: "Bearer " + credential.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: MODEL, response_format: { type: "json_object" }, max_tokens: 5000,
+        messages: [{ role: "system", content: prompt.instruction }, { role: "user", content: JSON.stringify({ stage: prompt.stage, papers: prompt.papers }) }] }),
+    });
+    if (!response.ok) throw new Error("stage_model_unavailable");
+    const body = await response.json() as DeepSeekResponse;
+    await recordUsage(database, "learning-stage:" + space.owner_user_id, new Date().toISOString().slice(0, 10), body.usage?.prompt_tokens || 0, body.usage?.completion_tokens || 0);
+    return extractJson(body.choices?.[0]?.message?.content || "");
+  } });
+  if (result.status !== "valid" || !result.assignments.length) return { status: result.status };
+  // Model latency can span a path edit, a dismissal, or a quality change.
+  const fresh = await readPath(database, space.id);
+  const freshStep = fresh?.steps.find(item => item.id === step.id && item.status !== "completed" && !item.resources.length);
+  if (!fresh || fresh.id !== path.id || !freshStep) return { status: "stale" };
+  const freshContext = await contextForSpace(database, space, fresh.targetTrackId);
+  const refreshedInput = inputFor(fresh, freshStep, freshContext.candidates);
+  const freshById = new Map(refreshedInput.candidates.map(paper => [paper.canonicalId, paper]));
+  refreshedInput.candidates = result.input.candidates.flatMap(paper => freshById.has(paper.canonicalId) ? [freshById.get(paper.canonicalId)!] : []);
+  if (await stageReviewKey(refreshedInput) !== result.key) return { status: "stale" };
+  const assignment = result.assignments[0];
+  const paper = freshContext.candidates.find(item => item.canonical_id === assignment.canonicalId);
+  if (!paper) return { status: "stale" };
+  const raw = await database.prepare("SELECT resources_json FROM learning_path_steps WHERE id = ? AND path_id = ? AND space_id = ?")
+    .bind(step.id, path.id, space.id).first<{ resources_json: string }>();
+  if (!raw) return { status: "stale" };
+  const resource = candidateResource(paper, assignment.evidence);
+  const previous = parseResources(raw.resources_json);
+  // Preserve historical entries; refresh evidence only for the same identity.
+  const merged = previous.some(item => resourceIdentity(item) === resourceIdentity(resource))
+    ? previous.map(item => resourceIdentity(item) === resourceIdentity(resource) ? { ...item, ...resource } : item)
+    : [...previous, resource];
+  const saved = await database.prepare(`UPDATE learning_path_steps SET resources_json = ?, evidence_query = '', updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND path_id = ? AND space_id = ? AND resources_json = ? AND status != 'completed'
+      AND kind = ? AND title_zh = ? AND title_en = ? AND goal_zh = ? AND goal_en = ? AND read_focus_zh = ? AND read_focus_en = ?
+      AND EXISTS (SELECT 1 FROM learning_paths p WHERE p.id = learning_path_steps.path_id AND p.space_id = ? AND p.status != 'superseded')
+      AND EXISTS (SELECT 1 FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
+        WHERE p.space_id = ? AND p.canonical_id = ? AND p.title = ? AND p.authors = ? AND i.abstract_text = ? AND i.ever_recommended = 1
+        AND NOT EXISTS (SELECT 1 FROM paper_feedback f WHERE f.space_id = p.space_id AND f.paper_id = p.id AND f.feedback = 'not_relevant'))`)
+    .bind(JSON.stringify(merged), step.id, path.id, space.id, raw.resources_json,
+      step.kind, step.titleZh, step.titleEn, step.goalZh, step.goalEn, step.readFocusZh, step.readFocusEn,
+      space.id, space.id, paper.canonical_id, paper.title, paper.authors, paper.abstract_text).run();
+  return { status: saved.meta.changes ? "attached" : "stale" };
+}
+
 export async function GET(request: Request) {
   const spaceId = new URL(request.url).searchParams.get("spaceId") || "";
   const owned = await ownedSpace(request, spaceId);
@@ -837,6 +904,8 @@ export async function POST(request: Request) {
   if (body.action === "advance-evidence") {
     const path = await readPath(owned.database, spaceId);
     if (!path || path.id !== body.pathId) return Response.json({ error: "Learning path changed" }, { status: 409 });
+    const stageReview = await reviewCurrentLearningStage(owned.database, owned.space, request);
+    if (stageReview.status === "attached") return Response.json({ ...await stateFor(owned.database, owned.space), stageReview });
     const discoveryAdvance = await advanceLearningDiscovery({
       database: owned.database, spaceId, path, unboundedRetries: unboundedDevelopmentRetries(),
       dispatch: (payload) => {
@@ -848,7 +917,7 @@ export async function POST(request: Request) {
         }));
       },
     });
-    return Response.json({ ...await stateFor(owned.database, owned.space), discoveryAdvance });
+    return Response.json({ ...await stateFor(owned.database, owned.space), discoveryAdvance, stageReview });
   }
   if (body.action) return Response.json({ error: "Unsupported learning action" }, { status: 400 });
   const requestedTrack = targetTrackId ? await owned.database.prepare(

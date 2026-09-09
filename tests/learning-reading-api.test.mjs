@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { glob } from "node:fs/promises";
+import { glob, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Miniflare } from "miniflare";
@@ -9,6 +9,9 @@ import { groundedGuidanceReview } from "../lib/learning-guidance.ts";
 // The normal test command builds first. Run the same Worker, API handlers and
 // schema bootstrap as production, in an isolated in-memory D1 with no model key.
 test("learning → reading → stage → route runs through the built Worker and D1", { timeout: 60000 }, async (t) => {
+  let stageModelCalls = 0;
+  let stageModelEnabled = false;
+  let beforeStageReply = async () => {};
   const serverDir = fileURLToPath(new URL("../dist/server/", import.meta.url));
   const modules = [];
   for await (const path of glob("**/*.js", { cwd: serverDir })) modules.push({ type: "ESModule", path: `${serverDir}${path}` });
@@ -28,6 +31,15 @@ test("learning → reading → stage → route runs through the built Worker and
     // Deterministic public-source responses, never a model credential or live recommendation.
     outboundService: async (request) => {
       const url = new URL(request.url);
+      if (url.hostname === "api.deepseek.com" && stageModelEnabled) {
+        stageModelCalls++;
+        const prompt = JSON.parse((await request.json()).messages[1].content);
+        await beforeStageReply();
+        return Response.json({ choices: [{ message: { content: JSON.stringify({ decisions: prompt.papers.map(paper => ({
+          canonicalId: paper.canonicalId, role: "primary", quote: paper.abstractText,
+          reason: "The supplied abstract directly derives the exact result required by this learning stage.",
+        })) }) } }] });
+      }
       if (url.hostname === "api.crossref.org") {
         const originalTitle = url.searchParams.get("query.title");
         if (originalTitle) {
@@ -54,7 +66,7 @@ test("learning → reading → stage → route runs through the built Worker and
       return new Response("source temporarily unavailable", { status: 503 });
     },
   });
-  const cookie = "pi_anonymous_workspace=learning-loop-test-00000001";
+  let cookie = "pi_anonymous_workspace=learning-loop-test-00000001";
   async function request(path, body, expected = 200, method = body ? "PATCH" : "GET") {
     const response = await mf.dispatchFetch(`http://localhost${path}`, {
       method, headers: { cookie, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
@@ -73,6 +85,7 @@ test("learning → reading → stage → route runs through the built Worker and
   ])).map((entry) => entry.results);
   try {
     await request("/api/learning-path?spaceId=missing", null, 404); // Bootstrap real schema.
+    await sql([{ sql: await readFile(new URL('../drizzle/0056_real_karen_page.sql', import.meta.url), 'utf8') }]);
     await sql([
       ...["info", "math"].map((id) => insert("research_spaces", { id, owner_user_id: "anonymous:learning-loop-test-00000001", name: id, member_name: "Test" })),
       ...["info", "math"].map((id) => insert("research_tracks", { id: `track-${id}`, space_id: id, title_zh: id, title_en: id })),
@@ -330,6 +343,50 @@ test("learning → reading → stage → route runs through the built Worker and
         assert.deepEqual((await sql([{ sql: "SELECT status FROM paper_reading_progress WHERE space_id = ?", values: [space] }]))[0].results, []);
         assert.deepEqual((await sql([{ sql: "SELECT id FROM research_track_papers WHERE space_id = ?", values: [space] }]))[0].results, []);
       }
+    });
+    await t.test("automatic stage review attaches approved abstracts without reading or route confirmation in both domains", async () => {
+      const originalCookie = cookie;
+      stageModelEnabled = true;
+      cookie += "; pi_deepseek_api_key=sk-isolated-fixture-not-a-real-key"; // Intercepted fake fixture, never a live credential.
+      try {
+        for (const [space, topic] of [["review-info", "Gaussian rate distortion"], ["review-math", "KLS stochastic localization"]]) {
+          await sql([
+            insert("research_spaces", { id: space, owner_user_id: "anonymous:learning-loop-test-00000001", name: `${space}: ${topic}`, member_name: "QA" }),
+            insert("learning_paths", { id: space, space_id: space, target: topic, title_zh: topic, title_en: topic, status: "waiting_evidence" }),
+            insert("learning_path_steps", { id: space, path_id: space, space_id: space, kind: "foundation", title_en: topic, title_zh: topic }),
+            insert("monitored_papers", { id: space, space_id: space, canonical_id: `doi:${space}`, title: `${topic} original fixture`, authors: "QA fixture", url: "https://example.org/qa", horizon: "years" }),
+            insert("paper_insights", { paper_id: space, space_id: space, ever_recommended: 1, quality_score: 90,
+              abstract_text: `We derive ${topic} bounds under explicitly stated source assumptions. This is synthetic evidence for isolated API testing, not a real paper or recommendation.` }),
+          ]);
+          assert.equal((await request(`/api/learning-path?spaceId=${space}`)).path.steps[0].resources.length, 0);
+          const body = { spaceId: space, pathId: space, action: 'advance-evidence' };
+          const after = await request('/api/learning-path', body, 200, 'POST');
+          assert.equal(after.stageReview.status, 'attached');
+          assert.equal(after.path.steps[0].resources[0].id, `monitor:${space}`);
+          assert.equal(after.path.steps[0].resources[0].readingStatus, 'unread');
+          assert.equal((await request('/api/learning-path', body, 200, 'POST')).path.steps[0].resources.length, 1);
+          const counts = (await sql([
+            { sql: 'SELECT COUNT(*) AS n FROM paper_reading_progress WHERE space_id = ?', values: [space] },
+            { sql: 'SELECT COUNT(*) AS n FROM research_track_papers WHERE space_id = ?', values: [space] },
+            { sql: 'SELECT COUNT(*) AS n FROM monitored_papers WHERE space_id = ?', values: [space] },
+          ])).map(item => item.results[0].n);
+          assert.deepEqual(counts, [0, 0, 1]);
+        }
+        assert.equal(stageModelCalls, 2);
+        // Simulate a change while the model is running, against the real API/D1.
+        for (const change of ['stage', 'quality']) {
+          await sql([{ sql: "UPDATE learning_path_steps SET resources_json = '[]', goal_en = ? WHERE id = 'review-info'", values: [`Snapshot ${change}`] }]);
+          beforeStageReply = async () => {
+            await sql([{ sql: change === 'stage'
+              ? "UPDATE learning_path_steps SET goal_en = 'Changed while reviewing' WHERE id = 'review-info'"
+              : "UPDATE paper_insights SET ever_recommended = 0 WHERE paper_id = 'review-info'" }]);
+          };
+          const stale = await request('/api/learning-path', { spaceId: 'review-info', pathId: 'review-info', action: 'advance-evidence' }, 200, 'POST');
+          assert.equal(stale.stageReview.status, 'stale');
+          assert.equal(stale.path.steps[0].resources.length, 0);
+          assert.equal((await sql([{ sql: "SELECT resources_json FROM learning_path_steps WHERE id = 'review-info'" }]))[0].results[0].resources_json, '[]');
+        }
+      } finally { cookie = originalCookie; stageModelEnabled = false; beforeStageReply = async () => {}; }
     });
     await t.test("failed model replans preserve prior paths and fallback retries bypass the evidence cache", async () => {
       await sql([
