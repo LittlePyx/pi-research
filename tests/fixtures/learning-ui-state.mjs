@@ -9,7 +9,7 @@ export function learningFixture(spaceId = spaces[0].id) {
   if (!space) return null;
   const titles = spaceId === spaces[0].id
     ? ['QA — A Mathematical Theory of Communication', 'QA — On Information and Sufficiency']
-    : ['QA — Isoperimetric inequalities and convex bodies', 'QA — Stochastic localization and the KLS conjecture'];
+    : [String.raw`QA — The KLS constant is $O(\log^{1/4} n)$`, 'QA — Stochastic localization and the KLS conjecture'];
   const papers = titles.map((title, index) => ({
     id: `${spaceId}-paper-${index}`, title, doi: null, authors: 'UI fixture — not a live evaluation',
     venue: 'Isolated browser acceptance', url: 'https://example.org/fixture', publishedAt: '2000-01-01',

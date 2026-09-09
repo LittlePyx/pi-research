@@ -1,6 +1,7 @@
 "use client";
 
 import { learningResourceHref, learningResourcePaperId, type LearningResource } from "../../lib/learning-path";
+import { MathText } from "./math-text";
 
 type Locale = "zh" | "en";
 
@@ -17,7 +18,7 @@ export function LearningResourceList({ resources, locale, openingId, onOpen, sig
     {resources.map((resource) => {
       const href = learningResourceHref(resource);
       const canOpen = Boolean(learningResourcePaperId(resource));
-      const content = <span><strong>{resource.title}</strong><small>{[resource.authors, resource.venue, resource.publishedAt?.slice(0, 4)].filter(Boolean).join(" · ")}</small><em className="v2-learning-resource-signals">{signals(resource, locale).map((signal) => <i key={signal}>{signal}</i>)}</em></span>;
+      const content = <span><strong><MathText>{resource.title}</MathText></strong><small>{[resource.authors, resource.venue, resource.publishedAt?.slice(0, 4)].filter(Boolean).join(" · ")}</small><em className="v2-learning-resource-signals">{signals(resource, locale).map((signal) => <i key={signal}>{signal}</i>)}</em></span>;
       return <article key={resource.id}>
         {canOpen ? <button type="button" disabled={openingId !== null} onClick={() => onOpen(resource)}>
           {content}<b>{openingId === resource.id ? "…" : locale === "zh" ? "阅读与笔记 →" : "Read & note →"}</b>

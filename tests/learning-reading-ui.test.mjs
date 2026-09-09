@@ -5,6 +5,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import * as learningHelpers from "../lib/learning-path.ts";
+import * as mathHelpers from "../lib/math-text.ts";
 import { shouldWakeLearningQualityQueue } from "../lib/monitor-quality-queue.mjs";
 
 const app = await readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8");
@@ -14,8 +15,19 @@ const compile = (source) => ts.transpileModule(source, { compilerOptions: {
 } }).outputText;
 const mod = { exports: {} };
 const require = createRequire(import.meta.url);
-new Function("require", "module", "exports", compile(component))((name) => name.endsWith("lib/learning-path") ? learningHelpers : require(name), mod, mod.exports);
+const mathModule = { exports: {} };
+new Function("require", "module", "exports", compile(await readFile(new URL("../app/components/math-text.tsx", import.meta.url), "utf8")))
+  ((name) => name.endsWith("lib/math-text") ? mathHelpers : require(name), mathModule, mathModule.exports);
+new Function("require", "module", "exports", compile(component))((name) => name.endsWith("lib/learning-path") ? learningHelpers : name === './math-text' ? mathModule.exports : require(name), mod, mod.exports);
 const { LearningResourceList } = mod.exports;
+
+test("formula component escapes ordinary markup and renders mathematical semantics", () => {
+  const html = renderToStaticMarkup(mathModule.exports.MathText({ children: '<img src=x onerror=alert(1)> $x^2$' }));
+  assert.match(html, /&lt;img/);
+  assert.doesNotMatch(html, /<img\b/);
+  assert.match(html, /<math/);
+  assert.match(html, /<msup>/);
+});
 
 function render(locale, openingId = null) {
   const events = [];

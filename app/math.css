@@ -1,0 +1,5 @@
+/* Math stays in the surrounding typography; wide formulae scroll locally. */
+.pi-math { display: inline-flex; align-items: baseline; max-width: 100%; vertical-align: baseline; overflow-x: auto; overflow-y: hidden; }
+.pi-math .katex { font-size: 1em; color: inherit; }
+.pi-math-display { display: block; margin-block: .65em; }
+.pi-math-display .katex-display { margin: 0; text-align: left; }

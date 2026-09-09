@@ -359,12 +359,14 @@ test("learning → reading → stage → route runs through the built Worker and
               abstract_text: `We derive ${topic} bounds under explicitly stated source assumptions. This is synthetic evidence for isolated API testing, not a real paper or recommendation.` }),
           ]);
           assert.equal((await request(`/api/learning-path?spaceId=${space}`)).path.steps[0].resources.length, 0);
-          const body = { spaceId: space, pathId: space, action: 'advance-evidence' };
-          const after = await request('/api/learning-path', body, 200, 'POST');
+          const body = { spaceId: space, pathId: space, action: 'review-stage' };
+          const reviewed = await request('/api/learning-path', body, 200, 'POST');
+          const after = { ...await request(`/api/learning-path?spaceId=${space}`), stageReview: reviewed.stageReview };
           assert.equal(after.stageReview.status, 'attached');
           assert.equal(after.path.steps[0].resources[0].id, `monitor:${space}`);
           assert.equal(after.path.steps[0].resources[0].readingStatus, 'unread');
-          assert.equal((await request('/api/learning-path', body, 200, 'POST')).path.steps[0].resources.length, 1);
+          assert.equal((await request('/api/learning-path', body, 200, 'POST')).stageReview.status, 'empty');
+          assert.equal((await request(`/api/learning-path?spaceId=${space}`)).path.steps[0].resources.length, 1);
           const counts = (await sql([
             { sql: 'SELECT COUNT(*) AS n FROM paper_reading_progress WHERE space_id = ?', values: [space] },
             { sql: 'SELECT COUNT(*) AS n FROM research_track_papers WHERE space_id = ?', values: [space] },

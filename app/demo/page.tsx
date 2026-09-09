@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages */
 import type { Metadata } from "next";
 import Image from "next/image";
+import { MathText } from "../components/math-text";
 import { DEMO_LEARNING_STEPS, DEMO_PAPERS, DEMO_TODAY_IDS, type DemoPaperRole } from "../../lib/demo-research";
 import styles from "./demo.module.css";
 
@@ -22,7 +23,7 @@ const informationPapers = DEMO_PAPERS.filter((paper) => paper.route === "informa
 function PaperTitle({ paper, compact = false }: { paper: (typeof DEMO_PAPERS)[number]; compact?: boolean }) {
   const content = <>
     <span className={styles.paperMeta}>{paper.year} · {paper.venue}</span>
-    <strong>{paper.title}</strong>
+    <strong><MathText>{paper.title}</MathText></strong>
     {!compact && <small>{paper.authors}</small>}
   </>;
   return paper.href

@@ -14,7 +14,7 @@ const server = await createServer({
   resolve: { alias: { 'next/image': fileURLToPath(new URL('../node_modules/vinext/dist/shims/image.js', import.meta.url)) } },
   plugins: [{ name: 'isolated-learning-fixture', enforce: 'pre',
     resolveId(id) { if (id === entry) return id; },
-    load(id) { if (id === entry) return `import React from 'react'; import {createRoot} from 'react-dom/client'; import App from '/app/research-app.tsx'; import '/app/globals.css'; createRoot(document.getElementById('root')).render(<App user={{userId:'fixture',displayName:'QA',email:'',fullName:null}} />);`; },
+    load(id) { if (id === entry) return `import React from 'react'; import {createRoot} from 'react-dom/client'; import App from '/app/research-app.tsx'; import '/app/globals.css'; import 'katex/dist/katex.min.css'; import '/app/math.css'; import '/app/interface-theme.css'; createRoot(document.getElementById('root')).render(<App user={{userId:'fixture',displayName:'QA',email:'',fullName:null}} />);`; },
     configureServer(vite) {
       vite.middlewares.use(async (req, res, next) => {
         const url = new URL(req.url, 'http://127.0.0.1:8112');

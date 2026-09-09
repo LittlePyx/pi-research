@@ -1482,6 +1482,16 @@ export const learningPaths = sqliteTable(
   ],
 );
 
+export const learningStageDispatches = sqliteTable("learning_stage_dispatches", {
+  pathId: text("path_id").primaryKey().references(() => learningPaths.id),
+  spaceId: text("space_id").notNull().references(() => researchSpaces.id),
+  nextAt: integer("next_at").notNull().default(0),
+  leaseUntil: integer("lease_until").notNull().default(0),
+  lockToken: text("lock_token"),
+  status: text("status").notNull().default("pending"),
+  updatedAt: text("updated_at").notNull().default(""),
+}, table => [index("idx_learning_stage_dispatch_due").on(table.nextAt, table.leaseUntil)]);
+
 export const learningStageReviews = sqliteTable("learning_stage_reviews", {
   id: text("id").primaryKey(),
   spaceId: text("space_id").notNull().references(() => researchSpaces.id),

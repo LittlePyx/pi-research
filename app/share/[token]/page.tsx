@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { MathText } from "../../components/math-text";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getShareSnapshot, type SharePaper } from "../../../db/share-snapshots";
@@ -64,7 +65,7 @@ export default async function SharePage({ params }: SharePageProps) {
 
         <section className="share-intro">
           <p>{payload.kind === "daily" ? (locale === "zh" ? "今日推荐快照" : "TODAY'S RESEARCH PICKS") : (locale === "zh" ? "单篇论文快照" : "PAPER SNAPSHOT")}</p>
-          <h1>{payload.kind === "daily" ? snapshot.title : payload.papers[0].title}</h1>
+          <h1><MathText>{payload.kind === "daily" ? snapshot.title : payload.papers[0].title}</MathText></h1>
           <div><span>{payload.spaceName}</span><i /> <span>{formatDate(payload.createdAt, locale)}</span><i /> <span>{payload.papers.length} {locale === "zh" ? "篇推荐" : payload.papers.length === 1 ? "recommendation" : "recommendations"}</span></div>
           <small>{locale === "zh" ? "内容已在创建时冻结；论文链接仍可直接打开。" : "Content was frozen when shared; original paper links remain live."}</small>
         </section>
@@ -75,7 +76,7 @@ export default async function SharePage({ params }: SharePageProps) {
               <div className="share-paper-number">{String(index + 1).padStart(2, "0")}</div>
               <div className="share-paper-body">
                 <div className="share-badges"><span>{horizonLabel(paper.horizon, locale)}</span>{paper.priorityVenue && <span className="priority">◆ {locale === "zh" ? "重点来源" : "Priority venue"}</span>}</div>
-                <h2>{paper.title}</h2>
+                <h2><MathText>{paper.title}</MathText></h2>
                 <p className="share-meta">{[paper.authors, paper.venue, formatDate(paper.publishedAt, locale)].filter(Boolean).join(" · ")}</p>
                 <section><h3>{locale === "zh" ? "论文介绍" : "Paper introduction"}</h3><p>{locale === "zh" ? paper.summaryZh : paper.summaryEn}</p></section>
                 <section className="share-why"><h3>{locale === "zh" ? "为什么适合读" : "Why it is worth reading"}</h3><p>{locale === "zh" ? paper.whyReadZh : paper.whyReadEn}</p></section>

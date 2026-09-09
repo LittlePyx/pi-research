@@ -901,10 +901,11 @@ export async function POST(request: Request) {
   const targetTrackId = cleanText(body.trackId, 100) || null;
   const owned = await ownedSpace(request, spaceId);
   if ("error" in owned) return owned.error;
-  if (body.action === "advance-evidence") {
+  if (body.action === "advance-evidence" || body.action === "review-stage") {
     const path = await readPath(owned.database, spaceId);
     if (!path || path.id !== body.pathId) return Response.json({ error: "Learning path changed" }, { status: 409 });
     const stageReview = await reviewCurrentLearningStage(owned.database, owned.space, request);
+    if (body.action === "review-stage") return Response.json({ stageReview });
     if (stageReview.status === "attached") return Response.json({ ...await stateFor(owned.database, owned.space), stageReview });
     const discoveryAdvance = await advanceLearningDiscovery({
       database: owned.database, spaceId, path, unboundedRetries: unboundedDevelopmentRetries(),

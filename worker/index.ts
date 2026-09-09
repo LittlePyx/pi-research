@@ -26,6 +26,7 @@ import { scheduledResearchRouteRetrySql } from "../lib/research-map-reliability"
 import { SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL } from "../lib/research-map-intelligence";
 import { SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL } from "../lib/research-route-evolution";
 import { developmentUnboundedEnabled } from "../lib/development-policy.mjs";
+import { runLearningStageScheduler } from "../lib/learning-stage-scheduler";
 import {
   claimResearchGapDiscovery,
   completeResearchGapDiscovery,
@@ -587,6 +588,18 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
   let routeSentinel: Awaited<ReturnType<typeof runScheduledResearchRouteSentinel>> | null = null;
   let operationalSentinel: Awaited<ReturnType<typeof runScheduledMonitorOperationalSentinel>> | null = null;
   let tickError = "";
+  // Independent of the browser and of slow discovery sources. Reuse the API's
+  // owned-space checks and existing per-input model lease; never copy credentials.
+  const learningStageWork = trigger !== "visit_backstop" && env.DEEPSEEK_API_KEY
+    ? runLearningStageScheduler({ database: env.DB, dispatch: async item => {
+      const response = await handler.fetch(new Request("https://pi-research.internal/api/learning-path", {
+        method: "POST", headers: { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${item.workspaceId}` },
+        body: JSON.stringify({ spaceId: item.spaceId, pathId: item.pathId, action: "review-stage" }),
+      }), env, ctx);
+      const body = await response.json().catch(() => ({})) as { stageReview?: { status?: string } };
+      return { ok: response.ok, status: body.stageReview?.status };
+    } }).catch(() => ({ attempted: false, status: "unavailable" }))
+    : Promise.resolve({ attempted: false, status: "idle" });
 
   try {
     recoveredJobCount = await recoverStaleMonitorJobs(env);
@@ -749,6 +762,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     tickError = error instanceof Error ? error.message.slice(0, 300) : "Scheduled monitor sweep failed";
     failedCount += 1;
   } finally {
+    await learningStageWork;
     await env.DB.prepare(
       `UPDATE monitor_scheduler_ticks SET completed_at = ?, due_space_count = ?, started_count = ?, advanced_count = ?,
        completed_count = ?, paused_count = ?, failed_count = ?, recovered_job_count = ?, error = ?,
