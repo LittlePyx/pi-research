@@ -45,6 +45,14 @@
 
 ### 2026-09-08 实测后改序（本节优先于下方历史排序）
 
+#### 阶段2生产验收包：五路径轮转与双领域阶段结果（2026-09-09 15:16 UTC起）
+
+- 只读承接 0854f44/v206，不打开产品页面、不人工触发或重扫。五条 learning_stage_dispatches 均已从最初 pending 获得自然执行，最近更新时间为14:30–15:13 UTC，租约均释放，当前均为empty。empty是本次无新增附件，不代表所有历史续评均无结果；必须结合持久化 review 和步骤资源核对。独立轮转“原五路径都能获得名额”子项已通过，不再重复等首轮领取。
+- 数学验收空间0c91daae-3a8c-4c76-89e0-dda1cb521ea1的13:53:50 review已完成。步骤66352ace-9d0d-4f37-8286-03322c1d2a71（随机泛函等周不等式）实际保存论文 On stochastic forms of functional isoperimetric inequalities，DOI 10.1007/s13163-026-00575-7，monitor:feafc02f-537b-4f71-9aeb-2a8c9402b859，来源daily-scan、已有质量分80。模型判为primary并附原摘要引文；逐字段比对持久化review与resources的canonicalId、stageKey和quote一致，readingStatus仍unread、completed_at仍null。路径active不等于已读或完成。这是既有质量通过材料的阶段归属落地，不是新发现/新推荐，不将它冒充KLS原始经典。
+- 信息论验收空间60bfce13-8286-4672-9d06-96f8f932d7ef在13:34:03完成两篇阶段判断：doi:10.1109/tit.2025.3548961及title:25939faeec3b414a46e343c8d19eb3f6f8d22c00b90fa0c7eed2807cf2191fd5均为unsuitable。这里是阶段不匹配，不是共享质量拒绝。熵功率/高斯极值基础步骤2b830bbf-3240-4f07-8f3d-0504296d4489仍resources=[]、pending、未完成，路径waiting_evidence。双领域整体材料交付未通过，不能用数学单例关闭。
+- 主数学空间01fbe995-9f58-4039-906e-da25514993c7的原KLS基础仍为空。任务42abba85在13:44:04再次以45/59筛选点超时；monitor_runs最新14:54:03又为超时、active_job_id=null，下次15:54:03 UTC。不能把这次运行层最新失败擅自归给42abba85，后继任务ID尚未读取。既有超时重复，不另发失败通知；没有修改超时、额度、退避或扩大候选量。
+- 验收边界：生产证据支持五路径公平消费、一个有依据的数学附件、信息论诚实保留缺口。未重新核对本轮今日推荐漏斗或浏览器打开返回，也未审计完整论文库历史；本次无代码变更、无新测试或部署，不重报558项为新运行。下一P1仍为原数学剩余筛选批次与超时根因、信息论基础真实材料；随后补生产阅读返回和今日投影，不以继续增加调度器代替交付。保留docs/及所有用户记录。
+
 #### 阶段2诊断包：固定筛选断点与失败保留（2026-09-09，自动接续）
 
 - 承接 b29ff83/v206，无业务变更或再次部署。只读按任务主键定位 b5d3c070-24ab-44f7-9927-201c88ca0ccc 与当前 42abba85-00b1-4fde-92aa-fa3e1a710bd7：前者 12:33:35 开始、12:35:55 超时，failure_source 为“已快速筛选 45 / 59”，last_success_stage=enriching_screening_abstracts；当前任务 attempt=3、retry_count=2、resume_of_job_id 精确指向前者，13:04:07 仍保留 45/59、360 候选、screening。45 个筛选计数未清零，不代表逐条历史已全部独立核对。D1 工具截断 work_queue_json，因此不能声称读取到最后 14 篇的完整身份与摘要。
