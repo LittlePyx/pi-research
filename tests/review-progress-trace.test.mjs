@@ -57,3 +57,17 @@ test('saved review diagnostics distinguish content correction from transport ret
   assert.doesNotMatch(JSON.stringify(entries), /fixture-secret|raw upstream/);
   assert.doesNotThrow(() => traceReviewEvent({ stage: 'deep_reviewing' }, () => { throw new Error('logger failed'); }));
 });
+
+test('final correction diagnostics identify uncovered fields without exporting claims', () => {
+  let entry;
+  traceReviewOutcome({ candidate: { title: 'QA', abstractText: 'Evidence' }, review: {
+    canonicalId: 'doi:known', screeningReason: '', verificationReport: { initial: { verdict: 'revise', coverageScore: 95 },
+      revised: { verdict: 'revise', coverageScore: 82, supportedFields: ['summary'], unsupportedFields: ['method'],
+        claimChecks: [{ field: 'summary', grounded: true, claimExcerpt: 'private raw claim' }], overstatements: [], contradictionRisks: [] } },
+  } }, value => { entry = value; });
+  assert.equal(entry.finalAuditCoverage, 82);
+  assert.deepEqual(entry.uncoveredCoreFields, ['problem', 'method', 'contribution']);
+  assert.deepEqual(entry.unsupportedCoreFields, ['method']);
+  assert.equal(entry.finalAuditIssueCount, 1);
+  assert.doesNotMatch(JSON.stringify(entry), /private raw claim/);
+});

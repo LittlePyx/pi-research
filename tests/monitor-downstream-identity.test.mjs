@@ -150,6 +150,24 @@ test('a sparse bilingual correction preserves the complete draft and cannot drop
   assert.equal((await verify([{ canonicalId: id, corrected: changed, verification: unsupported }], true))[0].recommended, false);
 });
 
+test('a token-truncated audit never publishes even if its JSON happens to parse', async () => {
+  let calls = 0;
+  const run = load('verifyRecommendationBatch', {
+    recommendationVerificationEvidence: async () => ({ source: 'abstract', units: [{ id: 'abstract-1', text: sentence }] }),
+    fetch: async (_url, options) => {
+      calls++;
+      const request = JSON.parse(options.body);
+      assert.ok(request.max_tokens > 1700 && request.max_tokens <= 4200);
+      return { ok: true, json: async () => ({ choices: [{ finish_reason: 'length',
+        message: { content: JSON.stringify({ verifications: [{ canonicalId: id, ...verdict }] }) } }], usage: {} }) };
+    },
+  });
+  await assert.rejects(run({ database: {}, spaceId: 'fixture', usageDate: '2026-09-10', workspaceScope: 'fixture',
+    spaceScope: 'fixture', apiKey: 'fixture-only', candidates: [{ canonicalId: id, title: 'QA' }], reviews: [review] }), /JSON truncated/);
+  assert.equal(calls, 1);
+  assert.equal(review.verificationStatus, 'pending');
+});
+
 test('missing, encoded, stripped and duplicate audit identities retry without declaring quality rejection', async () => {
   for (const correction of [false, true]) {
     const entry = { canonicalId: id, ...verdict, corrected: review, verification: verdict };

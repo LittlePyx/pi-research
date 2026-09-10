@@ -2764,6 +2764,7 @@ async function verifyRecommendationBatch(input: {
             ? "Every corrected paper-fact claim must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation. The verification object is the final evidence decision: cover the core fields summary, problem, method, and contribution when populated, and cite a supplied evidenceId for every supported or qualified core claim. Personalized fit and reading guidance remain research-context judgments."
             : "claimChecks must cover the core paper-fact fields summary, problem, method, and contribution when populated. Personalized whyRead, readingFocus, researchProblemImpact, and researchDecision are research-context judgments, not abstract claims. Every supported or qualified core check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
           "Treat title, authors, venue, date, and citation count only as metadata. Evidence units support only what they state or directly entail. Route context and user fit do not prove paper findings.",
+          "Write audit reasons and claim checks in concise English only; the corrected draft fields remain bilingual. Budget at most 1000 output tokens per paper for the verification object. Use short claim excerpts (at most 25 words) and reasons (at most 15 words); summarize related issues without omitting any unsupported core claim. Do not repeat the draft or evidence text in the audit. Cover all four core fields with evidence IDs even when only a non-core field was corrected.",
           "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it.",
           correctionMode ? "Assess the complete merged draft (original fields plus your changes), not only the changed fields. Keep each change concise, preserve every required bilingual field and at least two research questions per language, and never erase a required field. Preserve empty researchProblemImpact and researchDecision fields as empty; never invent user-specific context. If the corrected draft cannot pass, return insufficient; there will be no further rewrite loop." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
           "Drafts and evidence: " + JSON.stringify(auditable.map((review) => {
@@ -2786,7 +2787,7 @@ async function verifyRecommendationBatch(input: {
       thinking: { type: "disabled" },
       reasoning_effort: "low",
       response_format: { type: "json_object" },
-      max_tokens: correctionMode ? Math.min(4200, 1400 + auditable.length * 1500) : Math.min(2600, 850 + auditable.length * 850),
+      max_tokens: correctionMode ? Math.min(4200, 1400 + auditable.length * 1500) : Math.min(4200, 1400 + auditable.length * 1000),
       stream: false,
     }),
     signal: AbortSignal.timeout(correctionMode ? VERIFICATION_CORRECTION_TIMEOUT_MS : VERIFICATION_TIMEOUT_MS),
@@ -2806,6 +2807,7 @@ async function verifyRecommendationBatch(input: {
     scanJobId: input.scanJobId, canonicalIds: auditable.map((review) => review.canonicalId), correctionMode,
     finishReason: data.choices?.[0]?.finish_reason, outputTokens: totalOutputTokens, contentCharacters: content.length,
   });
+  if (data.choices?.[0]?.finish_reason === "length") throw new Error("Recommendation verification JSON truncated at output limit");
   const parsed = parseJsonObject(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { verifications?: unknown[]; corrections?: unknown[] };
   const denominator = Math.max(1, auditable.length);
   if (correctionMode) {
