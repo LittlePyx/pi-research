@@ -9,6 +9,8 @@ import { LearningResourceList } from "./components/learning-resource-list";
 import { LearningStageNavigation } from "./components/learning-stage-navigation";
 import { LearningStageGuidance } from "./components/learning-stage-guidance";
 import { LearningNextTask } from "./components/learning-next-task";
+import { ResearchWorkbook } from "./components/research-workbook";
+import type { WorkbookSource } from "../lib/research-workbook";
 import { learningBrowseStep, canChangeLearningStep } from "../lib/learning-browse";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import { emptyResearchMapState, researchLeadActionableGap, researchRouteLearningSignal, researchRouteOperationalStatus, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchLeadGapOrigin, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
@@ -25,7 +27,7 @@ import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, sc
 
 type Locale = "zh" | "en";
 type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid" | "balance" | "rate_limited" | "unavailable";
-type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail";
+type View = "today" | "threads" | "thread-detail" | "learn" | "library" | "memory" | "paper-detail" | "workbook";
 type LibraryFilter = "inbox" | "accepted" | "all" | "dismissed";
 type InboxFilter = "all" | "unseen" | "seen" | "snoozed";
 type LibraryStageFilter = "all" | "evaluated";
@@ -3167,6 +3169,10 @@ export default function ResearchApp({ user }: { user: User }) {
   const [directionPinnedRelationId, setDirectionPinnedRelationId] = useState<string | null>(null);
   const [researchMapMode, setResearchMapMode] = useState<ResearchMapMode>("directions");
   const [researchRouteTab, setResearchRouteTab] = useState<ResearchRouteTab>("problem");
+  const [workbookTrackId, setWorkbookTrackId] = useState<string | null>(null);
+  const [workbookReturnView, setWorkbookReturnView] = useState<View>("threads");
+  const [workbookPaperFocus, setWorkbookPaperFocus] = useState("");
+  const workbookScrollRef = useRef(0);
   const [paperNetworkMode, setPaperNetworkMode] = useState<PaperNetworkMode>("similarity");
   const [paperNetworkScope, setPaperNetworkScope] = useState<PaperNetworkScope>("all");
   const [paperDiscoveryTab, setPaperDiscoveryTab] = useState<PaperDiscoveryTab>("similar");
@@ -3242,7 +3248,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [librarySearch, setLibrarySearch] = useState("");
   const [librarySort, setLibrarySort] = useState<LibrarySort>("priority");
   const [libraryVisibleCount, setLibraryVisibleCount] = useState(60);
-  const [paperReturnView, setPaperReturnView] = useState<"today" | "library" | "learn">("today");
+  const [paperReturnView, setPaperReturnView] = useState<"today" | "library" | "learn" | "workbook">("today");
   const [paperNoteDraft, setPaperNoteDraft] = useState("");
   const [readingMemoryAnalyzing, setReadingMemoryAnalyzing] = useState(false);
   const [readingSaving, setReadingSaving] = useState(false);
@@ -3812,7 +3818,10 @@ export default function ResearchApp({ user }: { user: User }) {
   useEffect(() => {
     const mainViews = new Set<View>(["today", "threads", "learn", "library", "memory"]);
     const restoreView = () => {
-      const candidate = window.location.hash.slice(1) as View;
+      const [candidate, target] = window.location.hash.slice(1).split("/") as [View, string | undefined];
+      if (candidate === "workbook" && target && /^[a-zA-Z0-9_-]{1,120}$/.test(target)) {
+        setWorkbookTrackId(target); setView("workbook"); return;
+      }
       if (mainViews.has(candidate)) setView(candidate);
     };
     restoreView();
@@ -4370,12 +4379,13 @@ export default function ResearchApp({ user }: { user: User }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const navigate = (next: View) => {
-    const hash = next === "paper-detail" ? "paper" : next === "thread-detail" ? "thread" : next;
+  const navigate = (next: View, workbookTarget = workbookTrackId) => {
+    const hash = next === "workbook" && workbookTarget ? `workbook/${workbookTarget}` : next === "paper-detail" ? "paper" : next === "thread-detail" ? "thread" : next;
     if (window.location.hash !== "#" + hash) window.history.pushState({ piView: next }, "", "#" + hash);
     setView(next);
     setMobileNav(false);
     window.scrollTo({ top: 0, behavior: "auto" });
+    if (next === "workbook" && view === "paper-detail") requestAnimationFrame(() => window.scrollTo({ top: workbookScrollRef.current, behavior: "auto" }));
   };
 
   const switchSpace = (space: Space) => {
@@ -4432,6 +4442,8 @@ export default function ResearchApp({ user }: { user: User }) {
     setAnswerModel(null);
     setQuestion("");
     setSelectedMonitorPaper(null);
+    setWorkbookTrackId(null);
+    setWorkbookPaperFocus("");
   };
 
   const submitSpace = async (event: FormEvent) => {
@@ -4808,7 +4820,7 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
-  const openMonitorPaper = (paper: MonitorPaper, returnView: "today" | "library" | "learn" = view === "learn" ? "learn" : view === "library" ? "library" : "today") => {
+  const openMonitorPaper = (paper: MonitorPaper, returnView: "today" | "library" | "learn" | "workbook" = view === "learn" ? "learn" : view === "library" ? "library" : "today") => {
     const openedPaper = { ...paper, openedAt: new Date().toISOString(), userState: paper.userState === "unseen" ? "seen" as const : paper.userState };
     setPaperReturnView(returnView);
     setSelectedMonitorPaper(openedPaper);
@@ -4857,6 +4869,32 @@ export default function ResearchApp({ user }: { user: User }) {
       }
     } finally {
       if (requestId === learningPaperRequestRef.current && paperNetworkSpaceRef.current === spaceId) setOpeningLearningResourceId(null);
+    }
+  };
+
+  const openWorkbook = (trackId: string) => {
+    setWorkbookTrackId(trackId);
+    setWorkbookReturnView(view);
+    navigate("workbook", trackId);
+  };
+
+  const openWorkbookPaper = async (source: WorkbookSource, focus: string) => {
+    const spaceId = activeSpace.id;
+    const requestId = ++learningPaperRequestRef.current;
+    try {
+      let paper = historyPapers.find(p => p.id === source.id);
+      if (!paper) {
+        const response = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}&paperId=${encodeURIComponent(source.id)}`);
+        if (!response.ok) throw new Error("paper unavailable");
+        const data = await response.json() as { monitor?: MonitorState };
+        paper = data.monitor?.historyPapers?.find(p => p.id === source.id);
+      }
+      if (paperNetworkSpaceRef.current !== spaceId || learningPaperRequestRef.current !== requestId) return;
+      if (!paper) throw new Error("paper unavailable");
+      workbookScrollRef.current = window.scrollY;
+      setWorkbookPaperFocus(focus); openMonitorPaper(paper, "workbook");
+    } catch {
+      if (paperNetworkSpaceRef.current === spaceId && learningPaperRequestRef.current === requestId) setToast(locale === "zh" ? "论文暂时无法打开，请重试" : "Paper unavailable; retry");
     }
   };
 
@@ -5568,7 +5606,7 @@ export default function ResearchApp({ user }: { user: User }) {
     { id: "library", label: t.library, mark: "library" },
     { id: "memory", label: t.memory, mark: "notes" },
   ];
-  const activeNav = view === "paper-detail" ? paperReturnView : view === "thread-detail" ? "threads" : view;
+  const activeNav = view === "workbook" || (view === "paper-detail" && paperReturnView === "workbook") ? "threads" : view === "paper-detail" ? paperReturnView : view === "thread-detail" ? "threads" : view;
   const mapOutlineLabels = locale === "zh"
     ? ["读取研究空间与已确认记忆", "划分主攻、辅助与探索方向", "建立方向之间的主干关系", "保存方向骨架，即将展示"]
     : ["Reading the research space and confirmed memory", "Separating core, support, and exploratory directions", "Connecting the field backbone", "Saving the outline for immediate display"];
@@ -5941,6 +5979,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
                 </> : <section className="v2-paper-network-panel">
                   <header className="v2-paper-network-toolbar">
+                    {paperNetworkTrackId !== "all" && <button type="button" onClick={() => openWorkbook(paperNetworkTrackId)}>{locale === "zh" ? "比较条件与研究关系" : "Compare conditions and research relationships"} →</button>}
                     <div className="v2-paper-network-mode" role="group" aria-label={locale === "zh" ? "论文网络模式" : "Paper network mode"}>
                       <button type="button" aria-pressed={paperNetworkMode === "similarity"} className={paperNetworkMode === "similarity" ? "active" : ""} onClick={() => { setPaperNetworkMode("similarity"); setPaperNetworkScope("all"); }}><span>{locale === "zh" ? "相似论文" : "Similar papers"}</span><b>{researchMap.paperNetwork.similarityEdgeCount + rankedResearchNetworkCandidates.length}</b></button>
                       <button type="button" aria-pressed={paperNetworkMode === "citations"} className={paperNetworkMode === "citations" ? "active" : ""} onClick={() => { setPaperNetworkMode("citations"); setPaperNetworkScope("all"); }}><span>{locale === "zh" ? "知识引用流" : "Citation flow"}</span><b>{visibleCitationEdgeCount}</b></button>
@@ -6019,6 +6058,7 @@ export default function ResearchApp({ user }: { user: User }) {
               {researchRouteTab === "assessment" && <ResearchSynthesisWorkbench track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} error={researchSynthesisError} locale={locale} onRefresh={() => void refreshResearchSynthesis(selectedThread)} onScanGap={() => void scanResearchRouteGap(selectedThread)} onExplain={() => askAboutResearchRoute(selectedThread, "gap")} />}
 
               {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-evidence-panel" role="tabpanel">
+                <button type="button" onClick={() => openWorkbook(selectedThread.id)}>{locale === "zh" ? "比较条件、制定任务并留下研究产物" : "Compare conditions, plan a task and record an artifact"} →</button>
                 <header><div><p className="v2-kicker">{locale === "zh" ? "路线论文与证据状态" : "ROUTE PAPERS & EVIDENCE STATUS"}</p><h2>{locale === "zh" ? "从奠基、转折走到当前前沿" : "From foundations and turning points to the frontier"}</h2></div><div className="v2-route-stage-counts">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role) => <span className={role} key={role}><i />{researchRoleLabel(role, locale)}<b>{selectedThread.papers.filter((paper) => paper.role === role).length}</b></span>)}</div></header>
                 <div className="v2-route-evidence-chain">{(["foundation", "milestone", "frontier"] as ResearchTrackRole[]).map((role, roleIndex) => <section className={role} key={role}><header><span>{String(roleIndex + 1).padStart(2, "0")}</span><div><strong>{researchRoleLabel(role, locale)}</strong><small>{role === "foundation" ? (locale === "zh" ? "定义问题与基本工具" : "Defines the question and core tools") : role === "milestone" ? (locale === "zh" ? "改变路线走向的关键节点" : "Turning points that changed the route") : (locale === "zh" ? "当前活跃问题与方法" : "Current active questions and methods")}</small></div></header><div>{selectedThread.papers.filter((paper) => paper.role === role).map((paper) => <article key={paper.id}><header><span>{researchPaperYear(paper)}</span><small>{[paper.venue, `${paper.citationCount} ${t.citations}`].filter(Boolean).join(" · ")}</small></header><em className={`v2-route-provenance ${paper.provenance || "system_curated"}`}>{paper.provenance === "user_confirmed" ? (locale === "zh" ? "用户确认纳入" : "User confirmed in route") : (locale === "zh" ? "Pi 策展代表作" : "Pi-curated representative")}</em><h3><MathText>{paper.title}</MathText></h3><p>{locale === "zh" ? paper.rationaleZh : paper.rationaleEn}</p><footer><button type="button" onClick={() => askAboutRoutePaper(selectedThread, paper)}>{locale === "zh" ? "让 Pi 解释位置" : "Ask Pi about its place"}</button><a href={paper.url || (paper.doi ? "https://doi.org/" + paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedThread.id)}>{t.openOriginal} ↗</a>{paper.provenance !== "user_confirmed" && <button className="v2-route-node-deactivate" type="button" disabled={Boolean(mapAction)} onClick={() => void curateResearchTrackPaperNode(selectedThread, paper, "deactivated")}>{mapAction === `curate:${paper.id}` ? "…" : (locale === "zh" ? "跑题，停用节点" : "Off-topic · deactivate")}</button>}</footer></article>)}{!selectedThread.papers.some((paper) => paper.role === role) && <div className="v2-route-chain-empty"><span>＋</span><p>{locale === "zh" ? "这个阶段仍缺少有代表性的真实论文。" : "This stage still lacks a representative real paper."}</p><button type="button" onClick={() => { setResearchRouteTab("gaps"); }}>{locale === "zh" ? "去补证据" : "Fill the gap"} →</button></div>}</div></section>)}</div>
                 {(selectedThread.deactivatedPapers || []).length > 0 && <details className="v2-route-deactivated-nodes"><summary><span><small>{locale === "zh" ? "保留在审计历史中" : "RETAINED IN AUDIT HISTORY"}</small><strong>{locale === "zh" ? "已停用路线节点" : "Deactivated route nodes"}</strong></span><b>{selectedThread.deactivatedPapers?.length || 0}</b></summary><div>{(selectedThread.deactivatedPapers || []).map((paper) => <article key={paper.id}><header><span>{locale === "zh" ? "不参与路线供稿" : "Excluded from active route supply"}</span><small>{paper.curationUpdatedAt ? formatNotificationTime(paper.curationUpdatedAt, locale) : ""}</small></header><h3><MathText>{paper.title}</MathText></h3><p>{locale === "zh" ? paper.curationReasonZh : paper.curationReasonEn}</p><footer><span>{routePaperCurationSourceLabel(paper, locale)} · {(paper.curationEvidence || []).length} {locale === "zh" ? "条审计证据" : "audit signals"}</span><button type="button" disabled={Boolean(mapAction)} onClick={() => void curateResearchTrackPaperNode(selectedThread, paper, "active")}>{mapAction === `curate:${paper.id}` ? "…" : (locale === "zh" ? "恢复节点" : "Restore node")}</button></footer></article>)}</div></details>}
@@ -6047,6 +6087,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "learn" && (
           <main className="v2-page v2-learn-page">
+            {activeLearningState.path?.targetTrackId && <button type="button" className="v2-back" onClick={() => openWorkbook(activeLearningState.path!.targetTrackId!)}>{locale === "zh" ? "用当前路线材料完成一次比较练习" : "Complete a comparison exercise with this route’s papers"} →</button>}
             <section className="v2-learn-head"><h1>{t.learnTitle}</h1><div className="v2-learning-target-form"><input value={learningTarget} onChange={(event) => setLearningTarget(event.target.value)} placeholder={activeLearningState.suggestedTarget || (locale === "zh" ? "输入研究方向" : "Enter a research direction")} aria-label={t.learnTitle} /><button type="button" onClick={() => void generateLearningPath()} disabled={Boolean(learningAction) || activeLearningLoading || !learningTarget.trim()}>{learningAction === "generate" ? (locale === "zh" ? "正在生成…" : "Building…") : activeLearningState.path ? (locale === "zh" ? "按新证据更新" : "Update from evidence") : t.buildPath} →</button></div>{learningTargetTrackId && <div className="v2-learning-target-scope"><span>{locale === "zh" ? "当前方向" : "Current direction"}</span><strong>{researchMap.tracks.find((track) => track.id === learningTargetTrackId)?.[locale === "zh" ? "titleZh" : "titleEn"] || learningTarget}</strong><button type="button" onClick={() => { setLearningTargetTrackId(null); setLearningScopeDirty(true); learningIntentRef.current = null; }}>{locale === "zh" ? "使用全空间" : "Use full workspace"}</button></div>}{activeLearningReady && !activeLearningLoading && (!activeLearningError || Boolean(activeLearningState.path)) && <small>{activeLearningState.availablePaperCount} {locale === "zh" ? "篇可用论文" : "available papers"}{activeLearningState.waitingQualityCount > 0 ? ` · ${activeLearningState.waitingQualityCount} ${locale === "zh" ? "篇评估中" : "in review"}` : ""}</small>}</section>
             {activeLearningLoading ? <section className="v2-learning-loading" role="status"><InterfaceIcon name="loading" className="pi-state-mark" /><div><strong>{locale === "zh" ? "正在载入学习路径" : "Loading the learning path"}</strong><i><b /></i></div></section> : activeLearningError && !activeLearningState.path ? <div className="v2-learning-empty error" role="alert"><InterfaceIcon name="warning" className="pi-state-mark" /><h2>{locale === "zh" ? "学习路径载入失败" : "Learning path failed to load"}</h2><p>{activeLearningError}</p><button type="button" onClick={() => setLearningReloadNonce((current) => current + 1)}>{locale === "zh" ? "重新载入" : "Retry"} →</button></div> : activeLearningState.path ? (
               <section className="v2-learning-path">
@@ -6122,18 +6163,21 @@ export default function ResearchApp({ user }: { user: User }) {
           </main>
         )}
 
+        {workbookTrackId && <div hidden={view !== "workbook"}><ResearchWorkbook key={`${activeSpace.id}:${workbookTrackId}`} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => navigate(workbookReturnView)} /></div>}
+
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
-            <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "learn" ? t.learn : paperReturnView === "library" ? t.library : t.paperBack}</button>
+            <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "workbook" ? (locale === "zh" ? "返回原比较项与学习任务" : "Return to comparison and learning task") : paperReturnView === "learn" ? t.learn : paperReturnView === "library" ? t.library : t.paperBack}</button>
+            {paperReturnView === "workbook" && <p className="pi-workbook-error"><strong>{locale === "zh" ? "当前核查：" : "Current check: "}</strong><MathText>{workbookPaperFocus}</MathText></p>}
             <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.qualityStage === "recommended" ? selectedMonitorPaper.recommendationTier || "browse" : selectedMonitorPaper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{selectedMonitorPaper.qualityStage === "recommended" ? recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale) : selectedMonitorPaper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(selectedMonitorPaper, locale) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</span>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>}<PaperDiscoverySourceBadge paper={selectedMonitorPaper} locale={locale} /><RecommendationVerificationBadge paper={selectedMonitorPaper} locale={locale} /></div><h1><MathText>{selectedMonitorPaper.title}</MathText></h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div className="v2-paper-primary-actions"><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>✓ {t.relevant}</button><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a><details className="v2-paper-more-actions"><summary>{locale === "zh" ? "更多" : "More"} ＋</summary><div><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button></div></details></div></section>
             <div className="v2-paper-detail-grid">
               <div>
                 <section className="v2-content-section v2-paper-fit-summary"><p className="v2-kicker warm">{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? t.whySuitable : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).kicker}</p><h2>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? ((locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn) || (locale === "zh" ? "仍在共享质量队列中核对，尚未形成正式推荐。" : "Still under review in the shared quality queue; this is not yet a formal recommendation.")) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).note}</h2><RouteImpactNote paper={selectedMonitorPaper} locale={locale} />{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && selectedMonitorPaper.researchProblemId && <details className="v2-paper-problem-impact"><summary><span>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active research problem"}</span><b>＋</b></summary><div><h3>{locale === "zh" ? selectedMonitorPaper.researchProblemImpactZh : selectedMonitorPaper.researchProblemImpactEn}</h3><p><small>{locale === "zh" ? "读完后应该决定" : "DECISION AFTER READING"}</small><strong>{locale === "zh" ? selectedMonitorPaper.researchDecisionZh : selectedMonitorPaper.researchDecisionEn}</strong></p></div></details>}<footer><span>{defaultSpaceName(activeSpace.name, locale)}</span>{selectedMonitorPaper.qualityStage === "recommended" && <strong>{t.qualityScore} {displayQualityScore(selectedMonitorPaper.qualityScore)}</strong>}</footer></section>
                 {Boolean(locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn) && <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><h2>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</h2></section>}
                 {isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <section className="v2-paper-analysis"><header><p className="v2-kicker">{locale === "zh" ? "深度阅读导航" : "DEEP READING GUIDE"}</p><h2>{locale === "zh" ? "先理解它解决了什么，再决定读到多深" : "Understand what it resolves before choosing how deeply to read"}</h2></header><div>
-                  <article><small>{locale === "zh" ? "研究问题" : "Research problem"}</small><p>{(locale === "zh" ? selectedMonitorPaper.problemZh : selectedMonitorPaper.problemEn) || (locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn)}</p></article>
-                  <article><small>{locale === "zh" ? "方法与证据" : "Method & evidence"}</small><p>{(locale === "zh" ? selectedMonitorPaper.methodZh : selectedMonitorPaper.methodEn) || (locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn)}</p></article>
-                  <article><small>{locale === "zh" ? "主要贡献" : "Main contribution"}</small><p>{(locale === "zh" ? selectedMonitorPaper.contributionZh : selectedMonitorPaper.contributionEn) || (locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn)}</p></article>
+                  <article><small>{locale === "zh" ? "研究问题" : "Research problem"}</small><p>{(locale === "zh" ? selectedMonitorPaper.problemZh : selectedMonitorPaper.problemEn) || (locale === "zh" ? "当前审核材料未提供这一项。" : "The reviewed material does not provide this field.")}</p></article>
+                  <article><small>{locale === "zh" ? "方法与证据" : "Method & evidence"}</small><p>{(locale === "zh" ? selectedMonitorPaper.methodZh : selectedMonitorPaper.methodEn) || (locale === "zh" ? "当前审核材料未提供这一项。" : "The reviewed material does not provide this field.")}</p></article>
+                  <article><small>{locale === "zh" ? "主要贡献" : "Main contribution"}</small><p>{(locale === "zh" ? selectedMonitorPaper.contributionZh : selectedMonitorPaper.contributionEn) || (locale === "zh" ? "当前审核材料未提供这一项。" : "The reviewed material does not provide this field.")}</p></article>
                   <article className="caution"><small>{locale === "zh" ? "限制与不确定性" : "Limits & uncertainty"}</small><p>{(locale === "zh" ? selectedMonitorPaper.limitationsZh : selectedMonitorPaper.limitationsEn) || (locale === "zh" ? "当前元数据不足以支持更具体的限制判断，建议核对原文。" : "Available metadata is insufficient for a more specific limitation assessment; verify against the paper.")}</p></article>
                   <article className="focus"><small>{locale === "zh" ? "阅读时重点看" : "What to focus on"}</small><p>{(locale === "zh" ? selectedMonitorPaper.readingFocusZh : selectedMonitorPaper.readingFocusEn) || (locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn)}</p></article>
                 </div>{Boolean((locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn)?.length) && <footer><small>{locale === "zh" ? "可以继续追问" : "Questions to pursue"}</small><ol>{(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn).map((question) => <li key={question}>{question}</li>)}</ol></footer>}</section>}

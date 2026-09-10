@@ -1537,3 +1537,38 @@ export const learningPathSteps = sqliteTable(
     index("idx_learning_path_steps_space_status").on(table.spaceId, table.status),
   ],
 );
+
+export const researchComparisonWorkbooks = sqliteTable("research_comparison_workbooks", {
+  id: text("id").primaryKey(),
+  spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+  trackId: text("track_id").notNull().references(() => researchTracks.id, { onDelete: "cascade" }),
+  question: text("question").notNull(),
+  sourceRevision: text("source_revision").notNull(),
+  sourceIdsJson: text("source_ids_json").notNull(),
+  policy: text("policy").notNull(),
+  draftJson: text("draft_json").notNull().default(""),
+  contentJson: text("content_json").notNull().default(""),
+  reviewJson: text("review_json").notNull().default(""),
+  status: text("status").notNull().default("draft"),
+  lockToken: text("lock_token"),
+  leaseUntil: integer("lease_until").notNull().default(0),
+  retryAt: integer("retry_at").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+  updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+}, table => [index("idx_research_workbooks_track").on(table.spaceId, table.trackId, table.createdAt)]);
+
+export const researchComparisonArtifacts = sqliteTable("research_comparison_artifacts", {
+  id: text("id").primaryKey(),
+  workbookId: text("workbook_id").notNull().references(() => researchComparisonWorkbooks.id, { onDelete: "cascade" }),
+  spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+  revision: integer("revision").notNull(),
+  valueJson: text("value_json").notNull(),
+  createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+}, table => [uniqueIndex("idx_research_artifact_revision").on(table.workbookId, table.revision)]);
+
+export const researchWorkbookBootstrapSql = [
+  "CREATE TABLE IF NOT EXISTS research_comparison_workbooks (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, question TEXT NOT NULL, source_revision TEXT NOT NULL, source_ids_json TEXT NOT NULL, policy TEXT NOT NULL, draft_json TEXT NOT NULL DEFAULT '', content_json TEXT NOT NULL DEFAULT '', review_json TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', lock_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS idx_research_workbooks_track ON research_comparison_workbooks(space_id, track_id, created_at)",
+  "CREATE TABLE IF NOT EXISTS research_comparison_artifacts (id TEXT PRIMARY KEY NOT NULL, workbook_id TEXT NOT NULL REFERENCES research_comparison_workbooks(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, revision INTEGER NOT NULL, value_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_artifact_revision ON research_comparison_artifacts(workbook_id, revision)",
+];

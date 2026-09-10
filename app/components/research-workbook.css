@@ -1,0 +1,49 @@
+.pi-workbook { max-width: 1400px; margin: 0 auto; padding: 20px clamp(18px, 4vw, 56px) 80px; color: var(--ink, #21352e); }
+.pi-workbook *, .pi-workbook *::before, .pi-workbook *::after { box-sizing: border-box; }
+.pi-workbook-heading h1 { font-size: clamp(23px, 2.4vw, 30px); line-height: 1.4; max-width: 1000px; margin: 10px 0; }
+.pi-workbook-heading { margin-top: 20px; }
+.pi-workbook-heading p { margin: 8px 0; }
+.pi-workbook ol { list-style: decimal; padding-left: 24px; }
+.pi-workbook li { padding-left: 4px; }
+.pi-workbook p, .pi-workbook li, .pi-workbook dd { line-height: 1.8; }
+.pi-workbook button { cursor: pointer; font: inherit; padding: 10px 14px; border: 1px solid #c9d4cd; background: #fafbf8; color: inherit; border-radius: 3px; text-align: left; }
+.pi-workbook button:disabled { cursor: default; opacity: .5; }
+.pi-workbook button:focus-visible, .pi-workbook input:focus-visible, .pi-workbook textarea:focus-visible { outline: 2px solid #32644d; outline-offset: 3px; }
+.pi-workbook button[aria-pressed="true"] { background: #e4eee6; border-color: #32644d; }
+.pi-workbook-error { padding: 12px; border-left: 3px solid #9b6541; background: #fcf3e7; }
+.pi-workbook-picker { border-block: 1px solid #d5ddd7; padding: 16px 0; }
+.pi-workbook-picker summary { cursor: pointer; font-weight: 600; }
+.pi-workbook-picker label { display: flex; gap: 12px; align-items: flex-start; margin: 12px 0; }
+.pi-workbook-picker input { margin-top: 5px; flex: 0 0 auto; }
+.pi-workbook small { display: block; font-size: 12px; line-height: 1.6; color: #627268; }
+.pi-workbook-tabs { display: flex; gap: 8px; margin: 28px 0; flex-wrap: wrap; }
+.pi-workbook-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 28px; align-items: start; }
+.pi-workbook-layout > * { min-width: 0; }
+.pi-workbook h2 { font-size: 23px; margin: 20px 0 12px; }
+.pi-workbook-table-scroll { max-width: 100%; overflow-x: auto; }
+.pi-workbook table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px; }
+.pi-workbook th, .pi-workbook td { border-bottom: 1px solid #d4ddd5; padding: 12px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.pi-workbook thead th { background: #edf1eb; }
+.pi-workbook td button { display: block; width: 100%; border-color: transparent; padding: 8px; background: transparent; }
+.pi-workbook-inspector { position: sticky; top: 20px; border-left: 1px solid #d4ddd5; padding-left: 22px; overflow-wrap: anywhere; }
+.pi-workbook blockquote { margin: 18px 0; padding: 14px; background: #edf1eb; font-size: 14px; line-height: 1.8; }
+.pi-workbook cite { display: block; margin-top: 10px; font-size: 12px; }
+.pi-workbook label { line-height: 1.7; }
+.pi-workbook textarea { display: block; width: 100%; min-height: 110px; margin: 8px 0 18px; border: 1px solid #becdc2; border-radius: 3px; padding: 12px; font: inherit; color: inherit; background: #fffefa; resize: vertical; }
+.pi-workbook-artifact { border-top: 1px solid #d4ddd5; margin-top: 32px; padding-top: 10px; }
+.pi-workbook-artifact small { margin-top: 8px; }
+.pi-workbook-evidence-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 18px; }
+.pi-workbook-evidence-links button { font-size: 12px; }
+.pi-workbook-lesson { border-block: 1px solid #d4ddd5; padding: 16px 0; margin: 28px 0; }
+.pi-workbook dt { font-weight: 600; margin-top: 14px; }
+.pi-workbook dd { margin: 4px 0 12px; }
+.pi-workbook-relation { display: grid; gap: 12px; margin: 20px 0; }
+.pi-workbook-relation > div { padding: 14px; border: 1px solid #ccd7ce; display: flex; gap: 12px; align-items: baseline; }
+.pi-workbook-relation > strong { border-left: 2px dashed #718776; margin-left: 22px; padding: 12px 18px; }
+@media (max-width: 850px) {
+  .pi-workbook-layout { grid-template-columns: minmax(0, 1fr); }
+  .pi-workbook-layout > div { display: contents; }
+  .pi-workbook-artifact { order: 3; }
+  .pi-workbook-inspector { order: 2; position: static; border-left: 0; border-top: 1px solid #d4ddd5; padding: 16px 0; scroll-margin-top: 76px; }
+  .pi-workbook table { min-width: 570px; }
+}
