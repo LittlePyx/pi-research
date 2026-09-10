@@ -27,7 +27,7 @@ const server = await createServer({
           <button onClick={()=>setLocale(locale==='zh'?'en':'zh')}>中文 / English</button>
           <button onClick={(event)=>{
             const sizes=Array.from(document.querySelectorAll('.v2-citation-ledger, .v2-citation-ledger *')).map(element=>[element,parseFloat(getComputedStyle(element).fontSize)*2]);
-            sizes.forEach(([element,size])=>{element.style.fontSize=size+'px';});
+            sizes.forEach(([element,size])=>{element.style.setProperty('font-size',size+'px','important');});
             event.currentTarget.disabled=true;
           }}>200% text (QA)</button>
           <output aria-label="Selected paper">{selected}</output>
