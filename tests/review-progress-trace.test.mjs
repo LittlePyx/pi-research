@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { traceReviewQueue, traceReviewOutcome, traceReviewEvent } from '../lib/review-progress-trace.mjs';
+import { traceReviewQueue, traceReviewOutcome, traceReviewEvent, traceVerificationResponse } from '../lib/review-progress-trace.mjs';
+
+test('verification response metadata distinguishes token truncation without recording response text', () => {
+  const entries = [];
+  traceVerificationResponse({ scanJobId: 'job', canonicalIds: ['doi:known'], correctionMode: true,
+    finishReason: 'length', outputTokens: 4200, contentCharacters: 9000, content: 'private raw response' }, entry => entries.push(entry));
+  assert.equal(entries[0].finishReason, 'length');
+  assert.equal(entries[0].phase, 'correction');
+  assert.equal(entries[0].outputTokens, 4200);
+  assert.doesNotMatch(JSON.stringify(entries), /private raw response/);
+  assert.doesNotThrow(() => traceVerificationResponse({ canonicalIds: [] }, () => { throw new Error('logger unavailable'); }));
+});
 
 test('review diagnostics separate completion, deferral, verification and actual publication without raw content', () => {
   const entries = [];

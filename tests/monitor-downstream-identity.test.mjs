@@ -19,7 +19,7 @@ function load(name, dependencies) {
   });
   const deps = { ...identity, ...evidence, ...draft, parseJsonObject: JSON.parse,
     MONITOR_MODEL: 'fixture', VERIFICATION_TIMEOUT_MS: 1000, VERIFICATION_CORRECTION_TIMEOUT_MS: 1000,
-    recordUsage: async () => {}, ...dependencies };
+    recordUsage: async () => {}, traceVerificationResponse: () => {}, ...dependencies };
   const code = ts.transpileModule(nodes.join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   return new Function(...Object.keys(deps), `${code}; return ${name};`)(...Object.values(deps));
 }
@@ -52,6 +52,71 @@ async function verify(records, correction = false) {
       spaceScope: 'fixture', apiKey: 'fixture-only', candidates: [{ canonicalId: id, title: 'QA bounded estimate' }], reviews: [inputReview] });
   } finally { assert.deepEqual(inputReview, before); }
 }
+
+// Execute the production checkpoint's try/catch, including persistence and queue
+// updates. A mocked transport result must not become a content rejection here.
+async function verificationStep(result, attempt) {
+  let checkpointTry;
+  function visit(node) {
+    if (ts.isTryStatement(node) && node.tryBlock.getText(ast).includes('const verified = await verifyRecommendationBatch(')) checkpointTry = node;
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.ok(checkpointTry);
+  const saved = [], events = [];
+  const work = { verificationFailureCount: 2, verificationAttempts: { [id]: attempt },
+    verificationIds: [id], verificationCompletedIds: [], verificationDeferredIds: [] };
+  const deps = { ...evidence, ...draft, work, database: {}, space: { id: 'space' }, job: { id: 'job' },
+    usageDate: '2026-09-10', workspaceScope: 'fixture', spaceScope: 'fixture', apiKey: 'fixture-only',
+    batchCandidates: [{ canonicalId: id }], batchDrafts: [review], batchIds: [id], verificationAttempts: new Map([[id, attempt]]),
+    VERIFICATION_ATTEMPT_LIMIT: 3, VERIFICATION_CONTENT_PASS_LIMIT: 2, VERIFICATION_CIRCUIT_FAILURE_LIMIT: 3, MONITOR_MODEL: 'fixture',
+    verifyRecommendationBatch: async () => { if (result instanceof Error) throw result; return [result]; },
+    persistReviewBatch: async (_db, _space, _job, _candidates, reviews) => { saved.push(...reviews); return reviews; },
+    persistRecommendationAuditBatch: async () => {}, recordReliabilityEvent: async (_db, event) => events.push(event),
+    isNonRetryableDeepSeekError: () => false, monitorErrorCode: () => 'timeout', normalizedMonitorError: () => 'Timeout',
+  };
+  const functions = helpers.map(key => ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === key).getText(ast));
+  const code = ts.transpileModule(`${functions.join('\n')}\nasync function run() { ${checkpointTry.getText(ast)} }`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  await new Function(...Object.keys(deps), `${code}; return run();`)(...Object.values(deps));
+  return { saved, events, work };
+}
+
+test('last transport slot preserves a successful audit and defers only its unperformed correction', async () => {
+  const pending = (await verify([{ canonicalId: id, ...verdict, verdict: 'revise', overstatements: ['Qualify the summary.'] }]))[0];
+  assert.equal(pending.verificationRetryable, true);
+  const before = structuredClone(pending);
+  const last = await verificationStep(pending, 3);
+  assert.deepEqual(last.saved, [before]);
+  assert.deepEqual(last.work.verificationDeferredIds, [id]);
+  assert.deepEqual(last.work.verificationCompletedIds, []);
+  assert.equal(last.events[0].kind, 'verification_deferred');
+  assert.equal(last.events[0].metadata.correctionRequested, true);
+  assert.equal(last.events[0].metadata.retryScheduled, false);
+  const earlier = await verificationStep(pending, 2);
+  assert.deepEqual(earlier.work.verificationDeferredIds, []);
+  assert.equal(earlier.events[0].kind, 'verification_retry_scheduled');
+  assert.deepEqual(pending, before);
+
+  const corrected = (await verify([{ canonicalId: id, corrected: review, verification: verdict }], true))[0];
+  const completed = await verificationStep(corrected, 1);
+  assert.equal(completed.saved[0].verificationStatus, 'revised');
+  assert.equal(completed.saved[0].verificationRetryable, false);
+  assert.deepEqual(completed.work.verificationCompletedIds, [id]);
+});
+
+test('transport exhaustion saves no fabricated verdict and real insufficient decisions remain terminal', async () => {
+  const failed = await verificationStep(new Error('Timeout'), 3);
+  assert.deepEqual(failed.saved, []);
+  assert.deepEqual(failed.work.verificationDeferredIds, [id]);
+  assert.deepEqual(failed.work.verificationCompletedIds, []);
+  const rejected = (await verify([{ canonicalId: id, ...verdict, verdict: 'insufficient', unsupportedFields: ['method'] }]))[0];
+  const completed = await verificationStep(rejected, 3);
+  assert.equal(completed.saved[0].recommended, false);
+  assert.equal(completed.saved[0].verificationStatus, 'degraded');
+  assert.deepEqual(completed.work.verificationCompletedIds, [id]);
+  assert.deepEqual(completed.work.verificationDeferredIds, []);
+});
 
 test('actual audit and correction functions preserve literal DOI and still enforce evidence quality', async () => {
   for (const correction of [false, true]) {

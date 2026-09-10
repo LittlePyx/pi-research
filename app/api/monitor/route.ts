@@ -3,7 +3,7 @@ import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs
 import { createScreeningRequestTrace } from "../../../lib/screening-request-trace.mjs";
 import { matchScreeningRecords } from "../../../lib/screening-identity.mjs";
 import { canonicalResponseId, uniqueCanonicalResponses } from "../../../lib/canonical-response.mjs";
-import { traceReviewQueue, traceReviewOutcome, traceReviewEvent } from "../../../lib/review-progress-trace.mjs";
+import { traceReviewQueue, traceReviewOutcome, traceReviewEvent, traceVerificationResponse } from "../../../lib/review-progress-trace.mjs";
 import { researchGapQuestion } from "../../../lib/research-gap-scope.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
@@ -173,7 +173,7 @@ type OpenAlexWork = {
 };
 type OpenAlexResponse = { results?: OpenAlexWork[] };
 type DeepSeekResponse = {
-  choices?: Array<{ message?: { content?: string | null } }>;
+  choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 };
@@ -2687,6 +2687,7 @@ async function recommendationVerificationEvidence(
 
 async function verifyRecommendationBatch(input: {
   database: D1Database;
+  scanJobId?: string;
   spaceId: string;
   usageDate: string;
   workspaceScope: string;
@@ -2799,6 +2800,10 @@ async function verifyRecommendationBatch(input: {
     recordUsage(input.database, input.spaceScope, input.usageDate, totalInputTokens, totalOutputTokens),
   ]);
   const content = data.choices?.[0]?.message?.content || "";
+  traceVerificationResponse({
+    scanJobId: input.scanJobId, canonicalIds: auditable.map((review) => review.canonicalId), correctionMode,
+    finishReason: data.choices?.[0]?.finish_reason, outputTokens: totalOutputTokens, contentCharacters: content.length,
+  });
   const parsed = parseJsonObject(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { verifications?: unknown[]; corrections?: unknown[] };
   const denominator = Math.max(1, auditable.length);
   if (correctionMode) {
@@ -8185,37 +8190,35 @@ export async function POST(request: Request) {
             await saveScanWorkQueue(database, job.id, work);
             try {
               const verified = await verifyRecommendationBatch({
-                database, spaceId: space.id, usageDate, workspaceScope, spaceScope,
+                database, scanJobId: job.id, spaceId: space.id, usageDate, workspaceScope, spaceScope,
                 apiKey, candidates: batchCandidates, reviews: batchDrafts,
               });
-              const boundedVerified = verified.map((review) => {
-                const attempt = verificationAttempts.get(review.canonicalId) || 1;
-                if (!review.verificationRetryable || attempt < VERIFICATION_ATTEMPT_LIMIT) return review;
-                const initial = sanitizeEvidenceVerificationDraft(review.verificationReport?.audit || {
-                  verdict: "insufficient", reason: "Verification call budget ended before a conservative correction could be completed",
-                }, { allowedFields: recommendationVerificationFields(review) });
-                return degradedRecommendationReview(review, {
-                  ...evidenceVerificationReport({ initial }),
-                  reason: "Verification call budget ended without a clean evidence decision; the paper was withheld instead of entering another content loop",
-                });
-              });
-              const persisted = await persistReviewBatch(database, space.id, job.id, batchCandidates, boundedVerified);
+              // Transport failures do not count as completed content passes. A
+              // successful audit on the last call must retain its draft and audit;
+              // the existing carryover resumes only the unperformed correction.
+              const persisted = await persistReviewBatch(database, space.id, job.id, batchCandidates, verified);
               await persistRecommendationAuditBatch(database, space.id, job.id, batchCandidates, persisted, 0, 0);
               work.verificationFailureCount = 0;
               for (const batchId of batchIds) {
                 const persistedReview = persisted.find((review) => review.canonicalId === batchId);
                 const verificationAttempt = verificationAttempts.get(batchId) || 1;
                 if (persistedReview?.verificationRetryable) {
+                  const retryScheduled = verificationAttempt < VERIFICATION_ATTEMPT_LIMIT;
+                  if (!retryScheduled) {
+                    work.verificationDeferredIds = Array.from(new Set([...work.verificationDeferredIds, batchId]));
+                  }
                   await recordReliabilityEvent(database, {
                     spaceId: space.id,
                     scanJobId: job.id,
-                    kind: "verification_retry_scheduled",
+                    kind: retryScheduled ? "verification_retry_scheduled" : "verification_deferred",
                     stage: "verifying_recommendations",
                     source: MONITOR_MODEL,
                     outcome: "info",
-                    message: "Evidence audit completed; one bounded conservative correction is queued",
+                    message: retryScheduled
+                      ? "Evidence audit completed; one bounded conservative correction is queued"
+                      : "Evidence audit completed on the last transport slot; its draft and audit are preserved for correction carryover",
                     metadata: {
-                      canonicalId: batchId, verificationAttempt, draftPreserved: true, retryScope: "verification_only",
+                      canonicalId: batchId, verificationAttempt, retryScheduled, draftPreserved: true, retryScope: "verification_only",
                       correctionRequested: persistedReview.verificationReport?.correctionRequested === true,
                       maximumContentPasses: VERIFICATION_CONTENT_PASS_LIMIT,
                       maximumTransportAttempts: VERIFICATION_ATTEMPT_LIMIT,
