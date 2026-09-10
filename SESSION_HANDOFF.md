@@ -4,9 +4,11 @@
 
 ## 当前接续状态（2026-09-10，优先于历史快照）
 
-- **本轮修复进行中**：06:04只读确认Mirror Langevin首次核对为invalid_model_output后因既有熔断延期；原任务仍6已深评/1延期/1未处理/0正式推荐。本轮没有访问生产页面或人工推进。真实生产分支回归复现“前两次技术失败、第三次有效初核要求修订却被清空草稿并终态降级”的代码错误；已改为保存完整初核与草稿、只把未执行的修订延后给现有carryover，保持每轮3次调用及两次内容流程。新增响应finish_reason/token/字符数诊断，无原文或密钥。完整575项与构建通过，发布与剩余检查稍后写回；不得把该确定性复现说成已证明原两篇的生产根因。
+- **最新接续：v212于06:14:23 UTC发布成功**。源码6b7e886dce5f17f9802ac50429d82bcff4a8eaf9已推送GitHub和Sites；版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_6eeca8cd7b8081918e7c0f43eaf750c0，部署appgdep_6aa24a8a2bb8819185e1d61aef9a292f；public/环境修订6/无迁移。完整575项、lint、构建、离线基准与CI34444168719均通过。
+- **本轮确定性修复完成，论文验收仍开着**：真实生产分支回归复现“前两次技术失败、第三次有效初核要求修订却被清空草稿并终态降级”的代码错误；改为保存完整初核与草稿、只把未执行的修订延后给现有carryover，保持每轮3次调用及两次内容流程。新增响应finish_reason/token/字符数诊断，无原文或密钥。这不是已证明原两篇失败根因，不说原论文已恢复。
+- **06:13:50原9e4bab7f最新状态**：原8篇已有7篇深评完成、Space-Time Log-Sobolev因timeout延后；4篇草稿verificationDeferred、0正式推荐。Hessian-free（paperId b424a31d-6aef-43c0-8c1b-b5f3437e6210）摘要1471、相关35/质量0、not_required，因非凸势采样算法与KLS/等周函数不等式研究方向不符而未入选。Mirror Langevin于06:04初核错误码invalid_model_output，因既有熔断延期；具体是截断还是完整无效输出尚待新响应元数据。原任务另追加2篇（doi:10.1112/jlms.70616、title:67f51192…）进入enriching_abstracts，必须与原8篇分开。outputs/review-9e4bab7f-ledger.json已更新；本轮未访问生产页面、人工推进或恢复旧自动任务。
 
-- **05:55接续点（最新）**：原9e4bab7f、attempt14、59/59不变；已深评6/8，1篇深评超时延后、1篇未处理，正式推荐0。Hamilton–Jacobi与Sandwich Slice仍保留修订草稿，verificationAttempt=3、verificationDeferred=true，未取得两篇旧修订失败的确切错误码，不能断言质量不通过。mean width草稿也延后（attempt1）；Mirror Langevin已保存相关88/质量85、摘要1334字符，进入独立核对。Space-Time Log-Sobolev深评延后，与同轮已保存deep_reviewing/timeout事件对应；Hessian-free尚待深评。逐篇快照outputs/review-9e4bab7f-ledger.json已更新。8篇交付验收仍未完成，优先继续解决深评/修订的技术失败并核实最终结果。
+- **05:55此前快照**：原9e4bab7f、attempt14、59/59不变；已深评6/8，1篇深评超时延后、1篇未处理，正式推荐0。Hamilton–Jacobi与Sandwich Slice仍保留修订草稿，verificationAttempt=3、verificationDeferred=true，未取得两篇旧修订失败的确切错误码，不能断言质量不通过。mean width草稿也延后（attempt1）；Mirror Langevin已保存相关88/质量85、摘要1334字符，进入独立核对。Space-Time Log-Sobolev深评延后，与同轮已保存deep_reviewing/timeout事件对应；Hessian-free尚待深评。逐篇快照outputs/review-9e4bab7f-ledger.json已更新。8篇交付验收仍未完成，优先继续解决深评/修订的技术失败并核实最终结果。
 - **线上v211**：05:49:03 UTC发布成功，源码e224a582bbfa9b0ae4715f9336d7a1505053d74c，版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_98e4ffe3ca308191be497e10cbec2016，部署appgdep_6aa2448a6fec819180066c297a839cb2；public/环境修订6/无迁移。只补已保存核对原因、修订状态、尝试次数及白名单错误码日志；未改业务规则。Node24完整572项、lint、构建、离线基准及CI34442457032通过，源已推送GitHub和Sites main。
 - **本轮生产页面确实访问**：05:40:44触发网站已有visit补偿，后续不能说纯Cron。稍后DOM读取成功：今日仍展示09-09旧简报且注明“不计入今日数量”，原两篇在论文库显示“正在核对并修正/未加入阅读”；drag006显示“评审未入选/未加入阅读”，具体分数与详细原因尚未取得。详情点击/浏览器连接反复超时，不能说详情验收完成。未点扫描/重扫/阅读/接受/路线确认，未复制Key/Cookie；旧Codex自动任务未恢复。
 

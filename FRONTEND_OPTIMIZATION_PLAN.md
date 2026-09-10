@@ -39,6 +39,9 @@
 - 修复后直接保存已完成的核对结果；当该轮3次传输名额用完但初核要求修订，保留完整草稿/初核并加入verificationDeferredIds，由已有carryover只继续未执行的修订。未用完名额仍在原任务核对，真实insufficient仍终态拒绝。单轮3次、初核+一次修订两次内容流程、质量门槛、模型/超时/批量/调度均不变。
 - 补充限量响应元数据，记录job/canonicalIds、初核或修订、finish_reason白名单、输出token数与字符数；不记录原始响应/提示词/Key/用户记忆，用于区分JSON截断和完整但无效响应。新增真实分支的保留草稿/延期、技术耗尽、真实证据拒绝及修订终态回归。发布信息与完整检查结果待本轮更新。
 
+- **修复发布完成**：Node24完整575项、lint、构建、离线基准与CI34444168719通过。源码6b7e886dce5f17f9802ac50429d82bcff4a8eaf9已推送GitHub/Sites；v212于06:14:23 UTC发布成功，版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_6eeca8cd7b8081918e7c0f43eaf750c0，部署appgdep_6aa24a8a2bb8819185e1d61aef9a292f；public/环境修订6/无迁移。诊断已上线，但未把上线本身算作原草稿恢复成功。
+- **06:13:50实际队列**：原8篇7深评完成、1深评timeout延期、4草稿verificationDeferred、0正式推荐。Hessian-free（paperId b424a31d-6aef-43c0-8c1b-b5f3437e6210）摘要1471字符、相关35/质量0、not_required，因非凸势采样算法与KLS/等周及函数不等式方向不符未入选。原任务追加doi:10.1112/jlms.70616与title:67f51192b9f9e7d5e972f04cb48c9ed2f2dba08b168a49f994f854217277cb69两篇，进入enriching_abstracts；两篇不能混入原8篇验收计数。更新outputs/review-9e4bab7f-ledger.json，原两篇修订最终结果及技术错误具体形式仍待继续核对。
+
 ### 2026-09-10 两篇修订与原8篇交付继续核对（进行中）
 
 - 本轮按用户再次确认继续。main@8825e8d、线上v210、public均核实；完整重读交接。05:38只读确认两篇在05:34修订轮后仍pending，无新正式推荐。
