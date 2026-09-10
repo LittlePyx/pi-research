@@ -21,6 +21,9 @@ export type LearningResource = {
   qualityScore?: number | null;
   readingStatus?: LearningReadingStatus;
   suggestedMinutes?: number | null;
+  /** Current shared-quality reading focus; refreshed from the live paper, not legacy path prose. */
+  readingFocusZh?: string;
+  readingFocusEn?: string;
   /** Formal learning material is admitted only after the shared quality queue has approved it. */
   qualification?: "quality_approved";
   /** Internal stage-specific grounding; never a replacement for shared quality approval. */

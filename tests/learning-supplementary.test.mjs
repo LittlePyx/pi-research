@@ -40,3 +40,16 @@ test('bridge selection is bounded and idempotent and preserves historical supple
   const completed = path(); completed.steps[0].status = 'completed';
   assert.deepEqual(withSupplementaryReading(completed, candidates), completed);
 });
+
+test('equivalent noun inflections do not hide approved KLS and entropy reading aids', () => {
+  for (const [title, paper] of [
+    ['Foundations of the KLS Conjecture and Isoperimetric Constants', 'The KLS conjecture: a constant bound'],
+    ['Gaussian Entropy Power Inequalities', 'A Gaussian entropy power inequality'],
+  ]) {
+    const original = path(); original.steps[0].titleEn = title;
+    const result = withSupplementaryReading(original, [candidate('approved', paper)]);
+    assert.equal(result.steps[0].supplementaryResources.length, 1);
+    assert.deepEqual(result.steps[0].resources, []);
+    assert.equal(result.steps[0].evidenceStatus, 'retryable');
+  }
+});

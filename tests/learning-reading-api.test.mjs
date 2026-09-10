@@ -5,6 +5,7 @@ import test from "node:test";
 import { Miniflare } from "miniflare";
 import { groundedStageEvidence } from "../lib/learning-stage-match.ts";
 import { groundedGuidanceReview } from "../lib/learning-guidance.ts";
+import { learningNextTask } from "../lib/learning-next-task.ts";
 
 // The normal test command builds first. Run the same Worker, API handlers and
 // schema bootstrap as production, in an isolated in-memory D1 with no model key.
@@ -324,18 +325,24 @@ test("learning → reading → stage → route runs through the built Worker and
           insert("learning_path_steps", { id: space, path_id: space, space_id: space, kind: "foundation", title_en: topic, title_zh: topic, status: "active" }),
           ...["approved", "pending", "dismissed"].flatMap((state) => [
             insert("monitored_papers", { id: `${space}-${state}`, space_id: space, canonical_id: `${space}:${state}`, title: `${topic}: a survey ${state}`, url: "https://example.org/qa", horizon: "years" }),
-            insert("paper_insights", { paper_id: `${space}-${state}`, space_id: space, quality_score: 90, ever_recommended: state === "pending" ? 0 : 1 }),
+            insert("paper_insights", { paper_id: `${space}-${state}`, space_id: space, quality_score: 90, ever_recommended: state === "pending" ? 0 : 1,
+              reading_focus_zh: `${topic}：核对假设`, reading_focus_en: `${topic}: check assumptions` }),
           ]),
           insert("paper_feedback", { id: space, space_id: space, paper_id: `${space}-dismissed`, feedback: "not_relevant" }),
         ]);
         const result = await request(`/api/learning-path?spaceId=${space}`);
         assert.equal(result.path.steps[0].resources.length, 0);
         assert.deepEqual(result.path.steps[0].supplementaryResources.map(item => item.id), [`monitor:${space}-approved`]);
+        const task = learningNextTask(result.path.steps[0]);
+        assert.equal(task.resource.readingFocusZh, `${topic}：核对假设`);
+        assert.equal(task.resource.readingFocusEn, `${topic}: check assumptions`);
+        assert.equal(task.supplementary, true);
         assert.equal(result.path.completedSteps, 0);
         assert.equal(result.path.status, "waiting_evidence");
         const details = await request(`/api/monitor?spaceId=${space}&paperId=${space}-approved`);
         assert.ok(details.monitor.historyPapers.some(item => item.id === `${space}-approved`));
         const after = await request(`/api/learning-path?spaceId=${space}`);
+        assert.deepEqual(learningNextTask(after.path.steps[0]), task);
         assert.equal(after.path.steps[0].status, result.path.steps[0].status);
         assert.notEqual(after.path.steps[0].status, "completed");
         assert.equal(after.path.steps[0].resources.length, 0);
@@ -365,6 +372,13 @@ test("learning → reading → stage → route runs through the built Worker and
           assert.equal(after.stageReview.status, 'attached');
           assert.equal(after.path.steps[0].resources[0].id, `monitor:${space}`);
           assert.equal(after.path.steps[0].resources[0].readingStatus, 'unread');
+          await sql([{ sql: 'UPDATE paper_insights SET reading_focus_zh = ?, reading_focus_en = ? WHERE paper_id = ?',
+            values: [`${topic}：最新阅读重点`, `${topic}: current reading focus`, space] }]);
+          const refreshed = await request(`/api/learning-path?spaceId=${space}`);
+          const next = learningNextTask(refreshed.path.steps[0]);
+          assert.equal(next.supplementary, false);
+          assert.equal(next.resource.readingFocusZh, `${topic}：最新阅读重点`, 'hydrate current guidance instead of a stale resource snapshot');
+          assert.equal(next.resource.readingStatus, 'unread');
           assert.equal((await request('/api/learning-path', body, 200, 'POST')).stageReview.status, 'empty');
           assert.equal((await request(`/api/learning-path?spaceId=${space}`)).path.steps[0].resources.length, 1);
           const counts = (await sql([

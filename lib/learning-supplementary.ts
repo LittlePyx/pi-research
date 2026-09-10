@@ -1,6 +1,14 @@
 import type { LearningPath, LearningResource } from "./learning-path";
 import { learningStageAccepts, type LearningStagePaper } from "./learning-stage-match.ts";
 
+// Equivalent noun inflections only. Keep the existing overlap threshold and
+// never apply this reading aid to the admission of original-work evidence.
+const inflections: Record<string, string> = {
+  constants: "constant", inequalities: "inequality", measures: "measure",
+  densities: "density", bodies: "body", vectors: "vector", bounds: "bound",
+};
+const topicText = (text: string) => text.replace(/\b[a-z]+\b/gi, word => inflections[word.toLowerCase()] || word);
+
 /** Read-only alternatives, not original-work evidence or completion credit. */
 export function withSupplementaryReading(path: LearningPath, approved: Array<{
   resource: LearningResource;
@@ -20,7 +28,9 @@ export function withSupplementaryReading(path: LearningPath, approved: Array<{
         // A survey may help explain this exact subject, but cannot stand in for
         // the missing original. Keep the existing topic-overlap check; never
         // use citation count, age or a broad direction label as stage matching.
-        if (!learningStageAccepts({ ...step, kind: "method" }, candidate.paper)) continue;
+        if (!learningStageAccepts({ ...step, kind: "method", titleEn: topicText(step.titleEn), goalEn: topicText(step.goalEn) }, {
+          ...candidate.paper, title: topicText(candidate.paper.title), abstractText: topicText(candidate.paper.abstractText),
+        })) continue;
         additions.push(candidate.resource);
         seen.add(key(candidate.resource));
         if (previous.length + additions.length >= 2) break;

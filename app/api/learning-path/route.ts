@@ -64,6 +64,7 @@ type DraftPath = { titleZh: string; titleEn: string; rationaleZh: string; ration
 type DeepSeekResponse = { choices?: Array<{ message?: { content?: string | null } }>; usage?: { prompt_tokens?: number; completion_tokens?: number }; error?: { message?: string } };
 type LiveResourceRow = {
   id: string; canonical_id: string; title: string; authors: string; abstract_text: string; route_role: string | null;
+  reading_focus_zh: string; reading_focus_en: string;
   quality_score: number; ever_recommended: number; reading_status: string; dismissed: number;
 };
 function unboundedDevelopmentRetries() {
@@ -156,6 +157,8 @@ function candidateResource(item: CandidateRow, stageEvidence?: LearningStageEvid
     qualityScore: item.quality_score,
     readingStatus: readingStatus(item.reading_status),
     suggestedMinutes: item.read_minutes,
+    readingFocusZh: item.reading_focus_zh,
+    readingFocusEn: item.reading_focus_en,
     qualification: "quality_approved",
     ...(stageEvidence ? { stageEvidence } : {}),
     ...(guidanceReview ? { guidanceReview } : {}),
@@ -176,6 +179,7 @@ async function ownedSpace(request: Request, spaceId: string) {
 async function liveResourceRows(database: D1Database, spaceId: string, trackId: string | null) {
   return database.prepare(
     `SELECT p.id, p.canonical_id, p.title, p.authors, i.abstract_text, i.quality_score, i.ever_recommended,
+      i.reading_focus_zh, i.reading_focus_en,
       (SELECT rp.role FROM research_track_papers rp WHERE rp.space_id = p.space_id
         AND lower(rp.canonical_id) = lower(p.canonical_id) AND rp.curation_status = 'active'
         AND (? IS NULL OR rp.track_id = ?) ORDER BY rp.id LIMIT 1) AS route_role,
@@ -221,6 +225,8 @@ async function readPath(database: D1Database, spaceId: string): Promise<Learning
         canonicalId: live.canonical_id,
         qualityScore: live.quality_score,
         readingStatus: readingStatus(live.reading_status),
+        readingFocusZh: live.reading_focus_zh,
+        readingFocusEn: live.reading_focus_en,
         qualification: "quality_approved" as const,
       };
       if (!learningStageAccepts(target, { title: live.title, authors: live.authors, abstractText: live.abstract_text, routeRole: live.route_role || "" }, resource.stageEvidence)) {
