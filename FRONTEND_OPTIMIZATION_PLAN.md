@@ -37,9 +37,13 @@
 - 本轮按用户再次确认继续。main@8825e8d、线上v210、public均核实；完整重读交接。05:38只读确认两篇在05:34修订轮后仍pending，无新正式推荐。
 - computer-use生产页面核验遇连接失败：第一次连接失败、重置后选中既有in-app browser且空标签列表；新建隐藏生产标签调用30秒超时，随后inventory仍失败，未取得页面或点击任何扫描/重扫/阅读动作。**D1 last_user_activity_at=05:40:44证明页面请求确实到达**，访问补偿已经发生；后续不能一概说纯Cron。未知标签创建结果不重复开新标签，不复制Cookie/Key、不绕过旧受阻入口。
 - 05:44只读原9e4bab7f确认已深评5/8、剩余3篇。Hamilton–Jacobi和Sandwich Slice均verificationDeferred=true，属于保留草稿待后续核对，不算质量拒绝。新增doi:10.3934/mine.2023083（paperId=79542fde-0670-4dbd-b99e-396ea0e41d5a）摘要318字符、相关55/质量65、not_required、未推荐：理由为奇异结构/点质量最优传输与KLS、对数凹测度及函数不等式方向缺乏直接联系。新增Optimal mean width and metric entropy estimates for convex bodies（paperId=f87edfd1-dc98-49c4-9280-b4c89ac9095e，title:366017…）摘要686字符、相关85/质量88、pending/未发布，也已被列入verificationDeferred。3篇待核对、0正式推荐，不能将延后算拒稿。
-- 为区分正常内容修订、传输失败及终态证据不足，补充现有已保存诊断：队列记录逐篇verificationAttempt；结果记录correctionRequested/correctionCompleted/限长已保存verificationReason；可靠性事件仅在deep_reviewing/verifying_recommendations记录固定字段与错误码白名单、尝试次数，不记录原始错误/响应/Key/记忆。没有改模型、门槛、超时、批量、调度或重试规则。新增1项回归通过，构建及572项、离线基准已通过，完整lint仍在运行；发布待后续记录。
+- 为区分正常内容修订、传输失败及终态证据不足，补充现有已保存诊断：队列记录逐篇verificationAttempt；结果记录correctionRequested/correctionCompleted/限长已保存verificationReason；可靠性事件仅在deep_reviewing/verifying_recommendations记录固定字段与错误码白名单、尝试次数，不记录原始错误/响应/Key/记忆。没有改模型、门槛、超时、批量、调度或重试规则。新增1项回归通过，Node24完整572项、lint、构建、离线基准均通过。源码e224a582bbfa9b0ae4715f9336d7a1505053d74c已推送GitHub/Sites main，CI34442457032成功；v211于05:49:03 UTC发布成功，版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_98e4ffe3ca308191be497e10cbec2016，部署appgdep_6aa2448a6fec819180066c297a839cb2，public/环境修订6/无迁移。
+- **05:55后端验收**：原任务D1 updated05:54:57，checkpoint=verifying_recommendations，推荐0。已深评6/8、1延后、1未处理；新增Mirror Langevin（paperId26120c1f-8ce9-48f2-94fc-d71542aebe52）摘要1334、相关88/质量85，pending/retryable、coverage0、published=false。Space-Time Log-Sobolev已deepDeferred=true，同轮有已保存deep_reviewing/timeout；Hessian-free未深评。原两篇修订attempt均3、mean width为1，三者延后保留草稿。旧两篇具体修订错误码未取得，不以本轮深评timeout代替它们的根因证据。
+- **生产DOM子项**：今日仍是09-09最近简报，并明确“不计入今日数量”；原两篇在论文库显示“正在核对并修正/未加入阅读”，drag006显示“评审未入选/未加入阅读”。已确认未把待核对草稿作为正式推荐；详情点击反复超时，drag006详细分数/原因与两篇完整核对报告仍未读到，不能宣布逐篇验收完成。仅使用原临时标签，没有重复打开标签、操作扫描或替用户阅读确认。outputs/review-9e4bab7f-ledger.json保存最新队列和结果，原8篇的最终交付仍开着。
 
 ### 2026-09-10 后续核对身份修复与8篇实际结果（进行中）
+
+上一节本轮临时生产标签已成功关闭；未改viewport、无临时服务遗留。
 
 - **05:24原任务第一轮独立核对已保存**：05:23自然external_watchdog运行后，同一两篇的review_result_saved分别为Hamilton–Jacobi coverage90、Sandwich Slice coverage92，均verificationStatus=pending、verificationRetryable=true、published=false；D1于05:24:03仍verifying_recommendations，最终核对完成0/2、正式推荐0。它们从原coverage0推进到实际初核结果；结合verifyRecommendationBatch初核分支，这是需要保守修订的状态，不是终态质量通过，也不把coverage超过80当完成。既有修订流程继续等待自然名额，无人工唤醒。8篇总体仍3已深评/5未深评/0延后，其中2待最终核对。下表05:14作为历史首次逐篇快照保留，输出ledger已更新05:24的分数。
 

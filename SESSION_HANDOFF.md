@@ -4,7 +4,15 @@
 
 ## 当前接续状态（2026-09-10，优先于历史快照）
 
-- **05:24接续点（最新）**：v210下两篇已自然完成独立初核并保存覆盖分：Hamilton–Jacobi90、Sandwich Slice92；仍pending/retryable、published=false，按现行分支需继续保守修订。原9e4bab7f的D1 updated05:24:03，checkpoint=verifying_recommendations，最终核对0/2、正式推荐0。总体3/8已深评、5未深评、0延后。后续读取原两篇修订结果，再追踪其余5篇；不得因分数高或初核已保存宣布全链路完成。第一项身份修复/发布/571项及CI已完成，8篇实际结果验收仍开着，不用新任务替代。本轮只有安全只读生产核对，旧自动任务未恢复。
+- **05:55接续点（最新）**：原9e4bab7f、attempt14、59/59不变；已深评6/8，1篇深评超时延后、1篇未处理，正式推荐0。Hamilton–Jacobi与Sandwich Slice仍保留修订草稿，verificationAttempt=3、verificationDeferred=true，未取得两篇旧修订失败的确切错误码，不能断言质量不通过。mean width草稿也延后（attempt1）；Mirror Langevin已保存相关88/质量85、摘要1334字符，进入独立核对。Space-Time Log-Sobolev深评延后，与同轮已保存deep_reviewing/timeout事件对应；Hessian-free尚待深评。逐篇快照outputs/review-9e4bab7f-ledger.json已更新。8篇交付验收仍未完成，优先继续解决深评/修订的技术失败并核实最终结果。
+- **线上v211**：05:49:03 UTC发布成功，源码e224a582bbfa9b0ae4715f9336d7a1505053d74c，版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_98e4ffe3ca308191be497e10cbec2016，部署appgdep_6aa2448a6fec819180066c297a839cb2；public/环境修订6/无迁移。只补已保存核对原因、修订状态、尝试次数及白名单错误码日志；未改业务规则。Node24完整572项、lint、构建、离线基准及CI34442457032通过，源已推送GitHub和Sites main。
+- **本轮生产页面确实访问**：05:40:44触发网站已有visit补偿，后续不能说纯Cron。稍后DOM读取成功：今日仍展示09-09旧简报且注明“不计入今日数量”，原两篇在论文库显示“正在核对并修正/未加入阅读”；drag006显示“评审未入选/未加入阅读”，具体分数与详细原因尚未取得。详情点击/浏览器连接反复超时，不能说详情验收完成。未点扫描/重扫/阅读/接受/路线确认，未复制Key/Cookie；旧Codex自动任务未恢复。
+
+### 以下为此前轮次快照（不覆盖上方最新状态）
+
+本轮临时生产标签已成功关闭；未设置viewport，无临时预览服务遗留。
+
+- **05:24接续点**：v210下两篇已自然完成独立初核并保存覆盖分：Hamilton–Jacobi90、Sandwich Slice92；仍pending/retryable、published=false，按现行分支需继续保守修订。原9e4bab7f的D1 updated05:24:03，checkpoint=verifying_recommendations，最终核对0/2、正式推荐0。总体3/8已深评、5未深评、0延后。
 
 - **05:14最新生产进展**：原9e4bab7f、attempt14在v210下自然推进至3/8篇已深评、0延后、2篇独立核对pending、5篇尚未深评、0正式推荐；D1 checkpoint=verifying_recommendations。8个确切身份和逐篇表已写入原计划顶部，outputs/review-9e4bab7f-ledger.json有快照。两篇待核对为Hamilton–Jacobi受控梯度流（doi:10.1016/j.jfa.2026.111388）和Sandwich Slice（title:44ac7934…），摘要854/1176字符，相关分均78、质量75/85。第三篇drag006在v210前已深评未推荐，原因暂未独立取得。5篇尚待消费不算失败；整体8篇验收未完成。
 
