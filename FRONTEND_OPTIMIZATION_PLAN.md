@@ -1,5 +1,15 @@
 # Pi Research 优化与推进实施计划
 
+## 2026-09-10 v221：停用操作去歧义、综合材料清单与问题编辑入口
+
+- 用户要求将“跑题，停用节点”改为次要操作，并反馈综合研判/研究问题为空。v221 已发布，源码 `6c62c1a20f9b3292c5d051d16cfe628675a30859` 两端推送，版本 `appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_9ecd196bcb9081918ceb26797b43eda3`，部署 `appgdep_6aa29b14d95c8191b2322854d1bff56f` succeeded / public / 环境修订6，11:58:21 UTC。
+- 卡片改为折叠“认为不相关？”→“从本路线移除”，解释只停用当前路线且可恢复。未停用任何生产节点。
+- 综合 GET 新增逐篇 preparation，只读实际同空间的 pending/confirmed 提案及 active 路线匹配论文；沿用原 sourceClaims 的资格判断，显示 needs_confirmation / needs_evidence / ready，不提高资格、不代用户确认、不调用模型。无综合时不再展示路线 intelligence 置信度冒充综合置信度；去掉重复空状态。新增对应论文详情入口并支持返回原路线研判。
+- 研究问题原后端 confirm 本来支持无综合的用户问题，但前端提前 return 空态隐藏编辑器。现在直接显示问题、目标、范围、成功标准和假设编辑器，只有用户提交后才生效；AI 起草仍需要综合。直接问题页也读取现有综合来源，不自动生成综合。
+- 验证：607 测试通过，最终构建/lint exit0，CI34473918081 success。真实 Worker+D1 验证准备查询及无综合手动定义问题，隔离浏览器验证逐篇打开返回、编辑器、折叠按钮，中英文390px无整页横溢出。
+- **生产验收真实情况**：主数学 KLS 清单5篇（Neumann eigenvalues radial log-concave、ultra log-concave concentration、Exact-Affine Rigidity、Hit-and-Run Mixes、The KLS constant is O(log^(1/4)n)），全为待确认且证据未就绪，可综合0篇。问题编辑器已实见，未填写/确认。线上综合内容本身仍未生成，不能称内容闭环已完成；下一步重点追查这些既有论文的结构化证据为何未就绪，以及用户确认后的综合生成/问题起草真实验收，不能只继续改空态或代点接受。指定信息论空间仍不以主数学代验收。
+- 本轮未扫描、清退避、改阅读或恢复旧自动任务。生产正常访问可能触发既有 visit 补偿。生产论文库最后1249、今日6，这是动态快照不归因于本次改动。8114/session65226已停止，viewport已reset；关闭临时标签13/14时浏览器连接超时，随后的inventory连接失败，无法确认标签是否已关闭，后续连接恢复后仅清理这些临时标签。docs/保持原有未跟踪。
+
 ## 2026-09-10 当前状态：路线材料优先入口已发布 v220
 
 - 用户继续要求解决路线详情“缺口大”。业务源码 `0060ea040ea3b78a47ca77cb560b3942d8b9fd1e` 已推送 GitHub/Sites；v220 `appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_1aa12e61dd808191998f7af52e5a1cb4`，部署 `appgdep_6aa288c4f3488191895ad2a086376949` 于 2026-09-10 10:39:12 UTC succeeded，public/环境修订6。
