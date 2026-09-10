@@ -2,6 +2,8 @@ import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../d
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { createScreeningRequestTrace } from "../../../lib/screening-request-trace.mjs";
 import { matchScreeningRecords } from "../../../lib/screening-identity.mjs";
+import { canonicalResponseId, uniqueCanonicalResponses } from "../../../lib/canonical-response.mjs";
+import { traceReviewQueue, traceReviewOutcome } from "../../../lib/review-progress-trace.mjs";
 import { researchGapQuestion } from "../../../lib/research-gap-scope.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
@@ -2799,12 +2801,8 @@ async function verifyRecommendationBatch(input: {
   const parsed = parseJsonObject(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { verifications?: unknown[]; corrections?: unknown[] };
   const denominator = Math.max(1, auditable.length);
   if (correctionMode) {
-    const correctionById = new Map((Array.isArray(parsed.corrections) ? parsed.corrections : []).flatMap((raw) => {
-      if (!raw || typeof raw !== "object") return [];
-      const item = raw as Record<string, unknown>;
-      const canonicalId = cleanText(String(item.canonicalId || ""));
-      return canonicalId ? [[canonicalId, { corrected: item.corrected, verification: item.verification }] as const] : [];
-    }));
+    const correctionById = uniqueCanonicalResponses(auditable.map((review) => review.canonicalId), parsed.corrections);
+    if (correctionById.size !== auditable.length) throw new Error("Recommendation correction identity coverage incomplete");
     return input.reviews.map((review) => {
       if (!review.recommended) return review;
       const failedPreflight = preflightFailures.get(review.canonicalId);
@@ -2863,13 +2861,9 @@ async function verifyRecommendationBatch(input: {
       };
     });
   }
-  const initialRaw = Array.isArray(parsed.verifications) ? parsed.verifications : [];
-  const initialById = new Map(initialRaw.flatMap((raw) => {
-    if (!raw || typeof raw !== "object") return [];
-    const item = raw as Record<string, unknown>;
-    const canonicalId = cleanText(String(item.canonicalId || ""));
-    return canonicalId ? [[canonicalId, item] as const] : [];
-  }));
+  const initialById = uniqueCanonicalResponses(auditable.map((review) => review.canonicalId), parsed.verifications);
+  // Missing or ambiguous identity is a retryable response failure, not evidence rejection.
+  if (initialById.size !== auditable.length) throw new Error("Recommendation verification identity coverage incomplete");
   const initialReports = new Map<string, ReturnType<typeof sanitizeEvidenceVerificationDraft>>();
   for (const review of auditable) {
     const raw = initialById.get(review.canonicalId) || { verdict: "insufficient", reason: "Verifier omitted this paper" };
@@ -3230,6 +3224,11 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
   if (!insightWrites.length) return [] as PaperReview[];
   const insightResults = await database.batch(insightWrites.map((write) => write.statement));
   const persistedReviews = retainChangedMonitorWrites(insightWrites.map((write) => write.review), insightResults);
+  for (const review of persistedReviews) {
+    const candidate = candidateByCanonical.get(review.canonicalId);
+    if (candidate) traceReviewOutcome({ scanJobId, spaceId, paperId: paperIds.get(review.canonicalId),
+      candidate, review, published: isPublishedRecommendation(review) });
+  }
 
   const proposals = persistedReviews.flatMap((review) => {
     const candidate = candidateByCanonical.get(review.canonicalId);
@@ -3492,7 +3491,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         const incomplete = (nextParsed.reviews || []).filter((item) => item.isPaper === true && item.recommended === true
           && normalizeModelScore(item.relevanceScore, nextScoreScale) >= RECOMMENDATION_THRESHOLD
           && normalizeModelScore(item.qualityScore, nextScoreScale) >= 65)
-          .map((item) => ({ canonicalId: cleanText(item.canonicalId || ""), missing: recommendationDraftMissingFields(item) }))
+          .map((item) => ({ canonicalId: canonicalResponseId(item.canonicalId), missing: recommendationDraftMissingFields(item) }))
           .filter((item) => item.missing.length);
         if (incomplete.length) {
           throw new Error(`DeepSeek Pro returned an incomplete recommended review: ${incomplete.map((item) => `${item.canonicalId || "unknown"} (${item.missing.join(", ")})`).join("; ")}`);
@@ -3697,19 +3696,19 @@ async function reconcileRecommendedReviewTracks(
       recordUsage(database, spaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
     ]);
     const parsed = parseJsonObject(data.choices?.[0]?.message?.content || "") as { assignments?: Array<Record<string, unknown>> };
-    const assignments = new Map((parsed.assignments || []).flatMap((item) => {
-      const canonicalId = cleanText(String(item.canonicalId || ""));
+    const assignmentById = uniqueCanonicalResponses(missing.map((review) => review.canonicalId), parsed.assignments);
+    const assignments = new Map(Array.from(assignmentById, ([canonicalId, item]) => {
       const trackId = cleanText(String(item.trackId || ""));
       const rationaleZh = cleanText(String(item.rationaleZh || "")).slice(0, 700);
       const rationaleEn = cleanText(String(item.rationaleEn || "")).slice(0, 900);
-      if (!canonicalId || !validTrackIds.has(trackId) || !rationaleZh || !rationaleEn) return [];
-      return [[canonicalId, {
+      if (!validTrackIds.has(trackId) || !rationaleZh || !rationaleEn) return null;
+      return [canonicalId, {
         trackId,
         mapRole: paperReviewMapRole(item.mapRole),
         mapRationaleZh: rationaleZh,
         mapRationaleEn: rationaleEn,
-      }] as const];
-    }));
+      }] as const;
+    }).filter((entry) => entry !== null));
     return reviews.map((review) => review.trackId || !isPublishedRecommendation(review) || !assignments.has(review.canonicalId)
       ? review : { ...review, ...assignments.get(review.canonicalId)! });
   } catch (error) {
@@ -6011,6 +6010,7 @@ function monitorProgressByCheckpoint(checkpoint: string) {
 async function saveScanWorkQueue(database: D1Database, jobId: string, work: ScanWorkQueue) {
   await database.prepare("UPDATE monitor_scan_jobs SET work_queue_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .bind(JSON.stringify(work), jobId).run();
+  traceReviewQueue(jobId, work);
 }
 
 async function finalizeEvidenceExcludedCandidates(database: D1Database, spaceId: string, canonicalIds: string[]) {
