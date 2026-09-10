@@ -403,6 +403,7 @@ type Candidate = {
   provenance: CandidateProvenance[];
   qualityQueueLane?: "learning" | "gap" | "route" | "";
   qualityQueueFirstSeenAt?: string | null;
+  verificationPending?: boolean;
 };
 type CandidateProvenance = {
   sourceKey: string;
@@ -4365,7 +4366,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
      )
      SELECT paper_id, canonical_id, doi, title, authors, venue, url, published_at, source, horizon,
       citation_count, relevance_score, abstract_text, quality_score, priority_venue,
-      quality_queue_lane, quality_queue_first_seen_at
+      quality_queue_lane, quality_queue_first_seen_at, analysis_source
      FROM ranked_candidates
      ORDER BY CASE WHEN quality_queue_lane <> ''
         AND quality_queue_lane_rank <= 8
@@ -4386,7 +4387,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
     paper_id: string; canonical_id: string; doi: string | null; title: string; authors: string; venue: string; url: string;
     published_at: string | null; source: string; horizon: Horizon; citation_count: number; relevance_score: number;
     abstract_text: string; quality_score: number; priority_venue: number; quality_queue_lane: Candidate["qualityQueueLane"];
-    quality_queue_first_seen_at: string | null;
+    quality_queue_first_seen_at: string | null; analysis_source: string;
   }>();
   const provenanceByPaper = new Map<string, CandidateProvenance[]>();
   for (let start = 0; start < rows.results.length; start += 70) {
@@ -4446,6 +4447,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
     priorityVenue: Boolean(row.priority_venue),
     qualityQueueLane: row.quality_queue_lane || "",
     qualityQueueFirstSeenAt: row.quality_queue_first_seen_at,
+    verificationPending: row.analysis_source === "deepseek_verification_pending",
     source: row.source === "semantic_scholar" ? "semantic_scholar" as const
       : row.source === "openalex" ? "openalex" as const
         : row.source === "arxiv" ? "arxiv" as const
@@ -4493,6 +4495,7 @@ function candidateDirectionKey(candidate: Candidate) {
 }
 
 function selectHorizonScreeningCandidates(candidates: Candidate[], limit: number) {
+  if (limit <= 0) return [];
   const ranked = [...candidates].sort((left, right) => candidateScreeningPriority(right) - candidateScreeningPriority(left));
   const evidenceGapLimit = Math.min(Math.max(1, Math.round(limit * 0.2)), candidates.filter((candidate) => candidate.abstractText.trim().length < 120).length);
   const primary = selectBalancedByGroup(ranked, candidateDirectionKey, Math.max(0, limit - evidenceGapLimit));
@@ -4575,10 +4578,17 @@ function selectCurrentAndBacklogReviewBatch(candidates: Candidate[], currentCand
       horizonCandidates.filter((candidate) => candidate.provenance.some(isMonitorRouteProvenance)),
       Math.min(2, limit),
     );
-    const reservedIds = new Set(routeCandidates.map((candidate) => candidate.canonicalId));
+    const routeIds = new Set(routeCandidates.map((candidate) => candidate.canonicalId));
+    // Continue one bounded verification batch before ranking new discoveries.
+    // Existing route reservations and the horizon's total size remain intact.
+    const verificationCandidates = horizonCandidates
+      .filter((candidate) => candidate.verificationPending && !routeIds.has(candidate.canonicalId))
+      .slice(0, Math.min(VERIFICATION_BATCH_SIZE, limit - routeCandidates.length));
+    const reserved = [...routeCandidates, ...verificationCandidates];
+    const reservedIds = new Set(reserved.map((candidate) => candidate.canonicalId));
     const current = selectHorizonScreeningCandidates(
       horizonCandidates.filter((candidate) => currentIds.has(candidate.canonicalId) && !reservedIds.has(candidate.canonicalId)),
-      Math.max(0, currentBudget - routeCandidates.filter((candidate) => currentIds.has(candidate.canonicalId)).length),
+      Math.min(limit - reserved.length, Math.max(0, currentBudget - reserved.filter((candidate) => currentIds.has(candidate.canonicalId)).length)),
     );
     const currentSelected = new Set(current.map((candidate) => candidate.canonicalId));
     const backlog = selectHorizonScreeningCandidates(
@@ -4586,7 +4596,7 @@ function selectCurrentAndBacklogReviewBatch(candidates: Candidate[], currentCand
         && !currentSelected.has(candidate.canonicalId) && !reservedIds.has(candidate.canonicalId)),
       limit - current.length - reservedIds.size,
     );
-    const seeded = [...routeCandidates, ...current, ...backlog];
+    const seeded = [...reserved, ...current, ...backlog];
     const seededIds = new Set(seeded.map((candidate) => candidate.canonicalId));
     const fill = selectHorizonScreeningCandidates(horizonCandidates.filter((candidate) => !seededIds.has(candidate.canonicalId)), limit - seeded.length);
     selected.push(...seeded, ...fill);

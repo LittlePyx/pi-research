@@ -57,6 +57,7 @@ test('the actual monitor reader reloads enriched evidence for frozen jobs in bot
         assert.equal(result[0].canonicalId, frozen[0]);
         assert.equal(result[0].abstractText, fresh);
         assert.equal(result[0].qualityQueueLane, 'learning');
+        assert.equal(result[0].verificationPending, status === 'deepseek_verification_pending');
         assert.deepEqual(new Set(result[0].provenance.map((entry) => entry.sourceKey)), new Set(['research-route:learning', 'openalex:classic-rescue']));
       }
       assert.deepEqual(await pendingCandidateQueue(db, space, []), []);
