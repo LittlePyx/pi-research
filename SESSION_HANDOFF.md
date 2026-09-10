@@ -2,6 +2,16 @@
 
 本文件是当前接续入口。旧 `docs/PROJECT_HANDOFF.md` / `docs/NEXT_SESSION_PROMPT.md` 的 55a600e 基线和冷启动任务属于历史，不要据此从头重做。详细实施证据仍以 `FRONTEND_OPTIMIZATION_PLAN.md` 最新段落为准。
 
+## 新会话接续补充（2026-09-10，本节优先于下方旧快照）
+
+- 用户已明确接续开发，旧Codex自动任务仍不恢复、不新建。线上仍v207/public/环境修订6，本次没有部署或人工触发生产扫描。
+- GitHub此前落后32个提交，已快进同步main到b7b6471，其CI34431072569通过。当前工作分支为codex/citation-ledger-readability，业务提交bad7c6626a3d7c54e5596dbe6b15a22d54f335b0，草稿PR：https://github.com/LittlePyx/pi-research/pull/1 。该业务提交CI34431959257也已通过。此后仅交接文档可能领先；不覆盖未跟踪docs/。
+- 17C引用清单独立批次已实现来源独立行、完整换行标题、明确两端角色、保留数据库引用方向与原onSelect。Node24完整lint/构建/562项测试通过，1440/390真实隔离组件截图、鼠标与键盘选择、同快照2条引用均通过；700px英文结构已读。200%文字验收时浏览器连接超时，此后浏览器不可用，故保留草稿，不视为已上线。隔离预览8113已停止；没有运行新的学习页夹具或更改生产阅读/确认状态。
+- 浏览器恢复后先清除可能保留的临时700px viewport覆盖，再补200%和生产双领域交互。此新会话起初内置浏览器没有既有生产标签；不可从测试窗口推断所有者工作区、复制Cookie或造新验收空间。
+- 主数学完整resume链已取证到attempt12的d2c8a1ee-35de-4464-b885-b3deb57436c4（父1aeabc38），02:04:18超时，360候选/45筛选/0正式推荐，next03:04:18 UTC；这仍是v207发布前的失败，不再把42abba85当最新任务。03:04:28读取时仅刚到期限，尚未领取；新自然样本另记原计划，不能提前判定恢复失败。work_queue_json继续被截断，深评数及最后14篇身份未知。
+- 当前信息论验收步骤2b830bbf实际关联bd4bab8b，确切经典为Costa doi:10.1109/tit.1985.1057105；attempt6/queued6，next09:13 UTC。旧Shannon任务e9934cd0属于04948d10空间，attempt8/queued5，next03:13 UTC，二者不得混用。主数学KLS任务6786d1bf为attempt7/queued6，next07:03 UTC。数学已附材料review/资源仍一致且unread，当前信息论基础与KLS基础仍空，双领域交付未关闭。
+- 新确证读取限制：paper_insights按paper_id排序，连接器offset受工作区上限10000限制；边界主键85832907，数学附件feafc02f超出可达范围。未绕过限制、未扫整张论文表；其当前完整摘要/质量字段仍未独立取得。正常所有者浏览器读取仍是待恢复途径，不复试旧受阻诊断入口。
+
 ## 先读与先检查
 
 1. 完整阅读本文件、README.md，以及 FRONTEND_OPTIMIZATION_PLAN.md 的当前周期和最新落实。
