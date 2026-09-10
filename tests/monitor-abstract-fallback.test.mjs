@@ -75,6 +75,7 @@ test('actual D1 enrichment preserves longer stored evidence and never promotes a
       fetchSemanticScholarAbstracts: async () => new Map([['doi:qa', 'short but useful']]),
       fetchOpenAlexAbstracts: async () => new Map([['doi:qa', 'tiny']]),
       fetchCrossrefAbstracts: async () => new Map(),
+      recoverPaperAbstract: async () => null,
     });
     // A stale caller snapshot must not overwrite evidence already enriched in D1.
     await enrich(database, 'qa', [{ canonicalId: 'doi:qa', doi: 'qa', abstractText: '' }]);

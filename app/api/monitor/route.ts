@@ -1,3 +1,4 @@
+import { ABSTRACT_BLOCK_REASON, recoverPaperAbstract } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { createScreeningRequestTrace } from "../../../lib/screening-request-trace.mjs";
@@ -4295,6 +4296,8 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
   const candidateCondition = explicitlyRestricted
     ? restrictedIds.length ? `p.canonical_id IN (${restrictedIds.map(() => "?").join(", ")})` : "0 = 1"
     : `(i.analysis_model = ''
+       OR (i.analysis_source = 'deepseek_rejected' AND instr(i.screening_reason, 'Abstract evidence unavailable after bounded enrichment') > 0
+         AND NOT EXISTS (SELECT 1 FROM paper_abstract_recovery ar WHERE ar.paper_id=p.id AND (ar.retry_at > unixepoch()*1000 OR ar.lease_until > unixepoch()*1000)))
        OR i.analysis_source = 'deepseek_screened'
        OR i.analysis_source = 'deepseek_verification_pending'
        OR (i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded'
@@ -4723,7 +4726,12 @@ async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, 
      )`,
   ).bind(abstractText, abstractText, spaceId, spaceId, canonicalId));
   for (let start = 0; start < statements.length; start += 70) await database.batch(statements.slice(start, start + 70));
-  return { requested: missing.length, enriched: abstracts.size };
+  let recovered = 0;
+  for (const candidate of missing.filter(item => (abstracts.get(item.canonicalId)?.length || 0) < 120).slice(0, 1)) {
+    const row = await database.prepare("SELECT id FROM monitored_papers WHERE space_id=? AND canonical_id=? LIMIT 1").bind(spaceId, candidate.canonicalId).first<{ id: string }>();
+    if (row && (await recoverPaperAbstract(database, spaceId, row.id, true))?.status === "found") recovered++;
+  }
+  return { requested: missing.length, enriched: abstracts.size + recovered };
 }
 
 async function updateRunPhase(database: D1Database, spaceId: string, jobId: string, lockToken: string, status: string, scannedCount: number, newCount = 0) {
@@ -4876,7 +4884,7 @@ function toPaper(paper: PaperRow, now: number) {
     verificationCoverageScore: paper.verification_coverage_score,
     verificationPhase: monitorVerificationPhase(paper.verification_status, paper.verification_json),
     trackId: paper.track_id || null,
-    qualityStage: paper.quality_stage,
+    qualityStage: paper.quality_stage === "reviewed" && paper.screening_reason.includes(ABSTRACT_BLOCK_REASON) ? "awaiting_evidence" : paper.quality_stage,
     ...(originKind && paper.discovery_route_id && sourceLabels ? {
       discoveryOrigin: {
         kind: originKind,
@@ -6043,6 +6051,7 @@ async function finalizeEvidenceExcludedCandidates(database: D1Database, spaceId:
       `UPDATE paper_insights SET analysis_source = 'deepseek_rejected', llm_recommended = 0,
        screening_reason = CASE WHEN trim(screening_reason) = ''
         THEN 'Abstract evidence unavailable after bounded enrichment'
+        WHEN instr(screening_reason, 'Abstract evidence unavailable after bounded enrichment') > 0 THEN screening_reason
         ELSE screening_reason || ' · Abstract evidence unavailable after bounded enrichment' END,
        updated_at = CURRENT_TIMESTAMP
        WHERE space_id = ? AND analysis_source = 'deepseek_screened'

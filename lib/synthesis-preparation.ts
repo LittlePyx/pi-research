@@ -14,6 +14,7 @@ export function synthesisPreparation(papers: SynthesisPreparationPaper[], eligib
 
 export function preparationReviewState(state: string, reviewStage?: string) {
   if (state === "ready") return state;
+  if (reviewStage === "awaiting_evidence") return "awaiting_abstract";
   if (reviewStage === "reviewed") return "not_selected";
   if (reviewStage === "queued") return "awaiting_review";
   if (reviewStage === "reviewing") return "reviewing";

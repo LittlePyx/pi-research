@@ -421,6 +421,13 @@
       "when": 1789034470191,
       "tag": "0059_handy_smiling_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "6",
+      "when": 1789044060699,
+      "tag": "0060_new_hulk",
+      "breakpoints": true
     }
   ]
 }

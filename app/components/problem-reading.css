@@ -1,0 +1,34 @@
+.v2-app .v2-research-problem.pi-problem-reading { max-width: 900px; border: 0; border-radius: 0; background: transparent; }
+.v2-app .v2-research-problem.pi-problem-reading > header { padding: 20px 0; border-bottom: 1px solid #dce1dc; background: none; }
+.v2-app .v2-research-problem.pi-problem-reading > header h2 { font-size: 26px; line-height: 1.5; max-width: 800px; }
+.v2-app .v2-research-problem.pi-problem-reading .pi-problem-section { padding: 22px 0; border-bottom: 1px solid #dce1dc; }
+.v2-app .v2-research-problem.pi-problem-reading h3 { margin: 0 0 14px; font-size: 18px; }
+.v2-app .v2-research-problem.pi-problem-reading h4 { font-size: 17px; line-height: 1.65; }
+.v2-app .v2-research-problem.pi-problem-reading p { font-size: 16px; line-height: 1.85; overflow-wrap: anywhere; }
+.v2-app .v2-research-problem.pi-problem-reading .pi-problem-section article { padding: 10px 0; }
+.v2-app .v2-research-problem.pi-problem-reading .pi-problem-edit > summary { padding: 22px 0; cursor: pointer; font-size: 17px; font-weight: 600; color: #395746; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-editor { padding: 0; display: grid; grid-template-columns: 1fr; gap: 18px; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-editor label > span { font-size: 14px; }
+.v2-app .v2-research-problem.pi-problem-reading textarea { font-size: 16px; line-height: 1.7; border-radius: 3px; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-hypotheses, .v2-app .v2-research-problem.pi-problem-reading .v2-problem-confirm { padding: 22px 0; background: transparent; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-assessment { padding: 22px 0; background: transparent; border: 0; border-bottom: 1px solid #dce1dc; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-assessment > div { display: block; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-assessment article { padding: 16px 0; background: transparent; border: 0; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-actions { padding: 22px 0; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-actions > article { border: 0; border-bottom: 1px solid #dce1dc; background: none; border-radius: 0; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-action-body > strong { font-size: 18px; line-height: 1.6; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-context { margin: 16px 0; background: none; }
+@media(max-width:760px) { .v2-app .v2-research-problem.pi-problem-reading > header h2 { font-size: 22px; } .v2-app .v2-research-problem.pi-problem-reading .v2-problem-confirm { display: block; } }
+
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-statement-trace { margin: 12px 0; background: transparent; border: 0; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-statement-trace > summary { padding: 8px 0; font-size: 14px; cursor: pointer; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-statement-trace article { background: transparent; border: 0; padding: 12px 0; }
+.v2-app .v2-research-problem.pi-problem-reading .v2-problem-statement-trace footer { display: block; }
+.v2-app .v2-research-problem.pi-problem-reading .pi-problem-source { padding: 14px 0; border-bottom: 1px solid #dce1dc; }
+.v2-app .v2-research-problem.pi-problem-reading .pi-problem-source > strong { display: block; font-size: 16px; line-height: 1.6; }
+.v2-app .v2-research-problem.pi-problem-reading .pi-problem-source blockquote { margin: 12px 0; padding: 0 0 0 16px; border-left: 2px solid #afbeb3; font-size: 15px; line-height: 1.8; }
+.v2-app .v2-research-problem.pi-problem-reading .pi-problem-source a { display: inline-block; width: auto; border: 0; font-size: 14px; }
+
+.v2-app .v2-research-problem.pi-problem-reading > header > div { display: block; }
+.v2-app .v2-research-problem.pi-problem-reading > header .v2-kicker { margin: 0 0 8px; font-size: 12px; }
+.v2-app .v2-research-problem.pi-problem-reading .pi-problem-section { background: transparent; border-radius: 0; box-shadow: none; }

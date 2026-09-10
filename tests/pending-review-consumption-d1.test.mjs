@@ -28,7 +28,7 @@ test('the actual monitor reader reloads enriched evidence for frozen jobs in bot
     `${compiled}\nreturn pendingCandidateQueue;`)(activeResearchRouteSupplyPredicate, parseResearchRouteExperimentQueryKey);
   const repository = await readFile(new URL('../db/repository.ts', import.meta.url), 'utf8');
   const tables = ['research_spaces', 'research_tracks', 'research_track_papers', 'monitored_papers', 'paper_insights',
-    'monitor_candidate_sources', 'monitor_discovery_coverage', 'monitor_runs', 'paper_feedback'];
+    'paper_abstract_recovery', 'monitor_candidate_sources', 'monitor_discovery_coverage', 'monitor_runs', 'paper_feedback'];
   const definitions = [...repository.matchAll(/database\.prepare\("(CREATE (?:TABLE|UNIQUE INDEX) IF NOT EXISTS [^"]*)"\)/g)]
     .map((match) => match[1]).filter((sql) => tables.some((table) => sql.startsWith(`CREATE TABLE IF NOT EXISTS ${table} `) || sql.includes(` ON ${table}(`)));
   assert.equal(definitions.filter((sql) => sql.startsWith('CREATE TABLE')).length, tables.length);

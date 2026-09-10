@@ -1573,3 +1573,15 @@ export const researchWorkbookBootstrapSql = [
   "CREATE TABLE IF NOT EXISTS research_comparison_artifacts (id TEXT PRIMARY KEY NOT NULL, workbook_id TEXT NOT NULL REFERENCES research_comparison_workbooks(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, revision INTEGER NOT NULL, value_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_artifact_revision ON research_comparison_artifacts(workbook_id, revision)",
 ];
+
+export const paperAbstractRecovery = sqliteTable("paper_abstract_recovery", {
+  paperId: text("paper_id").primaryKey().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+  spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("pending"),
+  sourceUrl: text("source_url").notNull().default(""),
+  attemptedJson: text("attempted_json").notNull().default("[]"),
+  retryAt: integer("retry_at").notNull().default(0),
+  leaseUntil: integer("lease_until").notNull().default(0),
+  lockToken: text("lock_token"),
+  updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+});

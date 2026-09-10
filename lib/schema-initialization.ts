@@ -1,5 +1,5 @@
 // Bump when the bootstrap schema or its compatibility repairs change.
-export const SCHEMA_BOOTSTRAP_REVISION = "0059-read-path-v1";
+export const SCHEMA_BOOTSTRAP_REVISION = "0060-abstract-recovery-v1";
 
 export function schemaInitializer(initialize: (database: D1Database) => Promise<void>) {
   const pending = new WeakMap<D1Database, Promise<void>>();

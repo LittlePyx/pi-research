@@ -120,7 +120,7 @@ test("research-problem conclusions expose their evidence trail and discovery use
   assert.match(monitor, /problem_assessment_input_revision/);
   assert.match(monitor, /sourceKey: "research-route:problem"/);
   assert.match(client, /function ResearchStatementTrace/);
-  assert.match(client, /claim \{source\.claimId\}/);
+  assert.match(client, /source\.evidenceQuote/);
   assert.match(client, /action: origin === "problem" \? "expand-problem" : "expand-gap"/);
   assert.match(client, /候选进入今日共用的质量评估队列/);
   assert.match(client, /routeBuildDegraded/);

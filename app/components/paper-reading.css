@@ -1,6 +1,7 @@
-.v2-app .v2-page.v2-paper-detail { max-width: 1100px; margin-inline: auto; }
+.v2-app .v2-page.v2-paper-detail { max-width: 940px; margin-inline: auto; padding-top: 24px; }
 .v2-app .v2-paper-detail .v2-paper-head { padding: 18px 0 24px; }
-.v2-app .v2-paper-detail .v2-paper-head h1 { max-width: 960px; font-size: clamp(25px, 2.6vw, 36px); line-height: 1.35; margin: 14px 0; }
+.v2-app .v2-paper-detail .v2-paper-head h1 { max-width: 860px; font-size: clamp(23px, 2vw, 29px); line-height: 1.4; margin: 12px 0; }
+.v2-app .v2-paper-detail > .v2-back { margin-bottom: 12px; }
 .v2-app .v2-paper-detail .v2-paper-head > p { font-size: 15px; line-height: 1.7; margin: 8px 0; }
 .v2-app .v2-paper-detail .v2-paper-head > small { font-size: 13px; line-height: 1.7; }
 .v2-app .v2-paper-detail .v2-paper-top { font-size: 12px; gap: 12px; }
