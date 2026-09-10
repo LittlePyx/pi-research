@@ -2766,7 +2766,26 @@ function CitationFlowWorkbench({
       <article className="v2-citation-focus-card"><span>{locale === "zh" ? "当前焦点" : "CURRENT FOCUS"}</span><em>{researchRoleLabel(model.focus.paper.role, locale)} · {researchPaperYear(model.focus.paper)}</em><h4><MathText>{model.focus.paper.title}</MathText></h4><div className="v2-citation-focus-meta"><span>{model.focus.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span><small>{model.focus.paper.venue || (locale === "zh" ? "来源待核对" : "Venue unavailable")}</small></div><p>{locale === "zh" ? model.focus.paper.rationaleZh : model.focus.paper.rationaleEn}</p><dl><div><dt>{locale === "zh" ? "向前承接" : "Prior"}</dt><dd>{model.priorAll.length}</dd></div><div><dt>{locale === "zh" ? "向后影响" : "Later"}</dt><dd>{model.laterAll.length}</dd></div><div><dt>{locale === "zh" ? "总被引" : "Citations"}</dt><dd>{model.focus.paper.citationCount}</dd></div></dl><div className="v2-citation-focus-actions"><a href={model.focus.paper.url || (model.focus.paper.doi ? `https://doi.org/${model.focus.paper.doi}` : "#")} target="_blank" rel="noreferrer" onClick={() => onOpenFocus(model.focus!)}>{locale === "zh" ? "打开原文" : "Open original"} ↗</a><button type="button" onClick={() => onAskFocus(model.focus!)}>{locale === "zh" ? "让 Pi 解释" : "Ask Pi"}</button></div><button type="button" disabled={expanding} onClick={() => onExpandFocus(model.focus!)}>{expanding ? (locale === "zh" ? "正在寻找前后论文…" : "Discovering nearby papers…") : (locale === "zh" ? "到论文发现扩展前后 1-hop" : "Expand 1-hop in paper discovery")} →</button><small>{locale === "zh" ? "扩展候选会进入共享质量评估；只有评审通过才可能出现在今日，只有你收录确认后才进入正式路线与引用流。" : "Expanded candidates enter the shared quality review. Only papers that pass can reach Today, and only your explicit addition confirms formal route and citation-flow evidence."}</small></article>
       <section className="later"><header><span>03</span><div><h4>{locale === "zh" ? "后续发展" : "Later development"}</h4><small>{locale === "zh" ? "直接引用焦点论文的工作" : "Work that directly cites the focus"}</small></div><b>{model.laterAll.length > model.later.length ? `${model.later.length}/${model.laterAll.length}` : model.laterAll.length}</b></header><div>{model.later.length ? <>{model.later.map((item) => relationCard(item, "later"))}{model.laterAll.length > model.later.length && <details className="v2-citation-more"><summary>{locale === "zh" ? `展开其余 ${model.laterAll.length - model.later.length} 篇` : `Show ${model.laterAll.length - model.later.length} more`}</summary><div>{model.laterAll.slice(model.later.length).map((item) => relationCard(item, "later"))}</div></details>}</> : <p className="v2-citation-gap">{locale === "zh" ? "当前库内尚未核验到后续引用。" : "No later citation has been verified in the current library."}</p>}</div></section>
     </div>
-    <section className="v2-citation-ledger"><header><div><strong>{locale === "zh" ? "完整已核验引用清单" : "Complete verified citation ledger"}</strong><small>{locale === "zh" ? "箭头始终表示知识流向：被引工作 → 后续论文" : "Arrows always show knowledge flow: cited work → later paper"}</small></div><span>{model.ledger.length}</span></header><div>{model.ledger.map((edge) => { const prior = model.nodeById.get(edge.targetPaperId); const later = model.nodeById.get(edge.sourcePaperId); if (!prior || !later) return null; return <article key={edge.id}><button type="button" onClick={() => onSelect(prior.paper.id)}><small>{researchPaperYear(prior.paper)}</small><strong><MathText>{prior.paper.title}</MathText></strong></button><span aria-label={locale === "zh" ? "知识流向" : "knowledge flows to"}>→<small>{citationEvidenceProviderLabel(edge.evidenceSource)}</small></span><button type="button" onClick={() => onSelect(later.paper.id)}><small>{researchPaperYear(later.paper)}</small><strong><MathText>{later.paper.title}</MathText></strong></button></article>; })}</div></section>
+    <section className="v2-citation-ledger">
+      <header><div><strong>{locale === "zh" ? "完整已核验引用清单" : "Complete verified citation ledger"}</strong><small>{locale === "zh" ? "选择论文查看详情；引用方向按数据库记录。" : "Select a paper to inspect it; citation direction follows the database record."}</small></div><span>{model.ledger.length}</span></header>
+      <div>{model.ledger.map((edge) => {
+        const cited = model.nodeById.get(edge.targetPaperId);
+        const citing = model.nodeById.get(edge.sourcePaperId);
+        if (!cited || !citing) return null;
+        return <article key={edge.id}>
+          <button type="button" aria-pressed={model.focus?.paper.id === cited.paper.id} onClick={() => onSelect(cited.paper.id)}>
+            <small>{locale === "zh" ? "被引论文" : "Cited paper"}<span>{researchPaperYear(cited.paper)}</span></small>
+            <strong><MathText>{cited.paper.title}</MathText></strong>
+          </button>
+          <span className="v2-citation-ledger-arrow" aria-hidden="true">→</span>
+          <button type="button" aria-pressed={model.focus?.paper.id === citing.paper.id} onClick={() => onSelect(citing.paper.id)}>
+            <small>{locale === "zh" ? "引用它的论文" : "Paper citing it"}<span>{researchPaperYear(citing.paper)}</span></small>
+            <strong><MathText>{citing.paper.title}</MathText></strong>
+          </button>
+          <p className="v2-citation-ledger-source">{locale === "zh" ? "核验来源" : "Verified by"} · {citationEvidenceProviderLabel(edge.evidenceSource)}</p>
+        </article>;
+      })}</div>
+    </section>
   </section>;
 }
 
