@@ -2602,7 +2602,8 @@ function correctedRecommendationReview(review: PaperReview, value: unknown): Pap
     researchDecisionZh: review.researchDecisionZh ? text("researchDecisionZh", review.researchDecisionZh, 650) : "",
     researchDecisionEn: review.researchDecisionEn ? text("researchDecisionEn", review.researchDecisionEn, 850) : "",
   };
-  return next.summaryZh && next.summaryEn && next.whyReadZh && next.whyReadEn ? next : null;
+  // Required fields cannot disappear from the evidence gate after a correction.
+  return hasCompleteRecommendationDraft(next) ? next : null;
 }
 
 function isPublishedRecommendation(review: PaperReview) {
@@ -2753,17 +2754,17 @@ async function verifyRecommendationBatch(input: {
           : "You are Pi Research's fast independent recommendation evidence verifier. Audit only against the supplied metadata and numbered evidence units. Return strict JSON without hidden chain-of-thought." },
         { role: "user", content: [
           correctionMode
-            ? "Return {corrections:[{canonicalId,corrected:{summaryZh,summaryEn,whyReadZh,whyReadEn,problemZh,problemEn,methodZh,methodEn,contributionZh,contributionEn,limitationsZh,limitationsEn,readingFocusZh,readingFocusEn,researchQuestionsZh,researchQuestionsEn,researchProblemImpactZh,researchProblemImpactEn,researchDecisionZh,researchDecisionEn},verification:{verdict:\"verified|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,verdict:\"supported|qualified|unsupported\",reason}],reason}}]}."
+            ? "Return {corrections:[{canonicalId,corrected,verification:{verdict:\"verified|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,verdict:\"supported|qualified|unsupported\",reason}],reason}}]}. corrected is an object containing only the draft fields that need to change; use the exact supplied field names."
             : "Return {verifications:[{canonicalId,verdict:\"verified|revise|insufficient\",coverageScore,supportedFields,unsupportedFields,overstatements,contradictionRisks,supportedEvidenceIds,claimChecks:[{field,claimExcerpt,evidenceId,verdict:\"supported|qualified|unsupported\",reason}],reason]}.",
           correctionMode
-            ? "Correct every supplied draft into a complete conservative bilingual replacement. Apply the supplied audit exactly, retain supported substance, remove or qualify unsupported claims, and do not add new claims."
+            ? "Correct every supplied draft conservatively using its audit. Return both Zh and En values for each changed field; omit unchanged fields, which the server will preserve exactly. Remove or qualify unsupported claims without adding new claims. Do not repeat the complete draft."
             : "Audit every supplied paper. coverageScore must be an integer from 0 to 100. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
           correctionMode
             ? "Every corrected paper-fact claim must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation. The verification object is the final evidence decision: cover the core fields summary, problem, method, and contribution when populated, and cite a supplied evidenceId for every supported or qualified core claim. Personalized fit and reading guidance remain research-context judgments."
             : "claimChecks must cover the core paper-fact fields summary, problem, method, and contribution when populated. Personalized whyRead, readingFocus, researchProblemImpact, and researchDecision are research-context judgments, not abstract claims. Every supported or qualified core check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
           "Treat title, authors, venue, date, and citation count only as metadata. Evidence units support only what they state or directly entail. Route context and user fit do not prove paper findings.",
           "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it.",
-          correctionMode ? "Keep the correction concise while preserving every required bilingual field. Preserve empty researchProblemImpact and researchDecision fields as empty; never invent user-specific context. If the corrected draft cannot pass, return insufficient; there will be no further rewrite loop." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
+          correctionMode ? "Assess the complete merged draft (original fields plus your changes), not only the changed fields. Keep each change concise, preserve every required bilingual field and at least two research questions per language, and never erase a required field. Preserve empty researchProblemImpact and researchDecision fields as empty; never invent user-specific context. If the corrected draft cannot pass, return insufficient; there will be no further rewrite loop." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
           "Drafts and evidence: " + JSON.stringify(auditable.map((review) => {
             const candidate = candidateById.get(review.canonicalId);
             const evidence = evidenceByReview.get(review.canonicalId);

@@ -132,6 +132,24 @@ test('actual audit and correction functions preserve literal DOI and still enfor
   }
 });
 
+test('a sparse bilingual correction preserves the complete draft and cannot drop a required core field', async () => {
+  const changed = { summaryZh: review.summaryZh + '修订仅限定表述范围。', summaryEn: sentence + ' The scope is limited to this evidence.' };
+  const result = (await verify([{ canonicalId: id, corrected: changed, verification: verdict }], true))[0];
+  assert.equal(result.summaryZh, changed.summaryZh);
+  assert.equal(result.summaryEn, changed.summaryEn);
+  for (const key of ['methodZh', 'methodEn', 'problemZh', 'problemEn', 'contributionZh', 'contributionEn', 'readingFocusZh', 'readingFocusEn', 'researchQuestionsZh', 'researchQuestionsEn']) {
+    assert.deepEqual(result[key], review[key], key);
+  }
+  assert.equal(result.verificationStatus, 'revised');
+  assert.equal(result.verificationRetryable, false);
+  for (const corrected of [{ methodZh: '', methodEn: '' }, { problemZh: '短', problemEn: 'Short' },
+    { researchQuestionsZh: [], researchQuestionsEn: [] }]) {
+    await assert.rejects(verify([{ canonicalId: id, corrected, verification: verdict }], true), /correction incomplete/);
+  }
+  const unsupported = { ...verdict, verdict: 'insufficient', unsupportedFields: ['summary'] };
+  assert.equal((await verify([{ canonicalId: id, corrected: changed, verification: unsupported }], true))[0].recommended, false);
+});
+
 test('missing, encoded, stripped and duplicate audit identities retry without declaring quality rejection', async () => {
   for (const correction of [false, true]) {
     const entry = { canonicalId: id, ...verdict, corrected: review, verification: verdict };
