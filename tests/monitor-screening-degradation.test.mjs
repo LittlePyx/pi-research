@@ -70,7 +70,7 @@ test('screening timeout retries are bounded and never produce synthetic scores o
     QUICK_SCREEN_RETRY_TIMEOUT_MS: constant('QUICK_SCREEN_RETRY_TIMEOUT_MS'),
     AbortSignal: { timeout(ms) { deadlines.push(ms); return undefined; } },
     fetch: async (_url, request) => { requests.push(JSON.parse(request.body)); throw timeout; },
-    isNonRetryableDeepSeekError: () => false, setTimeout: callback => callback(),
+    isNonRetryableDeepSeekError: () => false, monitorErrorCode: () => 'timeout', setTimeout: callback => callback(),
     recordUsage: () => assert.fail('failed requests must not be recorded as successful screening'),
   });
   const database = { prepare: () => ({ bind: () => ({ first: async () => ({ profile_key: 'applied_mathematics' }) }) }) };
@@ -78,6 +78,55 @@ test('screening timeout retries are bounded and never produce synthetic scores o
   await assert.rejects(run(database, { id: 'fixture', name: 'QA mathematics' }, 'fixture', candidates, 'fixture-only'), error => error === timeout);
   assert.equal(requests.length, 2);
   assert.deepEqual(deadlines, [constant('QUICK_SCREEN_FAST_TIMEOUT_MS'), constant('QUICK_SCREEN_RETRY_TIMEOUT_MS')]);
-  assert.equal(requests[0].messages[1].content, requests[1].messages[1].content);
+  const inputs = requests.map(r => JSON.parse(r.messages[1].content.split('Records: ')[1]));
+  assert.equal(inputs[0].length, size);
+  assert.equal(inputs[1].length, Math.ceil(size / 2));
+  assert.deepEqual(inputs[1], inputs[0].slice(0, Math.ceil(size / 2)));
   assert.equal(requests.every(r => r.response_format.type === 'json_object'), true);
+});
+
+test('smaller timeout retry returns only evaluated IDs; rescue and non-timeout retries keep full coverage', async () => {
+  for (const [mode, errorCode] of [['fast', 'timeout'], ['rescue', 'timeout'], ['fast', 'invalid_response']]) {
+    let calls = 0;
+    let usageWrites = 0;
+    const inputs = [];
+    const run = load('quickScreenBatch', {
+      loadRouteReviewTitles: async () => [], benchmarkCalibrationPrompt: () => '', routeReviewOrigins: () => [],
+      MONITOR_MODEL: 'fixture-model',
+      QUICK_SCREEN_FAST_TIMEOUT_MS: constant('QUICK_SCREEN_FAST_TIMEOUT_MS'),
+      QUICK_SCREEN_RESCUE_TIMEOUT_MS: constant('QUICK_SCREEN_RESCUE_TIMEOUT_MS'),
+      QUICK_SCREEN_RETRY_TIMEOUT_MS: constant('QUICK_SCREEN_RETRY_TIMEOUT_MS'),
+      AbortSignal: { timeout: () => undefined },
+      fetch: async (_url, request) => {
+        const body = JSON.parse(request.body);
+        const papers = JSON.parse(body.messages[1].content.split('Records: ')[1]);
+        inputs.push(papers);
+        if (++calls === 1) throw new Error('fixture failure');
+        return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ screens: papers.map(p => ({
+          canonicalId: p.canonicalId, isPaper: true, relevanceScore: 85, qualityScore: 80, screeningReason: 'Direct evidence',
+        })) }) } }] }) };
+      },
+      monitorErrorCode: () => errorCode, isNonRetryableDeepSeekError: () => false, setTimeout: callback => callback(),
+      parseQuickScreenPayload: content => JSON.parse(content).screens, inferModelScoreScale: () => 100,
+      normalizeModelScore: score => score, cleanText: text => text, hasStrongFitScoreContradiction: () => false,
+      shanghaiDateKey: () => '2026-09-10', recordUsage: async () => { usageWrites++; },
+    });
+    const database = { prepare: () => ({ bind: () => ({ first: async () => ({ profile_key: 'applied_mathematics' }) }) }) };
+    const candidates = Array.from({ length: size }, (_, i) => ({ canonicalId: `fixture:${i}`, abstractText: 'Evidence.', horizon: 'years' }));
+    const original = structuredClone(candidates);
+    const first = await run(database, { id: 'fixture' }, 'fixture', candidates, 'fixture-only', mode);
+    const expected = mode === 'fast' && errorCode === 'timeout' ? Math.ceil(size / 2) : size;
+    assert.equal(first.length, expected);
+    assert.equal(inputs[1].length, expected);
+    assert.equal(calls, 2);
+    assert.equal(usageWrites, 3);
+    assert.deepEqual(candidates, original);
+    const completed = new Set(first.map(p => p.canonicalId));
+    const remaining = candidates.filter(p => !completed.has(p.canonicalId));
+    if (remaining.length) {
+      const next = await run(database, { id: 'fixture' }, 'fixture', remaining, 'fixture-only', mode);
+      assert.deepEqual([...first, ...next].map(p => p.canonicalId), original.map(p => p.canonicalId));
+      assert.equal(calls, 3);
+    }
+  }
 });

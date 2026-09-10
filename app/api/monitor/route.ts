@@ -2948,7 +2948,7 @@ async function quickScreenBatch(
       .bind(space.id).first<{ profile_key: string }>(),
   ]);
   const benchmarkProfileKey = preferenceRow?.profile_key || inferDomainProfile(space.name, space.description).key;
-  const prompt = [
+  const promptFor = (batch: Candidate[]) => [
     "Return one JSON object only with shape {\"screens\":[...]}. Screen every supplied record.",
     "Each screen must contain canonicalId, isPaper, relevanceScore, qualityScore, and screeningReason.",
     "relevanceScore and qualityScore must be integer scores on a 0-100 scale, never decimals on a 0-1 scale. 0 means no fit/evidence and 100 means exceptional fit/evidence.",
@@ -2964,7 +2964,7 @@ async function quickScreenBatch(
     `Confirmed research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
     `Positive examples: ${space.positiveExamples || "None yet"}`,
     `Negative examples: ${space.negativeExamples || "None yet"}`,
-    `Records: ${JSON.stringify(candidates.map((paper) => ({
+    `Records: ${JSON.stringify(batch.map((paper) => ({
       canonicalId: paper.canonicalId,
       title: paper.title,
       authors: paper.authors,
@@ -2981,6 +2981,11 @@ async function quickScreenBatch(
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      // Fast screening persists returned IDs and leaves all others pending.
+      // Reuse the existing retry slot with less work after a timeout; rescue
+      // still requires its complete group and must not take this partial path.
+      const batch = !deliberate && attempt > 0 && monitorErrorCode(lastError) === "timeout"
+        ? candidates.slice(0, Math.max(1, Math.ceil(candidates.length / 2))) : candidates;
       const response = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
         headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
@@ -2990,12 +2995,12 @@ async function quickScreenBatch(
             { role: "system", content: deliberate
               ? "You are Pi Research's careful evidence-disciplined second-pass paper triage editor. Return strict JSON."
               : "You are Pi Research's fast evidence-disciplined paper triage editor. Return strict JSON." },
-            { role: "user", content: prompt },
+            { role: "user", content: promptFor(batch) },
           ],
           thinking: { type: deliberate && attempt === 0 ? "enabled" : "disabled" },
           reasoning_effort: deliberate && attempt === 0 ? "medium" : "low",
           response_format: { type: "json_object" },
-          max_tokens: Math.min(3600, 500 + candidates.length * (deliberate ? 190 : 150)),
+          max_tokens: Math.min(3600, 500 + batch.length * (deliberate ? 190 : 150)),
           stream: false,
         }),
         signal: AbortSignal.timeout(attempt === 0
@@ -3009,7 +3014,7 @@ async function quickScreenBatch(
       const parsedScreens = parseQuickScreenPayload(content);
       const scoreScale = inferModelScoreScale(parsedScreens);
       const byId = new Map(parsedScreens.map((item) => [cleanText(item.canonicalId || ""), item]));
-      const screens = candidates.map((candidate) => {
+      const screens = batch.map((candidate) => {
         const item = byId.get(candidate.canonicalId);
         if (!item) throw new Error("DeepSeek Pro did not screen every candidate");
         const relevanceScore = normalizeModelScore(item.relevanceScore, scoreScale);
