@@ -32,6 +32,29 @@
 
 ## 当前优先级与调整规则（2026-09-07）
 
+### 2026-09-10 修订完整性与真实交付（进行中）
+
+- **原4篇后端核对已全部收口**：07:24:44 e1a99572保存mean width（f87edfd1-dc98-49c4-9280-b4c89ac9095e）verified/nonretryable/published=true，coverage90，四核心字段缺失0/unsupported0/问题0。单篇初核stop、1061输出token、2890字符，原稿复用，无重新深评。加上Mirror Langevin，共2正式入选；Hamilton–Jacobi与Sandwich Slice共2最终证据门槛未通过；待核对0。outputs/original-four-closure-20260910.json记录逐篇身份、job、结果和响应证据；原8篇账本同步。当前e1a99572仍在评估另外7篇，不能把这一轮未结束等同于原4篇仍未完成。最后等待当轮简报更新后核验mean width进入今日。
+
+- **v217已发布并通过检查**：07:21:03 UTC，源码1a54f332b5e1ed8d1f21cf4d70124e87ecaf284e，版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_e7cb76151f908191801aeae6164b7bef，部署appgdep_6aa25a43a80c8191b1caee29072d186c；public/环境修订6/无迁移。583项、lint、构建、离线基准、CI34449385108全通过。生产论文库此前会被任意历史verification_pending误标为reviewing；现按最新reviewed_at和同秒rowid顺序取最后审计，保留全部历史。07:22–07:24 DOM确认Sandwich Slice与Hamilton–Jacobi cylindrical test functions已显示评审未入选/未加入阅读，mean width仍正在核对；Space-Time Log-Sobolev也明确未入选。
+- **最后一篇正在验收**：07:21:55正常新版页面reload访问补偿启动e1a99572-3b09-4225-a5e0-4c1c19d23dce，quality_queue/attempt1、没有重扫；新批次56篇，复用8条既有筛选，07:23:26确认mean width原稿deepCompleted=true、verificationQueued=true、attempt0，优先续核名额实际生效。不同于前轮被挤出，当前没有重新深评该原稿。旧Codex自动任务仍未恢复。
+
+- **v216已发布并通过检查**：07:10:39 UTC，源码6ace574cbac4692b311c50a798e419e038be6f1e，版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_3e754449400881919ef5c0d1a7a99348，部署appgdep_6aa257b891208191b3822a2736cc8de4；public/环境修订6/无迁移。582项、lint、构建、离线基准、CI34448542369均成功；v215 CI34447749808也成功。原Mirror Langevin于07:02:28有直接生产根因证据：初核finish_reason=length，1700输出token、6349字符，随后invalid_model_output。v216要求短英文审计/短claim excerpt和理由，完整覆盖四个核心字段，并把初核上限从1700–2600改为2400–4200（批次1–3），保持24秒、单轮调用次数和全部证据门槛；显式拒绝任何length响应，即使JSON恰好完整。补充最终核对的字段覆盖/分数/问题数量白名单诊断，不输出原始claims。
+- **原4篇已收口3篇**：07:02:04 Hamilton–Jacobi及Sandwich Slice保守修订完整返回（2篇合计1127token、stop），均因最终确定性证据检查未通过而degraded/nonretryable/未发布；保存原因分别涉及whyRead中的证据支持表述，完整末次字段明细尚未独立取得，不能进一步臆测失败字段。Mirror Langevin在既有后续尝试后于07:04:28 revised/coverage85/published=true，移除摘要不支持的χ²收敛、熵最优传输和强数据处理不等式表述，保留可支持内容。此成功发生于v215，不倒算成v216输出上限修复的成功。mean width仍在共享队列待续接。
+- **真实页面交付**：eb3ede58于07:08:40完成，今日DOM确认累计4篇且显示Mirror Langevin，早先2篇保留；本轮另1正式为Navier-Stokes Fokker-Planck的Logarithmic Sobolev论文。14篇深评/本轮2正式/4证据未过，是该任务统计，不是原4篇计数。原Space-Time Log-Sobolev于07:05已保存完整深评（35a0c21a-d5d5-41df-bce0-f993dea16b85，摘要1255、相关88/质量85），最终逐篇判定尚未独立取得。主数学monitor_run下次质量处理时间07:18:40.676 UTC。最新安全证据存outputs/verification-delivery-v216.json；临时生产标签仍用于最后一篇验收，结束时须关闭。
+
+- **v215恢复修复已发布**：07:00:37 UTC，源码983e490c8df3f91d76d6ea9c5f292e5375a6322f已推送GitHub/Sites；版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_e648d3416a3081919982136a95f3311d，部署appgdep_6aa25578b1f48191a22786d7daab0c91。public/环境修订6/无迁移；580测试、lint、构建及离线基准通过，CI34447749808待完成。v213 CI34446501241与v214 CI34447286098均成功。07:01新版页面正常reload后，同一eb3ede58从深评中断点转入verifying_recommendations；没有新任务/重扫，实际触发visit已披露。
+
+- **v214已发布**：06:54:51 UTC，源码30d0fee7e4cd9d73918073e93b5b7c63f7a30b67，版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_cebd9e9aeb288191a5c81de80624e885，部署appgdep_6aa2541a9a908191abbaa9bc95c56f77。577项、lint、构建与离线基准通过。解决新队列重排会挤出已保存待核对稿的问题：D1消费者显式带verificationPending，每个时间范围保留一批3篇续核名额，保留原路线2个名额及12/16/28总量；0空位不额外塞摘要缺口候选。旧真实函数隔离回归得到0/3续核，修复后3/3且不超总量。
+- **06:47新任务实际变化**：eb3ede58筛选59/59，9篇深评队列，Hamilton–Jacobi、Sandwich Slice、Mirror Langevin3篇旧稿直接复用进入待核对；mean width虽然在360池中，却被本轮重排挤出，不能说4篇都已续核。已完成另1篇Sobolev–Poincaré有限元论文（doi:10.1137/25m1748470）相关15/质量70不入选。06:47:34推进请求的Worker实际outcome=canceled，租约后来清除，未产生模型判定；这是请求中断，不是证据不足。
+- **正在补全恢复流程**：原页面advance的网络或响应体中断会退出并保留旧“处理中”画面，现转入已有只读follower/到期租约恢复，取消页面仍停止、明确服务端错误仍显示；同时deep_reviewing先核对已保存完整稿，不再等新候选全部深评。实际函数回归覆盖headers/body断开、取消、服务端拒绝、已核对/已延后不重入，完整检查与发布待完成。
+
+- 原9e4bab7f于06:25:40完成：360候选、59已筛选、13深评完成、1深评timeout延后、2正式推荐、4草稿核对延后。原8篇单独仍是7深评完成/1延后/4待核对/0正式；2篇入选来自后追加的6篇，分别为Wolff Dynamics的Log-Sobolev不等式（983661e8-e057-4c4a-a710-11eb081d5454，覆盖95）与ultra log-concave distributions集中不等式（210fc857-5abb-4511-9a80-fa306fe3df5d，覆盖100）。生产今日DOM已确认两篇实际显示；后者初核finish_reason=stop、704输出token、2580字符。
+- 原drag006现在取得确切paperId e4f1a3ef-154b-4d1d-8402-3d00522402d4，相关10/质量70，因非协调有限元离散Sobolev与本空间KLS/对数凹测度研究缺乏直接联系未入选。Hamilton–Jacobi详情已打开，完整中文稿仍在、未加入阅读；两篇需修订稿及mean width/Mirror Langevin均未冒充正式推荐。原两篇具体失败响应仍未取得，不把“可能截断”写成已证实根因。
+- 新质量队列eb3ede58-7e35-4014-965f-ea30021a7131于06:36:29由正常页面visit启动，attempt1、quality_queue、无resume_of_job_id；队列前部明确包含原4篇。06:45:45已完成去重、复用9篇筛选，进入enriching_screening_abstracts。本轮生产访问06:21:44、06:36:28，以及新版发布核验06:45，均可能触发网站已有访问补偿，不能称为纯Cron。未点扫描/重扫/阅读/接受，未恢复旧Codex自动任务。
+- 本地真实函数回归发现修订清空method等字段后，旧代码可能把空字段排除在证据门槛外。现改为合并后调用已有完整性检查；不完整响应留待重试，真实insufficient仍拒绝。修订请求只返回必要的双语字段变化，服务端保留未变字段，并核对完整合并稿；不再要求每次重复20个字段全文。未改模型、超时、批量、尝试次数、质量标准或调度。
+- v213已于06:44:39 UTC发布成功，源码5d2345ab059dd4faac317df071c3f328b2b47229已推送GitHub与Sites；版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_eb1b211c88448191b64ac6da22301dd4，部署appgdep_6aa251bc8204819196e96cdb19be35a4。public/环境修订6/无迁移；本地576测试、lint、构建与离线基准通过。CI34446501241尚在运行。原4篇最终核对验收继续。
+
 ### 2026-09-10 技术失败不得消耗内容修订机会（进行中）
 
 - 本轮完整重读交接并核实main@255f85d、线上v211/public。06:04原9e4bab7f仍6/8已深评、1延后、1未处理、0正式推荐；Mirror Langevin首次核对实际错误码invalid_model_output，并因既有连续失败熔断而延后，不是已通过或已拒稿。与05:54的深评timeout分别记录。本轮未访问生产页面、触发扫描或恢复旧自动任务。
