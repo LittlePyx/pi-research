@@ -1007,6 +1007,7 @@ export const recommendationAuditEvents = sqliteTable(
   (table) => [
     uniqueIndex("idx_recommendation_audit_job_paper").on(table.scanJobId, table.paperId),
     index("idx_recommendation_audit_space_reviewed").on(table.spaceId, table.reviewedAt),
+    index("idx_recommendation_audit_space_paper_reviewed").on(table.spaceId, table.paperId, table.reviewedAt),
     index("idx_recommendation_audit_space_decision_reviewed").on(table.spaceId, table.decision, table.reviewedAt),
   ],
 );

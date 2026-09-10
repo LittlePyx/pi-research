@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { fixtureResponse, learningFixture, spaces } from "../tests/fixtures/learning-ui-state.mjs";
 import { workbookSample, workbookSources } from "../tests/fixtures/research-workbook.mjs";
+import { routeReadingFixture } from "../tests/fixtures/route-reading.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const entry = "/__pi_workbook_fixture.tsx";
 const saved = new Map();
@@ -17,7 +18,7 @@ const server = await createServer({ root, configFile: false, envDir: false,
     configureServer(vite) { vite.middlewares.use(async (req, res, next) => {
       const url = new URL(req.url, "http://127.0.0.1:8114");
       if (url.pathname.startsWith("/api/")) {
-        if (!["GET", "POST"].includes(req.method) || (req.method === "POST" && !["/api/monitor", "/api/feedback", "/api/research-workbook"].includes(url.pathname))) {
+        if (!["GET", "POST"].includes(req.method) || (req.method === "POST" && !["/api/monitor", "/api/feedback", "/api/research-workbook", "/api/research-map"].includes(url.pathname))) {
           res.writeHead(403, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Disabled in fixture" })); return;
         }
         let body = ""; for await (const chunk of req) body += chunk;
@@ -25,6 +26,8 @@ const server = await createServer({ root, configFile: false, envDir: false,
         const spaceId = url.searchParams.get("spaceId") || input.spaceId || spaces[0].id;
         let result = fixtureResponse(req.url, req.method, spaceId);
         const data = learningFixture(spaceId);
+        if (url.pathname === "/api/research-map" && input.action === "read") result = { status: 200, body: routeReadingFixture() };
+        if (url.pathname === "/api/monitor" && req.method === "POST") await new Promise(resolve => setTimeout(resolve, 10000));
         if (url.pathname === "/api/learning-path" && data) { data.learning.path.targetTrackId = "kls"; result = { status: 200, body: data.learning }; }
         if (url.pathname === "/api/monitor" && data) { data.monitor.historyPapers = workbookSources.map((s, i) => ({ ...data.monitor.historyPapers[i], id: s.id, title: s.title, authors: s.authors, url: s.url })); result = { status: 200, body: { monitor: data.monitor } }; }
         if (url.pathname === "/api/research-workbook" && data) {

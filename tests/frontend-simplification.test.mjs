@@ -47,7 +47,7 @@ test("route overview cards show one summary and one state-aware action", async (
   const routeCards = routeOverview.slice(routeOverview.indexOf('<section className="v2-route-groups">'), routeOverview.indexOf('<details className="v2-route-map-assist">'));
 
   assert.match(routeCards, /const recoveryActionNeeded = \["queued", "retryable", "empty", "failed", "partial"\]/);
-  assert.match(routeCards, /v2-route-gap-link compact/);
+  assert.doesNotMatch(routeCards, /v2-route-gap-link compact/);
   assert.match(routeCards, /confirmedRouteEvidenceCount\(thread\)/);
   assert.doesNotMatch(routeCards, /thread\.intelligence\.assessment/);
   assert.doesNotMatch(routeCards, /v2-route-latest-change|<dl>/);

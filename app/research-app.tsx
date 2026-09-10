@@ -10,6 +10,7 @@ import { LearningStageNavigation } from "./components/learning-stage-navigation"
 import { LearningStageGuidance } from "./components/learning-stage-guidance";
 import { LearningNextTask } from "./components/learning-next-task";
 import { ResearchWorkbook } from "./components/research-workbook";
+import "./route-reading.css";
 import type { WorkbookSource } from "../lib/research-workbook";
 import { learningBrowseStep, canChangeLearningStep } from "../lib/learning-browse";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
@@ -1783,14 +1784,14 @@ function researchSynthesisKindLabel(kind: ResearchSynthesisStatement["kind"], lo
   return labels[kind][locale];
 }
 
-function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) => void) {
+function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) => void, immediate = true) {
   let stopped = false;
   let polling = false;
   const poll = async () => {
-    if (stopped || polling) return;
+    if (stopped || polling || document.visibilityState === "hidden") return;
     polling = true;
     try {
-      const response = await fetch("/api/monitor?spaceId=" + encodeURIComponent(spaceId));
+      const response = await fetch("/api/monitor?spaceId=" + encodeURIComponent(spaceId), { signal: AbortSignal.timeout(20_000) });
       const data = await response.json() as { monitor?: MonitorState };
       if (!stopped && response.ok && data.monitor) onUpdate(data.monitor);
     } catch {
@@ -1799,8 +1800,8 @@ function startMonitorPolling(spaceId: string, onUpdate: (monitor: MonitorState) 
       polling = false;
     }
   };
-  void poll();
-  const timer = window.setInterval(() => void poll(), 1500);
+  if (immediate) void poll();
+  const timer = window.setInterval(() => void poll(), 5000);
   return () => {
     stopped = true;
     window.clearInterval(timer);
@@ -1816,7 +1817,7 @@ async function followMonitorPipeline(
   let current = initialMonitor;
   let lastReclaimAttemptAt = 0;
   for (let step = 0; step < 400 && !isCancelled() && !["ready", "error"].includes(current.status); step += 1) {
-    await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    await new Promise((resolve) => window.setTimeout(resolve, 5000));
     if (isCancelled()) break;
     try {
       const response = await fetch("/api/monitor?spaceId=" + encodeURIComponent(spaceId), { cache: "no-store" });
@@ -3234,6 +3235,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const [mobileNav, setMobileNav] = useState(false);
   const [monitor, setMonitor] = useState<MonitorState | null>(null);
   const [monitoring, setMonitoring] = useState(false);
+  const [workspaceLoadFailed, setWorkspaceLoadFailed] = useState(false);
+  const monitorSpaceRef = useRef<string | null>(null);
   const [scanElapsedSeconds, setScanElapsedSeconds] = useState(0);
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
   const [venueDraft, setVenueDraft] = useState("");
@@ -3356,7 +3359,7 @@ export default function ResearchApp({ user }: { user: User }) {
     });
   }, [historyPapers, inboxFilter, libraryFilter, librarySearch, librarySort, libraryStageFilter]);
   const visibleLibraryPapers = useMemo(() => libraryPapers.slice(0, libraryVisibleCount), [libraryPapers, libraryVisibleCount]);
-  const scanIsActive = monitoring || isMonitorScanning(monitor?.status);
+  const scanIsActive = Boolean(monitor) && (monitoring || isMonitorScanning(monitor?.status));
   const effectiveScanStatus: MonitorStatus = monitoring && !isMonitorScanning(monitor?.status) ? "scanning" : monitor?.status || "idle";
   const activeScanJob = monitor?.scanJob && !["ready", "error"].includes(monitor.scanJob.status) ? monitor.scanJob : null;
   const verificationInProgress = Boolean(scanIsActive && activeScanJob?.checkpoint === "verifying_recommendations");
@@ -3375,6 +3378,7 @@ export default function ResearchApp({ user }: { user: User }) {
     ? (locale === "zh" ? "正在核对推荐依据" : "Checking recommendation evidence")
     : monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
+  const monitorReadNotice = workspaceLoadFailed ? <section className="pi-content-loading" role="alert"><strong>{locale === "zh" ? "研究空间暂时未能载入" : "Workspace could not be loaded"}</strong><button type="button" onClick={() => window.location.reload()}>{locale === "zh" ? "重新载入" : "Retry loading"}</button></section> : !monitor ? <section className="pi-content-loading" role="status"><strong>{locale === "zh" ? "正在读取已保存的论文…" : "Loading saved papers…"}</strong><p>{locale === "zh" ? "已有内容载入后即可阅读，无需等待后台扫描完成。" : "You can read saved content while discovery continues in the background."}</p></section> : monitor.status === "error" && !monitor.papers.length ? <section className="pi-content-loading" role="alert"><strong>{locale === "zh" ? "论文暂时未能载入" : "Papers could not be loaded"}</strong><button type="button" onClick={() => setLearningMonitorWake((value) => value + 1)}>{locale === "zh" ? "重新载入" : "Retry loading"}</button></section> : null;
   const currentRunHasDiscovery = Boolean(activeScanJob && (activeScanJob.discoveredCount > 0
     || activeScanJob.horizonStats?.some((item) => item.candidates !== null)));
   const healthyCoverageCount = !scanIsActive || currentRunHasDiscovery
@@ -3764,7 +3768,7 @@ export default function ResearchApp({ user }: { user: User }) {
       if (savedSpace) setActiveSpaceId(savedSpace);
     }, 0);
 
-    fetch("/api/spaces")
+    fetch("/api/spaces", { signal: AbortSignal.timeout(20_000) })
       .then(async (response) => {
         if (!response.ok) throw new Error("spaces unavailable");
         return response.json() as Promise<{
@@ -3804,6 +3808,7 @@ export default function ResearchApp({ user }: { user: User }) {
       })
       .catch(() => {
         setSpaces(fallbackSpaces);
+        setWorkspaceLoadFailed(true);
         setModelConnectionState("unavailable");
       });
 
@@ -3834,17 +3839,29 @@ export default function ResearchApp({ user }: { user: User }) {
     let cancelled = false;
     let stopPolling: () => void = () => undefined;
     const timer = window.setTimeout(() => {
-      setMonitor(null);
+      if (monitorSpaceRef.current !== activeSpace.id) setMonitor(null);
+      monitorSpaceRef.current = activeSpace.id;
       setMonitoring(true);
-      stopPolling = startMonitorPolling(activeSpace.id, (nextMonitor) => {
-        if (!cancelled) setMonitor(nextMonitor);
-      });
-      fetch("/api/monitor", {
+      // Render saved papers before requesting any visit-triggered background work.
+      fetch("/api/monitor?spaceId=" + encodeURIComponent(activeSpace.id), { signal: AbortSignal.timeout(20_000) })
+        .then(async (response) => {
+          const data = await response.json() as { monitor?: MonitorState; error?: string };
+          if (!response.ok || !data.monitor) throw new Error(data.error || "monitor unavailable");
+          if (!cancelled) setMonitor(data.monitor);
+        })
+        .then(() => {
+          if (cancelled) return null;
+          stopPolling = startMonitorPolling(activeSpace.id, (nextMonitor) => {
+            if (!cancelled) setMonitor(nextMonitor);
+          }, false);
+          return fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ spaceId: activeSpace.id, trigger: "visit", action: "start" }),
-      })
+          });
+        })
         .then(async (response) => {
+          if (!response || cancelled) return;
           const data = await response.json() as { monitor?: MonitorState; error?: string };
           if (data.monitor && !cancelled) setMonitor(data.monitor);
           if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "monitor unavailable");
@@ -5774,9 +5791,10 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "today" && (
           <main className="v2-page v2-today">
+            {monitorReadNotice}
             <section className="v2-today-hero">
               <div className="v2-today-hero-copy"><p className="v2-kicker">{formatTodayDate(locale)}</p><h1>{locale === "zh" ? "今日" : "Today"}</h1></div>
-              <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "ready" ? monitorReadyLabel : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
+              <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{!monitor ? (locale === "zh" ? "正在读取已有内容" : "Loading saved content") : scanIsActive ? scanPhase : monitor?.status === "ready" ? monitorReadyLabel : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
             </section>
 
             {monitor?.dailyBrief && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
@@ -5817,9 +5835,9 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-monitor-head">
                 <div className="v2-monitor-intro"><p className="v2-kicker">{locale === "zh" ? "论文发现" : "PAPER DISCOVERY"}</p><h2>{locale === "zh" ? "论文扫描" : "Paper scan"}</h2><p>{locale === "zh" ? "近 14 天 · 近 6 个月 · 近 5 年" : "14 days · 6 months · 5 years"}</p></div>
                 <div className="v2-monitor-actions">
-                  <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? monitorReadyLabel : t.neverScanned}</span>
+                  <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{!monitor ? (locale === "zh" ? "正在读取已有内容" : "Loading saved content") : scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? monitorReadyLabel : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
-<button type="button" onClick={runManualMonitor} disabled={scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgressLabel}` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
+<button type="button" onClick={runManualMonitor} disabled={!monitor || scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgressLabel}` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
                 </div>
               </div>
               {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><InterfaceIcon name="clock" /><p>{locale === "zh" ? "今天的完整扫描额度已用完；Pi 会在刷新后继续，现有论文、偏好与断点均已保留。" : "Today's full-scan budget is exhausted. Pi will continue after the reset; papers, preferences, and checkpoints are preserved."}</p></div>}
@@ -5936,20 +5954,14 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "threads" && (
           <main className="v2-page v2-map-page">
-              <section className="v2-page-head v2-map-head v2-route-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {modelDisplayName(researchMap.model)}</p><h1>{researchMapMode === "directions" ? (locale === "zh" ? "研究路线" : "Research routes") : (locale === "zh" ? "高级图谱探索" : "Advanced graph explorer")}</h1>{researchMapMode === "papers" && <p>{locale === "zh" ? "引用、相似工作与阅读顺序。" : "Citations, related work, and reading order."}</p>}</div><div className="v2-map-head-actions">{researchMapMode === "papers" ? <button className="v2-route-back-overview" type="button" onClick={() => { setResearchMapMode("directions"); setSelectedNetworkPaperId(null); }}>{locale === "zh" ? "← 返回路线总览" : "← Back to route overview"}</button> : <><span className="v2-map-total"><strong>{researchMap.tracks.length}</strong>{locale === "zh" ? "条研究路线" : "research routes"}</span><button className="v2-route-head-explorer" type="button" onClick={() => setResearchMapMode("papers")}>{locale === "zh" ? "高级图谱探索" : "Advanced graph explorer"} →</button></>}</div></section>
+              <section className="v2-page-head v2-map-head v2-route-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{researchMapMode === "directions" ? (locale === "zh" ? "研究路线" : "Research routes") : (locale === "zh" ? "高级图谱探索" : "Advanced graph explorer")}</h1>{researchMapMode === "papers" && <p>{locale === "zh" ? "引用、相似工作与阅读顺序。" : "Citations, related work, and reading order."}</p>}</div><div className="v2-map-head-actions">{researchMapMode === "papers" ? <button className="v2-route-back-overview" type="button" onClick={() => { setResearchMapMode("directions"); setSelectedNetworkPaperId(null); }}>{locale === "zh" ? "← 返回路线总览" : "← Back to route overview"}</button> : <><span className="v2-map-total"><strong>{researchMap.tracks.length}</strong>{locale === "zh" ? "条研究路线" : "research routes"}</span><button className="v2-route-head-explorer" type="button" onClick={() => setResearchMapMode("papers")}>{locale === "zh" ? "高级图谱探索" : "Advanced graph explorer"} →</button></>}</div></section>
             {mapLoading ? (
               <section className="v2-map-loading v2-outline-loading" role="status"><InterfaceIcon name="loading" className="pi-state-mark" /><div><strong>{locale === "zh" ? "正在建立研究路线" : "Building research routes"}</strong><p>{mapOutlineLabels[mapOutlinePhase]}</p><i><b style={{ width: `${22 + mapOutlinePhase * 21}%` }} /></i><small>{locale === "zh" ? "已识别的路线先显示，论文证据随后补充。" : "Identified routes appear first; paper evidence follows."}</small></div></section>
             ) : researchMap.tracks.length ? (
               <>
                 {researchMapMode === "directions" ? <>
-                  {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress v2-route-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes await evidence`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成内容已经保存" : "Completed work is saved")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i></section> : null}
-                  {((researchMap.intelligenceProgress && researchMap.intelligenceProgress.ready < researchMap.intelligenceProgress.total) || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress v2-route-build-progress" role="status"><div><InterfaceIcon name={mapIntelligenceTrackId ? "loading" : "clock"} className="pi-state-mark" /><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "方向研判中" : "Assessing direction") : (locale === "zh" ? "部分方向待更新" : "Some assessments need refresh")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "已有路线和研判已保留" : "Existing routes and assessments are retained")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i></section> : null}
-                  {Boolean((researchMap.buildProgress?.partialTrackIds?.length || 0) + (researchMap.buildProgress?.emptyTrackIds?.length || 0) + (researchMap.buildProgress?.failedTrackIds?.length || 0)) && <section className="v2-map-build-progress v2-route-build-degraded" role="status"><div><span className="paused"><i>!</i></span><div><strong>{locale === "zh" ? "部分路线待补充" : "Some routes need evidence"}</strong><p>{locale === "zh" ? "已有论文已保留；无可见证据的路线不会标记为完成。" : "Existing papers are retained; routes without visible evidence are not marked complete."}</p></div></div></section>}
-
-                  {routeAttention && routeAttentionTrack && <RoutePortfolioOverview portfolio={routePortfolio} todayCount={routeTodayPaperCount} attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={handleRouteAttention} />}
-
                   <section className="v2-route-groups">
-                    <header><div><p className="v2-kicker">{locale === "zh" ? "研究路线" : "RESEARCH ROUTES"}</p><h2>{locale === "zh" ? "主攻、辅助与探索" : "Core, supporting, and exploratory"}</h2></div></header>
+                    <header><div><p className="v2-kicker">{locale === "zh" ? "研究路线" : "RESEARCH ROUTES"}</p><h2>{locale === "zh" ? "选择一条路线继续研究" : "Choose a route to continue"}</h2></div></header>
                     {(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => researchTracksByRole[role].length ? <section className={`v2-route-group ${role}`} key={role}>
                       <header><span>{directionRoleLabel(role, locale)}</span><b>{researchTracksByRole[role].length}</b></header>
                       <div>{researchTracksByRole[role].map((thread) => {
@@ -5957,12 +5969,21 @@ export default function ResearchApp({ user }: { user: User }) {
                         return <article className={`${thread.buildStatus} ${thread.monitoringStatus}`} key={thread.id}>
                           <header><span className={`v2-direction-heat ${thread.heatLevel}`} title={directionHeatTitle(thread, locale)}><i />{directionHeatLabel(thread.heatLevel, locale)}</span><RouteOperationalBadge track={thread} locale={locale} /><small>{recoveryActionNeeded ? researchTrackBuildSummary(thread, locale) : `${confirmedRouteEvidenceCount(thread)} ${locale === "zh" ? "篇证据" : "papers"}`}</small></header>
                           <button className="v2-route-card-main" type="button" onClick={() => openThread(thread)}><h3>{locale === "zh" ? thread.titleZh : thread.titleEn}</h3><p>{locale === "zh" ? thread.summaryZh : thread.summaryEn}</p></button>
-                          {(thread.intelligence?.evidenceGapZh || thread.intelligence?.evidenceGapEn) && <button className="v2-route-gap-link compact" type="button" onClick={() => openThread(thread, "gaps")}><span>{locale === "zh" ? "证据缺口" : "Evidence gap"}</span><p>{locale === "zh" ? thread.intelligence.evidenceGapZh : thread.intelligence.evidenceGapEn}</p><b>→</b></button>}
-                          <footer>{recoveryActionNeeded ? <button type="button" onClick={() => void expandResearchTrack(thread)} disabled={Boolean(mapAction || mapBuildTrackId || thread.monitoringStatus === "paused")}>{mapAction === thread.id ? (locale === "zh" ? "补充中…" : "Recovering…") : thread.monitoringStatus === "paused" ? (locale === "zh" ? "路线已暂停" : "Route paused") : ["queued", "retryable", "empty", "failed"].includes(thread.buildStatus) ? (locale === "zh" ? "重试补充证据" : "Retry evidence") : (locale === "zh" ? "补全路线证据" : "Complete route evidence")}</button> : <button type="button" onClick={() => openThread(thread)}>{locale === "zh" ? "进入工作区" : "Open workspace"} →</button>}</footer>
+                          <footer><button type="button" onClick={() => openThread(thread)}>{locale === "zh" ? "进入研究" : "Open research"} →</button></footer>
                         </article>;
                       })}</div>
                     </section> : null)}
                   </section>
+
+                  <details className="pi-route-secondary">
+                    <summary>{locale === "zh" ? "发现进度与待处理事项" : "Discovery progress and pending actions"}</summary>
+                  {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress v2-route-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes await evidence`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成内容已经保存" : "Completed work is saved")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i></section> : null}
+                  {((researchMap.intelligenceProgress && researchMap.intelligenceProgress.ready < researchMap.intelligenceProgress.total) || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress v2-route-build-progress" role="status"><div><InterfaceIcon name={mapIntelligenceTrackId ? "loading" : "clock"} className="pi-state-mark" /><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "方向研判中" : "Assessing direction") : (locale === "zh" ? "部分方向待更新" : "Some assessments need refresh")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "已有路线和研判已保留" : "Existing routes and assessments are retained")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i></section> : null}
+                  {Boolean((researchMap.buildProgress?.partialTrackIds?.length || 0) + (researchMap.buildProgress?.emptyTrackIds?.length || 0) + (researchMap.buildProgress?.failedTrackIds?.length || 0)) && <section className="v2-map-build-progress v2-route-build-degraded" role="status"><div><span className="paused"><i>!</i></span><div><strong>{locale === "zh" ? "部分路线待补充" : "Some routes need evidence"}</strong><p>{locale === "zh" ? "已有论文已保留；无可见证据的路线不会标记为完成。" : "Existing papers are retained; routes without visible evidence are not marked complete."}</p></div></div></section>}
+
+                  {routeAttention && routeAttentionTrack && <RoutePortfolioOverview portfolio={routePortfolio} todayCount={routeTodayPaperCount} attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={handleRouteAttention} />}
+
+                  </details>
 
                   <details className="v2-route-map-assist">
                     <summary><span><small>{locale === "zh" ? "辅助视图" : "SUPPORTING VIEW"}</small><strong>{locale === "zh" ? "查看方向之间的演化与关系" : "Explore evolution and cross-direction relationships"}</strong><p>{locale === "zh" ? "需要理解全局结构时再展开；Pi 推断关系与真实论文证据保持区分。" : "Expand only when you need the global structure; Pi-inferred links remain separate from paper evidence."}</p></span><b>{researchMap.edges.length} {locale === "zh" ? "条关系" : "links"} ＋</b></summary>
@@ -6050,7 +6071,7 @@ export default function ResearchApp({ user }: { user: User }) {
             {selectedThread ? <>
               <section className="v2-route-workspace-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {directionRoleLabel(selectedThread.userRole, locale)}</p><h1>{locale === "zh" ? selectedThread.titleZh : selectedThread.titleEn}</h1><details className="v2-route-summary"><summary><span>{locale === "zh" ? "路线说明" : "Route scope"}</span><b aria-hidden="true">＋</b></summary><p>{locale === "zh" ? selectedThread.summaryZh : selectedThread.summaryEn}</p></details><div className="v2-route-workspace-meta"><span className={`v2-direction-heat ${selectedThread.heatLevel}`} title={directionHeatTitle(selectedThread, locale)}><i />{directionHeatLabel(selectedThread.heatLevel, locale)}</span><RouteOperationalBadge track={selectedThread} locale={locale} />{selectedThread.buildStatus !== "ready" && <span>{selectedThread.buildStatus === "partial" ? (locale === "zh" ? "部分可用" : "Partially available") : researchTrackBuildSummary(selectedThread, locale)}</span>}<span>{confirmedRouteEvidenceCount(selectedThread)} {locale === "zh" ? "篇已确认" : "confirmed"}</span>{pendingRouteEvidenceCount(selectedThread) > 0 && <span>{pendingRouteEvidenceCount(selectedThread)} {locale === "zh" ? "篇待确认" : "pending"}</span>}</div></div></section>
 
-              <ResearchLeadDecisionPanel track={selectedThread} problemState={researchProblemState} synthesis={researchSynthesis} locale={locale} onOpenWorkspace={setResearchRouteTab} onOpenToday={() => navigate("today")} onOpenLearning={() => openRouteLearningPath(selectedThread)} onScanGap={(origin) => void scanResearchRouteSignal(selectedThread, origin)} gapScanning={mapAction === `gap:${selectedThread.id}` || mapAction === `problem:${selectedThread.id}`} gapScanBlocked={Boolean(mapAction || mapBuildTrackId || mapIntelligenceTrackId || selectedThread.monitoringStatus === "paused")} />
+
 
               <nav className="v2-route-workspace-tabs" aria-label={locale === "zh" ? "路线工作区" : "Route workspace"}>{(["problem", "assessment", "evidence", "gaps", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" aria-current={researchRouteTab === tab ? "page" : undefined} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><strong>{tab === "problem" ? (locale === "zh" ? "研究问题" : "Research problem") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "证据" : "Evidence") : tab === "gaps" ? (locale === "zh" ? "缺口与发现" : "Gaps & discovery") : (locale === "zh" ? "研究计划" : "Research plan")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{confirmedRouteEvidenceCount(selectedThread)}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</nav>
 
@@ -6075,6 +6096,10 @@ export default function ResearchApp({ user }: { user: User }) {
                 {selectedThreadChanges.length > 0 && <section className="v2-route-change-log"><header><strong>{locale === "zh" ? "最近确认的变化" : "Recent confirmed changes"}</strong><span>{selectedThreadChanges.length}</span></header>{selectedThreadChanges.map((change) => <article key={change.id}><InterfaceIcon name={routeChangeKindLabel(change.kind).symbol} /><div><small>{formatNotificationTime(change.createdAt, locale)}</small><strong>{change.kind === "new_evidence" ? change.paperTitle : (locale === "zh" ? change.titleZh : change.titleEn)}</strong><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>)}</section>}
               </section>}
 
+              <details className="pi-route-secondary">
+                <summary>{locale === "zh" ? "路线判断与其他行动" : "Route assessment and other actions"}</summary>
+              <ResearchLeadDecisionPanel track={selectedThread} problemState={researchProblemState} synthesis={researchSynthesis} locale={locale} onOpenWorkspace={setResearchRouteTab} onOpenToday={() => navigate("today")} onOpenLearning={() => openRouteLearningPath(selectedThread)} onScanGap={(origin) => void scanResearchRouteSignal(selectedThread, origin)} gapScanning={mapAction === `gap:${selectedThread.id}` || mapAction === `problem:${selectedThread.id}`} gapScanBlocked={Boolean(mapAction || mapBuildTrackId || mapIntelligenceTrackId || selectedThread.monitoringStatus === "paused")} />
+              </details>
               <RouteManagementDrawer key={`${selectedThread.id}:${routeManagementNeedsAttention(selectedThread) ? "attention" : "quiet"}`} track={selectedThread} locale={locale}>
                 <section className={`v2-route-role-strip ${selectedThread.userRole} ${selectedThread.monitoringStatus}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级；暂停只停止新发现，不清除任何历史。" : "This role changes future discovery budget and priority; pausing only stops new discovery and clears no history."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}<button type="button" className={`monitor-toggle ${selectedThread.monitoringStatus}`} onClick={() => void setResearchDirectionMonitoring(selectedThread, selectedThread.monitoringStatus === "paused" ? "active" : "paused")} disabled={Boolean(mapAction)}>{mapAction === `monitoring:${selectedThread.id}` ? "…" : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复路线" : "Resume route") : (locale === "zh" ? "暂停路线" : "Pause route")}</button></div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
                 <div className="v2-route-management-actions"><button type="button" onClick={() => askAboutResearchRoute(selectedThread)}>{locale === "zh" ? "让 Pi 解释这条路线" : "Ask Pi about this route"}</button><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || selectedThread.monitoringStatus === "paused")}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在补充…" : "Filling…") : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "已暂停自动发现" : "Automatic discovery paused") : ["queued", "retryable", "empty", "failed"].includes(selectedThread.buildStatus) ? (locale === "zh" ? "重试补充这条路线" : "Retry this route") : selectedThread.buildStatus === "partial" ? (locale === "zh" ? "补全这条路线" : "Complete this route") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></div>
@@ -6105,6 +6130,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "library" && (
           <main className="v2-page v2-library-page">
+            {monitorReadNotice}
             <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.libraryTitle}</h1></div><details className="v2-library-export"><summary>{locale === "zh" ? "导出" : "Export"} ＋</summary><div className="v2-library-head-actions"><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=bibtex&scope=accepted`}>BibTeX ↓</a><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=ris&scope=accepted`}>RIS / Zotero ↓</a></div></details></section>
             <div className="v2-library-tabs">
               <button className={libraryFilter === "inbox" ? "active" : ""} type="button" onClick={() => { setLibraryFilter("inbox"); setLibraryStageFilter("all"); setInboxFilter("all"); }}>{t.inbox}<span>{monitor?.historyCounts?.inbox || 0}</span></button>
@@ -6135,7 +6161,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 </article>
               ))}
               {visibleLibraryPapers.length < libraryPapers.length && <button className="v2-library-load-more" type="button" onClick={() => setLibraryVisibleCount((count) => count + 60)}>{locale === "zh" ? `继续显示（剩余 ${libraryPapers.length - visibleLibraryPapers.length} 篇）` : `Show more (${libraryPapers.length - visibleLibraryPapers.length} remaining)`}</button>}
-              {!libraryPapers.length && <p className="v2-monitor-empty">{scanIsActive ? scanPhase : locale === "zh" ? "这个分类暂时没有论文。" : "No papers are in this category yet."}</p>}
+              {monitor && monitor.status !== "error" && !libraryPapers.length && <p className="v2-monitor-empty">{locale === "zh" ? "这个分类暂时没有论文，可以切换到全部发现查看已保存内容。" : "No papers in this category. Open All discoveries to browse saved content."}</p>}
             </div>
           </main>
         )}

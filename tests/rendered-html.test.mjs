@@ -84,7 +84,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(client, /modelDisplayName/);
   assert.match(client, /DeepSeek V4 Pro/);
   assert.match(client, /startMonitorPolling/);
-  assert.match(client, /window\.setInterval\(\(\) => void poll\(\), 1500\)/);
+  assert.match(client, /window\.setInterval\(\(\) => void poll\(\), 5000\)/);
   assert.match(client, /DeepSeek Pro 正在逐篇筛选并撰写/);
   assert.match(client, /activeScanJob/);
   assert.match(client, /探索覆盖/);

@@ -414,6 +414,13 @@
       "when": 1789030604761,
       "tag": "0058_colorful_gwen_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1789034470191,
+      "tag": "0059_handy_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }

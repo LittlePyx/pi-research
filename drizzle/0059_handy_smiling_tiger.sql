@@ -1,0 +1,1 @@
+CREATE INDEX `idx_recommendation_audit_space_paper_reviewed` ON `recommendation_audit_events` (`space_id`,`paper_id`,`reviewed_at`);

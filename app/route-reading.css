@@ -1,0 +1,42 @@
+/* One content column, with operational detail disclosed on demand. */
+.v2-app .v2-page.v2-map-page .v2-route-group > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.v2-app .v2-page.v2-map-page .v2-route-group article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 24px; padding: 22px 0; border: 0; border-bottom: 1px solid #dfe3df; border-radius: 0; background: transparent; }
+.v2-app .v2-page.v2-map-page .v2-route-group article > header { grid-column: 1 / -1; justify-content: flex-start; gap: 12px; }
+.v2-app .v2-page.v2-map-page .v2-route-group article > header > small { margin-left: 0; }
+.v2-app .v2-page.v2-map-page .v2-route-card-main { margin: 0; text-align: left; }
+.v2-app .v2-page.v2-map-page .v2-route-card-main h3 { font-size: 21px; line-height: 1.5; }
+.v2-app .v2-page.v2-map-page .v2-route-card-main p { max-width: 72ch; color: #67716b; line-height: 1.7; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.v2-app .v2-page.v2-map-page .v2-route-group article > footer { align-self: center; margin: 0; padding: 0; }
+.v2-app .v2-page.v2-map-page .v2-route-group article > footer button { background: transparent; color: #315d48; border-color: #d6ded8; }
+.v2-app .v2-page.v2-map-page .v2-direction-heat { color: #707a73; background: transparent; }
+.v2-app .v2-page.v2-map-page .v2-direction-heat i { background: #94a399; }
+.v2-app .v2-page.v2-map-page .v2-route-page-head { margin-bottom: 22px; }
+.v2-app .v2-page.v2-map-page .v2-route-groups > header .v2-kicker { display: none; }
+.v2-app .v2-page.v2-map-page .v2-route-groups > header h2 { font-size: 15px; font-weight: 500; line-height: 1.6; color: #68736b; }
+.pi-route-secondary { margin-top: 28px; padding: 16px 0; border-top: 1px solid #dfe3df; }
+.pi-route-secondary > summary { cursor: pointer; color: #536459; font-size: 14px; line-height: 1.6; }
+.pi-route-secondary[open] > summary { margin-bottom: 18px; }
+.v2-app .v2-page.v2-route-workspace .v2-route-workspace-head { border: 0; border-radius: 0; padding: 14px 0 20px; background: transparent; }
+.v2-app .v2-page.v2-route-workspace .v2-route-workspace-head h1 { max-width: 28em; font-size: clamp(25px, 3vw, 34px); line-height: 1.45; }
+.v2-app .v2-page.v2-route-workspace .v2-route-workspace-tabs { margin-top: 0; border-radius: 0; background: transparent; }
+.v2-app .v2-page.v2-route-workspace .v2-route-workspace-panel { border-radius: 0; box-shadow: none; }
+.v2-app .v2-topbar { grid-template-columns: minmax(100px, .7fr) minmax(180px, 1fr) auto; }
+.v2-top-actions { flex-shrink: 0; min-width: max-content; }
+.v2-top-actions .v2-alert-link { white-space: nowrap; flex-shrink: 0; }
+.pi-content-loading { padding: 20px 0; border-bottom: 1px solid #dfe3df; margin-bottom: 24px; }
+.pi-content-loading strong { font-size: 16px; }
+.pi-content-loading p { color: #68736b; font-size: 14px; margin-top: 8px; }
+.pi-content-loading button { margin-left: 18px; text-decoration: underline; }
+@media (max-width: 760px) {
+  .v2-app .v2-page.v2-map-page .v2-route-page-head { padding-bottom: 16px; margin-bottom: 18px; }
+  .v2-app .v2-page.v2-map-page .v2-map-head-actions { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+  .v2-app .v2-page.v2-map-page .v2-map-total { order: 0; border: 0; padding: 0; display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+  .v2-app .v2-page.v2-map-page .v2-map-total strong { font-size: 17px; }
+  .v2-app .v2-page.v2-map-page .v2-route-head-explorer { order: 1; width: auto; font-size: 12px; }
+  .v2-app .v2-topbar { grid-template-columns: 31px minmax(0, 1fr) auto; }
+  .v2-top-actions .v2-alert-link > span { display: none; }
+  .v2-app .v2-page.v2-map-page .v2-route-group article { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .v2-app .v2-page.v2-map-page .v2-route-group article > header { flex-wrap: wrap; }
+  .v2-app .v2-page.v2-map-page .v2-route-group article > footer { justify-content: flex-start; }
+  .v2-app .v2-page.v2-map-page .v2-route-group article > footer button { width: auto; min-width: 0; }
+}

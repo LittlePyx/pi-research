@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { schemaInitializer } from "../lib/schema-initialization";
 import { researchWorkbookBootstrapSql, researchGapDiscoveryBootstrapSql, researchMapEvidenceProposalBootstrapSql, researchProblemBootstrapSql, researchRouteRevisionBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
 
 export type ApiUser = {
@@ -234,7 +235,13 @@ async function ensureResearchGapDiscoveryColumns(database: D1Database) {
   }
 }
 
+const initializeSchema = schemaInitializer(bootstrapSchema);
+
 export async function ensureSchema(database = getDatabase()) {
+  await initializeSchema(database);
+}
+
+async function bootstrapSchema(database: D1Database) {
   await database.batch([
     database.prepare("CREATE TABLE IF NOT EXISTS research_spaces (id TEXT PRIMARY KEY NOT NULL, owner_user_id TEXT NOT NULL, name TEXT NOT NULL, member_name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', accent TEXT NOT NULL DEFAULT 'blue', preferred_locale TEXT NOT NULL DEFAULT 'zh', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_research_spaces_owner_name ON research_spaces(owner_user_id, name)"),
@@ -319,6 +326,7 @@ export async function ensureSchema(database = getDatabase()) {
     database.prepare("CREATE TABLE IF NOT EXISTS recommendation_audit_events (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, scan_job_id TEXT NOT NULL REFERENCES monitor_scan_jobs(id) ON DELETE CASCADE, paper_id TEXT NOT NULL REFERENCES monitored_papers(id) ON DELETE CASCADE, decision TEXT NOT NULL, is_paper INTEGER NOT NULL DEFAULT 1, recommended INTEGER NOT NULL DEFAULT 0, horizon TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', relevance_score INTEGER NOT NULL DEFAULT 0, quality_score INTEGER NOT NULL DEFAULT 0, recommendation_tier TEXT NOT NULL DEFAULT 'browse', screening_reason TEXT NOT NULL DEFAULT '', provenance_json TEXT NOT NULL DEFAULT '[]', appearance_count INTEGER NOT NULL DEFAULT 1, allocated_input_tokens INTEGER NOT NULL DEFAULT 0, allocated_output_tokens INTEGER NOT NULL DEFAULT 0, verification_status TEXT NOT NULL DEFAULT 'not_required', verification_coverage_score INTEGER NOT NULL DEFAULT 0, verification_json TEXT NOT NULL DEFAULT '{}', verification_input_tokens INTEGER NOT NULL DEFAULT 0, verification_output_tokens INTEGER NOT NULL DEFAULT 0, reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_recommendation_audit_job_paper ON recommendation_audit_events(scan_job_id, paper_id)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_recommendation_audit_space_reviewed ON recommendation_audit_events(space_id, reviewed_at)"),
+    database.prepare("CREATE INDEX IF NOT EXISTS idx_recommendation_audit_space_paper_reviewed ON recommendation_audit_events(space_id, paper_id, reviewed_at)"),
     database.prepare("CREATE INDEX IF NOT EXISTS idx_recommendation_audit_space_decision_reviewed ON recommendation_audit_events(space_id, decision, reviewed_at)"),
     database.prepare("CREATE TABLE IF NOT EXISTS share_snapshots (id TEXT PRIMARY KEY NOT NULL, token TEXT NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, kind TEXT NOT NULL, locale TEXT NOT NULL DEFAULT 'zh', title TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     database.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_share_snapshots_token ON share_snapshots(token)"),

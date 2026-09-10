@@ -154,7 +154,7 @@ test("an identified evidence gap becomes a direct, freshness-safe discovery acti
   }), null);
 });
 
-test("route workspace puts decisions and active research before low-frequency management", async () => {
+test("route workspace puts active research before disclosed secondary decisions and management", async () => {
   const [ui, css] = await Promise.all([readFile(uiUrl, "utf8"), readFile(cssUrl, "utf8")]);
   const detail = ui.slice(ui.indexOf('{view === "thread-detail"'), ui.indexOf('{view === "learn"'));
   const decisionIndex = detail.indexOf("<ResearchLeadDecisionPanel");
@@ -163,7 +163,8 @@ test("route workspace puts decisions and active research before low-frequency ma
   const managementIndex = detail.indexOf("<RouteManagementDrawer");
 
   assert.ok(decisionIndex >= 0);
-  assert.ok(decisionIndex < tabsIndex);
+  assert.ok(activeWorkIndex < decisionIndex);
+  assert.match(detail.slice(0, decisionIndex), /<details className="pi-route-secondary">\s*<summary>/);
   assert.ok(tabsIndex < activeWorkIndex);
   assert.ok(activeWorkIndex < managementIndex);
   assert.match(detail, /<RouteManagementDrawer key=\{`\$\{selectedThread\.id\}:\$\{routeManagementNeedsAttention\(selectedThread\)[\s\S]*v2-route-management-actions[\s\S]*<RouteDiscoveryLoop[\s\S]*<RouteEvolutionWorkbench[\s\S]*<\/RouteManagementDrawer>/);
