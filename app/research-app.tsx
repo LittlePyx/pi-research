@@ -1861,18 +1861,30 @@ async function advanceMonitorPipeline(
   let current = initialMonitor;
   for (let step = 0; step < 64 && !isCancelled(); step += 1) {
     if (["ready", "error"].includes(current.status)) break;
-    const response = await fetch("/api/monitor", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        spaceId,
-        action: "advance",
-        jobId: current.scanJob?.id,
-        leaseToken: current.leaseToken,
-        leaseGeneration: current.leaseGeneration,
-      }),
-    });
-    const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
+    let response: Response;
+    let data: { monitor?: MonitorState; error?: string };
+    try {
+      response = await fetch("/api/monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spaceId,
+          action: "advance",
+          jobId: current.scanJob?.id,
+          leaseToken: current.leaseToken,
+          leaseGeneration: current.leaseGeneration,
+        }),
+      });
+      data = await response.json();
+    } catch (error) {
+      if (isCancelled()) return current;
+      // A disconnected response does not tell us whether the stage persisted.
+      // Read the authoritative job and use the existing lease-reclaim cadence.
+      if (error instanceof TypeError || (error instanceof Error && error.name === "AbortError")) {
+        return followMonitorPipeline(spaceId, current, onUpdate, isCancelled);
+      }
+      throw error;
+    }
     if (data.monitor) {
       current = data.monitor;
       if (!isCancelled()) onUpdate(current);

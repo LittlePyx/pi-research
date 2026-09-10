@@ -7941,6 +7941,13 @@ export async function POST(request: Request) {
           : "候选摘要证据完整，准备深度解读";
         await setStage("deep_reviewing", "deep_reviewing", work.freshLaneActive ? 36 : 80, source);
       } else if (job.checkpoint === "deep_reviewing") {
+        const savedDraftsReady = work.verificationIds.some((id) => work.deepCompletedIds.includes(id)
+          && !work.verificationCompletedIds.includes(id) && !work.verificationDeferredIds.includes(id));
+        if (savedDraftsReady) {
+          await setStage("verifying_recommendations", "deep_reviewing", work.freshLaneActive ? 44 : 94,
+            "已有保存完整的解读，先继续推荐核对；新候选随后处理");
+          return Response.json(await readOwnedState({ verifyingRecommendations: true }), { status: 202 });
+        }
         const completedIds = new Set(work.deepCompletedIds);
         const deferredIds = new Set(work.deepDeferredIds);
         const remainingIds = work.deepIds.filter((id) => !completedIds.has(id) && !deferredIds.has(id));
