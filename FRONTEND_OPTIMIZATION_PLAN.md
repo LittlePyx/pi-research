@@ -34,6 +34,23 @@
 
 ### 2026-09-10 后续核对身份修复与8篇实际结果（进行中）
 
+- **05:24原任务第一轮独立核对已保存**：05:23自然external_watchdog运行后，同一两篇的review_result_saved分别为Hamilton–Jacobi coverage90、Sandwich Slice coverage92，均verificationStatus=pending、verificationRetryable=true、published=false；D1于05:24:03仍verifying_recommendations，最终核对完成0/2、正式推荐0。它们从原coverage0推进到实际初核结果；结合verifyRecommendationBatch初核分支，这是需要保守修订的状态，不是终态质量通过，也不把coverage超过80当完成。既有修订流程继续等待自然名额，无人工唤醒。8篇总体仍3已深评/5未深评/0延后，其中2待最终核对。下表05:14作为历史首次逐篇快照保留，输出ledger已更新05:24的分数。
+
+- **05:14生产逐篇进展**：同一9e4bab7f、attempt14在05:13外部调度下使用v210自然推进。队列日志完整取得8个身份：3篇deepCompleted=true、0延后、5篇未深评；其中2篇verificationQueued=true，均未完成核对。D1于05:14:06进入verifying_recommendations，正式推荐0。这证明新日志在生产可用及任务继续消费，尚不证明本批独立核对或8篇交付完成。快照outputs/review-9e4bab7f-ledger.json。
+
+| 原8篇身份/题名 | 05:14 UTC确切状态 |
+| --- | --- |
+| doi:10.1093/imanum/drag006 | 深评已完成、未入核对、未正式推荐；该篇在v210前完成，具体分数/原因尚未独立取得 |
+| doi:10.1016/j.jfa.2026.111388 — Hamilton–Jacobi equations for controlled gradient flows: cylindrical test functions | 摘要854字符；相关78/质量75；草稿已保存、独立核对pending、未发布；paperId=8aedbebb-ef09-4629-a2dd-49bcc66c2c09 |
+| title:44ac7934a1fbd997dba25368b5acea96841fcf0239a64e450d5cd46a044567c6 — Sandwich Slice: Optimal Transport Potentials Are Optimal Generalized Slicers | 摘要1176字符；相关78/质量85；草稿已保存、独立核对pending、未发布；paperId=de8427aa-e517-41cf-94f5-3f1fe670f2e0 |
+| title:3660179005e1ff723d92c2292d85c5dca3fffd4a59fffd375f98c36456a99b68 — Optimal mean width and metric entropy estimates for convex bodies | 尚未深评、未延后、未入核对 |
+| doi:10.3934/mine.2023083 | 尚未深评、未延后、未入核对 |
+| title:0dd2e141a0a91f8f9b5f86a47722e8c9cd6ea50ad8decc4a3846a6f6ef2f84da — Space-Time Log-Sobolev Inequality and Hypocoercive Hypercontractivity for Underdamped Langevin Dynamics | 尚未深评、未延后、未入核对 |
+| title:6087dea65e84a06ca91801669cc828b91dd921a91ee1600ec80045aceee60cbc — Mirror Langevin diffusions: Convergence rates and Markov chain approximations | 尚未深评、未延后、未入核对 |
+| title:111fd1f7bca2308af5c6499e42c89b29bf74844c9ebb4d7ef40c6ee0aa152eae — Improved Analysis for Hessian-free High-resolution Monte Carlo Sampling | 尚未深评、未延后、未入核对 |
+
+- 两个DOI的题名由出版社页面独立核对：drag006为[On discrete Sobolev inequalities for nonconforming finite elements under a semiregular mesh condition](https://academic.oup.com/imajna/advance-article-abstract/doi/10.1093/imanum/drag006/8708288)，mine.2023083为[Singular structures in solutions to the Monge-Ampère equation with point masses](https://aimspress.com/article/doi/10.3934/mine.2023083)。仅作书目识别，不当作D1摘要补齐、质量通过或真实推荐证据；没有读取全文。
+
 - **v210已发布**：2026-09-10 05:07:10 UTC成功，源码9b94224a7d068896b116659b5d126e40d3ed6a40已推送GitHub与Sites绑定main；版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_9d4371ce999081918b02c2a9c0b9743c，部署appgdep_6aa23af2d47c81918d8c9d979627b248。public/环境修订6/DB不变，无迁移。CI34439733019已成功。原任务下一次自然推进与逐篇验收仍待取得，不能写成8篇已完成。
 
 - 用户确认按当前最高优先级执行。完整重读交接与README、核对当前计划；main@7c540e0仅原docs/未跟踪，线上仍public v209。未恢复旧Codex自动任务、未人工推进/重扫/清退避。
