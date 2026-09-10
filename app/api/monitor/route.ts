@@ -3,7 +3,7 @@ import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs
 import { createScreeningRequestTrace } from "../../../lib/screening-request-trace.mjs";
 import { matchScreeningRecords } from "../../../lib/screening-identity.mjs";
 import { canonicalResponseId, uniqueCanonicalResponses } from "../../../lib/canonical-response.mjs";
-import { traceReviewQueue, traceReviewOutcome } from "../../../lib/review-progress-trace.mjs";
+import { traceReviewQueue, traceReviewOutcome, traceReviewEvent } from "../../../lib/review-progress-trace.mjs";
 import { researchGapQuestion } from "../../../lib/research-gap-scope.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
@@ -2211,6 +2211,7 @@ async function recordReliabilityEvent(database: D1Database, input: {
       input.outcome || "info", Math.max(0, Math.round(input.durationMs || 0)), input.errorCode || "",
       cleanText(input.message || "").slice(0, 500), JSON.stringify(input.metadata || {}),
     ).run();
+    traceReviewEvent(input);
   } catch (error) {
     // Reliability telemetry must never become a new failure mode for the scan itself.
     console.error("Failed to record monitor reliability event", error);
