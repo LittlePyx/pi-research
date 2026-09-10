@@ -186,6 +186,9 @@ test('real HTTP keep-alive without a model result is diagnosed as body timeout, 
 test('fast screening retains thirteen valid papers after one identity mismatch and finishes only the remaining paper next', async () => {
   for (const domain of ['applied_mathematics', 'information_theory']) {
     const candidates = Array.from({ length: 14 }, (_, i) => ({ canonicalId: `${domain}:${i}`, abstractText: 'Evidence.', horizon: 'months' }));
+    // Exact punctuation from the production queue. HTML text cleanup destroys
+    // <0812:lbotao> even when the model copies this identity perfectly.
+    candidates[13].canonicalId = 'doi:10.1130/0091-7613(1990)018<0812:lbotao>2.3.co;2';
     const requests = [];
     const diagnostics = [];
     const run = load('quickScreenBatch', {
@@ -205,7 +208,7 @@ test('fast screening retains thirteen valid papers after one identity mismatch a
       },
       monitorErrorCode: () => 'timeout', isNonRetryableDeepSeekError: () => false, setTimeout: callback => callback(),
       parseQuickScreenPayload: content => JSON.parse(content).screens, inferModelScoreScale: () => 'percent',
-      normalizeModelScore: score => score, cleanText: text => text, hasStrongFitScoreContradiction: () => false,
+      normalizeModelScore: score => score, cleanText: load('cleanText', {}), hasStrongFitScoreContradiction: () => false,
       shanghaiDateKey: () => '2026-09-10', recordUsage: async () => {},
       recordReliabilityEvent: async (_db, event) => diagnostics.push(event),
     });

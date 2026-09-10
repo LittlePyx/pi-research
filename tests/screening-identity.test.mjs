@@ -25,3 +25,15 @@ test('ambiguous duplicates and malformed evaluations stay pending, including fal
   assert.deepEqual(result.diagnostics.invalidIds, ['b', 'c', 'd']);
   assert.equal(result.diagnostics.unexpectedCount, 1);
 });
+
+test('literal DOI angle brackets are identity characters, never HTML markup', () => {
+  const id = 'doi:10.1130/0091-7613(1990)018<0812:lbotao>2.3.co;2';
+  const result = matchScreeningRecords([id], [record(id)]);
+  assert.equal(result.byId.get(id).canonicalId, id);
+  assert.deepEqual(result.diagnostics.missingIds, []);
+  assert.equal(result.diagnostics.unexpectedCount, 0);
+  // Encoded or stripped alternatives must not be silently mapped to the DOI.
+  for (const changed of [id.replace('<0812:lbotao>', ' '), id.replace('<', '&lt;').replace('>', '&gt;')]) {
+    assert.equal(matchScreeningRecords([id], [record(changed)]).byId.size, 0);
+  }
+});
