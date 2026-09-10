@@ -1,4 +1,5 @@
 import { emptyResearchMapState } from "../../lib/research-map.ts";
+import { workbookSources } from "./research-workbook.mjs";
 export function routeReadingFixture() {
   const map = emptyResearchMapState(); map.generated = true;
   map.tracks = [
@@ -15,5 +16,11 @@ export function routeReadingFixture() {
       deepReviewRate: 0, recommendationRate: 0, acceptanceRate: 0, lastScannedAt: null, staleDays: null,
       tasks: Object.fromEntries(["frontier", "foundation", "gap", "network"].map(key => [key, { status: "idle", scannedCount: 0, queuedCount: 0, recommendedCount: 0 }])) },
   }));
+  const source = workbookSources[0];
+  map.tracks[0].papers = [{ id: source.id, canonicalId: source.canonicalId, doi: null, title: source.title, authors: source.authors,
+    url: source.url, venue: "Isolated material sample", publishedAt: null, citationCount: 0, role: "milestone", summaryZh: "", summaryEn: "",
+    rationaleZh: "隔离材料样本，用于核验缺少其他阶段时仍可查看现有论文。", rationaleEn: "Isolated sample: collected material remains available when other categories are empty.",
+    position: 0, provenance: "system_curated", curationStatus: "active", curationEvidence: [] }];
+  map.tracks[0].buildStatus = "partial";
   return map;
 }

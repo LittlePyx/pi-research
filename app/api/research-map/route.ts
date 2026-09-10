@@ -1,4 +1,5 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
+import { routeMaterialState } from "../../../lib/route-material-state";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { researchGapQuestion, researchGapSubject, RESEARCH_GAP_SCOPE_PROMPT } from "../../../lib/research-gap-scope.mjs";
 import { buildArxivSearchQuery, parseArxivAtom } from "../../../lib/discovery/arxiv";
@@ -2467,7 +2468,7 @@ async function readMap(database: D1Database, spaceId: string, extra: Record<stri
   const precisionAuditProgress = await researchRoutePrecisionAuditProgress(database, spaceId);
   const routeCount = (value: unknown) => Math.max(0, Math.round(Number(value) || 0));
   return {
-    tracks,
+    tracks: tracks.map(track => ({ ...track, materialState: routeMaterialState(track) })),
     routePortfolio: {
       formalEvidenceCount: routeCount(routePortfolioCounts?.confirmed_evidence_count),
       structuralPaperCount: uniquePaperCount,

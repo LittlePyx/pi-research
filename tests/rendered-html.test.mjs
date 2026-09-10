@@ -219,8 +219,8 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /v2-route-workspace-tabs/);
   assert.match(client, /路线总览/);
   assert.match(client, /当前研判/);
-  assert.match(client, /"证据" : "Evidence"/);
-  assert.match(client, /缺口与发现/);
+  assert.match(client, /"材料与比较" : "Materials & comparison"/);
+  assert.match(client, /材料补充/);
   assert.match(client, /"研究计划" : "Research plan"/);
   assert.match(client, /高级图谱探索/);
   assert.match(client, /setResearchDirectionRole/);

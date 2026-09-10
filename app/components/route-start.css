@@ -1,0 +1,13 @@
+.pi-route-start { padding: 24px 0; max-width: 960px; }
+.pi-route-start h2 { font-size: 21px; font-weight: 500; line-height: 1.5; margin: 0 0 10px; }
+.pi-route-start h3 { font-size: 18px; font-weight: 500; line-height: 1.6; }
+.pi-route-start p { font-size: 15px; line-height: 1.8; color: #58645d; margin: 8px 0 14px; }
+.pi-route-start > section { margin-top: 30px; padding-top: 24px; border-top: 1px solid #dfe3df; }
+.pi-route-start article { padding: 18px 0; border-bottom: 1px solid #e4e7e4; }
+.pi-route-start small { color: #727c75; font-size: 12px; }
+.pi-route-start button, .pi-route-start a { display: inline-block; text-align: left; margin-top: 10px; color: #315d48; font-size: 14px; line-height: 1.6; text-decoration: underline; text-underline-offset: 4px; }
+.pi-route-start details { margin-top: 12px; }
+.pi-route-start summary { cursor: pointer; font-size: 14px; color: #5f6b63; }
+.pi-route-start blockquote { margin: 12px 0; padding-left: 16px; border-left: 2px solid #b4c1b7; }
+.pi-route-start-pending { padding-top: 20px; border-top: 1px solid #dfe3df; }
+.pi-route-start li { margin: 10px 0; font-size: 14px; line-height: 1.8; }

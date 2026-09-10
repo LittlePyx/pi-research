@@ -18,7 +18,7 @@
 .pi-route-secondary[open] > summary { margin-bottom: 18px; }
 .v2-app .v2-page.v2-route-workspace .v2-route-workspace-head { border: 0; border-radius: 0; padding: 14px 0 20px; background: transparent; }
 .v2-app .v2-page.v2-route-workspace .v2-route-workspace-head h1 { max-width: 28em; font-size: clamp(25px, 3vw, 34px); line-height: 1.45; }
-.v2-app .v2-page.v2-route-workspace .v2-route-workspace-tabs { margin-top: 0; border-radius: 0; background: transparent; }
+.v2-app .v2-page.v2-route-workspace .v2-route-workspace-tabs { margin-top: 0; border-radius: 0; background: transparent; grid-template-columns: repeat(6,minmax(0,1fr)); }
 .v2-app .v2-page.v2-route-workspace .v2-route-workspace-panel { border-radius: 0; box-shadow: none; }
 .v2-app .v2-topbar { grid-template-columns: minmax(100px, .7fr) minmax(180px, 1fr) auto; }
 .v2-top-actions { flex-shrink: 0; min-width: max-content; }

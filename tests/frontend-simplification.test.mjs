@@ -122,7 +122,7 @@ test("primary product copy states research content, status, and actions without 
   assert.match(app, /"今日" : "Today"/);
   assert.match(app, /"论文扫描" : "Paper scan"/);
   assert.match(app, /"部分路线待补充" : "Some routes need evidence"/);
-  assert.match(app, /"待补证据" : "Missing evidence"/);
+  assert.match(app, /"待收录与待核对材料" : "Materials to collect and check"/);
   assert.match(app, /"研究计划" : "Research plan"/);
   assert.match(app, /"研究记忆" : "Research memory"/);
   assert.doesNotMatch(app, /今天先处理什么|为什么今天没有推荐|三个时间窗，持续向前挖掘/);
