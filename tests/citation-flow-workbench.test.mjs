@@ -19,7 +19,8 @@ test("citation API and workbench share one fail-closed verification contract", a
 test("citation flow keeps direction, provider, and quality-queue semantics explicit", async () => {
   const app = await readFile(appPath, "utf8");
 
-  assert.match(app, /被引工作 → 后续论文/);
+  assert.match(app, /被引论文/);
+  assert.match(app, /引用它的论文/);
   assert.match(app, /citationEvidenceProviderLabel\(edge\.evidenceSource\)/);
   assert.match(app, /只包含数据库确认的直接引用/);
   assert.match(app, /扩展候选会进入共享质量评估/);
