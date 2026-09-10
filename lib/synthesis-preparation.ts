@@ -11,3 +11,11 @@ export function synthesisPreparation(papers: SynthesisPreparationPaper[], eligib
     hasGroundedEvidence: Boolean(paper.grounded),
   }));
 }
+
+export function preparationReviewState(state: string, reviewStage?: string) {
+  if (state === "ready") return state;
+  if (reviewStage === "reviewed") return "not_selected";
+  if (reviewStage === "queued") return "awaiting_review";
+  if (reviewStage === "reviewing") return "reviewing";
+  return state;
+}

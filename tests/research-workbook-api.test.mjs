@@ -54,6 +54,10 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       assert.equal(synthesis.preparation[0].state, "needs_confirmation");
       assert.equal(synthesis.preparation[0].hasGroundedEvidence, false);
       assert.equal(calls, 0);
+      const reading = await request(`/api/paper-reading?spaceId=math&paperId=${workbookSources[0].id}`);
+      assert.equal(reading.paper.abstractText, workbookSources[0].abstractText);
+      await request(`/api/paper-reading?spaceId=other-owner&paperId=${workbookSources[0].id}`, null, 404);
+      assert.equal(calls, 0);
       const defined = await request("/api/research-problem", { ...base, action: "confirm", question: "Which assumptions should I compare?", objective: "Inspect the two supplied papers", scope: "Only the supplied abstracts", successCriteria: "Record supported and missing assumptions", hypotheses: [] });
       assert.equal(defined.problemState.problem.status, "active");
       assert.equal(defined.problemState.problem.question, "Which assumptions should I compare?");

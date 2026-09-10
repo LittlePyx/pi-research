@@ -1,0 +1,28 @@
+.v2-app .v2-page.v2-paper-detail { max-width: 1100px; margin-inline: auto; }
+.v2-app .v2-paper-detail .v2-paper-head { padding: 18px 0 24px; }
+.v2-app .v2-paper-detail .v2-paper-head h1 { max-width: 960px; font-size: clamp(25px, 2.6vw, 36px); line-height: 1.35; margin: 14px 0; }
+.v2-app .v2-paper-detail .v2-paper-head > p { font-size: 15px; line-height: 1.7; margin: 8px 0; }
+.v2-app .v2-paper-detail .v2-paper-head > small { font-size: 13px; line-height: 1.7; }
+.v2-app .v2-paper-detail .v2-paper-top { font-size: 12px; gap: 12px; }
+.v2-app .v2-paper-detail .v2-paper-primary-actions { margin-top: 20px; }
+.v2-app .v2-paper-detail .v2-paper-detail-grid { display: block; border-top: 1px solid #dfe3df; }
+.v2-app .v2-paper-detail .v2-paper-detail-grid > div { max-width: 860px; }
+.v2-app .v2-paper-detail .v2-content-section { padding: 24px 0; background: transparent; border: 0; border-bottom: 1px solid #dfe3df; border-radius: 0; }
+.v2-app .v2-paper-detail .v2-content-section h2 { font-size: 17px; line-height: 1.85; font-weight: 400; }
+.pi-paper-abstract, .pi-paper-review { padding: 24px 0; border-bottom: 1px solid #dfe3df; }
+.v2-app .v2-paper-detail .pi-paper-abstract h2, .v2-app .v2-paper-detail .pi-paper-review h2 { font-size: 18px; margin: 0 0 14px; font-weight: 600; }
+.pi-paper-abstract p, .pi-paper-review p { font-size: 16px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0; }
+.pi-paper-muted { color: #77817b; font-size: 14px !important; }
+.pi-paper-review small { color: #77817b; font-size: 12px; }
+.pi-paper-reading-tools { max-width: 860px; margin-top: 24px; border-top: 1px solid #dfe3df; }
+.pi-paper-reading-tools > summary { cursor: pointer; padding: 18px 0; font-size: 15px; color: #476151; }
+.v2-app .v2-paper-detail .v2-real-detail-aside { position: static; margin: 0; padding: 8px 0 24px; background: transparent; border: 0; box-shadow: none; max-width: 680px; }
+.v2-app .v2-paper-detail .v2-real-detail-aside textarea { font-size: 15px; line-height: 1.8; min-height: 150px; }
+.v2-app .v2-paper-detail .v2-real-detail-aside dl { display: none; }
+.v2-app .v2-paper-detail .v2-paper-analysis > header h2 { font-size: 20px; }
+.v2-app .v2-paper-detail .v2-paper-analysis > div { display: block; }
+.v2-app .v2-paper-detail .v2-paper-analysis article { padding: 18px 0; background: none; border-bottom: 1px solid #e5e8e5; }
+.v2-app .v2-paper-detail .v2-paper-analysis article p { font-size: 16px; line-height: 1.85; }
+@media(max-width:760px) { .v2-app .v2-page.v2-paper-detail { padding-inline: 18px; } .v2-app .v2-paper-detail .v2-paper-head h1 { font-size: 26px; } }
+
+.pi-paper-summary { font-size: 16px; line-height: 1.9; }
