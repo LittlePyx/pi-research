@@ -46,6 +46,20 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       insert("monitored_papers", { id: "unreviewed", space_id: "math", canonical_id: "unreviewed", title: "KLS unreviewed", horizon: "years" }),
       insert("paper_insights", { paper_id: "unreviewed", space_id: "math", ever_recommended: 0, abstract_text: workbookSources[0].abstractText }),
     ]);
+    await t.test("synthesis preparation identifies pending materials and manual problem definition needs no generated synthesis", async () => {
+      await sql([insert("research_map_evidence_proposals", { id: "pending-material", space_id: "math", track_id: "kls", paper_id: workbookSources[0].id, status: "pending" })]);
+      const synthesis = (await request("/api/research-synthesis?spaceId=math&trackId=kls")).synthesis;
+      assert.equal(synthesis.canGenerate, false);
+      assert.equal(synthesis.preparation[0].id, workbookSources[0].id);
+      assert.equal(synthesis.preparation[0].state, "needs_confirmation");
+      assert.equal(synthesis.preparation[0].hasGroundedEvidence, false);
+      assert.equal(calls, 0);
+      const defined = await request("/api/research-problem", { ...base, action: "confirm", question: "Which assumptions should I compare?", objective: "Inspect the two supplied papers", scope: "Only the supplied abstracts", successCriteria: "Record supported and missing assumptions", hypotheses: [] });
+      assert.equal(defined.problemState.problem.status, "active");
+      assert.equal(defined.problemState.problem.question, "Which assumptions should I compare?");
+      assert.equal(calls, 0);
+      await request("/api/research-synthesis?spaceId=other-owner&trackId=kls", null, 404);
+    });
     let state;
     await t.test("reads never generate; approval and source identities are checked", async () => {
       assert.equal((await request(path)).workbook.candidates.length, 2); assert.equal(calls, 0);
@@ -66,7 +80,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await post(save, 409);
       const read = (await request(path)).workbook; assert.deepEqual(read.artifact.value, artifact);
       const rows = await sql([{ sql: "SELECT COUNT(*) AS n FROM paper_reading_progress" }, { sql: "SELECT COUNT(*) AS n FROM research_problems" }, { sql: "SELECT COUNT(*) AS n FROM research_track_papers" }]);
-      assert.deepEqual(rows.map(r => r.results[0].n), [0, 0, 0]);
+      assert.deepEqual(rows.map(r => r.results[0].n), [0, 1, 0]); // Only the explicitly confirmed fixture problem exists.
     });
     await t.test("same IDs cannot be read or written by another owner", async () => {
       cookie = "pi_anonymous_workspace=workbook-other-owner-0000001";

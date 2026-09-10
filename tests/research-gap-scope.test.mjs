@@ -94,10 +94,11 @@ test("the synthesis API read path scopes legacy gaps and keeps stale-source disc
   ];
   const before = structuredClone(rows);
   const db = { prepare: (sql) => {
-    assert.match(sql, /^SELECT/);
+    assert.match(sql.trim(), /^SELECT/);
+    if (sql.includes('AS grounded')) return { bind: () => ({ all: async () => ({ results: [] }) }) };
     return { bind: () => ({ first: async () => saved, all: async () => ({ results: rows }) }) };
   } };
-  const dependencies = { sourceClaims: async () => claims, researchSynthesisInputRevision: async () => "revision", sourceSummary: (items) => ({ paperCount: items.length, fulltextPaperCount: 0, claimCount: items.length }), scopedSynthesisGap, parseJsonArray: JSON.parse, primaryResearchSynthesisGap, researchSynthesisDiscoveryQuery, MODEL: "test" };
+  const dependencies = { synthesisPreparation: () => [], sourceClaims: async () => claims, researchSynthesisInputRevision: async () => "revision", sourceSummary: (items) => ({ paperCount: items.length, fulltextPaperCount: 0, claimCount: items.length }), scopedSynthesisGap, parseJsonArray: JSON.parse, primaryResearchSynthesisGap, researchSynthesisDiscoveryQuery, MODEL: "test" };
   const readState = new Function(...Object.keys(dependencies), `${code}; return readState;`)(...Object.values(dependencies));
   const result = (await readState(db, "space", "track")).synthesis;
   assert.equal(result.nextSearchSourceStatementId, "ga");

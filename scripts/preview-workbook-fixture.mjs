@@ -26,6 +26,8 @@ const server = await createServer({ root, configFile: false, envDir: false,
         const spaceId = url.searchParams.get("spaceId") || input.spaceId || spaces[0].id;
         let result = fixtureResponse(req.url, req.method, spaceId);
         const data = learningFixture(spaceId);
+        if (url.pathname === "/api/research-synthesis" && req.method === "GET") result = { status: 200, body: { synthesis: { status: "empty", stale: false, statements: [], availablePaperCount: 0, availableClaimCount: 0, canGenerate: false, preparation: workbookSources.map(p => ({ id: p.id, title: p.title, url: p.url, state: "needs_confirmation", hasGroundedEvidence: true })) } } };
+        if (url.pathname === "/api/research-problem" && req.method === "GET") result = { status: 200, body: { problemState: { problem: null, hypotheses: [], actions: [], assessment: null, evidence: { canDraft: false, canAssess: false } } } };
         if (url.pathname === "/api/research-map" && input.action === "read") result = { status: 200, body: routeReadingFixture() };
         if (url.pathname === "/api/monitor" && req.method === "POST") await new Promise(resolve => setTimeout(resolve, 10000));
         if (url.pathname === "/api/learning-path" && data) { data.learning.path.targetTrackId = "kls"; result = { status: 200, body: data.learning }; }

@@ -1,5 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
+import { synthesisPreparation, type SynthesisPreparationPaper } from "../../../lib/synthesis-preparation";
 import { scopedSynthesisGap, RESEARCH_GAP_SCOPE_PROMPT } from "../../../lib/research-gap-scope.mjs";
 import { enqueueResearchGapDiscovery } from "../../../lib/research-gap-discovery";
 import {
@@ -156,6 +157,24 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
     claimId: claim.claim_id, paperId: claim.paper_id, evidenceLevel: claim.evidence_level, textHash: claim.text_hash,
   })));
   const availability = sourceSummary(claims);
+  const preparationRows = await database.prepare(`
+    SELECT paper.id, paper.title, paper.url,
+      EXISTS (SELECT 1 FROM research_map_evidence_proposals p WHERE p.space_id = paper.space_id
+        AND p.paper_id = paper.id AND p.track_id = ? AND p.status = 'confirmed') AS confirmed,
+      (EXISTS (SELECT 1 FROM paper_feedback f WHERE f.space_id = paper.space_id AND f.paper_id = paper.id
+        AND (f.saved = 1 OR f.feedback = 'relevant')) OR EXISTS (SELECT 1 FROM paper_reading_progress r
+        WHERE r.space_id = paper.space_id AND r.paper_id = paper.id AND r.status IN ('reading','read','mastered','cited'))) AS selected,
+      EXISTS (SELECT 1 FROM paper_evidence_claims c JOIN paper_evidence_documents d ON d.id = c.document_id AND d.space_id = c.space_id
+        WHERE c.space_id = paper.space_id AND c.paper_id = paper.id AND c.grounded = 1 AND d.status IN ('ready','partial')) AS grounded
+    FROM monitored_papers paper WHERE paper.space_id = ? AND (
+      EXISTS (SELECT 1 FROM research_map_evidence_proposals p WHERE p.space_id = paper.space_id
+        AND p.paper_id = paper.id AND p.track_id = ? AND p.status IN ('pending','confirmed'))
+      OR EXISTS (SELECT 1 FROM research_track_papers r WHERE r.space_id = paper.space_id AND r.track_id = ?
+        AND r.curation_status = 'active' AND (r.canonical_id = paper.canonical_id
+          OR (COALESCE(r.doi,'') != '' AND lower(r.doi) = lower(COALESCE(paper.doi,'')))
+          OR lower(trim(r.title)) = lower(trim(paper.title)))))
+    ORDER BY confirmed DESC, grounded DESC, paper.title LIMIT 40
+  `).bind(trackId, spaceId, trackId, trackId).all<SynthesisPreparationPaper>();
   const synthesis = await database.prepare(
     `SELECT id, status, input_revision, question_zh, question_en, overview_zh, overview_en,
       change_summary_zh, change_summary_en, next_search_query, confidence, source_paper_count,
@@ -218,6 +237,7 @@ async function readState(database: D1Database, spaceId: string, trackId: string)
       availablePaperCount: availability.paperCount,
       availableFulltextPaperCount: availability.fulltextPaperCount,
       availableClaimCount: availability.claimCount,
+      preparation: synthesisPreparation(preparationRows.results, new Set(claims.map(claim => claim.paper_id))),
       canGenerate: availability.paperCount >= 2,
       stale: synthesisStale,
       model: synthesis?.model || MODEL,
