@@ -1,5 +1,6 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
+import { createScreeningRequestTrace } from "../../../lib/screening-request-trace.mjs";
 import { researchGapQuestion } from "../../../lib/research-gap-scope.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
@@ -2940,6 +2941,7 @@ async function quickScreenBatch(
   candidates: Candidate[],
   apiKey: string,
   mode: "fast" | "rescue" = "fast",
+  scanJobId?: string,
 ) {
   const deliberate = mode === "rescue";
   const [routeTitles, preferenceRow] = await Promise.all([
@@ -2948,7 +2950,14 @@ async function quickScreenBatch(
       .bind(space.id).first<{ profile_key: string }>(),
   ]);
   const benchmarkProfileKey = preferenceRow?.profile_key || inferDomainProfile(space.name, space.description).key;
-  const promptFor = (batch: Candidate[]) => [
+  const recordsFor = (batch: Candidate[]) => batch.map((paper) => ({
+    canonicalId: paper.canonicalId, title: paper.title, authors: paper.authors,
+    venue: paper.venue, publishedAt: paper.publishedAt, horizon: paper.horizon,
+    citations: paper.citationCount, priorityVenue: paper.priorityVenue,
+    discoverySource: paper.source, routeOrigins: routeReviewOrigins(paper, routeTitles),
+    abstract: paper.abstractText.slice(0, 900),
+  }));
+  const promptFor = (records: ReturnType<typeof recordsFor>) => [
     "Return one JSON object only with shape {\"screens\":[...]}. Screen every supplied record.",
     "Each screen must contain canonicalId, isPaper, relevanceScore, qualityScore, and screeningReason.",
     "relevanceScore and qualityScore must be integer scores on a 0-100 scale, never decimals on a 0-1 scale. 0 means no fit/evidence and 100 means exceptional fit/evidence.",
@@ -2964,28 +2973,28 @@ async function quickScreenBatch(
     `Confirmed research memory: ${space.memoryContext || "No confirmed imported profile yet"}`,
     `Positive examples: ${space.positiveExamples || "None yet"}`,
     `Negative examples: ${space.negativeExamples || "None yet"}`,
-    `Records: ${JSON.stringify(batch.map((paper) => ({
-      canonicalId: paper.canonicalId,
-      title: paper.title,
-      authors: paper.authors,
-      venue: paper.venue,
-      publishedAt: paper.publishedAt,
-      horizon: paper.horizon,
-      citations: paper.citationCount,
-      priorityVenue: paper.priorityVenue,
-      discoverySource: paper.source,
-      routeOrigins: routeReviewOrigins(paper, routeTitles),
-      abstract: paper.abstractText.slice(0, 900),
-    })))}`,
+    `Records: ${JSON.stringify(records)}`,
   ].join("\n");
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const batch = !deliberate && attempt > 0 && monitorErrorCode(lastError) === "timeout"
+      ? candidates.slice(0, Math.max(1, Math.ceil(candidates.length / 2))) : candidates;
+    const records = recordsFor(batch);
+    const prompt = promptFor(records);
+    const timeoutMs = attempt === 0
+      ? deliberate ? QUICK_SCREEN_RESCUE_TIMEOUT_MS : QUICK_SCREEN_FAST_TIMEOUT_MS
+      : QUICK_SCREEN_RETRY_TIMEOUT_MS;
+    const maxTokens = Math.min(3600, 500 + batch.length * (deliberate ? 190 : 150));
+    const trace = createScreeningRequestTrace({
+      spaceId: space.id, scanJobId, model: MONITOR_MODEL, mode, attempt: attempt + 1,
+      timeoutMs, maxTokens, records, promptCharacters: prompt.length,
+    });
+    let completed = 0;
+    let requestError: unknown = null;
     try {
       // Fast screening persists returned IDs and leaves all others pending.
       // Reuse the existing retry slot with less work after a timeout; rescue
       // still requires its complete group and must not take this partial path.
-      const batch = !deliberate && attempt > 0 && monitorErrorCode(lastError) === "timeout"
-        ? candidates.slice(0, Math.max(1, Math.ceil(candidates.length / 2))) : candidates;
       const response = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
         headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json" },
@@ -2995,23 +3004,24 @@ async function quickScreenBatch(
             { role: "system", content: deliberate
               ? "You are Pi Research's careful evidence-disciplined second-pass paper triage editor. Return strict JSON."
               : "You are Pi Research's fast evidence-disciplined paper triage editor. Return strict JSON." },
-            { role: "user", content: promptFor(batch) },
+            { role: "user", content: prompt },
           ],
           thinking: { type: deliberate && attempt === 0 ? "enabled" : "disabled" },
           reasoning_effort: deliberate && attempt === 0 ? "medium" : "low",
           response_format: { type: "json_object" },
-          max_tokens: Math.min(3600, 500 + batch.length * (deliberate ? 190 : 150)),
+          max_tokens: maxTokens,
           stream: false,
         }),
-        signal: AbortSignal.timeout(attempt === 0
-          ? deliberate ? QUICK_SCREEN_RESCUE_TIMEOUT_MS : QUICK_SCREEN_FAST_TIMEOUT_MS
-          : QUICK_SCREEN_RETRY_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
+      trace.headers(response.status);
       const data = await response.json() as DeepSeekResponse;
+      trace.body(data);
       if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro quick screening failed");
       const content = data.choices?.[0]?.message?.content || "";
       if (!content.trim()) throw new Error("DeepSeek Pro returned an empty screening result");
       const parsedScreens = parseQuickScreenPayload(content);
+      trace.phase("validate");
       const scoreScale = inferModelScoreScale(parsedScreens);
       const byId = new Map(parsedScreens.map((item) => [cleanText(item.canonicalId || ""), item]));
       const screens = batch.map((candidate) => {
@@ -3034,17 +3044,27 @@ async function quickScreenBatch(
       });
       const usageDate = shanghaiDateKey(new Date());
       const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
+      trace.phase("usage");
       await Promise.all([
         recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
         recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
         recordUsage(database, "monitor-space:" + space.id, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
       ]);
+      completed = screens.length;
       return screens;
     } catch (error) {
+      requestError = error;
       lastError = error;
       if (isNonRetryableDeepSeekError(error)) throw error;
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 700));
+    } finally {
+      const evidence = trace.finish(requestError ? "failed" : "success", requestError ? monitorErrorCode(requestError) : "", completed);
+      await recordReliabilityEvent(database, {
+        spaceId: space.id, scanJobId, kind: "screening_request_finished", stage: mode === "rescue" ? "rescue_screening" : "screening",
+        source: MONITOR_MODEL, outcome: requestError ? "failed" : "success", durationMs: evidence.durationMs,
+        errorCode: evidence.errorCode, metadata: evidence,
+      });
     }
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 700));
   }
   throw lastError instanceof Error ? lastError : new Error("DeepSeek Pro quick screening failed twice");
 }
@@ -3056,6 +3076,7 @@ async function quickScreenCandidates(
   candidates: Candidate[],
   apiKey: string,
   mode: "fast" | "rescue" = "fast",
+  scanJobId?: string,
 ) {
   if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be screened");
   const usageDate = shanghaiDateKey(new Date());
@@ -3072,7 +3093,7 @@ async function quickScreenCandidates(
     || spaceCount + groups.length > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT)) {
     throw new Error("DeepSeek Pro screening budget reached");
   }
-  const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey, mode)));
+  const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey, mode, scanJobId)));
   const screens = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
   const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
   const fatalError = errors.find((error) => isNonRetryableDeepSeekError(error));
@@ -7717,7 +7738,7 @@ export async function POST(request: Request) {
           await database.prepare(
             "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
           ).bind(`DeepSeek Pro 正在筛选第 ${batchStart}–${batchEnd} / ${work.candidateIds.length} 篇；本批完成后自动保存`, job.id).run();
-          const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey);
+          const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey, "fast", job.id);
           const persistedScreens = await persistQuickScreens(database, space.id, result.screens);
           const byId = new Map(work.screens.map((screen) => [screen.canonicalId, screen]));
           for (const screen of persistedScreens) byId.set(screen.canonicalId, screen);
@@ -7821,7 +7842,7 @@ export async function POST(request: Request) {
         }
       } else if (job.checkpoint === "rescue_screening") {
         const candidates = await pendingCandidateQueue(database, space.id, work.rescueScreenIds);
-        const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey, "rescue");
+        const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey, "rescue", job.id);
         const persistedScreens = await persistQuickScreens(database, space.id, result.screens);
         const byId = new Map(work.screens.map((screen) => [screen.canonicalId, screen]));
         for (const screen of persistedScreens) byId.set(screen.canonicalId, screen);
