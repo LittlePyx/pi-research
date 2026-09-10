@@ -1,6 +1,7 @@
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { createScreeningRequestTrace } from "../../../lib/screening-request-trace.mjs";
+import { matchScreeningRecords } from "../../../lib/screening-identity.mjs";
 import { researchGapQuestion } from "../../../lib/research-gap-scope.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
@@ -3022,11 +3023,17 @@ async function quickScreenBatch(
       if (!content.trim()) throw new Error("DeepSeek Pro returned an empty screening result");
       const parsedScreens = parseQuickScreenPayload(content);
       trace.phase("validate");
-      const scoreScale = inferModelScoreScale(parsedScreens);
-      const byId = new Map(parsedScreens.map((item) => [cleanText(item.canonicalId || ""), item]));
-      const screens = batch.map((candidate) => {
-        const item = byId.get(candidate.canonicalId);
-        if (!item) throw new Error("DeepSeek Pro did not screen every candidate");
+      const { byId, diagnostics } = matchScreeningRecords(batch.map(candidate => candidate.canonicalId), parsedScreens);
+      trace.validation(diagnostics);
+      if (!byId.size || deliberate && byId.size !== batch.length) {
+        throw new Error("DeepSeek Pro did not screen every candidate with a unique valid identity");
+      }
+      // A missing/mistyped ID must not discard other fully validated records.
+      // Fast screening already persists partial batches by canonical ID; leave
+      // unmatched papers pending, without guessing identities or rejecting them.
+      const scoreScale = inferModelScoreScale(Array.from(byId.values()));
+      const screens = batch.filter(candidate => byId.has(candidate.canonicalId)).map((candidate) => {
+        const item = byId.get(candidate.canonicalId)!;
         const relevanceScore = normalizeModelScore(item.relevanceScore, scoreScale);
         const qualityScore = normalizeModelScore(item.qualityScore, scoreScale);
         const screeningReason = cleanText(item.screeningReason || "Fast screening completed").slice(0, 300);
@@ -3057,10 +3064,11 @@ async function quickScreenBatch(
       lastError = error;
       if (isNonRetryableDeepSeekError(error)) throw error;
     } finally {
-      const evidence = trace.finish(requestError ? "failed" : "success", requestError ? monitorErrorCode(requestError) : "", completed);
+      const outcome = requestError ? "failed" : completed < batch.length ? "degraded" : "success";
+      const evidence = trace.finish(outcome, requestError ? monitorErrorCode(requestError) : completed < batch.length ? "screening_identity_incomplete" : "", completed);
       await recordReliabilityEvent(database, {
         spaceId: space.id, scanJobId, kind: "screening_request_finished", stage: mode === "rescue" ? "rescue_screening" : "screening",
-        source: MONITOR_MODEL, outcome: requestError ? "failed" : "success", durationMs: evidence.durationMs,
+        source: MONITOR_MODEL, outcome, durationMs: evidence.durationMs,
         errorCode: evidence.errorCode, metadata: evidence,
       });
     }

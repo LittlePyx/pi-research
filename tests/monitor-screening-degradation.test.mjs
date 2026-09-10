@@ -5,11 +5,13 @@ import ts from 'typescript';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createScreeningRequestTrace } from '../lib/screening-request-trace.mjs';
+import { matchScreeningRecords } from '../lib/screening-identity.mjs';
 
 const source = await readFile(new URL('../app/api/monitor/route.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('route.ts', source, ts.ScriptTarget.Latest, true);
 function load(name, dependencies) {
   dependencies = {
+    matchScreeningRecords,
     createScreeningRequestTrace: input => createScreeningRequestTrace(input, { emit: () => {} }),
     recordReliabilityEvent: async () => {},
     ...dependencies,
@@ -178,5 +180,47 @@ test('real HTTP keep-alive without a model result is diagnosed as body timeout, 
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('fast screening retains thirteen valid papers after one identity mismatch and finishes only the remaining paper next', async () => {
+  for (const domain of ['applied_mathematics', 'information_theory']) {
+    const candidates = Array.from({ length: 14 }, (_, i) => ({ canonicalId: `${domain}:${i}`, abstractText: 'Evidence.', horizon: 'months' }));
+    const requests = [];
+    const diagnostics = [];
+    const run = load('quickScreenBatch', {
+      loadRouteReviewTitles: async () => [], benchmarkCalibrationPrompt: () => '', routeReviewOrigins: () => [],
+      MONITOR_MODEL: 'fixture-model', QUICK_SCREEN_FAST_TIMEOUT_MS: 24000,
+      QUICK_SCREEN_RESCUE_TIMEOUT_MS: 28000, QUICK_SCREEN_RETRY_TIMEOUT_MS: 12000,
+      AbortSignal: { timeout: () => undefined },
+      fetch: async (_url, request) => {
+        const papers = JSON.parse(JSON.parse(request.body).messages[1].content.split('Records: ')[1]);
+        requests.push(papers.map(p => p.canonicalId));
+        if (requests.length > 1 && papers.length === 14) throw new DOMException('timeout', 'TimeoutError');
+        const screens = (papers.length === 14 ? papers.slice(0, 13) : papers).map(p => ({
+          canonicalId: p.canonicalId, isPaper: true, relevanceScore: 85, qualityScore: 80, screeningReason: 'Direct evidence.',
+        }));
+        if (papers.length === 14) screens.push({ ...screens[0], canonicalId: 'unknown-model-identity' });
+        return { ok: true, status: 200, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ screens }) } }] }) };
+      },
+      monitorErrorCode: () => 'timeout', isNonRetryableDeepSeekError: () => false, setTimeout: callback => callback(),
+      parseQuickScreenPayload: content => JSON.parse(content).screens, inferModelScoreScale: () => 'percent',
+      normalizeModelScore: score => score, cleanText: text => text, hasStrongFitScoreContradiction: () => false,
+      shanghaiDateKey: () => '2026-09-10', recordUsage: async () => {},
+      recordReliabilityEvent: async (_db, event) => diagnostics.push(event),
+    });
+    const database = { prepare: () => ({ bind: () => ({ first: async () => ({ profile_key: domain }) }) }) };
+    const first = await run(database, { id: domain }, 'fixture', candidates, 'fixture-only', 'fast', 'resume-14');
+    assert.equal(first.length, 13);
+    assert.equal(requests.length, 1, 'do not repeat a whole group after preserving valid results');
+    assert.equal(diagnostics[0].outcome, 'degraded');
+    assert.deepEqual(diagnostics[0].metadata.validation.missingIds, [candidates[13].canonicalId]);
+    assert.equal(diagnostics[0].metadata.validation.unexpectedCount, 1);
+    const done = new Set(first.map(p => p.canonicalId));
+    const remaining = candidates.filter(p => !done.has(p.canonicalId));
+    const second = await run(database, { id: domain }, 'fixture', remaining, 'fixture-only', 'fast', 'resume-14');
+    assert.deepEqual([...first, ...second].map(p => p.canonicalId), candidates.map(p => p.canonicalId));
+    assert.deepEqual(requests[1], [candidates[13].canonicalId]);
+    await assert.rejects(run(database, { id: domain }, 'fixture', candidates, 'fixture-only', 'rescue', 'rescue-14'));
   }
 });
