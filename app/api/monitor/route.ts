@@ -4998,6 +4998,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         WHEN EXISTS (
           SELECT 1 FROM recommendation_audit_events history
           WHERE history.space_id = p.space_id AND history.paper_id = p.id
+           AND history.id = (SELECT latest.id FROM recommendation_audit_events latest
+             WHERE latest.space_id = p.space_id AND latest.paper_id = p.id
+             ORDER BY datetime(latest.reviewed_at) DESC, latest.rowid DESC LIMIT 1)
            AND history.relevance_score >= 72 AND history.quality_score >= 70
            AND (history.decision = 'verification_pending'
             OR (history.verification_status = 'degraded' AND (
