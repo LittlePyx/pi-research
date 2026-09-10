@@ -428,6 +428,13 @@
       "when": 1789044060699,
       "tag": "0060_new_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1789046152627,
+      "tag": "0061_premium_proemial_gods",
+      "breakpoints": true
     }
   ]
 }

@@ -27,3 +27,6 @@
 @media(max-width:760px) { .v2-app .v2-page.v2-paper-detail { padding-inline: 18px; } .v2-app .v2-paper-detail .v2-paper-head h1 { font-size: 26px; } }
 
 .pi-paper-summary { font-size: 16px; line-height: 1.9; }
+.pi-related-abstract { margin: 24px 0; padding: 18px 0; border-top: 1px solid #dfe3df; }
+.pi-related-abstract h3 { font-size: 18px; line-height: 1.6; }
+.pi-related-abstract a { overflow-wrap: anywhere; font-size: 14px; }

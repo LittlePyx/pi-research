@@ -1,0 +1,1 @@
+ALTER TABLE `paper_abstract_recovery` ADD `result_json` text DEFAULT '' NOT NULL;

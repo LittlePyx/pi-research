@@ -9,11 +9,11 @@ export async function GET(request: Request) {
   const paperId = url.searchParams.get("paperId") || "";
   if (!spaceId || !paperId) return Response.json({ error: "spaceId and paperId required" }, { status: 400 });
   const db = getDatabase(); await ensureSchema(db);
-  const paper = await db.prepare(`SELECT COALESCE(i.abstract_text, '') AS abstractText
+  const paper = await db.prepare(`SELECT COALESCE(i.abstract_text, '') AS abstractText, i.analysis_source AS analysisSource
     FROM monitored_papers p JOIN research_spaces s ON s.id = p.space_id
     LEFT JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
     WHERE p.id = ? AND p.space_id = ? AND s.owner_user_id = ? LIMIT 1`)
-    .bind(paperId, spaceId, user.userId).first<{ abstractText: string }>();
+    .bind(paperId, spaceId, user.userId).first<{ abstractText: string; analysisSource: string }>();
   if (!paper) return Response.json({ error: "Paper not found" }, { status: 404 });
   const recovery = await readAbstractRecovery(db, spaceId, paperId);
   return Response.json({ paper, recovery }, { headers: { "Cache-Control": "private, no-store" } });
@@ -33,6 +33,6 @@ export async function POST(request: Request) {
   const owned = await db.prepare("SELECT p.id FROM monitored_papers p JOIN research_spaces s ON s.id=p.space_id WHERE p.id=? AND p.space_id=? AND s.owner_user_id=?").bind(paperId, spaceId, user.userId).first();
   if (!owned) return Response.json({ error: "Paper not found" }, { status: 404 });
   const recovery = await recoverPaperAbstract(db, spaceId, paperId);
-  const paper = await db.prepare("SELECT abstract_text AS abstractText FROM paper_insights WHERE paper_id=? AND space_id=?").bind(paperId, spaceId).first();
+  const paper = await db.prepare("SELECT abstract_text AS abstractText, analysis_source AS analysisSource FROM paper_insights WHERE paper_id=? AND space_id=?").bind(paperId, spaceId).first();
   return Response.json({ paper, recovery }, { headers: { "Cache-Control": "private, no-store" } });
 }

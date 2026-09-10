@@ -16,7 +16,7 @@ async function loadFunction(name, dependencies) {
 test('abstract enrichment continues past short evidence and uses a healthy DOI source', async () => {
   const calls = [];
   const writes = [];
-  const fresh = 'Structured abstract evidence. '.repeat(10);
+  const fresh = 'Structured abstract evidence. '.repeat(20);
   const database = { prepare(sql) { return { bind(...args) { return { sql, args }; } }; },
     async batch(statements) { writes.push(...statements); } };
   const enrich = await loadFunction('enrichDeepReviewAbstracts', {

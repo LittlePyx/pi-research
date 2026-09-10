@@ -4706,10 +4706,10 @@ async function fetchCrossrefAbstracts(database: D1Database, candidates: Candidat
 }
 
 async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, candidates: Candidate[]) {
-  const missing = candidates.filter((candidate) => candidate.abstractText.trim().length < 120);
+  const missing = candidates.filter((candidate) => candidate.abstractText.trim().length < 400);
   if (!missing.length) return { requested: 0, enriched: 0 };
   const abstracts = await fetchSemanticScholarAbstracts(database, spaceId, missing);
-  const unresolved = missing.filter((candidate) => (abstracts.get(candidate.canonicalId)?.trim().length || 0) < 120 && candidate.doi);
+  const unresolved = missing.filter((candidate) => (abstracts.get(candidate.canonicalId)?.trim().length || 0) < 400 && candidate.doi);
   const openAlexAbstracts = await fetchOpenAlexAbstracts(database, unresolved);
   const mergeAbstracts = (incoming: Map<string, string>) => {
     for (const [canonicalId, abstractText] of incoming) {
@@ -4717,7 +4717,7 @@ async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, 
     }
   };
   mergeAbstracts(openAlexAbstracts);
-  const crossrefMissing = missing.filter((candidate) => (abstracts.get(candidate.canonicalId)?.trim().length || 0) < 120 && candidate.doi);
+  const crossrefMissing = missing.filter((candidate) => (abstracts.get(candidate.canonicalId)?.trim().length || 0) < 400 && candidate.doi);
   if (crossrefMissing.length) mergeAbstracts(await fetchCrossrefAbstracts(database, crossrefMissing));
   const statements = Array.from(abstracts.entries()).map(([canonicalId, abstractText]) => database.prepare(
     `UPDATE paper_insights SET abstract_text = CASE WHEN length(?) > length(abstract_text) THEN ? ELSE abstract_text END,
@@ -4727,7 +4727,7 @@ async function enrichDeepReviewAbstracts(database: D1Database, spaceId: string, 
   ).bind(abstractText, abstractText, spaceId, spaceId, canonicalId));
   for (let start = 0; start < statements.length; start += 70) await database.batch(statements.slice(start, start + 70));
   let recovered = 0;
-  for (const candidate of missing.filter(item => (abstracts.get(item.canonicalId)?.length || 0) < 120).slice(0, 1)) {
+  for (const candidate of missing.filter(item => (abstracts.get(item.canonicalId)?.length || 0) < 400).slice(0, 1)) {
     const row = await database.prepare("SELECT id FROM monitored_papers WHERE space_id=? AND canonical_id=? LIMIT 1").bind(spaceId, candidate.canonicalId).first<{ id: string }>();
     if (row && (await recoverPaperAbstract(database, spaceId, row.id, true))?.status === "found") recovered++;
   }

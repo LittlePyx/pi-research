@@ -1579,6 +1579,7 @@ export const paperAbstractRecovery = sqliteTable("paper_abstract_recovery", {
   spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
   status: text("status").notNull().default("pending"),
   sourceUrl: text("source_url").notNull().default(""),
+  resultJson: text("result_json").notNull().default(""),
   attemptedJson: text("attempted_json").notNull().default("[]"),
   retryAt: integer("retry_at").notNull().default(0),
   leaseUntil: integer("lease_until").notNull().default(0),

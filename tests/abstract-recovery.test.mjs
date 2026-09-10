@@ -28,3 +28,12 @@ test('unavailable sources differ from completed searches with no matching abstra
   assert.equal(missing.hit, null); assert.equal(missing.failed, false);
   assert.equal(failed.hit, null); assert.equal(failed.failed, true);
 });
+test('a fuller abstract under another DOI stays separate from the original record', async () => {
+  const result = await lookupAbstract(paper, async (url, source) => {
+    if (source === 'crossref' && new URL(url).pathname === '/works') return Response.json({ message: { items: [{ DOI:'10.1234/other-version', title:[paper.title], author:[{given:'Ada',family:'Lovelace'},{given:'Test',family:'Author'}], abstract:'Separate version abstract for an isolated test. '.repeat(12) }] } });
+    return new Response('',{status:404});
+  });
+  assert.equal(result.hit, null, 'a DOI mismatch cannot become primary evidence');
+  assert.equal(result.related.doi, '10.1234/other-version');
+  assert.ok(result.related.abstractText.length >= 400);
+});

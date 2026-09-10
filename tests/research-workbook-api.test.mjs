@@ -18,9 +18,12 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       if (new URL(request.url).pathname === '/fixture') return Response.json(await env.DB.batch((await request.json()).map(({sql,values=[]}) => env.DB.prepare(sql).bind(...values))));
       return app.fetch(request,env,ctx); } };` }, ...modules],
     outboundService: async request => {
+      const target = new URL(request.url);
+      if (target.hostname === "api.crossref.org" && target.pathname.includes("version-fixture")) return Response.json({message:{DOI:"10.9999/version-fixture"}});
+      if (target.hostname === "api.crossref.org" && target.searchParams.get("query.title") === "Isolated related version") return Response.json({message:{items:[{DOI:"10.9999/alternate-version",title:["Isolated related version"],author:[{given:"First",family:"Author"},{given:"Second",family:"Author"}],abstract:"Separate DOI version abstract, isolated test only. ".repeat(12)}]}});
       if (new URL(request.url).hostname === "api.crossref.org" && request.url.includes("abstract-fixture")) {
         abstractCalls++;
-        return Response.json({ message: { DOI: "10.9999/abstract-fixture", abstract: "Isolated abstract recovery evidence, for integration testing only. ".repeat(5) } });
+        return Response.json({ message: { DOI: "10.9999/abstract-fixture", abstract: "Isolated abstract recovery evidence, for integration testing only. ".repeat(8) } });
       }
       if (new URL(request.url).hostname !== "api.deepseek.com") return new Response("No external access in fixture", { status: 503 });
       calls++; const input = JSON.parse((await request.json()).messages[1].content); await beforeReply();
@@ -51,7 +54,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       insert("monitored_papers", { id: "unreviewed", space_id: "math", canonical_id: "unreviewed", title: "KLS unreviewed", horizon: "years" }),
       insert("paper_insights", { paper_id: "unreviewed", space_id: "math", ever_recommended: 0, abstract_text: workbookSources[0].abstractText }),
     ]);
-    await t.test("missing abstract recovery preserves owner scope, requeues only evidence-blocked review and persists its source", async () => {
+    await t.test("missing abstract recovery preserves owner scope, requeues reviews based on superseded short evidence and persists its source", async () => {
       await sql([
         insert("monitored_papers", { id: "abstract-fixture", space_id: "math", canonical_id: "doi:10.9999/abstract-fixture", doi: "10.9999/abstract-fixture", title: "Isolated abstract recovery", authors: "Fixture author", horizon: "years" }),
         insert("paper_insights", { paper_id: "abstract-fixture", space_id: "math", analysis_source: "deepseek_rejected", analysis_model: "old-review", screening_reason: "Abstract evidence unavailable after bounded enrichment" }),
@@ -74,7 +77,20 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await sql([{ sql: "UPDATE paper_abstract_recovery SET retry_at=0 WHERE paper_id='abstract-fixture'" }]);
       await request("/api/paper-reading", { spaceId: "math", paperId: "abstract-fixture" });
       const preserved = await sql([{ sql: "SELECT analysis_source,analysis_model FROM paper_insights WHERE paper_id='abstract-fixture'" }]);
-      assert.deepEqual(preserved[0].results[0], { analysis_source:"deepseek_rejected", analysis_model:"real-review" });
+      assert.deepEqual(preserved[0].results[0], { analysis_source:"deepseek_screened", analysis_model:"" });
+    });
+    await t.test("alternate DOI abstracts stay separate and do not overwrite or requeue the original record", async () => {
+      await sql([
+        insert("monitored_papers", {id:"version-fixture",space_id:"math",canonical_id:"doi:10.9999/version-fixture",doi:"10.9999/version-fixture",title:"Isolated related version",authors:"First Author, Second Author",horizon:"years"}),
+        insert("paper_insights", {paper_id:"version-fixture",space_id:"math",abstract_text:"Saved short text",analysis_source:"deepseek_rejected",analysis_model:"previous-review"}),
+      ]);
+      const result = await request("/api/paper-reading", {spaceId:"math",paperId:"version-fixture"});
+      assert.equal(result.recovery.status,"related_version");
+      assert.equal(result.recovery.related.doi,"10.9999/alternate-version");
+      assert.equal(result.paper.abstractText,"Saved short text");
+      assert.equal(result.paper.analysisSource,"deepseek_rejected");
+      const saved = await request("/api/paper-reading?spaceId=math&paperId=version-fixture");
+      assert.deepEqual(saved.recovery.related,result.recovery.related);
     });
     await t.test("synthesis preparation identifies pending materials and manual problem definition needs no generated synthesis", async () => {
       await sql([insert("research_map_evidence_proposals", { id: "pending-material", space_id: "math", track_id: "kls", paper_id: workbookSources[0].id, status: "pending" })]);

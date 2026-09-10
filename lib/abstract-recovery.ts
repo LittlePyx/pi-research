@@ -5,7 +5,8 @@ import { ExternalSourceCooldownError, fetchExternalSource } from "./external-sou
 export const ABSTRACT_BLOCK_REASON = "Abstract evidence unavailable after bounded enrichment";
 export type AbstractIdentity = { doi: string | null; title: string; authors: string; url: string };
 type Hit = { abstractText: string; sourceUrl: string };
-export type Recovery = { status: string; source_url: string; retry_at: number; attempted_json: string };
+type RelatedAbstract = Hit & { doi: string };
+export type Recovery = { status: string; source_url: string; retry_at: number; attempted_json: string; result_json?: string; related?: RelatedAbstract | null };
 const clean = (text: string) => text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 12000);
 const doiKey = (value: string) => value.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "").trim().toLowerCase();
 
@@ -16,14 +17,21 @@ export function matchesAbstractIdentity(paper: AbstractIdentity, record: { doi?:
   return record.authors.some(author => { const name = normalizeWorkTitle(author); return name.length >= 5 && known.includes(name); });
 }
 
-export async function lookupAbstract(paper: AbstractIdentity, request: (url: string, source: string) => Promise<Response>, preprintOnly = false): Promise<{ hit: Hit | null; failed: boolean; attempted: string[]; retryMs: number }> {
+export async function lookupAbstract(paper: AbstractIdentity, request: (url: string, source: string) => Promise<Response>, preprintOnly = false): Promise<{ hit: Hit | null; failed: boolean; attempted: string[]; retryMs: number; related: RelatedAbstract | null }> {
+  let related: RelatedAbstract | null = null;
   const attempted: string[] = []; let failed = false; let retryMs = 0;
   const attempt = async (source: string, url: string, read: (response: Response) => Promise<Hit | null>) => {
     attempted.push(source);
     try { const response = await request(url, source); if (response.status === 404) return null; if (!response.ok) throw new Error("source unavailable"); return await read(response); }
     catch (error) { failed = true; if (error instanceof ExternalSourceCooldownError) retryMs = Math.max(retryMs, error.retryAfterSeconds * 1000); return null; }
   };
-  const valid = (abstractText: string, sourceUrl: string): Hit | null => clean(abstractText).length >= 120 ? { abstractText: clean(abstractText), sourceUrl } : null;
+  let shortHit: Hit | null = null;
+  const valid = (abstractText: string, sourceUrl: string): Hit | null => {
+    const candidate = { abstractText: clean(abstractText), sourceUrl };
+    if (candidate.abstractText.length >= 400) return candidate;
+    if (candidate.abstractText.length >= 120 && candidate.abstractText.length > (shortHit?.abstractText.length || 0)) shortHit = candidate;
+    return null;
+  };
   let hit: Hit | null = null;
   if (paper.doi && !preprintOnly) {
     const endpoint = `https://api.crossref.org/works/${encodeURIComponent(doiKey(paper.doi))}`;
@@ -42,6 +50,19 @@ export async function lookupAbstract(paper: AbstractIdentity, request: (url: str
       });
     }
   }
+  if (!hit && !preprintOnly) {
+    const endpoint = new URL("https://api.crossref.org/works");
+    endpoint.searchParams.set("query.title", paper.title); endpoint.searchParams.set("rows", "3");
+    await attempt("crossref", endpoint.href, async response => {
+      const payload = await response.json() as { message?: { items?: Array<{ DOI: string; title?: string[]; author?: Array<{ given?: string; family?: string }>; abstract?: string }> } };
+      const matches = (payload.message?.items || []).filter(row => row.DOI && doiKey(row.DOI) !== doiKey(paper.doi || "") && normalizeWorkTitle(row.title?.[0] || "") === normalizeWorkTitle(paper.title) && (row.author?.length || 0) >= 2 && row.author!.every(author => {
+        const full = normalizeWorkTitle(`${author.given || ""} ${author.family || ""}`); return full.length >= 5 && normalizeWorkTitle(paper.authors).includes(full);
+      })).filter(row => clean(row.abstract || "").length >= 400);
+      if (matches.length === 1) related = { abstractText: clean(matches[0].abstract!), sourceUrl: `https://api.crossref.org/works/${encodeURIComponent(matches[0].DOI)}`, doi: matches[0].DOI };
+      return null;
+    });
+  }
+  if (related) return { hit: null, failed, attempted, retryMs, related };
   if (!hit) {
     const endpoint = new URL("https://api.datacite.org/dois");
     endpoint.searchParams.set("query", `prefix:10.48550 AND titles.title:"${normalizeWorkTitle(paper.title)}"`);
@@ -65,34 +86,38 @@ export async function lookupAbstract(paper: AbstractIdentity, request: (url: str
       return valid(rows[0].abstract, rows[0].url.replace(/^http:/, "https:"));
     });
   }
-  return { hit, failed, attempted, retryMs };
+  return { hit: hit || shortHit, failed, attempted, retryMs, related };
 }
 
 export async function readAbstractRecovery(db: D1Database, spaceId: string, paperId: string) {
-  return db.prepare("SELECT status, source_url, retry_at, attempted_json FROM paper_abstract_recovery WHERE space_id = ? AND paper_id = ?").bind(spaceId, paperId).first<Recovery>();
+  const record = await db.prepare("SELECT status, source_url, retry_at, attempted_json, result_json FROM paper_abstract_recovery WHERE space_id = ? AND paper_id = ?").bind(spaceId, paperId).first<Recovery>();
+  if (!record) return null;
+  return { ...record, related: record.result_json ? JSON.parse(record.result_json) as RelatedAbstract : null };
 }
 
 // A per-paper lease complements the existing shared provider cooldowns.
 export async function recoverPaperAbstract(db: D1Database, spaceId: string, paperId: string, preprintOnly = false) {
   const paper = await db.prepare(`SELECT p.doi,p.title,p.authors,p.url,i.abstract_text FROM monitored_papers p JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id WHERE p.id=? AND p.space_id=?`).bind(paperId, spaceId).first<AbstractIdentity & { abstract_text: string }>();
-  if (!paper || paper.abstract_text.trim().length >= 120) return readAbstractRecovery(db, spaceId, paperId);
+  if (!paper || paper.abstract_text.trim().length >= 400) return readAbstractRecovery(db, spaceId, paperId);
+  const existing = await readAbstractRecovery(db, spaceId, paperId);
+  if (existing?.status === "found" && paper.abstract_text.trim().length >= 120) return existing;
   const token = crypto.randomUUID(); const now = Date.now();
   await db.prepare("INSERT OR IGNORE INTO paper_abstract_recovery (paper_id,space_id) VALUES (?,?)").bind(paperId, spaceId).run();
   const lock = await db.prepare(`UPDATE paper_abstract_recovery SET status='searching',lock_token=?,lease_until=?,updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND lease_until<=? AND retry_at<=?`).bind(token, now + 90000, paperId, spaceId, now, now).run();
   if (!lock.meta.changes) return readAbstractRecovery(db, spaceId, paperId);
   const deadline = AbortSignal.timeout(24000);
-  const result = await lookupAbstract(paper, (url, sourceKey) => fetchExternalSource(url, { headers: { Accept: sourceKey === "arxiv" ? "application/atom+xml" : "application/json" }, signal: AbortSignal.any([deadline, AbortSignal.timeout(7000)]) }, { database: db, sourceKey, maxRetries: 0, maxInlineWaitMs: 0 }), preprintOnly);
-  const retryAt = result.hit ? 0 : Date.now() + Math.max(result.retryMs, result.failed ? 5 * 60000 : 6 * 3600000);
-  const status = result.hit ? "found" : result.failed ? "source_error" : "not_found";
+  const result = await lookupAbstract(paper, (url, sourceKey) => fetchExternalSource(url, { headers: { Accept: sourceKey === "arxiv" ? "application/atom+xml" : "application/json" }, signal: AbortSignal.any([deadline, AbortSignal.timeout(7000)]) }, { database: db, sourceKey, maxRetries: 0, maxInlineWaitMs: 500 }), preprintOnly);
+  const retryAt = result.hit ? 0 : Date.now() + Math.max(result.retryMs, result.related ? 24 * 3600000 : result.failed ? 5 * 60000 : 6 * 3600000);
+  const status = result.hit ? "found" : result.related ? "related_version" : result.failed ? "source_error" : "not_found";
   const statements = [];
   if (result.hit) statements.push(db.prepare(`UPDATE paper_insights SET abstract_text=?,
-    analysis_model=CASE WHEN analysis_source='deepseek_rejected' AND instr(screening_reason, ?) > 0 AND ever_recommended=0 THEN '' ELSE analysis_model END,
-    analysis_source=CASE WHEN analysis_source='deepseek_rejected' AND instr(screening_reason, ?) > 0 AND ever_recommended=0 THEN 'deepseek_screened' ELSE analysis_source END,
-    updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND length(trim(abstract_text))<120
+    analysis_model=CASE WHEN analysis_source='deepseek_rejected' AND ever_recommended=0 THEN '' ELSE analysis_model END,
+    analysis_source=CASE WHEN analysis_source='deepseek_rejected' AND ever_recommended=0 THEN 'deepseek_screened' ELSE analysis_source END,
+    updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND length(trim(abstract_text)) < length(?)
     AND EXISTS(SELECT 1 FROM paper_abstract_recovery WHERE paper_id=? AND lock_token=?)`)
-    .bind(result.hit.abstractText, ABSTRACT_BLOCK_REASON, ABSTRACT_BLOCK_REASON, paperId, spaceId, paperId, token));
-  statements.push(db.prepare("UPDATE paper_abstract_recovery SET status=?,source_url=?,retry_at=?,attempted_json=?,lock_token=NULL,lease_until=0,updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND lock_token=?")
-    .bind(status, result.hit?.sourceUrl || "", retryAt, JSON.stringify(result.attempted), paperId, spaceId, token));
+    .bind(result.hit.abstractText, paperId, spaceId, result.hit.abstractText, paperId, token));
+  statements.push(db.prepare("UPDATE paper_abstract_recovery SET status=?,source_url=?,retry_at=?,attempted_json=?,result_json=?,lock_token=NULL,lease_until=0,updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND lock_token=?")
+    .bind(status, result.hit?.sourceUrl || "", retryAt, JSON.stringify(result.attempted), result.related ? JSON.stringify(result.related) : "", paperId, spaceId, token));
   await db.batch(statements);
   return readAbstractRecovery(db, spaceId, paperId);
 }
