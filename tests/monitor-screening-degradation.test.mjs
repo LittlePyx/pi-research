@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { createScreeningRequestTrace } from '../lib/screening-request-trace.mjs';
 
 const source = await readFile(new URL('../app/api/monitor/route.ts', import.meta.url), 'utf8');
@@ -140,5 +142,41 @@ test('smaller timeout retry returns only evaluated IDs; rescue and non-timeout r
       assert.deepEqual([...first, ...next].map(p => p.canonicalId), original.map(p => p.canonicalId));
       assert.equal(calls, 3);
     }
+  }
+});
+
+test('real HTTP keep-alive without a model result is diagnosed as body timeout, never screened', { timeout: 10000 }, async () => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.flushHeaders();
+    response.write('\n');
+    const keepAlive = setInterval(() => response.write('\n'), 30);
+    response.on('close', () => clearInterval(keepAlive));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const events = [];
+  const diagnostics = [];
+  const run = load('quickScreenBatch', {
+    createScreeningRequestTrace: input => createScreeningRequestTrace(input, { emit: event => events.push(event) }),
+    recordReliabilityEvent: async (_db, event) => { diagnostics.push(event); },
+    loadRouteReviewTitles: async () => [], inferDomainProfile: () => ({ key: 'applied_mathematics' }),
+    benchmarkCalibrationPrompt: () => '', routeReviewOrigins: () => [], MONITOR_MODEL: 'fixture-model',
+    QUICK_SCREEN_FAST_TIMEOUT_MS: 1000, QUICK_SCREEN_RESCUE_TIMEOUT_MS: 1000, QUICK_SCREEN_RETRY_TIMEOUT_MS: 500,
+    AbortSignal, fetch: (_url, request) => fetch(`http://127.0.0.1:${server.address().port}`, request),
+    isNonRetryableDeepSeekError: () => false, monitorErrorCode: () => 'timeout', setTimeout: callback => callback(),
+    recordUsage: () => assert.fail('an HTTP 200 without a model result is not a successful evaluation'),
+  });
+  const database = { prepare: () => ({ bind: () => ({ first: async () => ({ profile_key: 'applied_mathematics' }) }) }) };
+  try {
+    await assert.rejects(run(database, { id: 'fixture' }, 'fixture', [
+      { canonicalId: 'fixture:body-stall', abstractText: 'Supplied evidence.' },
+    ], 'fixture-only', 'fast', 'resume-body-stall'), error => /abort|timeout/i.test(error.name + error.message));
+    assert.equal(diagnostics.length, 2);
+    assert.equal(diagnostics.every(event => event.metadata.httpStatus === 200 && event.metadata.phase === 'body' && event.metadata.completed === 0), true);
+    assert.equal(events.filter(event => event.kind === 'screening_request_input').length, 2);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
   }
 });
