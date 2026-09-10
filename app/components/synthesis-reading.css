@@ -1,0 +1,45 @@
+.v2-app .v2-research-synthesis { padding: 0 28px 28px; background: #fff; }
+.v2-app .v2-research-synthesis > header { padding: 24px 0; gap: 20px; background: none; border-bottom: 1px solid #dfe3df; }
+.v2-app .v2-research-synthesis > header h2 { font-size: 24px; line-height: 1.4; }
+.v2-app .v2-research-synthesis > header button { font-size: 13px; border-radius: 3px; min-height: 40px; }
+.pi-synthesis-reading { max-width: 880px; margin: 0 auto; color: #293c33; }
+.pi-synthesis-reading p { font-size: 16px; line-height: 1.9; margin: 12px 0; overflow-wrap: anywhere; }
+.pi-synthesis-reading .pi-synthesis-eyebrow { font-size: 12px; line-height: 1.6; color: #6c7972; letter-spacing: .04em; margin: 0 0 8px; }
+.pi-synthesis-reading h3 { margin: 0; font-size: 22px; line-height: 1.6; font-weight: 500; overflow-wrap: anywhere; }
+.pi-synthesis-question { padding: 30px 0; }
+.pi-synthesis-question h3 { font-size: 26px; }
+.pi-synthesis-question small { color: #6c7972; font-size: 13px; }
+.pi-synthesis-finding { border-top: 1px solid #dfe3df; padding: 28px 0; }
+.pi-synthesis-finding > header { display: grid; grid-template-columns: 36px minmax(0,1fr); gap: 14px; }
+.pi-synthesis-index { color: #8a948f; font-size: 14px; padding-top: 3px; font-variant-numeric: tabular-nums; }
+.pi-synthesis-finding-body { margin-left: 50px; }
+.pi-synthesis-reading summary { cursor: pointer; font-size: 14px; line-height: 1.7; color: #466453; padding: 10px 0; }
+.pi-synthesis-source-list { background: #f7f8f6; padding: 0 22px; margin-top: 10px; }
+.pi-synthesis-source-list > article { padding: 24px 0; border-bottom: 1px solid #dfe3df; }
+.pi-synthesis-source-list > article:last-child { border-bottom: 0; }
+.pi-synthesis-source-list h4 { font-size: 18px; line-height: 1.6; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
+.pi-synthesis-source-list .pi-synthesis-bibliography { color: #6c7972; font-size: 13px; margin: 8px 0 18px; }
+.pi-synthesis-source-list blockquote { margin: 0; padding: 0 0 0 16px; border-left: 2px solid #bbc7be; font-size: 16px; line-height: 1.9; overflow-wrap: anywhere; }
+.pi-synthesis-source-list footer { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; margin-top: 18px; font-size: 13px; color: #6c7972; }
+.pi-synthesis-source-list a { color: #315d48; text-decoration: underline; text-underline-offset: 4px; }
+.pi-synthesis-next-step { border-top: 1px solid #dfe3df; padding: 28px 0; }
+.pi-synthesis-next-step code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #f7f8f6; }
+.pi-synthesis-next-step button { padding: 10px 16px; margin-top: 12px; color: #fff; background: #315d48; border-radius: 3px; cursor: pointer; }
+.pi-synthesis-next-step button:disabled { opacity: .5; cursor: default; }
+.pi-synthesis-version { border-top: 1px solid #dfe3df; }
+.pi-synthesis-version p { font-size: 13px; color: #6c7972; }
+.pi-synthesis-reading .pi-synthesis-notice { background: #faf5e9; padding: 12px 16px; font-size: 14px; }
+.v2-app .pi-synthesis-preparation { max-width: 880px; margin: auto; }
+.v2-app .pi-synthesis-preparation h3 { font-size: 22px; font-weight: 500; }
+.v2-app .pi-synthesis-preparation li { padding: 22px 0; }
+.v2-app .pi-synthesis-preparation li strong { font-size: 18px; font-weight: 500; }
+.v2-app .pi-synthesis-preparation li p { font-size: 14px; }
+@media(max-width:760px) {
+  .v2-app .v2-research-synthesis { padding: 0 16px 20px; }
+  .v2-app .v2-research-synthesis > header { align-items: flex-start; flex-direction: column; }
+  .pi-synthesis-question h3 { font-size: 22px; }
+  .pi-synthesis-reading h3 { font-size: 20px; }
+  .pi-synthesis-finding > header { grid-template-columns: 25px minmax(0,1fr); gap: 8px; }
+  .pi-synthesis-finding-body { margin-left: 0; }
+  .pi-synthesis-source-list { padding: 0 14px; }
+}

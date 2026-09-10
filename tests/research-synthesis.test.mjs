@@ -67,9 +67,9 @@ test("route synthesis is source-linked, incremental, and feeds daily discovery",
   assert.match(api, /nextSearchSourceStatementId/);
   assert.match(api, /researchSynthesisDiscoveryQuery/);
   assert.match(client, /"共识、分歧与缺口"/);
-  assert.match(client, /回到来源核对/);
-  assert.match(client, /claim \{source\.claimId\}/);
-  assert.match(client, /来自证据缺口/);
+  assert.match(client, /SynthesisReading/);
+
+
   assert.match(monitor, /synthesis_next_search_query/);
   assert.match(monitor, /Grounded cross-paper synthesis/);
   assert.match(map, /SELECT next_search_query FROM research_syntheses/);

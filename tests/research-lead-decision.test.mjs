@@ -181,7 +181,10 @@ test("problem and synthesis workbenches keep decisions before expandable evidenc
   const synthesis = ui.slice(synthesisStart, ui.indexOf("function researchProblemStageLabel", synthesisStart));
   const problem = ui.slice(problemStart, ui.indexOf("export default function ResearchApp", problemStart));
 
-  assert.ok(synthesis.indexOf('className="v2-synthesis-next"') < synthesis.indexOf('className="v2-synthesis-evidence-detail"'));
+  assert.match(synthesis, /SynthesisReading/);
+  const reading = await readFile(new URL("../app/components/synthesis-reading.tsx", import.meta.url), "utf8");
+  assert.ok(reading.indexOf('className="pi-synthesis-findings"') < reading.indexOf('className="pi-synthesis-next-step"'));
+  assert.ok(reading.indexOf('className="pi-synthesis-finding-body"') < reading.indexOf('className="pi-synthesis-source-disclosure"'));
   assert.ok(problem.indexOf("v2-problem-assessment") < problem.indexOf("v2-problem-context"));
   assert.ok(problem.indexOf("v2-problem-actions") < problem.indexOf("v2-problem-context"));
   assert.match(css, /\.v2-synthesis-evidence-detail > summary[\s\S]*\.v2-problem-context > summary/);
