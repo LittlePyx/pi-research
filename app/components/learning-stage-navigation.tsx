@@ -1,5 +1,6 @@
 'use client';
 
+import { focusWorkspaceSection } from '../../lib/workspace-section-navigation';
 import type { LearningPathStep } from '../../lib/learning-path';
 
 export function LearningStageNavigation({ steps, selectedId, currentId, locale, label, onSelect }: {
@@ -10,7 +11,7 @@ export function LearningStageNavigation({ steps, selectedId, currentId, locale, 
   return <nav className="pi-learning-stage-nav" aria-label={locale === 'zh' ? '查看学习阶段' : 'Browse learning stages'}>
     {steps.map((step, index) => <button type="button" key={step.id}
       aria-pressed={selectedId === step.id} aria-controls="learning-stage-content"
-      onClick={() => onSelect(step.id)}>
+      onClick={() => { onSelect(step.id); if (typeof window !== 'undefined' && window.matchMedia("(max-width: 800px)").matches) requestAnimationFrame(() => focusWorkspaceSection("#learning-stage-content")); }}>
       <span>{String(index + 1).padStart(2, '0')}</span>
       <span><strong>{locale === 'zh' ? step.titleZh : step.titleEn}</strong>
         <small>{label(step, locale)} · {step.resources.length} {locale === 'zh' ? '篇' : 'papers'}</small></span>

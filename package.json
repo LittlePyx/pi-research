@@ -14,7 +14,7 @@
     "test:discovery": "node scripts/run-discovery-benchmark.mjs",
     "test:discovery:live": "node scripts/run-discovery-benchmark.mjs --live",
     "test:release": "npm run lint && npm run test:live && npm run test:discovery:live && npm test",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "node scripts/lint-workspace.mjs",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

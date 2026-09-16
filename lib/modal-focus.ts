@@ -6,8 +6,8 @@ export function activateModalFocus(dialog: HTMLElement, onClose: () => void, fal
   doc.body.style.overflow = "hidden";
   const siblings = Array.from(dialog.parentElement?.children || []).filter((node): node is HTMLElement => node instanceof HTMLElement && node !== dialog);
   const inertBefore = siblings.map((node) => node.inert);
-  siblings.forEach((node) => { node.inert = true; });
-  const candidates = () => Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]'))
+  siblings.forEach((node) => { if (!node.classList.contains("v2-mobile-backdrop")) node.inert = true; });
+  const candidates = () => Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], summary, [tabindex="0"]'))
     .filter((node) => !node.classList.contains("v2-modal-backdrop") && !node.hidden && node.getClientRects().length > 0);
   const first = () => candidates()[0] || dialog;
   first().focus();

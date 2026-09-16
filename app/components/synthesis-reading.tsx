@@ -1,4 +1,5 @@
 import { MathText } from "./math-text";
+import { SectionNavigation } from "./section-navigation";
 import "./synthesis-reading.css";
 
 type Source = { claimId: string; paperId: string; title: string; authors: string; venue: string; publishedAt: string | null; evidenceQuote: string; locator: string; sourceUrl: string; evidenceLevel: string };
@@ -10,6 +11,7 @@ export function SynthesisReading({ synthesis: s, locale, onScanGap }: { synthesi
   const labels: Record<string, string> = zh ? { consensus: "共同结论", disagreement: "分歧", qualification: "适用条件", method_lineage: "方法联系", evidence_gap: "待核实问题" } : { consensus: "Shared findings", disagreement: "Disagreement", qualification: "Conditions", method_lineage: "Method connections", evidence_gap: "Open questions in this material" };
   const next = s.statements.find(item => item.id === s.nextSearchSourceStatementId);
   return <div className="pi-synthesis-reading">
+    <SectionNavigation label={zh ? "阅读顺序" : "Read in order"} items={[{ label: zh ? "核心问题" : "Question", target: ".pi-synthesis-question" }, { label: zh ? "判断与出处" : "Findings & sources", target: ".pi-synthesis-findings" }, ...(s.nextSearchQuery ? [{ label: zh ? "下一步核查" : "Next check", target: ".pi-synthesis-next-step" }] : [])]} />
     {s.stale && <p className="pi-synthesis-notice" role="status">{zh ? "材料已变化。以下为上一版判断，需要按当前证据重新核对。" : "Materials changed. These are previous findings and need review against current evidence."}</p>}
     {s.status === "partial" && <p className="pi-synthesis-notice">{zh ? "本次综合尚不完整，以下仅展示已保留的判断。" : "This synthesis is incomplete; only retained findings are shown."}</p>}
     <section className="pi-synthesis-question"><p className="pi-synthesis-eyebrow">{zh ? "这组论文回答什么" : "THE QUESTION"}</p><h3><MathText>{zh ? s.questionZh : s.questionEn}</MathText></h3><p><MathText>{zh ? s.overviewZh : s.overviewEn}</MathText></p><small>{zh ? `基于 ${s.sourcePaperCount} 篇论文 · 按下方出处核对` : `Based on ${s.sourcePaperCount} papers · check the sources below`}</small></section>

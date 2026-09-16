@@ -1,3 +1,5 @@
+"use client";
+import { useState } from "react";
 import type { ResearchTrack } from "../../lib/research-map";
 import { routeMaterialState } from "../../lib/route-material-state";
 import { MathText } from "./math-text";
@@ -8,9 +10,13 @@ export function ResearchLeads({ tracks, locale, onOpen, onLearn }: {
   onOpen: (track: ResearchTrack) => void; onLearn: (track: ResearchTrack) => void;
 }) {
   const zh = locale === "zh";
+  const [query, setQuery] = useState("");
+  const matching = tracks.filter(track => `${track.titleZh} ${track.titleEn} ${track.summaryZh} ${track.summaryEn}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return <section className="pi-research-leads" aria-label={zh ? "研究线索" : "Research leads"}>
+    <div className="pi-lead-filter"><input aria-label={zh ? "查找研究线索" : "Find a research lead"} value={query} onChange={event => setQuery(event.target.value)} placeholder={zh ? "按方向、方法或问题查找线索" : "Find a direction, method or question"} /><span>{matching.length} {zh ? "条线索" : "leads"}</span>{query && <button type="button" onClick={() => setQuery("")}>{zh ? "清除" : "Clear"}</button>}</div>
+    {!matching.length && <p className="v2-monitor-empty">{zh ? "没有匹配的线索，请换一个关键词。" : "No matching leads. Try another keyword."}</p>}
     {(["core", "support", "explore"] as const).map(role => {
-      const group = tracks.filter(t => t.userRole === role);
+      const group = matching.filter(t => t.userRole === role);
       if (!group.length) return null;
       return <section key={role}><header><h2>{role === "core" ? (zh ? "主要研究" : "Main research") : role === "support" ? (zh ? "相关方法与工具" : "Related methods & tools") : (zh ? "待探索线索" : "Exploratory leads")}</h2><span>{group.length}</span></header>
         {group.map(track => {

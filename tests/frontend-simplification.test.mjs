@@ -70,7 +70,7 @@ test("Today leads with selected reading while scan detail and secondary lists st
 test("library and paper detail keep reading primary while management and audit stay on demand", async () => {
   const [app, css] = await Promise.all([readFile(appUrl, "utf8"), readFile(cssUrl, "utf8")]);
   const library = app.slice(app.indexOf('{view === "library"'), app.indexOf('{view === "memory"'));
-  const paperDetail = app.slice(app.indexOf('{view === "paper-detail"'), app.indexOf('</main>', app.indexOf('{view === "paper-detail"')));
+  const paperDetail = app.slice(app.indexOf('{view === "paper-detail" &&'), app.indexOf('</main>', app.indexOf('{view === "paper-detail" &&')));
   const paperHead = paperDetail.slice(paperDetail.indexOf('<section className="v2-paper-head">'), paperDetail.indexOf('<div className="v2-paper-detail-grid">'));
 
   assert.match(library, /<details className="v2-library-export">/);
@@ -88,7 +88,7 @@ test("library and paper detail keep reading primary while management and audit s
 
 test("research memory separates explicit and inferred evidence while collapsing profile and note detail", async () => {
   const app = await readFile(appUrl, "utf8");
-  const memory = app.slice(app.indexOf('{view === "memory"'), app.indexOf('{view === "paper-detail"'));
+  const memory = app.slice(app.indexOf('{view === "memory"'), app.indexOf('{view === "paper-detail" &&'));
   const importModal = app.slice(app.indexOf('{importOpen &&'), app.indexOf('{feedbackDialog &&'));
 
   assert.match(memory, /你明确表达的/);

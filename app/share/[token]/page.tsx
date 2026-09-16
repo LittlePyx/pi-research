@@ -65,7 +65,7 @@ export default async function SharePage({ params }: SharePageProps) {
 
         <section className="share-intro">
           <p>{payload.kind === "daily" ? (locale === "zh" ? "今日推荐快照" : "TODAY'S RESEARCH PICKS") : (locale === "zh" ? "单篇论文快照" : "PAPER SNAPSHOT")}</p>
-          <h1><MathText>{payload.kind === "daily" ? snapshot.title : payload.papers[0].title}</MathText></h1>
+          <h1><MathText>{payload.kind === "daily" ? snapshot.title : (locale === "zh" ? "论文阅读快照" : "Paper reading snapshot")}</MathText></h1>
           <div><span>{payload.spaceName}</span><i /> <span>{formatDate(payload.createdAt, locale)}</span><i /> <span>{payload.papers.length} {locale === "zh" ? "篇推荐" : payload.papers.length === 1 ? "recommendation" : "recommendations"}</span></div>
           <small>{locale === "zh" ? "内容已在创建时冻结；论文链接仍可直接打开。" : "Content was frozen when shared; original paper links remain live."}</small>
         </section>

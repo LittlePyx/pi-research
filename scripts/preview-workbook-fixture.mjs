@@ -15,7 +15,7 @@ const server = await createServer({ root, configFile: false, envDir: false,
   resolve: { alias: { "next/image": fileURLToPath(new URL("../node_modules/vinext/dist/shims/image.js", import.meta.url)) } },
   plugins: [{ name: "isolated-workbook-fixture", enforce: "pre",
     resolveId(id) { if (id === entry) return id; },
-    load(id) { if (id === entry) return `import React from 'react'; import {createRoot} from 'react-dom/client'; import App from '/app/research-app.tsx'; import '/app/globals.css'; import 'katex/dist/katex.min.css'; import '/app/math.css'; import '/app/interface-theme.css'; createRoot(document.getElementById('root')).render(<><p style={{padding:12,background:'#fff0cf'}}>隔离内容样本：仅含已注明出处的摘要片段；不是生产推荐或模型审核结果。</p><App user={{userId:'fixture',displayName:'QA',email:'',fullName:null}} /></>);`; },
+    load(id) { if (id === entry) return `import React from 'react'; import {createRoot} from 'react-dom/client'; import App from '/app/research-app.tsx'; import '/app/globals.css'; import 'katex/dist/katex.min.css'; import '/app/math.css'; import '/app/interface-theme.css'; import '/app/workspace-design.css'; createRoot(document.getElementById('root')).render(<><p style={{padding:12,background:'#fff0cf'}}>隔离内容样本：仅含已注明出处的摘要片段；不是生产推荐或模型审核结果。</p><App user={{userId:'fixture',displayName:'QA',email:'',fullName:null}} /></>);`; },
     configureServer(vite) { vite.middlewares.use(async (req, res, next) => {
       const url = new URL(req.url, "http://127.0.0.1:8114");
       if (url.pathname.startsWith("/api/")) {

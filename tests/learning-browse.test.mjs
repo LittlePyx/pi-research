@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
 import { learningBrowseStep, canChangeLearningStep } from '../lib/learning-browse.ts';
+import { focusWorkspaceSection } from '../lib/workspace-section-navigation.ts';
 
 const steps = [
   {id:'foundation',titleZh:'基础文献',titleEn:'Foundations',status:'active',resources:[]},
@@ -15,7 +16,7 @@ const source = await readFile(new URL('../app/components/learning-stage-navigati
 const component = {exports:{}};
 new Function('require','module','exports',ts.transpileModule(source,{
   compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},
-}).outputText)(createRequire(import.meta.url),component,component.exports);
+}).outputText)(id => id === '../../lib/workspace-section-navigation' ? { focusWorkspaceSection } : createRequire(import.meta.url)(id),component,component.exports);
 
 test('Stage navigation opens existing materials without advancing progress',()=>{
   const before=JSON.stringify(steps);

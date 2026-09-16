@@ -43,7 +43,7 @@
 .intro dl div { padding: 20px 0; border-bottom: 1px solid var(--demo-line); display: grid; grid-template-columns: 1fr auto; align-items: center; }
 .intro dt { color: #7b857f; font-size: 12px; }
 .intro dd { margin: 0; color: var(--demo-blue); font: 34px/1 Georgia, serif; }
-.intro dd small { width: 84px; margin-left: 10px; color: #78847d; display: inline-block; font: 10px/1.35 var(--font-geist-sans), sans-serif; }
+.intro dd small { width: 84px; margin-left: 10px; color: #78847d; display: inline-block; font: 10px/1.35 var(--font-geist-sans, system-ui), sans-serif; }
 
 .today, .routes { padding: 72px 0; border-bottom: 1px solid var(--demo-line); scroll-margin-top: 72px; }
 .sectionHeader { margin-bottom: 30px; display: flex; align-items: end; justify-content: space-between; gap: 30px; }
@@ -142,3 +142,17 @@
 @media (prefers-reduced-motion: reduce) {
   .header { backdrop-filter: none; }
 }
+
+/* Demo uses the same legible research-workspace rhythm. */
+.page { --demo-ink:#202e39; --demo-muted:#566875; --demo-line:#dce4e9; --demo-blue:#285d73; background:#f6f8fa; font-family:var(--font-geist-sans, system-ui),"Microsoft YaHei",sans-serif; }
+.page main { max-width:1180px; }
+.header { padding-inline:clamp(18px,3vw,44px); background:#fff; }
+.header nav a { padding-block:12px; }
+.intro { min-height:0; padding:48px 0 36px; gap:44px; }
+.intro h1 { font:650 clamp(28px,3vw,42px)/1.4 var(--font-geist-sans, system-ui),sans-serif; margin:12px 0 18px; }
+.sectionHeader h2 { font:600 clamp(23px,2vw,28px)/1.5 var(--font-geist-sans, system-ui),sans-serif; }
+.today, .routes { padding:36px 0; }
+.paperTitle strong { font-size:20px; line-height:1.6; }
+.page :is(button,a,input,summary):focus-visible { outline:3px solid #4386a2; outline-offset:4px; }
+.page :is(h1,h2,h3,p,strong) { overflow-wrap:anywhere; }
+@media(max-width:800px) { .intro { grid-template-columns:1fr; padding-top:30px; gap:24px; } .header { grid-template-columns:1fr auto; gap:10px; } .header nav { grid-column:1 / -1; order:3; gap:20px; overflow:auto; padding-bottom:8px; } .page main { width:calc(100% - 32px); } }
