@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { fixtureResponse, learningFixture, spaces } from "../tests/fixtures/learning-ui-state.mjs";
 import { workbookSample, workbookSources } from "../tests/fixtures/research-workbook.mjs";
 import { routeReadingFixture } from "../tests/fixtures/route-reading.mjs";
+import { researchSourcePlan } from "../lib/research-source-plan.ts";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const entry = "/__pi_workbook_fixture.tsx";
 const saved = new Map();
@@ -26,6 +27,16 @@ const server = await createServer({ root, configFile: false, envDir: false,
         const spaceId = url.searchParams.get("spaceId") || input.spaceId || spaces[0].id;
         let result = fixtureResponse(req.url, req.method, spaceId);
         const data = learningFixture(spaceId);
+        if (url.pathname === "/api/research-memory") {
+          const items = workbookSources.slice(0, 2).map((paper, index) => ({ paperId: paper.id, title: paper.title, venue: "隔离内容样本", note: index ? "阅读任务样本：比较两篇材料中的对象与假设，暂不把标题相近理解为结论相同。" : "阅读笔记样本：先记录原问题的定义、使用的假设，以及仍需要查证的一步。此处用于展示排版，不是实际研究结论。", updatedAt: "2026-09-16", status: "pending", takeawayZh: "", takeawayEn: "", methodsZh: [], methodsEn: [], questionsZh: [], questionsEn: [] }));
+          const q = url.searchParams.get("q") || "";
+          const matches = items.filter(p => `${p.title} ${p.note}`.includes(q));
+          result = { status: 200, body: { items: matches, total: matches.length, nextOffset: null } };
+        }
+        if (url.pathname === "/api/research-sources") {
+          const space = spaces.find(s => s.id === spaceId) || spaces[0];
+          result = { status: 200, body: { plan: researchSourcePlan(space.name, space.description || ""), activity: [] } };
+        }
         if (url.pathname === "/api/research-synthesis" && req.method === "GET") result = { status: 200, body: { synthesis: { status: "empty", stale: false, statements: [], availablePaperCount: 0, availableClaimCount: 0, canGenerate: false, preparation: workbookSources.map(p => ({ id: p.id, title: p.title, url: p.url, state: "needs_confirmation", hasGroundedEvidence: true })) } } };
         if (url.pathname === "/api/research-synthesis" && req.method === "GET" && process.argv.includes("--synthesis-ready")) {
           const sample = workbookSample();

@@ -1,3 +1,4 @@
+import { researchSourcePlan, sourcePlanIssn, normalizeSourceTitle } from "../../../lib/research-source-plan";
 import { pendingQualityCandidateCondition, qualityQueueCountsSql } from "../../../lib/monitor-quality-status-sql.mjs";
 import { ABSTRACT_BLOCK_REASON, recoverPaperAbstract } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
@@ -1099,13 +1100,13 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
   for (const venue of venueWindow) {
     queries.push({
       key: "priority-journal",
-      sourceKey: `crossref:journal:${PRIORITY_JOURNAL_ISSNS.get(normalizeVenue(venue)) || normalizeVenue(venue)}`,
+      sourceKey: `crossref:journal:${(sourcePlanIssn(venue) || PRIORITY_JOURNAL_ISSNS.get(normalizeVenue(venue))) || normalizeVenue(venue)}`,
       query: `${space.description} ${profileWindow.slice(0, 2).join(" ")}`,
       venue,
       sort: horizon.key === "years" ? "is-referenced-by-count" : horizon.key === "days" ? "published" : "relevance",
       rotating: horizon.key !== "days",
       channel: "journal",
-      issn: PRIORITY_JOURNAL_ISSNS.get(normalizeVenue(venue)),
+      issn: (sourcePlanIssn(venue) || PRIORITY_JOURNAL_ISSNS.get(normalizeVenue(venue))),
     });
   }
   for (const author of authorWindow) {
@@ -1647,6 +1648,7 @@ async function fetchHorizon(
       const normalizedItems = await Promise.all((data.message?.items || []).map(async (item) => {
         const candidate = await normalizeItem(item, horizon.key);
         if (!candidate) return null;
+        if (plan.channel === "journal" && !plan.issn && plan.venue && normalizeSourceTitle(candidate.venue) !== normalizeSourceTitle(plan.venue)) return null;
         if (plan.routeTitleEn && !researchTrackTitleTopicalFit(plan.routeTitleEn, {
           title: candidate.title,
           abstractText: candidate.abstractText,
@@ -1995,21 +1997,22 @@ async function ensurePreference(database: D1Database, space: SpaceRow) {
   if (!row) {
     const profile = inferDomainProfile(space.name, space.description);
     await database.prepare("INSERT OR IGNORE INTO monitor_preferences (id, space_id, profile_key, priority_venues) VALUES (?, ?, ?, ?)")
-      .bind(crypto.randomUUID(), space.id, profile.key, JSON.stringify(profile.venues)).run();
+      .bind(crypto.randomUUID(), space.id, profile.key, JSON.stringify(researchSourcePlan(space.name, space.description).defaultVenues)).run();
     row = await database.prepare("SELECT profile_key, priority_venues, tracked_authors, exploration_mode, user_modified FROM monitor_preferences WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<PreferenceRow>();
   }
   if (row && !row.user_modified) {
     const inferred = inferDomainProfile(space.name, space.description);
+    const defaultVenues = researchSourcePlan(space.name, space.description).defaultVenues;
     const currentVenues = parseVenues(row.priority_venues);
     const defaultsChanged = row.profile_key !== inferred.key
-      || currentVenues.length !== inferred.venues.length
-      || currentVenues.some((venue, index) => venue !== inferred.venues[index]);
+      || currentVenues.length !== defaultVenues.length
+      || currentVenues.some((venue, index) => venue !== defaultVenues[index]);
     if (defaultsChanged) {
       await database.prepare(
         "UPDATE monitor_preferences SET profile_key = ?, priority_venues = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND user_modified = 0",
-      ).bind(inferred.key, JSON.stringify(inferred.venues), space.id).run();
-      row = { ...row, profile_key: inferred.key, priority_venues: JSON.stringify(inferred.venues) };
+      ).bind(inferred.key, JSON.stringify(defaultVenues), space.id).run();
+      row = { ...row, profile_key: inferred.key, priority_venues: JSON.stringify(defaultVenues) };
     }
   }
   const profile = getDomainProfile(row?.profile_key || "general_research");
@@ -5811,14 +5814,14 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const payload = await request.json() as { spaceId?: string; priorityVenues?: string[]; trackedAuthors?: string[]; explorationMode?: ExplorationMode; reset?: boolean };
+    const payload = await request.json() as { spaceId?: string; priorityVenues?: string[]; trackedAuthors?: string[]; explorationMode?: ExplorationMode; reset?: boolean; rescan?: boolean };
     const spaceId = payload.spaceId?.trim() || "";
     if (!spaceId) return Response.json({ error: "spaceId is required" }, { status: 400 });
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
     const { database, space } = context;
     if (payload.reset) {
-      await database.prepare("DELETE FROM monitor_preferences WHERE space_id = ?").bind(space.id).run();
+      await database.prepare("UPDATE monitor_preferences SET user_modified=0 WHERE space_id = ?").bind(space.id).run();
       await ensurePreference(database, space);
     } else {
       const venues = Array.from(new Set((payload.priorityVenues || []).map((venue) => cleanText(venue).slice(0, 120)).filter(Boolean))).slice(0, 30);
@@ -5835,11 +5838,11 @@ export async function PATCH(request: Request) {
          user_modified = 1, updated_at = CURRENT_TIMESTAMP`,
       ).bind(crypto.randomUUID(), space.id, current.profileKey, JSON.stringify(venues), JSON.stringify(trackedAuthors), explorationMode).run();
     }
-    await database.batch([
-      database.prepare("UPDATE monitor_runs SET last_run_at = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?").bind(space.id),
-      database.prepare("UPDATE paper_insights SET analysis_model = '', updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND analysis_source = 'deepseek_rejected'").bind(space.id),
-      database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = date('now')").bind(space.id),
-    ]);
+    // Saving a source choice changes future discovery, not the existing review ledger.
+    await database.prepare("DELETE FROM monitor_query_plans WHERE space_id = ? AND plan_date = date('now')").bind(space.id).run();
+    if (payload.rescan === true) {
+      await database.prepare("UPDATE monitor_runs SET last_run_at = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE space_id = ?").bind(space.id).run();
+    }
     return Response.json(await readState(database, space, { preferencesSaved: true }));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to save monitoring preferences" }, { status: 500 });

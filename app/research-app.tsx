@@ -1,5 +1,8 @@
 "use client";
 
+import { ResearchSourceSuggestions } from "./components/research-source-suggestions";
+import { ResearchMemoryNotebook } from "./components/research-memory-notebook";
+import "./components/research-memory-sources.css";
 import { QualityReviewStatus } from "./components/quality-review-status";
 
 import { FormEvent, type ReactNode, useEffect, useCallback, useMemo, useRef, useState } from "react";
@@ -3288,7 +3291,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [librarySearch, setLibrarySearch] = useState("");
   const [librarySort, setLibrarySort] = useState<LibrarySort>("priority");
   const [libraryVisibleCount, setLibraryVisibleCount] = useState(60);
-  const [paperReturnView, setPaperReturnView] = useState<"today" | "library" | "learn" | "workbook" | "thread-detail">("today");
+  const [paperReturnView, setPaperReturnView] = useState<View>("today");
   const [paperNoteDraft, setPaperNoteDraft] = useState("");
   const [readingMemoryAnalyzing, setReadingMemoryAnalyzing] = useState(false);
   const [readingSaving, setReadingSaving] = useState(false);
@@ -4645,7 +4648,7 @@ export default function ResearchApp({ user }: { user: User }) {
     setSourceSettingsOpen(true);
   };
 
-  const saveSourceSettings = async (reset = false) => {
+  const saveSourceSettings = async (reset = false, rescan = false) => {
     if (savingPreferences || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     const priorityVenues = venueDraft.split(/\r?\n/).map((venue) => venue.trim()).filter(Boolean);
     const trackedAuthors = authorDraft.split(/\r?\n/).map((author) => author.trim()).filter(Boolean);
@@ -4656,7 +4659,7 @@ export default function ResearchApp({ user }: { user: User }) {
       const response = await fetch("/api/monitor", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, priorityVenues, trackedAuthors, explorationMode: explorationDraft, reset }),
+        body: JSON.stringify({ spaceId: activeSpace.id, priorityVenues, trackedAuthors, explorationMode: explorationDraft, reset, rescan }),
       });
       const data = await response.json() as { monitor?: MonitorState };
       if (!response.ok || !data.monitor) throw new Error("preference update failed");
@@ -4664,7 +4667,8 @@ export default function ResearchApp({ user }: { user: User }) {
       setVenueDraft((data.monitor.preferences?.priorityVenues || []).join("\n"));
       setAuthorDraft((data.monitor.preferences?.trackedAuthors || []).join("\n"));
       setSourceSettingsOpen(false);
-      setToast(t.sourcesSaved);
+      setToast(rescan ? t.sourcesSaved : (locale === "zh" ? "关注来源已保存，将用于后续扫描" : "Sources saved for future discovery"));
+      if (!rescan) return;
       setMonitoring(true);
       stopPolling = startMonitorPolling(activeSpace.id, setMonitor);
       const scanResponse = await fetch("/api/monitor", {
@@ -4684,9 +4688,11 @@ export default function ResearchApp({ user }: { user: User }) {
           await followMonitorPipeline(activeSpace.id, scanData.monitor, setMonitor);
         }
       }
+    } catch {
+      setToast(locale === "zh" ? "来源设置未能完成，请重试" : "Source settings could not be updated; retry");
     } finally {
       stopPolling?.();
-      setMonitoring(false);
+      if (rescan) setMonitoring(false);
       setSavingPreferences(false);
     }
   };
@@ -4883,7 +4889,7 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
-  const openMonitorPaper = (paper: MonitorPaper, returnView: "today" | "library" | "learn" | "workbook" | "thread-detail" = view === "learn" ? "learn" : view === "library" ? "library" : "today") => {
+  const openMonitorPaper = (paper: MonitorPaper, returnView: View = view === "learn" ? "learn" : view === "library" ? "library" : "today") => {
     const openedPaper = { ...paper, openedAt: new Date().toISOString(), userState: paper.userState === "unseen" ? "seen" as const : paper.userState };
     setPaperReturnView(returnView);
     setSelectedMonitorPaper(openedPaper);
@@ -4935,7 +4941,7 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
-  const openRoutePaper = async (paperId: string) => {
+  const openRoutePaper = async (paperId: string, returnView: View = "thread-detail") => {
     const spaceId = activeSpace.id;
     const requestId = ++learningPaperRequestRef.current;
     try {
@@ -4949,9 +4955,9 @@ export default function ResearchApp({ user }: { user: User }) {
       }
       if (paperNetworkSpaceRef.current !== spaceId || learningPaperRequestRef.current !== requestId) return;
       if (!paper) throw new Error("paper unavailable");
-      openMonitorPaper(paper, "thread-detail");
+      openMonitorPaper(paper, returnView);
     } catch {
-      if (paperNetworkSpaceRef.current === spaceId && learningPaperRequestRef.current === requestId) setToast(locale === "zh" ? "这篇论文暂时无法读取，请在当前路线重试" : "This paper could not be loaded. Retry here in the route.");
+      if (paperNetworkSpaceRef.current === spaceId && learningPaperRequestRef.current === requestId) setToast(locale === "zh" ? "这篇论文暂时无法读取，请在当前页面重试" : "This paper could not be loaded. Retry here.");
     }
   };
 
@@ -6232,20 +6238,16 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "memory" && (
           <main className="v2-page">
-            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</p><h1>{t.memoryTitle}</h1></div></section>
-            <section className="v2-import-memory-card">
-              <div><InterfaceIcon name="upload" className="pi-state-mark" /><div><p className="v2-kicker">{t.importResearch}</p><h2>{confirmedProfile ? (locale === "zh" ? confirmedProfile.primaryDirectionZh : confirmedProfile.primaryDirectionEn) : (locale === "zh" ? "建立你的研究画像" : "Build your research profile")}</h2></div></div>
-              <p>{confirmedProfile ? (locale === "zh" ? confirmedProfile.summaryZh : confirmedProfile.summaryEn) : t.importIntro}</p>
-              <button type="button" onClick={openResearchImport}>{confirmedProfile ? (locale === "zh" ? "继续导入资料" : "Import more materials") : t.importResearch} →</button>
+            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</p><h1>{locale === "zh" ? "研究记忆" : "Research memory"}</h1></div></section>
+            <section className="pi-memory-focus">
+              <div><span>{locale === "zh" ? "当前研究范围" : "CURRENT RESEARCH SCOPE"}</span><h2>{confirmedProfile ? (locale === "zh" ? confirmedProfile.primaryDirectionZh : confirmedProfile.primaryDirectionEn) : activeSpace.name}</h2><p>{confirmedProfile ? (locale === "zh" ? confirmedProfile.summaryZh : confirmedProfile.summaryEn) : activeSpace.description}</p><small>{locale === "zh" ? "来自空间描述与已确认资料，用于后续检索和问答。" : "From your space description and confirmed materials; used for discovery and questions."}</small></div>
+              <div className="pi-memory-focus-actions"><button type="button" onClick={openResearchImport}>{locale === "zh" ? "补充研究资料" : "Add research materials"} →</button><button type="button" onClick={openSourceSettings} disabled={!monitor?.preferences}>{locale === "zh" ? `管理关注来源 · ${monitor?.preferences?.priorityVenues.length || 0}` : `Manage sources · ${monitor?.preferences?.priorityVenues.length || 0}`} →</button></div>
             </section>
-            <section className="v2-layered-memory"><header><div><p className="v2-kicker">{locale === "zh" ? "偏好证据" : "PREFERENCE EVIDENCE"}</p><h2>{locale === "zh" ? "明确偏好与 Pi 推断" : "Explicit preferences and Pi inferences"}</h2></div></header><div><section><h3>{locale === "zh" ? "你明确表达的" : "Explicit evidence"}<span>{explicitPreferenceSignals.length}</span></h3>{explicitPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><small>{signal.evidence}</small></div><b>{signal.effectiveConfidence}%</b></article>)}{!explicitPreferenceSignals.length && <p>{locale === "zh" ? "对论文标记“适合”或“不相关”并选择原因后显示。" : "Appears after accepting or dismissing a paper with a reason."}</p>}</section><section><h3>{locale === "zh" ? "Pi 推断的" : "Pi inferences"}<span>{inferredPreferenceSignals.length}</span></h3>{inferredPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><small>{signal.evidence}</small></div><b>{signal.effectiveConfidence}%</b><button type="button" onClick={() => dismissInferredSignal(signal.id)} aria-label={locale === "zh" ? "停用这条推断" : "Disable this inference"}>×</button></article>)}{!inferredPreferenceSignals.length && <p>{locale === "zh" ? "有阅读、提问或确认导入的证据后显示。" : "Appears after grounded reading, questions, or confirmed imports."}</p>}</section></div></section>
-            <section className="v2-reading-memory">
-              <header><div><p className="v2-kicker warm">{locale === "zh" ? "阅读记录" : "READING NOTES"}</p><h2>{locale === "zh" ? "研究记忆" : "Research memory"}</h2><p>{locale === "zh" ? "保存笔记后提取结论、方法、问题和研究连接；原笔记与推断分开保存。" : "Saved notes yield conclusions, methods, questions, and research links; original notes and inferences remain separate."}</p></div><strong>{monitor?.readingMemories?.filter((memory) => memory.analysisStatus === "ready").length || 0}</strong></header>
-              <div>{monitor?.readingMemories?.map((memory) => { const methods = locale === "zh" ? memory.methodsZh : memory.methodsEn; const questions = locale === "zh" ? memory.questionsZh : memory.questionsEn; const connections = locale === "zh" ? memory.connectionsZh : memory.connectionsEn; return <details className={memory.analysisStatus} key={memory.paperId}><summary><span><small>{readingStatusLabel(memory.readingStatus as MonitorPaper["readingStatus"], locale)} · {memory.analysisStatus === "ready" ? modelDisplayName(memory.model) : memory.analysisStatus === "error" ? (locale === "zh" ? "待重试" : "Retry needed") : (locale === "zh" ? "等待分析" : "Pending")}</small><strong><MathText>{memory.title}</MathText></strong></span><b>＋</b></summary><div>{memory.analysisStatus === "ready" ? <><p>{locale === "zh" ? memory.takeawayZh : memory.takeawayEn}</p>{Boolean(methods.length) && <dl><dt>{locale === "zh" ? "可复用方法" : "Reusable methods"}</dt><dd>{methods.slice(0, 3).map((item) => <i key={item}>{item}</i>)}</dd></dl>}{Boolean(questions.length) && <dl><dt>{locale === "zh" ? "仍待解决" : "Open questions"}</dt><dd>{questions.slice(0, 2).map((item) => <i key={item}>{item}</i>)}</dd></dl>}{Boolean(connections.length) && <small>{locale === "zh" ? "与当前研究的连接：" : "Connection to your work: "}{connections[0]}</small>}</> : <p>{memory.noteExcerpt || (locale === "zh" ? "笔记已保存，可稍后重新分析。" : "The note is saved and can be analyzed later.")}</p>}<footer><span>{memory.venue}</span><button type="button" onClick={() => { const paper = historyPapers.find((item) => item.id === memory.paperId); if (paper) openMonitorPaper(paper); }}>{locale === "zh" ? "打开论文" : "Open paper"} →</button></footer></div></details>; })}{!monitor?.readingMemories?.length && <div className="v2-reading-memory-empty"><InterfaceIcon name="notes" className="pi-state-mark" /><p>{locale === "zh" ? "在论文详情中保存阅读笔记。" : "Save a reading note from a paper detail."}</p></div>}</div>
-            </section>
+            <ResearchMemoryNotebook key={activeSpace.id} spaceId={activeSpace.id} locale={locale} onOpenPaper={id => void openRoutePaper(id, "memory")} onLibrary={() => navigate("library")} onQuestion={(title, followup) => { setQuestion(locale === "zh" ? `基于论文“${title}”的阅读笔记，我想继续研究：${followup}。请区分已有依据和待验证假设。` : `From my reading note on “${title}”, explore: ${followup}. Separate evidence from hypotheses.`); setAskOpen(true); }} />
+            <details className="pi-memory-preferences"><summary>{locale === "zh" ? `研究偏好与 Pi 推断 · ${inferredPreferenceSignals.length} 条推断可检查` : `Preferences and inferences · ${inferredPreferenceSignals.length} to inspect`}</summary><section className="v2-layered-memory"><header><div><p className="v2-kicker">{locale === "zh" ? "偏好证据" : "PREFERENCE EVIDENCE"}</p><h2>{locale === "zh" ? "明确偏好与 Pi 推断" : "Explicit preferences and Pi inferences"}</h2></div></header><div><section><h3>{locale === "zh" ? "你明确表达的" : "Explicit evidence"}<span>{explicitPreferenceSignals.length}</span></h3>{explicitPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><details><summary>{locale === "zh" ? "查看依据" : "Evidence"}</summary><small>{signal.evidence}</small></details></div></article>)}{!explicitPreferenceSignals.length && <p>{locale === "zh" ? "对论文标记“适合”或“不相关”并选择原因后显示。" : "Appears after accepting or dismissing a paper with a reason."}</p>}</section><section><h3>{locale === "zh" ? "Pi 推断的" : "Pi inferences"}<span>{inferredPreferenceSignals.length}</span></h3>{inferredPreferenceSignals.slice(0, 8).map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><details><summary>{locale === "zh" ? "查看依据" : "Evidence"}</summary><small>{signal.evidence}</small></details></div><button type="button" onClick={() => dismissInferredSignal(signal.id)} aria-label={locale === "zh" ? "停用这条推断" : "Disable this inference"}>{locale === "zh" ? "停用推断" : "Disable inference"}</button></article>)}{!inferredPreferenceSignals.length && <p>{locale === "zh" ? "有阅读、提问或确认导入的证据后显示。" : "Appears after grounded reading, questions, or confirmed imports."}</p>}</section></div></section></details>
             <details className="v2-memory-profile-details"><summary><span><strong>{locale === "zh" ? "研究画像详情" : "Research profile details"}</strong><small>{locale === "zh" ? "方向、知识、开放问题与资料来源" : "Directions, knowledge, open questions, and sources"}</small></span><b>＋</b></summary><div className="v2-memory-profile-body"><div className="v2-memory-grid">
               <section><h2>{t.interestMemory}</h2><p>{locale === "zh" ? "已确认的持续关注与检索主题。" : "Confirmed sustained interests and discovery topics."}</p><div className="v2-tags">{confirmedProfile ? [...confirmedProfile.subdirections, ...confirmedProfile.interests].slice(0, 10).map((item, index) => <i key={index}>{locale === "zh" ? item.labelZh : item.labelEn}</i>) : <small>{locale === "zh" ? "尚未导入已确认资料" : "No confirmed materials yet"}</small>}</div></section>
-              <section><h2>{t.knowledgeMemory}</h2><p>{locale === "zh" ? "仅包含有材料证据的已有知识。" : "Includes only knowledge supported by material evidence."}</p><div className="v2-knowledge-lines">{confirmedProfile?.knowledge.length ? confirmedProfile.knowledge.slice(0, 5).map((item, index) => <div key={index}><b>{locale === "zh" ? item.labelZh : item.labelEn}</b><i><em style={{ width: `${item.confidence}%` }} /></i></div>) : <small>{locale === "zh" ? "等待有证据的知识画像" : "Waiting for evidence-backed knowledge"}</small>}</div></section>
+              <section><h2>{t.knowledgeMemory}</h2><p>{locale === "zh" ? "仅包含有材料证据的已有知识。" : "Includes only knowledge supported by material evidence."}</p><div className="v2-knowledge-lines">{confirmedProfile?.knowledge.length ? confirmedProfile.knowledge.slice(0, 5).map((item, index) => <div key={index}><b>{locale === "zh" ? item.labelZh : item.labelEn}</b></div>) : <small>{locale === "zh" ? "等待有证据的知识画像" : "Waiting for evidence-backed knowledge"}</small>}</div></section>
               <section><h2>{t.activityMemory}</h2><p>{locale === "zh" ? "当前空间的已确认资料。" : "Confirmed materials in this space."}</p><dl><div><dt>{locale === "zh" ? "已确认导入" : "Confirmed imports"}</dt><dd>{researchImports.filter((item) => item.status === "confirmed").length}</dd></div><div><dt>{t.profileSources}</dt><dd>{latestConfirmedImport?.fileNames.length || 0}</dd></div></dl></section>
               <section><h2>{t.preferenceMemory}</h2><p>{locale === "zh" ? "用于筛选论文的开放问题。" : "Open questions used in paper screening."}</p><div className="v2-preferences">{confirmedProfile?.openQuestions.length ? confirmedProfile.openQuestions.slice(0, 4).map((item, index) => <i key={index}><b>{item.confidence}%</b> {locale === "zh" ? item.labelZh : item.labelEn}</i>) : <small>{locale === "zh" ? "尚无已确认的开放问题" : "No confirmed open questions yet"}</small>}</div></section>
             </div>{confirmedProfile?.researchOpportunities.length ? <section className="v2-memory-opportunities"><div className="v2-section-title"><div><p className="v2-kicker warm">{t.futureDirections}</p><h2>{locale === "zh" ? "可继续研究的方向" : "Research opportunities"}</h2></div><span>{confirmedProfile.researchOpportunities.length}</span></div><div>{confirmedProfile.researchOpportunities.map((item, index) => <article key={index}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{locale === "zh" ? item.titleZh : item.titleEn}</h3><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p><ul>{(locale === "zh" ? item.startingPointsZh : item.startingPointsEn).slice(0, 3).map((point) => <li key={point}>{point}</li>)}</ul><small>{t.evidenceConfidence} {item.confidence}% · {item.evidenceFiles.join(" · ")}</small></div></article>)}</div></section> : null}<section className="v2-isolation-card"><div><InterfaceIcon name="shield" className="pi-state-mark" /><div><p className="v2-kicker">{t.isolationBoundary}</p><h2>{defaultSpaceName(activeSpace.name, locale)}</h2></div></div><p>{t.isolationBody}</p><small>{t.accountNote}</small><button type="button" onClick={() => setSpaceDialog(true)}>{t.switchSpace} →</button></section></div></details>
@@ -6257,7 +6259,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail">
-            <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "thread-detail" ? (locale === "zh" ? "返回原路线研判" : "Return to route synthesis") : paperReturnView === "workbook" ? (locale === "zh" ? "返回原比较项与学习任务" : "Return to comparison and learning task") : paperReturnView === "learn" ? t.learn : paperReturnView === "library" ? t.library : t.paperBack}</button>
+            <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "thread-detail" ? (locale === "zh" ? "返回原路线研判" : "Return to route synthesis") : paperReturnView === "workbook" ? (locale === "zh" ? "返回原比较项与学习任务" : "Return to comparison and learning task") : paperReturnView === "memory" ? t.memory : paperReturnView === "threads" ? t.threads : paperReturnView === "learn" ? t.learn : paperReturnView === "library" ? t.library : t.paperBack}</button>
             {paperReturnView === "workbook" && <p className="pi-workbook-error"><strong>{locale === "zh" ? "当前核查：" : "Current check: "}</strong><MathText>{workbookPaperFocus}</MathText></p>}
             <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.qualityStage === "recommended" ? selectedMonitorPaper.recommendationTier || "browse" : selectedMonitorPaper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{selectedMonitorPaper.qualityStage === "recommended" ? recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale) : selectedMonitorPaper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(selectedMonitorPaper, locale) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</span>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>}<PaperDiscoverySourceBadge paper={selectedMonitorPaper} locale={locale} /><RecommendationVerificationBadge paper={selectedMonitorPaper} locale={locale} /></div><h1><MathText>{selectedMonitorPaper.title}</MathText></h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div className="v2-paper-primary-actions"><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a><details className="v2-paper-more-actions"><summary>{locale === "zh" ? "更多" : "More"} ＋</summary><div><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>{locale === "zh" ? "标记与我相关" : "Mark relevant to me"}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button></div></details></div></section>
             <div className="v2-paper-detail-grid">
@@ -6312,11 +6314,12 @@ export default function ResearchApp({ user }: { user: User }) {
             <div className="v2-modal-head"><div><p className="v2-kicker">{t.prioritySources}</p><h2>{t.sourceSettingsTitle}</h2><p>{t.sourceSettingsIntro}</p></div><button type="button" onClick={() => setSourceSettingsOpen(false)}>×</button></div>
             <form onSubmit={(event) => { event.preventDefault(); void saveSourceSettings(false); }}>
               <div className="v2-detected-profile"><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor.preferences.profileNameZh : monitor.preferences.profileNameEn}</strong><em>{monitor.preferences.userModified ? t.userCustomized : t.systemProvided}</em></div>
+              <ResearchSourceSuggestions key={activeSpace.id} spaceId={activeSpace.id} locale={locale} selected={venueDraft.split(/\r?\n/).map(s => s.trim()).filter(Boolean)} onChange={titles => setVenueDraft(titles.join("\n"))} onOpenPaper={id => { setSourceSettingsOpen(false); void openRoutePaper(id, view === "paper-detail" ? paperReturnView : view); }} />
               <fieldset className="v2-exploration-mode"><legend>{locale === "zh" ? "每日探索强度" : "Daily exploration range"}</legend><div>{(["focused", "balanced", "open"] as const).map((mode) => <button type="button" key={mode} className={explorationDraft === mode ? "active" : ""} onClick={() => setExplorationDraft(mode)}><strong>{mode === "focused" ? (locale === "zh" ? "聚焦" : "Focused") : mode === "balanced" ? (locale === "zh" ? "平衡" : "Balanced") : (locale === "zh" ? "开放" : "Open")}</strong><small>{mode === "focused" ? (locale === "zh" ? "紧贴核心方向" : "Core directions only") : mode === "balanced" ? (locale === "zh" ? "核心＋相邻线索" : "Core + adjacent leads") : (locale === "zh" ? "主动跨方向探索" : "Broader cross-field search")}</small></button>)}</div></fieldset>
-              <label><span>{t.venuesLabel}</span><textarea value={venueDraft} onChange={(event) => setVenueDraft(event.target.value)} rows={10} /></label>
+              <label><span>{locale === "zh" ? "已选择的来源（可补充或直接编辑）" : "Selected sources (add or edit directly)"}</span><textarea value={venueDraft} onChange={(event) => setVenueDraft(event.target.value)} rows={10} /></label>
               <label><span>{locale === "zh" ? "持续追踪的作者（每行一位）" : "Tracked authors (one per line)"}</span><textarea value={authorDraft} onChange={(event) => setAuthorDraft(event.target.value)} rows={5} placeholder={locale === "zh" ? "例如：Terence Tao" : "e.g. Terence Tao"} /></label>
               {Boolean(monitor.suggestedAuthors?.length) && <div className="v2-author-suggestions"><span>{locale === "zh" ? "根据已接受论文建议" : "Suggested from accepted papers"}</span><div>{monitor.suggestedAuthors?.slice(0, 10).map((author) => <button type="button" key={author} onClick={() => setAuthorDraft((current) => Array.from(new Set([...current.split(/\r?\n/).filter(Boolean), author])).join("\n"))}>＋ {author}</button>)}</div></div>}
-              <div className="v2-source-settings-actions"><button type="button" onClick={() => void saveSourceSettings(true)} disabled={savingPreferences}>{t.resetSources}</button><button type="submit" disabled={savingPreferences || !venueDraft.trim()}>{savingPreferences ? t.savingSources : t.saveSources} →</button></div>
+              <div className="v2-source-settings-actions"><button type="button" onClick={() => void saveSourceSettings(true)} disabled={savingPreferences}>{t.resetSources}</button><button type="button" disabled={savingPreferences || !venueDraft.trim() || scanIsActive} onClick={() => void saveSourceSettings(false, true)}>{locale === "zh" ? "保存并扫描" : "Save and scan"}</button><button type="submit" disabled={savingPreferences || !venueDraft.trim()}>{savingPreferences ? t.savingSources : (locale === "zh" ? "保存关注来源" : "Save sources")} →</button></div>
             </form>
           </div>
         </div>
