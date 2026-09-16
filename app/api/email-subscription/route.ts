@@ -1,0 +1,38 @@
+import {env} from 'cloudflare:workers';
+import {ensureSchema,getApiUser,getDatabase} from '../../../db/repository';
+import {emailHash,mailConfigured,nextDigestAt,sendMail,shanghaiDate,validEmail,validSendTime,type MailEnv} from '../../../lib/email-digest';
+async function context(request:Request,spaceId:string){const user=getApiUser(request);if(!user)return null;const db=getDatabase();await ensureSchema(db);if(!await db.prepare('SELECT id FROM research_spaces WHERE id=? AND owner_user_id=?').bind(spaceId,user.userId).first())return null;return {db,settings:{...env,DB:db} as MailEnv};}
+async function state(db:D1Database,spaceId:string,settings:MailEnv){const subscription=await db.prepare('SELECT id,email,enabled,verified_at AS verifiedAt,send_time AS sendTime,timezone,locale,next_send_at AS nextSendAt,code_expires AS codeExpires,verification_sent_at AS verificationSentAt FROM email_subscriptions WHERE space_id=?').bind(spaceId).first();const deliveries=await db.prepare('SELECT d.delivery_date AS date,d.status,d.sent_at AS sentAt,d.error FROM email_deliveries d JOIN email_subscriptions s ON s.id=d.subscription_id WHERE s.space_id=? ORDER BY d.created_at DESC LIMIT 5').bind(spaceId).all();return {configured:mailConfigured(settings),subscription,deliveries:deliveries.results};}
+export async function GET(request:Request){const s=new URL(request.url).searchParams.get('spaceId')||'',c=await context(request,s);if(!c)return Response.json({error:'Space not found'},{status:404});return Response.json(await state(c.db,s,c.settings),{headers:{'Cache-Control':'private, no-store'}});}
+export async function POST(request:Request){
+  if(request.headers.get('origin')&&request.headers.get('origin')!==new URL(request.url).origin)return Response.json({error:'Origin mismatch'},{status:403});
+  const raw=await request.json().catch(()=>({})) as Record<string,unknown>; const b={spaceId:String(raw.spaceId||''),trackId:String(raw.trackId||''),paperId:String(raw.paperId||''),status:String(raw.status||''),category:String(raw.category||''),action:String(raw.action||''),email:String(raw.email||''),sendTime:String(raw.sendTime||'10:00'),locale:String(raw.locale||'zh'),code:String(raw.code||''),enabled:raw.enabled===true};const c=await context(request,b.spaceId);if(!c)return Response.json({error:'Space not found'},{status:404});const {db,settings}=c;
+  if(b.action==='pause'){await db.prepare('UPDATE email_subscriptions SET enabled=0,updated_at=CURRENT_TIMESTAMP WHERE space_id=?').bind(b.spaceId).run();return Response.json(await state(db,b.spaceId,settings));}
+  const email=typeof b.email==='string'?b.email.trim().toLowerCase():'',time=b.sendTime||'10:00',locale=b.locale==='en'?'en':'zh';
+  if(!validEmail(email)||!validSendTime(time))return Response.json({error:'请输入有效邮箱和发送时间。'},{status:400});
+  const now=Date.now();
+  if(b.action==='request-code'){
+    if(!mailConfigured(settings))return Response.json({error:'站点尚未配置发件服务，暂时不能发送验证邮件。'},{status:503});
+    const previous=await db.prepare('SELECT id,verification_day,verification_count,verification_sent_at FROM email_subscriptions WHERE space_id=?').bind(b.spaceId).first<{id:string;verification_day:string;verification_count:number;verification_sent_at:number}>();
+    if(previous&&(now-previous.verification_sent_at<60000||(previous.verification_day===shanghaiDate(now)&&previous.verification_count>=5)))return Response.json({error:'验证邮件发送频率已达上限，请稍后再试。'},{status:429});
+    const recipientCount=await db.prepare('SELECT SUM(verification_count) AS count FROM email_subscriptions WHERE email=? AND verification_day=?').bind(email,shanghaiDate(now)).first<{count:number}>();if((recipientCount?.count||0)>=10)return Response.json({error:'该邮箱今日验证次数已达上限。'},{status:429});
+    const id=previous?.id||crypto.randomUUID(),code=String(crypto.getRandomValues(new Uint32Array(1))[0]%1000000).padStart(6,'0'),expires=now+600000,hash=await emailHash(`${id}:${email}:${expires}:${code}`),unsub=crypto.randomUUID()+crypto.randomUUID();
+    const reserved=await db.prepare(`INSERT INTO email_subscriptions(id,space_id,email,send_time,locale,code_hash,code_expires,verification_day,verification_count,verification_sent_at,unsubscribe_token) VALUES(?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(space_id) DO UPDATE SET email=excluded.email,enabled=0,verified_at=NULL,send_time=excluded.send_time,locale=excluded.locale,code_hash=excluded.code_hash,code_expires=excluded.code_expires,code_attempts=0,verification_count=CASE WHEN email_subscriptions.verification_day=excluded.verification_day THEN email_subscriptions.verification_count+1 ELSE 1 END,verification_day=excluded.verification_day,verification_sent_at=excluded.verification_sent_at,unsubscribe_token=excluded.unsubscribe_token,updated_at=CURRENT_TIMESTAMP WHERE email_subscriptions.verification_sent_at<=? AND (email_subscriptions.verification_day<>? OR email_subscriptions.verification_count<5)`).bind(id,b.spaceId,email,time,locale,hash,expires,shanghaiDate(now),now,unsub,now-60000,shanghaiDate(now)).run();
+    if(!reserved.meta.changes)return Response.json({error:'请稍后再请求验证码。'},{status:429});
+    await db.prepare("UPDATE email_deliveries SET status='cancelled' WHERE subscription_id=? AND status IN ('pending','retry')").bind(id).run();
+    try{await sendMail(settings,{from:settings.EMAIL_FROM!,to:[email],subject:locale==='zh'?'Pi Research 邮箱验证':'Verify your Pi Research email',text:`${locale==='zh'?'验证码（10分钟内有效）':'Verification code (valid for 10 minutes)'}: ${code}\n${locale==='zh'?'如果不是你申请的，请忽略此邮件。':'If you did not request this, ignore this email.'}`,html:`<p>${locale==='zh'?'Pi Research 邮箱验证码':'Pi Research verification code'}</p><p style="font-size:28px;letter-spacing:4px">${code}</p><p>${locale==='zh'?'10 分钟内有效。非本人申请请忽略。':'Valid for 10 minutes. Ignore if not requested.'}</p>`},`verify:${id}:${expires}`);}catch{return Response.json({error:'验证邮件未能发送，请稍后重试。'},{status:502});}
+    return Response.json(await state(db,b.spaceId,settings));
+  }
+  const sub=await db.prepare('SELECT id,email,verified_at,code_hash,code_expires,code_attempts FROM email_subscriptions WHERE space_id=?').bind(b.spaceId).first<{id:string;email:string;verified_at:string|null;code_hash:string;code_expires:number;code_attempts:number}>();
+  if(!sub||sub.email!==email)return Response.json({error:'请先验证此邮箱。'},{status:409});
+  if(b.action==='verify'){
+    if(sub.code_expires<now||sub.code_attempts>=5||!/^\d{6}$/.test(String(b.code||'')))return Response.json({error:'验证码已过期或尝试次数过多，请重新获取。'},{status:400});
+    const attempt=await db.prepare('UPDATE email_subscriptions SET code_attempts=code_attempts+1 WHERE id=? AND code_hash=? AND code_attempts<5 AND code_expires>?').bind(sub.id,sub.code_hash,now).run();
+    if(!attempt.meta.changes||await emailHash(`${sub.id}:${email}:${sub.code_expires}:${b.code}`)!==sub.code_hash)return Response.json({error:'验证码不正确。'},{status:400});
+    const verified=await db.prepare("UPDATE email_subscriptions SET verified_at=CURRENT_TIMESTAMP,code_hash='',code_expires=0 WHERE id=? AND code_hash=? AND email=?").bind(sub.id,sub.code_hash,email).run();if(!verified.meta.changes)return Response.json({error:'邮箱验证状态已改变，请重试。'},{status:409});
+  }else if(b.action!=='save'||!sub.verified_at)return Response.json({error:'请先验证邮箱。'},{status:400});
+  if(b.enabled!==true)return Response.json(await state(db,b.spaceId,settings));
+  if(!mailConfigured(settings))return Response.json({error:'邮件服务尚未配置，暂不能开启。'},{status:503});
+  await db.prepare('UPDATE email_subscriptions SET enabled=1,send_time=?,locale=?,next_send_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND email=? AND verified_at IS NOT NULL').bind(time,locale,nextDigestAt(time,now),sub.id,email).run();
+  return Response.json(await state(db,b.spaceId,settings));
+}

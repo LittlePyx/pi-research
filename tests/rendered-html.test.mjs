@@ -379,7 +379,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-paper-network-drawer/);
   assert.match(client, /function CitationFlowWorkbench/);
   assert.match(client, /参考文献/);
-  assert.match(client, /完整已核验引用清单/);
+  assert.match(client, /当前焦点的直接引用清单/);
   assert.match(client, /直接引用 · \$\{citationEvidenceProviderLabel\(item\.edge\.evidenceSource\)\} 核验/);
   assert.match(client, /model\.priorAll\.length > model\.prior\.length/);
   assert.match(client, /展开其余 \$\{model\.priorAll\.length - model\.prior\.length\} 篇/);

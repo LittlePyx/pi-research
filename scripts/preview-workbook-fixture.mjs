@@ -27,6 +27,9 @@ const server = await createServer({ root, configFile: false, envDir: false,
         const spaceId = url.searchParams.get("spaceId") || input.spaceId || spaces[0].id;
         let result = fixtureResponse(req.url, req.method, spaceId);
         const data = learningFixture(spaceId);
+        if (url.pathname === "/api/library-catalog") result = { status:200, body:{items:workbookSources.map(p=>({id:p.id,canonicalId:p.canonicalId,title:p.title,authors:p.authors,venue:"隔离内容样本",url:p.url,doi:null,publishedAt:null,abstractText:p.abstractText,recommended:0,verified:0,inRoute:0,membership:null,category:null,graphStatus:null,checkedAt:null,matchTerms:[]})),total:workbookSources.length,nextOffset:null,coverage:{total:workbookSources.length,checked:0,noLinks:0,blocked:0},terms:[]} };
+        if (url.pathname === "/api/email-subscription") result = { status:200, body:{configured:false,subscription:null,deliveries:[]} };
+        if (url.pathname === "/api/library-graph") result = { status:200, body:{status:"pending",checkedAt:null,retryAt:0,busy:false,items:[],offsets:{references:0,citations:0},errors:[],limited:false} };
         if (url.pathname === "/api/research-memory") {
           const items = workbookSources.slice(0, 2).map((paper, index) => ({ paperId: paper.id, title: paper.title, venue: "隔离内容样本", note: index ? "阅读任务样本：比较两篇材料中的对象与假设，暂不把标题相近理解为结论相同。" : "阅读笔记样本：先记录原问题的定义、使用的假设，以及仍需要查证的一步。此处用于展示排版，不是实际研究结论。", updatedAt: "2026-09-16", status: "pending", takeawayZh: "", takeawayEn: "", methodsZh: [], methodsEn: [], questionsZh: [], questionsEn: [] }));
           const q = url.searchParams.get("q") || "";

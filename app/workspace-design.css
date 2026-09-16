@@ -1,3 +1,44 @@
+/* Library-wide exploration, separate from the curated route backbone. */
+.pi-workspace .pi-library-explorer { background:#fff; border:1px solid var(--pi-line); border-radius:10px; padding:24px; margin:24px 0; }
+.pi-workspace .pi-library-explorer h2 { font-family:inherit; font-size:22px; font-weight:600; line-height:1.5; margin:0 0 8px; }
+.pi-workspace .pi-citation-other { margin-top:18px; border-top:1px solid var(--pi-line); padding-top:14px; }
+.pi-workspace .pi-citation-other summary { cursor:pointer; font-size:14px; color:var(--pi-accent); }
+.pi-workspace .pi-citation-other article { padding:16px 0; border-bottom:1px solid var(--pi-line); }
+.pi-workspace .pi-citation-other button { white-space:normal; text-align:left; padding:6px; font-size:15px; line-height:1.6; }
+.pi-workspace .pi-citation-other small { display:block; color:var(--pi-muted); margin-top:8px; }
+.pi-workspace .pi-library-explorer p { margin:8px 0; font-size:14px; line-height:1.7; color:var(--pi-muted); }
+.pi-workspace .pi-library-coverage { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; padding:18px 0; border-block:1px solid var(--pi-line); }
+.pi-workspace .pi-library-coverage dt { font-size:14px; color:var(--pi-muted); }
+.pi-workspace .pi-library-coverage dd { margin:4px 0 0; font-size:24px; color:var(--pi-ink); }
+.pi-workspace .pi-library-controls { display:flex; flex-wrap:wrap; align-items:end; gap:16px; }
+.pi-workspace .pi-library-controls label:first-child { flex:1; min-width:180px; }
+.pi-workspace .pi-library-controls label { font-size:14px; }
+.pi-workspace .pi-library-selection { margin:18px 0; padding:16px; border:1px solid var(--pi-line); border-radius:6px; background:var(--pi-canvas); }
+.pi-workspace .pi-library-selection summary { cursor:pointer; font-size:14px; font-weight:600; color:var(--pi-accent); }
+.pi-workspace .pi-library-selection label { display:block; margin:12px 0; font-size:14px; }
+.pi-workspace .pi-library-selection textarea { display:block; width:100%; font:inherit; padding:12px; border:1px solid var(--pi-line); border-radius:6px; margin-top:6px; background:#fff; }
+.pi-workspace .pi-library-selection article { margin-top:14px; padding-top:14px; border-top:1px solid var(--pi-line); }
+.pi-workspace .pi-library-controls input[type="search"] { display:block; width:100%; margin-top:6px; padding:10px 12px; border:1px solid var(--pi-line); border-radius:6px; font-size:16px; }
+.pi-workspace .pi-library-rows article { border-top:1px solid var(--pi-line); padding:20px 0; }
+.pi-workspace .pi-library-rows h3,.pi-workspace .pi-library-focus h3 { font-family:inherit; font-size:17px; line-height:1.65; margin:8px 0; overflow-wrap:anywhere; }
+.pi-workspace .pi-library-rows span,.pi-workspace .pi-library-rows small,.pi-workspace .pi-library-focus article > span { color:var(--pi-muted); font-size:13px; }
+.pi-workspace .pi-library-explorer footer,.pi-workspace .pi-library-explorer nav { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:12px; }
+.pi-workspace .pi-library-explorer :is(button,select),.pi-workspace .pi-email-settings button { font:inherit; font-size:14px; min-height:40px; padding:8px 12px; color:var(--pi-accent); background:#f2f7f9; border:1px solid var(--pi-line); border-radius:5px; cursor:pointer; }
+.pi-workspace .pi-library-explorer button:disabled,.pi-workspace .pi-email-settings button:disabled { opacity:.55; cursor:default; }
+.pi-workspace .pi-library-focus { border-top:2px solid var(--pi-accent); margin-top:28px; padding-top:20px; scroll-margin-top:20px; }
+.pi-workspace .pi-library-focus article { margin:12px 0; padding:16px; border:1px solid var(--pi-line); border-radius:6px; }
+.pi-workspace .pi-library-focus article h4 { font-size:16px; line-height:1.65; margin:8px 0; overflow-wrap:anywhere; }
+.pi-workspace .pi-library-focus :is(a,button) { margin-right:10px; }
+.pi-workspace .pi-route-graph-legacy > summary { padding:18px 0; color:var(--pi-accent); font-size:16px; cursor:pointer; }
+.pi-workspace .pi-email-settings { margin:0 0 24px; border:1px solid var(--pi-line); border-radius:8px; background:#fff; }
+.pi-workspace .pi-email-settings > summary { cursor:pointer; padding:16px 20px; font-size:15px; }
+.pi-workspace .pi-email-settings > summary span { margin-left:14px; color:var(--pi-muted); font-size:13px; }
+.pi-workspace .pi-email-settings > div { border-top:1px solid var(--pi-line); padding:20px; max-width:720px; }
+.pi-workspace .pi-email-settings p { font-size:14px; line-height:1.7; }
+.pi-workspace .pi-email-settings label { display:block; font-size:14px; margin:14px 0; }
+.pi-workspace .pi-email-settings input { display:block; padding:10px 12px; margin-top:6px; width:100%; max-width:420px; font-size:16px; border:1px solid var(--pi-line); border-radius:5px; }
+@media(max-width:600px) { .pi-workspace .pi-library-explorer {padding:16px;} .pi-workspace .pi-library-coverage {grid-template-columns:1fr 1fr;} .pi-workspace .pi-email-settings > summary span {display:block;margin:6px 0 0;} }
+
 /* Verified citation pairs: titles and provenance never compete for space. */
 .v2-app.pi-workspace .pi-citation-ledger { border-top: 1px solid var(--pi-line); padding: 24px; background: var(--pi-surface); }
 .v2-app.pi-workspace .pi-citation-ledger-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }

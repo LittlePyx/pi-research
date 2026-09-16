@@ -29,6 +29,18 @@ The application needs a D1 binding named `DB`. For interactive use, open the AI 
 
 During active product development, set `PI_DEVELOPMENT_UNBOUNDED=1` to remove total route, evidence-gap, model-analysis, and local Semantic Scholar usage caps. Transient work continues from durable checkpoints without a maximum attempt count. Provider backoff, request timeouts, single-flight leases, per-pass batch sizes, and final recommendation quality gates remain active.
 
+## Route collections, library graph, and email subscriptions
+
+Route backbones remain small, curated sets. The related-literature panel reads the entire current-space library with pagination: conservative title/abstract keyword matches are labelled as such, and users can add method, background, related-work, or evidence-to-examine categories. These memberships never accept a recommendation or promote formal route evidence. User exclusions and deactivated route nodes do not reappear as automatic matches.
+
+The graph's primary explorer accepts any owned library paper as its starting point, including unreviewed papers. Queries store provider-backed references/citations separately from route membership. DOI, arXiv, and Semantic Scholar identifiers are supported; missing identifiers, pending queries, partial pages, empty source responses, and source errors are distinct states. Each explicit query reads at most 50 references and 50 citations, retains progress, and stops at 400 relationships. This is a bounded source lookup, not proof of complete academic coverage. Existing route graph tools remain under a labelled secondary disclosure; direct, intermediate, and unrelated citation scopes are separate.
+
+Daily mail is opt-in per research space. The Today page collects a recipient address, sends a six-digit verification code, and requires confirmation before enabling. Default delivery is **10:00 Asia/Shanghai**; users can edit the time or pause. The existing website scheduler checks due subscriptions, so sending may occur after the chosen minute. No Codex automation is created or resumed.
+
+Before enabling production mail, a site administrator must set `RESEND_API_KEY` and `EMAIL_FROM` (a sender on a verified domain), and optionally `EMAIL_SITE_URL`. Keys belong only in server runtime secrets, never user forms. The UI reports an unconfigured service and disables verification/subscription rather than claiming success. See [Resend sender requirements](https://www.resend.com/docs/api-reference/errors) and [idempotency](https://resend.com/docs/dashboard/emails/idempotency-keys).
+
+Mail contains that date's saved brief papers only when their recommendation evidence is verified; otherwise it honestly reports that the digest is not ready. It does not generate model content or substitute old daily papers. Durable daily delivery rows, leases, an immutable payload and provider idempotency keys protect concurrent/retry delivery. Retries stop before the provider's 24-hour idempotency expiry. “Sent” means accepted by the mail service, not proof of inbox delivery. Unsubscribe GET shows a confirmation page; POST (including one-click mail-client requests) disables sending.
+
 ## Validation
 
 ```bash

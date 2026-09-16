@@ -1584,6 +1584,19 @@ export const researchWorkbookBootstrapSql = [
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_artifact_revision ON research_comparison_artifacts(workbook_id, revision)",
 ];
 
+export const researchRouteLibrary = sqliteTable("research_route_library", {
+  id:text('id').primaryKey(),spaceId:text('space_id').notNull().references(()=>researchSpaces.id,{onDelete:'cascade'}),trackId:text('track_id').notNull().references(()=>researchTracks.id,{onDelete:'cascade'}),paperId:text('paper_id').notNull().references(()=>monitoredPapers.id,{onDelete:'cascade'}),status:text('status').notNull(),category:text('category').notNull().default('related'),updatedAt:text('updated_at').notNull().default(sql.raw('CURRENT_TIMESTAMP')),
+},t=>[uniqueIndex('idx_route_library_track_paper').on(t.trackId,t.paperId),index('idx_route_library_space').on(t.spaceId,t.trackId)]);
+export const libraryGraphChecks = sqliteTable('library_graph_checks', {
+  paperId:text('paper_id').primaryKey().references(()=>monitoredPapers.id,{onDelete:'cascade'}),spaceId:text('space_id').notNull().references(()=>researchSpaces.id,{onDelete:'cascade'}),status:text('status').notNull().default('pending'),resultJson:text('result_json').notNull().default('{}'),checkedAt:text('checked_at'),retryAt:integer('retry_at').notNull().default(0),leaseUntil:integer('lease_until').notNull().default(0),lockToken:text('lock_token'),
+},t=>[index('idx_library_graph_space').on(t.spaceId)]);
+export const emailSubscriptions = sqliteTable('email_subscriptions', {
+  id:text('id').primaryKey(),spaceId:text('space_id').notNull().references(()=>researchSpaces.id,{onDelete:'cascade'}),email:text('email').notNull(),enabled:integer('enabled').notNull().default(0),verifiedAt:text('verified_at'),sendTime:text('send_time').notNull().default('10:00'),timezone:text('timezone').notNull().default('Asia/Shanghai'),locale:text('locale').notNull().default('zh'),codeHash:text('code_hash').notNull().default(''),codeExpires:integer('code_expires').notNull().default(0),codeAttempts:integer('code_attempts').notNull().default(0),verificationDay:text('verification_day').notNull().default(''),verificationCount:integer('verification_count').notNull().default(0),verificationSentAt:integer('verification_sent_at').notNull().default(0),unsubscribeToken:text('unsubscribe_token').notNull(),nextSendAt:integer('next_send_at').notNull().default(0),updatedAt:text('updated_at').notNull().default(sql.raw('CURRENT_TIMESTAMP')),
+},t=>[uniqueIndex('idx_email_subscription_space').on(t.spaceId),index('idx_email_subscription_due').on(t.enabled,t.nextSendAt)]);
+export const emailDeliveries = sqliteTable('email_deliveries', {
+  id:text('id').primaryKey(),subscriptionId:text('subscription_id').notNull().references(()=>emailSubscriptions.id,{onDelete:'cascade'}),deliveryDate:text('delivery_date').notNull(),status:text('status').notNull().default('pending'),payloadJson:text('payload_json').notNull(),attempts:integer('attempts').notNull().default(0),leaseUntil:integer('lease_until').notNull().default(0),retryAt:integer('retry_at').notNull().default(0),providerId:text('provider_id'),error:text('error').notNull().default(''),createdAt:integer('created_at').notNull(),sentAt:integer('sent_at'),
+},t=>[uniqueIndex('idx_email_delivery_date').on(t.subscriptionId,t.deliveryDate)]);
+
 export const paperAbstractRecovery = sqliteTable("paper_abstract_recovery", {
   paperId: text("paper_id").primaryKey().references(() => monitoredPapers.id, { onDelete: "cascade" }),
   spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),

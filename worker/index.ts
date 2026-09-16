@@ -27,6 +27,7 @@ import { SCHEDULED_RESEARCH_TRACK_INTELLIGENCE_SQL } from "../lib/research-map-i
 import { SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL } from "../lib/research-route-evolution";
 import { developmentUnboundedEnabled } from "../lib/development-policy.mjs";
 import { runLearningStageScheduler } from "../lib/learning-stage-scheduler";
+import { runEmailDigests } from "../lib/email-digest";
 import {
   claimResearchGapDiscovery,
   completeResearchGapDiscovery,
@@ -39,6 +40,9 @@ interface Env {
   DB: D1Database;
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL?: string;
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
+  EMAIL_SITE_URL?: string;
   PI_DEVELOPMENT_UNBOUNDED?: string;
   MONITOR_SCHEDULER_SECRET?: string;
   MONITOR_INDEPENDENT_SCHEDULER_SECRET?: string;
@@ -572,6 +576,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
   await reconcileExpiredSchedulerTicks(env);
   const lease = await acquireSchedulerLease(env, trigger);
   if (!lease.acquired) return { acquired: false, trigger };
+  if (env.RESEND_API_KEY && env.EMAIL_FROM) ctx.waitUntil(runEmailDigests(env).catch(() => { console.error('Email digest dispatch failed'); }));
   const { tickId, leaseToken } = lease;
   let dueSpaceCount = 0;
   let startedCount = 0;
