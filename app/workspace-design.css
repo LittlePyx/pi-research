@@ -1,3 +1,32 @@
+/* Verified citation pairs: titles and provenance never compete for space. */
+.v2-app.pi-workspace .pi-citation-ledger { border-top: 1px solid var(--pi-line); padding: 24px; background: var(--pi-surface); }
+.v2-app.pi-workspace .pi-citation-ledger-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.v2-app.pi-workspace .pi-citation-ledger-heading h4 { margin: 0; color: var(--pi-ink); font-family: inherit; font-size: 18px; font-weight: 650; line-height: 1.5; }
+.v2-app.pi-workspace .pi-citation-ledger-heading p { margin: 6px 0 0; color: var(--pi-muted); font-size: 14px; line-height: 1.7; }
+.v2-app.pi-workspace .pi-citation-ledger-heading > span { flex-shrink: 0; padding: 4px 10px; border-radius: 6px; background: var(--pi-surface-subtle); color: var(--pi-muted); font-size: 14px; }
+.v2-app.pi-workspace .pi-citation-ledger-list { display: grid; gap: 14px; }
+.v2-app.pi-workspace .pi-citation-link { min-width: 0; border: 1px solid var(--pi-line); border-radius: 10px; background: var(--pi-surface); }
+.v2-app.pi-workspace .pi-citation-link-papers { display: grid; grid-template-columns: minmax(0,1fr) 32px minmax(0,1fr); align-items: start; gap: 8px; padding: 12px; }
+.v2-app.pi-workspace .pi-citation-link-paper { display: flex; flex-direction: column; align-items: stretch; gap: 10px; min-width: 0; width: 100%; height: 100%; padding: 12px; border: 1px solid transparent; border-radius: 6px; background: transparent; text-align: left; color: var(--pi-ink); cursor: pointer; }
+.v2-app.pi-workspace .pi-citation-link-paper:hover { background: var(--pi-canvas); border-color: var(--pi-line); }
+.v2-app.pi-workspace .pi-citation-link-paper[aria-pressed="true"] { background: var(--pi-accent-soft); border-color: #c4d9e2; }
+.v2-app.pi-workspace .pi-citation-link-paper > strong { display: block; white-space: normal; overflow-wrap: anywhere; color: var(--pi-ink); font-size: 16px; font-weight: 600; line-height: 1.65; }
+.v2-app.pi-workspace .pi-citation-link-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; color: var(--pi-muted); font-size: 14px; line-height: 1.5; }
+.v2-app.pi-workspace .pi-citation-link-meta > em { color: var(--pi-accent); font-size: 13px; font-style: normal; font-weight: 600; }
+.v2-app.pi-workspace .pi-citation-link-arrow { align-self: center; text-align: center; color: var(--pi-accent); font-size: 24px; line-height: 1; }
+.v2-app.pi-workspace .pi-citation-link-source { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 10px 24px; border-top: 1px solid var(--pi-line); border-radius: 0 0 10px 10px; background: var(--pi-canvas); color: var(--pi-muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.v2-app.pi-workspace .pi-citation-link-source > span:first-child { font-weight: 600; color: var(--pi-accent); }
+@media (max-width: 1050px) {
+  .v2-app.pi-workspace .pi-citation-link-papers { grid-template-columns: minmax(0,1fr); gap: 0; }
+  .v2-app.pi-workspace .pi-citation-link-arrow { justify-self: start; margin: 2px 12px; transform: rotate(90deg); }
+}
+@media (max-width: 600px) {
+  .v2-app.pi-workspace .pi-citation-ledger { padding: 18px 12px; }
+  .v2-app.pi-workspace .pi-citation-ledger-heading { flex-wrap: wrap; gap: 10px; }
+  .v2-app.pi-workspace .pi-citation-link-papers { padding: 6px; }
+  .v2-app.pi-workspace .pi-citation-link-source { padding: 10px 18px; }
+}
+
 /* Shared reading and interaction scale across the complete workspace. */
 .v2-app.pi-workspace {
   --pi-canvas: #f6f8fa;
