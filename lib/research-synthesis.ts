@@ -2,6 +2,17 @@ import { scopedSynthesisGap } from "./research-gap-scope.mjs";
 
 export type ResearchSynthesisKind = "consensus" | "disagreement" | "qualification" | "method_lineage" | "evidence_gap";
 
+/** The reviewer must cover every field; a single unsupported finding blocks publication. */
+export function validateSynthesisReview(raw: unknown, statementCount: number) {
+  const review = raw as { verdict?: string; checks?: Array<{ id?: string; verdict?: string }> } | null;
+  const expected = ["question", "overview", "changeSummary", "nextSearchQuery", ...Array.from({ length: statementCount }, (_, i) => `statement:${i}`)];
+  if (review?.verdict !== "supported" || !Array.isArray(review.checks) || review.checks.length !== expected.length
+    || new Set(review.checks.map(c => c.id)).size !== expected.length
+    || expected.some(id => !review.checks!.some(c => c.id === id && c.verdict === "supported"))) {
+    throw new Error("Synthesis did not pass independent evidence review");
+  }
+}
+
 export type ResearchSynthesisSourceClaim = {
   claimId: string;
   paperId: string;

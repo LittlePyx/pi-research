@@ -60,7 +60,7 @@ test("route synthesis is source-linked, incremental, and feeds daily discovery",
     readFile(new URL("../db/repository.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(api, /claim\.grounded = 1/);
+  assert.match(await readFile(new URL("../lib/route-research-evidence.ts", import.meta.url), "utf8"), /claim\.grounded = 1/);
   assert.match(api, /sourceClaimIds/);
   assert.match(api, /Distinguish a real contradiction/);
   assert.match(api, /research_synthesis_revisions/);

@@ -44,13 +44,13 @@ test("route workspace keeps one decision surface and moves supporting context be
 test("route overview cards show one summary and one state-aware action", async () => {
   const app = await readFile(appUrl, "utf8");
   const routeOverview = app.slice(app.indexOf('{view === "threads"'), app.indexOf('{view === "thread-detail"'));
-  const routeCards = routeOverview.slice(routeOverview.indexOf('<section className="v2-route-groups">'), routeOverview.indexOf('<details className="v2-route-map-assist">'));
-
-  assert.match(routeCards, /const recoveryActionNeeded = \["queued", "retryable", "empty", "failed", "partial"\]/);
-  assert.doesNotMatch(routeCards, /v2-route-gap-link compact/);
-  assert.match(routeCards, /confirmedRouteEvidenceCount\(thread\)/);
-  assert.doesNotMatch(routeCards, /thread\.intelligence\.assessment/);
-  assert.doesNotMatch(routeCards, /v2-route-latest-change|<dl>/);
+  const routeCards = await readFile(new URL("../app/components/research-leads.tsx", import.meta.url), "utf8");
+  assert.match(routeOverview, /ResearchLeads tracks=/);
+  assert.match(routeCards, /routeMaterialState/);
+  assert.match(routeCards, /papers\[0\]\.title/);
+  assert.match(routeCards, /onOpen\(track\)/);
+  assert.match(routeCards, /onLearn\(track\)/);
+  assert.doesNotMatch(routeCards, /intelligence\.assessment|heatLevel|<dl>/);
   assert.doesNotMatch(routeOverview, /<section className="v2-route-explorer-entry">/);
 });
 

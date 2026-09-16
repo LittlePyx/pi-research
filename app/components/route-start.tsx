@@ -6,9 +6,10 @@ import "./route-start.css";
 type Synthesis = { status: string; stale: boolean; statements: Array<{ id: string; kind: string; titleZh: string; titleEn: string; textZh: string; textEn: string; sourcePaperIds: string[]; sources: Array<{ paperId: string; title: string; evidenceQuote: string; evidenceLevel: string; sourceUrl: string }> }> };
 const href = (url: string) => /^https?:\/\//i.test(url) ? url : undefined;
 
-export function RouteStart({ track, synthesis, loading, failed, locale, onEvidence, onMaterials, onSynthesis, onPaperOpen }: {
+export function RouteStart({ track, synthesis, loading, failed, locale, onEvidence, onMaterials, onSynthesis, onPaperOpen, onCompare, onProblem, onLearn, question }: {
   track: ResearchTrack; synthesis: Synthesis | null; loading: boolean; failed: boolean; locale: "zh" | "en";
   onEvidence: () => void; onMaterials: () => void; onSynthesis: () => void; onPaperOpen: () => void;
+  onCompare: () => void; onProblem: () => void; onLearn: () => void; question?: string;
 }) {
   const zh = locale === "zh";
   const material = routeMaterialState(track);
@@ -19,6 +20,9 @@ export function RouteStart({ track, synthesis, loading, failed, locale, onEviden
   const loadingMessage = zh ? (papers.length ? "正在读取已保存的综合判断；上面的论文可以先查看。" : "正在读取已保存的综合状态。") : (papers.length ? "Loading saved findings; the papers above are available now." : "Loading saved synthesis status.");
   const failureMessage = zh ? (papers.length ? "综合判断暂未载入，已有材料仍可查看。" : "综合状态暂未载入，可先查看材料收集进度。") : (papers.length ? "Findings could not be loaded; collected papers remain available." : "Synthesis status could not be loaded; collection progress is available.");
   return <section className="pi-route-start" aria-label={zh ? "当前材料与判断" : "Current materials and findings"}>
+    <div className="pi-route-entry"><div><small>{zh ? "下一步" : "NEXT STEP"}</small><h2>{findings.length ? (zh ? "从已有判断推进研究问题" : "Move from findings to a question") : papers.length >= 2 ? (zh ? "先比较这些论文的条件与结论" : "Compare conditions and findings") : (zh ? "先核对这条路线的材料" : "Inspect this route’s materials")}</h2></div><button type="button" className="pi-research-primary" onClick={findings.length ? onProblem : papers.length >= 2 ? onCompare : onEvidence}>{findings.length ? (zh ? "研究问题与任务" : "Question & tasks") : papers.length >= 2 ? (zh ? "选择论文开始比较" : "Select papers to compare") : (zh ? "查看材料" : "View materials")} →</button></div>
+    <div className="pi-study-path-links"><button type="button" onClick={onLearn}>{zh ? "进入本路线学习路径" : "Study this route"}</button><button type="button" onClick={onCompare}>{zh ? "比较记录与学习产物" : "Comparisons & learning artifacts"}</button></div>
+    {question && <section className="pi-route-working-question"><small>{zh ? "当前研究问题" : "CURRENT QUESTION"}</small><h2><MathText>{question}</MathText></h2><button type="button" onClick={onProblem}>{zh ? "查看依据与下一步任务" : "Evidence and next actions"} →</button></section>}
     <header><h2>{papers.length ? (zh ? "从已有材料开始" : "Start with collected papers") : (zh ? "这条线索还在收集材料" : "This lead is still collecting material")}</h2><p>{papers.length ? (zh ? `${papers.length} 篇路线材料可查看。收录代表作不等于已经完成研究判断。` : `${papers.length} route papers are available. A collected paper is not a completed research assessment.`) : (zh ? "本空间尚未收录可展示的路线材料。这里暂时是一条待探索线索，不能据此判断学界存在空白。" : "This workspace has no route material to display yet. This is an exploratory lead, not evidence of a gap in the field.")}</p></header>
     {papers.length ? <div className="pi-route-start-papers">{papers.slice(0, 4).map(paper => <article key={paper.id}>
       <small>{paper.provenance === "user_confirmed" ? (zh ? "已确认纳入路线" : "Confirmed in route") : (zh ? "路线收录材料 · 待自行核对" : "Collected route paper · check the source")}</small>

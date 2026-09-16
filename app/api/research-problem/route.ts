@@ -1,3 +1,5 @@
+import { sourceClaims } from "../../../lib/route-research-evidence";
+import { researchSynthesisInputRevision } from "../../../lib/research-synthesis";
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { enqueueResearchGapDiscovery } from "../../../lib/research-gap-discovery";
@@ -97,6 +99,11 @@ async function synthesisContext(database: D1Database, spaceId: string, trackId: 
       next_search_query, confidence, updated_at FROM research_syntheses
      WHERE space_id = ? AND track_id = ? AND status IN ('ready', 'partial') LIMIT 1`,
   ).bind(spaceId, trackId).first<{ id: string; input_revision: string; question_zh: string; question_en: string; overview_zh: string; overview_en: string; change_summary_zh: string; change_summary_en: string; next_search_query: string; confidence: number; updated_at: string }>();
+  if (synthesis) {
+    const claims = await sourceClaims(database, spaceId, trackId);
+    const revision = await researchSynthesisInputRevision(claims.map(c => ({ claimId: c.claim_id, paperId: c.paper_id, evidenceLevel: c.evidence_level, textHash: c.text_hash })));
+    if (revision !== synthesis.input_revision) return { synthesis: null, statements: [] as StatementRow[] };
+  }
   const statements = synthesis ? await database.prepare(
     `SELECT id, kind, title_zh, title_en, text_zh, text_en, confidence, source_claim_ids
      FROM research_synthesis_statements WHERE synthesis_id = ? ORDER BY position`,

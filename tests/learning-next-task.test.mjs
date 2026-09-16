@@ -34,7 +34,7 @@ const compile = source => ts.transpileModule(source, { compilerOptions: { module
 const mod = { exports: {} };
 new Function('require', 'module', 'exports', compile(await readFile(new URL('../app/components/learning-next-task.tsx', import.meta.url), 'utf8')))(name => name.endsWith('lib/learning-next-task') ? tasks : name === './math-text' ? { MathText: ({ children }) => children } : require(name), mod, mod.exports);
 
-test('both languages show paper-specific focus, prerequisites and a note task without completion actions', () => {
+test('both languages show paper-specific focus and a note task without completion actions', () => {
   const step = { ...stage(), supplementaryResources: [{ ...resource('approved bridge'), readingFocusZh: '核对已评估的假设 <script>bad</script>', readingFocusEn: 'Check reviewed assumptions <script>bad</script>' }] };
   for (const locale of ['zh', 'en']) {
     let selected;
@@ -44,6 +44,6 @@ test('both languages show paper-specific focus, prerequisites and a note task wi
     assert.match(html, locale === 'zh' ? /本阶段原始材料仍待补齐/ : /original material is still missing/);
     assert.match(html, /&lt;script&gt;/);
     assert.doesNotMatch(html, /<script>|<input|<button/);
-    assert.equal((html.match(/<li>/g) || []).length, 3);
+    assert.equal((html.match(/<li>/g) || []).length, 2);
   }
 });

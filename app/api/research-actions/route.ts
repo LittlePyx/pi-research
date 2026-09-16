@@ -1,4 +1,5 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import { routeVerifiedAbstractClaims } from "../../../lib/verified-abstract-claims";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import {
   evidenceVerificationReport,
@@ -330,7 +331,16 @@ async function actionEvidence(database: D1Database, action: ActionContextRow) {
      FROM monitored_papers paper LEFT JOIN paper_evidence_claims claim ON claim.paper_id = paper.id
      WHERE paper.space_id = ?`,
   ).bind(action.space_id).first<{ paper_revision: string; evidence_revision: string }>();
-  return { hypotheses: hypotheses.results, synthesis, papers: papers.results, claims: claims.results, revisions };
+  const audited = await routeVerifiedAbstractClaims(database, action.space_id, action.track_id);
+  const available = audited.filter(c => paperIds.includes(c.paper_id));
+  const auditedPapers = new Set(available.map(c => c.paper_id));
+  const sharedClaims = available.map(c => ({ id: c.claim_id, paper_id: c.paper_id, kind: c.claim_kind,
+    claim_zh: c.claim_zh, claim_en: c.claim_en, evidence_quote: c.evidence_quote,
+    locator: c.locator, source_url: c.source_url, confidence: c.confidence }));
+  return { hypotheses: hypotheses.results, synthesis,
+    papers: papers.results.map(p => auditedPapers.has(p.id) ? { ...p, evidence_status: "ready", evidence_level: "abstract", evidence_coverage: 64 } : p),
+    claims: [...sharedClaims, ...claims.results.filter(c => !auditedPapers.has(c.paper_id))],
+    revisions: { ...revisions, evidence_revision: `${revisions?.evidence_revision || ""}:${available.map(c => c.text_hash).join(":")}` } };
 }
 
 async function enqueueReading(database: D1Database, action: ActionContextRow, paperIds: string[], note: string) {

@@ -215,7 +215,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(repository, /CREATE TABLE IF NOT EXISTS research_paper_network_states/);
   assert.match(client, /研究地图/);
   assert.match(client, /继续填充这条路线/);
-  assert.match(client, /v2-route-groups/);
+  assert.match(client, /ResearchLeads/);
   assert.match(client, /v2-route-workspace-tabs/);
   assert.match(client, /路线总览/);
   assert.match(client, /当前研判/);
