@@ -250,9 +250,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /"all" \| "one-hop" \| "multi-seed"/);
   assert.match(client, /selectBalancedMultiSeedEdges/);
   assert.match(client, /paperNetworkOriginCanonicalIds/);
-  assert.match(client, /共同领域/);
-  assert.match(client, /跨域桥接/);
-  assert.match(client, /并集比较/);
+  assert.match(client, /共同邻居/);
+  assert.match(client, /\["shared", "union"\] as MultiOriginIntent\[\]/);
+  assert.match(client, /分别探索/);
   assert.match(client, /seedConnectionCount/);
   assert.match(client, /markerUnits="userSpaceOnUse"/);
   assert.match(client, /edge\.kind === "citation" && mode === "citations"/);
@@ -378,13 +378,13 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-paper-network-canvas/);
   assert.match(css, /\.v2-paper-network-drawer/);
   assert.match(client, /function CitationFlowWorkbench/);
-  assert.match(client, /前置知识/);
+  assert.match(client, /参考文献/);
   assert.match(client, /完整已核验引用清单/);
   assert.match(client, /直接引用 · \$\{citationEvidenceProviderLabel\(item\.edge\.evidenceSource\)\} 核验/);
   assert.match(client, /model\.priorAll\.length > model\.prior\.length/);
   assert.match(client, /展开其余 \$\{model\.priorAll\.length - model\.prior\.length\} 篇/);
   assert.match(client, /item\.node\.paper\.authors \|\|/);
-  assert.match(client, /到论文发现扩展前后 1-hop/);
+  assert.match(client, /展开外部引用邻居/);
   assert.match(client, /selectedPaperId !== model\.focus\.paper\.id/);
   assert.doesNotMatch(client, /model\.ledger\.slice\(0, 16\)/);
   assert.match(client, /function ReadingOrderWorkbench/);
@@ -463,7 +463,7 @@ test("builds persistent personalized learning paths from real research papers", 
 
   assert.match(client, /你已切换为从全空间论文中规划/);
   assert.match(client, /按全空间重新规划/);
-  assert.match(client, /activeLearningState\.path \? generateLearningPath\(activeLearningState\.path\.target, activeLearningState\.path\.targetTrackId\) : generateLearningPath\(learningTarget\)/);
+  assert.match(client, /onGenerate=\{\(track\) => \{[^\n]*openRouteLearningPath\(route, currentGraphTask\)/);
   assert.match(client, /learningResourceSignals/);
   assert.match(client, /质量已通过/);
   assert.match(client, /<LearningStageGuidance /);

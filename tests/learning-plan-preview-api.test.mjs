@@ -14,6 +14,9 @@ test('learning preview preserves the saved path, enforces ownership and source f
       modelCalls++; const payload = await request.json(); const input = JSON.parse(payload.messages[1].content);
       assert.match(input.learningOutcome, /Understand methods and proof strategies/);
       assert.match(input.learningOutcome, /Existing prerequisite knowledge/);
+      if (modelCalls === 1) {
+        assert.deepEqual(input.preferredPapers, ['doi:10.9999/two']);
+      }
       if (failModel) return Response.json({ error: { message: 'Isolated upstream failure' } }, { status: 503 });
       return Response.json({ choices:[{finish_reason:'stop',message:{content:JSON.stringify({titleZh:'UNSUPPORTED CLAIM',titleEn:'UNSUPPORTED CLAIM',steps:['foundation','method','milestone','frontier','project'].map(kind=>({kind,titleZh:'UNSUPPORTED CLAIM',titleEn:'UNSUPPORTED CLAIM',goalZh:'UNSUPPORTED CLAIM',goalEn:'UNSUPPORTED CLAIM',checkpointZh:'UNSUPPORTED CLAIM',checkpointEn:'UNSUPPORTED CLAIM',resourceIds:[]}))})}}],usage:{prompt_tokens:1,completion_tokens:1} });
     } });
@@ -58,7 +61,8 @@ test('learning preview preserves the saved path, enforces ownership and source f
       insert('monitored_papers',{id,space_id:'preview',canonical_id:'doi:10.9999/'+id,title:'Gaussian rate distortion '+id,authors:'Fixture author',horizon:'years',url:'https://example.org/'+id}),
       insert('paper_insights',{paper_id:id,space_id:'preview',abstract_text:'An isolated abstract about Gaussian rate distortion and its assumptions. This paragraph is test data, not a research result.',ever_recommended:1,quality_score:90}),
     ]));
-    const grounded = (await preview({background:'Existing prerequisite knowledge.'})).preview;
+    const grounded = (await preview({background:'Existing prerequisite knowledge.', preferredCanonicalIds:['doi:10.9999/two','doi:10.9999/not-approved']})).preview;
+    assert.deepEqual(grounded.missingPreferred, ['doi:10.9999/not-approved'], 'unavailable selected papers must be reported instead of silently replaced');
     assert.equal(grounded.modelPlanned,true); assert.equal(grounded.materialCount,0); assert.equal(grounded.candidateCount,3);
     assert.ok(grounded.steps.every(s=>!JSON.stringify(s).includes('UNSUPPORTED CLAIM')), 'preview must not expose unreviewed factual prose');
     failModel = true;

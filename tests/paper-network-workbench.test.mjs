@@ -8,7 +8,8 @@ const stylesPath = new URL("../app/globals.css", import.meta.url);
 test("paper network focus uses the verifiable one-hop evidence contract", async () => {
   const client = await readFile(clientPath, "utf8");
 
-  assert.match(client, /selectVerifiableOneHopEdges\(edges, selectedPaperId\)/);
+  assert.match(client, /const layoutFocusId = scope === "one-hop" \? selectedPaperId : null/);
+  assert.match(client, /selectVerifiableOneHopEdges\(edges, layoutFocusId\)/);
   assert.match(client, /selectVerifiableOneHopEdges\(selectedNetworkRelations, selectedNetworkNode\.paper\.id\)/);
   assert.match(client, /可核验一跳只显示文献耦合或数据库核验的引用发现关系/);
   assert.match(client, /没有加入推荐发现线索或 Pi 推断关系/);

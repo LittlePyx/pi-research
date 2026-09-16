@@ -25,7 +25,8 @@ test("citation flow keeps direction, provider, and quality-queue semantics expli
   assert.match(app, /扩展候选会进入共享质量评估/);
   assert.match(app, /只有评审通过才可能出现在今日/);
   assert.match(app, /只有你收录确认后才进入正式路线与引用流/);
-  assert.match(app, /到论文发现扩展前后 1-hop/);
+  assert.match(app, /展开外部引用邻居/);
+  assert.match(app, /expandResearchNetwork\(\[node\.paper\.canonicalId\], true, true\)/);
 });
 
 test("citation focus owns its detail actions without opening the duplicate side drawer", async () => {

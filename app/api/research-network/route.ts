@@ -1157,7 +1157,7 @@ async function renewExpansionLock(database: D1Database, spaceId: string, expansi
 async function releaseExpansionLock(database: D1Database, spaceId: string, expansionKey: string, token: string, status?: "ready" | "no_matches" | "exhausted" | "partial" | "unavailable" | null) {
   await database.prepare(
     `UPDATE research_network_expansion_states SET lock_token = NULL, lock_expires_at = NULL,
-     status = COALESCE(?, status) WHERE space_id = ? AND expansion_key = ? AND lock_token = ?`,
+     status = COALESCE(?, CASE WHEN status = 'building' THEN 'partial' ELSE status END) WHERE space_id = ? AND expansion_key = ? AND lock_token = ?`,
   ).bind(status || null, spaceId, expansionKey, token).run();
 }
 

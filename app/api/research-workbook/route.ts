@@ -1,3 +1,4 @@
+import { focusedWorkbookQuestion, storedWorkbookQuestion, workbookFocus } from "../../../lib/graph-task";
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { WORKBOOK_POLICY, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, workbookDraftPrompt, workbookReviewFields, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
@@ -58,7 +59,8 @@ async function rowFor(ctx: Context, id = "") {
     .bind(ctx.spaceId, ctx.trackId, ...(id ? [id] : [])).first<Row>();
 }
 
-async function projection(ctx: Context, row: Row | null) {
+async function projection(original: Context, row: Row | null, preferred: string[] = [], focus = "") {
+  const ctx = { ...original, question: focusedWorkbookQuestion(original.track.question || `${original.track.title_zh} / ${original.track.title_en}: ${original.track.summary_zh} ${original.track.summary_en}`, row ? workbookFocus(row.question) : focus) };
   const candidates = await sources(ctx);
   const ids: string[] = row ? parse(row.source_ids_json) || [] : [];
   const selected = ids.map(id => candidates.find(s => s.id === id)).filter((s): s is WorkbookSource => Boolean(s));
@@ -69,7 +71,7 @@ async function projection(ctx: Context, row: Row | null) {
   const versions = await ctx.database.prepare(`SELECT id, status, created_at FROM research_comparison_workbooks
     WHERE space_id = ? AND track_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 20`).bind(ctx.spaceId, ctx.trackId).all();
   const state: WorkbookState = { id: row?.id || null, revision: row?.source_revision || revision, status: row?.status || "empty",
-    stale, sources: selected, candidates: candidates.slice(0, 12), content: row?.status === "ready" ? parse(row.content_json) : null,
+    stale, sources: selected, candidates: [...candidates.filter(c=>preferred.includes(c.canonicalId.toLowerCase())), ...candidates.filter(c=>!preferred.includes(c.canonicalId.toLowerCase()))].slice(0, 15), content: row?.status === "ready" ? parse(row.content_json) : null,
     artifact: artifact ? { revision: artifact.revision, value: parse(artifact.value_json) } : null, retryAt: row?.retry_at || 0 };
   return Response.json({ workbook: state, versions: versions.results }, { headers: { "Cache-Control": "no-store" } });
 }
@@ -80,7 +82,7 @@ export async function GET(request: Request) {
   if ("error" in ctx) return ctx.error;
   const id = safeId(url.searchParams.get("workbookId")); const row = await rowFor(ctx, id);
   if (id && !row) return Response.json({ error: "Workbook not found" }, { status: 404 });
-  return projection(ctx, row);
+  return projection(ctx, row, (url.searchParams.get("canonicalIds") || "").split(",").map(v=>v.toLowerCase()).slice(0,3), (url.searchParams.get("focus") || "").slice(0,1000));
 }
 
 async function modelCall(apiKey: string, prompt: string, reviewer: boolean) {
@@ -102,11 +104,14 @@ export async function POST(request: Request) {
   let active: { ctx: Context; id: string; token: string } | null = null;
   try {
     const body = await request.json() as Record<string, unknown>;
-    const ctx = await context(request, safeId(body.spaceId), safeId(body.trackId));
+    let ctx = await context(request, safeId(body.spaceId), safeId(body.trackId));
     if ("error" in ctx) return ctx.error;
     const action = safeId(body.action);
     if (!["prepare", "advance", "save-artifact"].includes(action)) return Response.json({ error: "Invalid action" }, { status: 400 });
+    const baseContext = ctx;
     let row = await rowFor(ctx, safeId(body.workbookId));
+    const focusQuestion = action === "prepare" ? (typeof body.focusQuestion === "string" ? body.focusQuestion.trim().slice(0,1000) : "") : workbookFocus(row?.question || "");
+    ctx = { ...ctx, question: focusedWorkbookQuestion(ctx.question, focusQuestion) };
     if (action !== "prepare" && (!body.workbookId || !row)) return Response.json({ error: "Workbook not found" }, { status: 404 });
     if (action === "save-artifact") {
       if (!row || row.status !== "ready") return Response.json({ error: "Reviewed workbook required" }, { status: 422 });
@@ -121,7 +126,7 @@ export async function POST(request: Request) {
         SELECT ?, ?, ?, ?, ? WHERE COALESCE((SELECT MAX(revision) FROM research_comparison_artifacts WHERE workbook_id = ? AND space_id = ?), 0) = ? ${guard.sql}`)
         .bind(crypto.randomUUID(), row.id, ctx.spaceId, next, JSON.stringify(value), row.id, ctx.spaceId, body.baseRevision, ...guard.values).run();
       if (!saved.meta.changes) return Response.json({ error: "A newer artifact exists; reload before saving" }, { status: 409 });
-      return projection(ctx, row);
+      return projection(baseContext, row);
     }
     const credential = resolveDeepSeekCredential(request);
     if (!credential.apiKey) return Response.json({ error: "Connect the model to prepare this comparison", modelRequired: true }, { status: 428 });
@@ -134,11 +139,11 @@ export async function POST(request: Request) {
       const id = `${ctx.spaceId}:${ctx.trackId}:${revision}`;
       await ctx.database.prepare(`INSERT OR IGNORE INTO research_comparison_workbooks
         (id, space_id, track_id, question, source_revision, source_ids_json, policy) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .bind(id, ctx.spaceId, ctx.trackId, ctx.question, revision, JSON.stringify(ids), WORKBOOK_POLICY).run();
+        .bind(id, ctx.spaceId, ctx.trackId, storedWorkbookQuestion(baseContext.question, focusQuestion), revision, JSON.stringify(ids), WORKBOOK_POLICY).run();
       row = await rowFor(ctx, id);
     }
     if (!row) throw new Error("workbook_missing");
-    if (row.status === "ready" || row.status === "rejected") return projection(ctx, row);
+    if (row.status === "ready" || row.status === "rejected") return projection(baseContext, row);
     const ids = parse(row.source_ids_json) as string[];
     const selected = ids.map(id => candidates.find(s => s.id === id)).filter((s): s is WorkbookSource => Boolean(s));
     if (selected.length !== ids.length || await workbookRevision(ctx.question, selected) !== row.source_revision) return Response.json({ error: "Evidence changed; prepare a new comparison" }, { status: 409 });
@@ -146,7 +151,7 @@ export async function POST(request: Request) {
     const lease = await ctx.database.prepare(`UPDATE research_comparison_workbooks SET lock_token = ?, lease_until = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND space_id = ? AND status NOT IN ('ready', 'rejected') AND lease_until <= ? AND retry_at <= ?`)
       .bind(token, now + 120_000, row.id, ctx.spaceId, now, now).run();
-    if (!lease.meta.changes) return projection(ctx, row);
+    if (!lease.meta.changes) return projection(baseContext, row);
     active = { ctx, id: row.id, token };
     const draft = row.draft_json ? validateWorkbook(parse(row.draft_json), selected) : null;
     const prompt = draft ? JSON.stringify({ question: ctx.question, sources: selected, workbook: draft,
@@ -164,7 +169,7 @@ export async function POST(request: Request) {
     const freshCtx = await context(request, ctx.spaceId, ctx.trackId);
     if ("error" in freshCtx) throw new Error("workbook_context_changed");
     const freshSources = (await sources(freshCtx)).filter(s => ids.includes(s.id));
-    if (await workbookRevision(freshCtx.question, freshSources) !== row.source_revision) throw new Error("workbook_evidence_changed");
+    if (await workbookRevision(focusedWorkbookQuestion(freshCtx.question, workbookFocus(row.question)), freshSources) !== row.source_revision) throw new Error("workbook_evidence_changed");
     const guard = evidenceGuard(freshCtx, freshSources);
     const saved = await ctx.database.prepare(`UPDATE research_comparison_workbooks SET draft_json = ?, content_json = ?, review_json = ?, status = ?,
       lock_token = NULL, lease_until = 0, retry_at = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND lock_token = ? ${guard.sql}`)

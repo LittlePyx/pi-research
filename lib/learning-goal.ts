@@ -18,6 +18,7 @@ export function learningGoalPrompt(topic: string, goal: LearningGoal, background
   return `${topic}. ${outcome} Learning outcome: ${LEARNING_GOALS[goal].en}. ${background ? `Learner background and specific question: ${background}.` : ""} Adjust depth and checkpoints to this outcome. Do not assume the learner has mastered prerequisites. For an overview, emphasize definitions; for methods, distinguish abstract-level statements from proofs requiring original reading.`;
 }
 export type LearningPlanPreview = {
+  missingPreferred?: string[];
   id: string; target: string; trackId: string | null; goal: LearningGoal; background: string;
   candidateCount: number; materialCount: number; modelPlanned: boolean;
   steps: Array<{ kind: string; titleZh: string; titleEn: string; goalZh: string; goalEn: string;

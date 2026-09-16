@@ -552,7 +552,7 @@ function extractJson(value: string) {
   return JSON.parse(candidate);
 }
 
-async function buildDraft(database: D1Database, workspaceId: string, space: SpaceRow, target: string, context: Awaited<ReturnType<typeof contextForSpace>>, apiKey: string, objective?: { goal: LearningGoal; background: string }) {
+async function buildDraft(database: D1Database, workspaceId: string, space: SpaceRow, target: string, context: Awaited<ReturnType<typeof contextForSpace>>, apiKey: string, objective?: { goal: LearningGoal; background: string; preferredCanonicalIds?: string[] }) {
   if (!apiKey) throw new Error("DeepSeek Pro is not configured");
   const date = new Date().toISOString().slice(0, 10);
   const workspaceScope = "learning-path-workspace:" + workspaceId;
@@ -578,6 +578,8 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
       messages: [
         { role: "system", content: "You are Pi Research's curriculum architect. Build a compact bilingual path grounded only in supplied quality-approved paper IDs. Never invent papers or bibliographic facts. Every factual statement in titles, goals, explanations, reading focus and checkpoints must be supported by the assigned papers' available abstracts, not model memory or route summaries. If a stage lacks suitable evidence, leave resourceIds empty, describe a reading task without asserting results, and provide one safe ASCII scholarly search query without Boolean operators. Return JSON only." },
         { role: "user", content: JSON.stringify({
+          preferredPapers: (objective?.preferredCanonicalIds || []).filter(id => context.candidates.some(p => p.canonical_id.toLowerCase() === id.toLowerCase())),
+          preferenceRule: "Consider these exact user-selected papers first when eligible and suitable. Add prerequisites if needed; do not force assignments or substitute identity. Explain missing evidence with an empty stage.",
           learningOutcome: objective ? learningGoalPrompt(target, objective.goal, objective.background) : target,
           task: "Create exactly five ordered stages: foundation, method, milestone, frontier, project. Give each stage a specific subject in its English and Chinese title. Use 1-3 unique supplied IDs only when the paper directly supports that stage, not merely the broad research route. A paper may appear in only one stage. For EVERY assigned ID supply resourceEvidence[id]: {role:'primary',quote,reason}; quote 35-700 characters exactly from its title or abstractText and explain why it is primary evidence for this stage. Route labels, recency, citation counts and quality scores do not prove foundational or milestone status. A paper merely discussing a classic or citing a breakthrough cannot replace that original work. Leave unsuitable stages empty with a specific ASCII evidenceQuery naming the missing work, author, theorem or method. Never fill a quota. Read/mastered/cited work is prior knowledge. The final project stage must match the supplied learning outcome: an explanation exercise for overview, a source-linked comparison for core papers, a method reconstruction for methods, or a falsifiable question for research preparation. Include concise reading focus and a verifiable checkpoint.",
           outputSchema: { titleZh: "string", titleEn: "string", rationaleZh: "string", rationaleEn: "string", steps: [{ kind: "foundation|method|milestone|frontier|project", titleZh: "string", titleEn: "string", goalZh: "string", goalEn: "string", whyZh: "string", whyEn: "string", readFocusZh: "string", readFocusEn: "string", checkpointZh: "string", checkpointEn: "string", estimatedMinutes: 90, resourceIds: ["exact supplied id"], resourceEvidence: { "exact supplied id": { role: "primary", quote: "exact title or abstract excerpt", reason: "specific reason this paper supports the stage" } }, evidenceQuery: "specific safe ASCII query" }] },
@@ -909,7 +911,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({})) as { spaceId?: string; target?: string; trackId?: string | null; action?: string; pathId?: string; previewId?: string; goal?: string; background?: string };
+  const body = await request.json().catch(() => ({})) as { spaceId?: string; target?: string; trackId?: string | null; action?: string; pathId?: string; previewId?: string; goal?: string; background?: string; preferredCanonicalIds?: string[] };
   const spaceId = cleanText(body.spaceId, 100);
   let targetTrackId = cleanText(body.trackId, 100) || null;
   const owned = await ownedSpace(request, spaceId);
@@ -954,7 +956,7 @@ export async function POST(request: Request) {
   if (target.length < 2) return Response.json({ error: "Please provide a learning target" }, { status: 400 });
   const previous = await readPath(owned.database, spaceId);
   const sourceRevision = await sourceRevisionFor(context, targetTrackId);
-  const objective = preview ? { goal: learningGoal(preview.goal), background: preview.background } : { goal: learningGoal(body.goal || previous?.learningGoal), background: cleanText(body.background ?? previous?.learnerBackground, 1000) };
+  const objective = preview ? { goal: learningGoal(preview.goal), background: preview.background } : { goal: learningGoal(body.goal || previous?.learningGoal), background: cleanText(body.background ?? previous?.learnerBackground, 1000), preferredCanonicalIds: Array.isArray(body.preferredCanonicalIds) ? body.preferredCanonicalIds.filter(v=>typeof v === "string").slice(0,3).map(v=>v.slice(0,240)) : [] };
   if (body.action === "preview") {
     if (target.length < 4 || (objective.goal === "research" && objective.background.length < 12)) return Response.json({ error: "Describe a specific topic and, for research preparation, the question you want to answer." }, { status: 400 });
     let draft = evidenceSkeleton(targetTrackId ? context : { ...context, candidates: [] }, target);
@@ -971,6 +973,7 @@ export async function POST(request: Request) {
     const papers = new Map(context.candidates.map(p => [p.resource_id,p]));
     const result: LearningPlanPreview = { id, target, trackId:targetTrackId, ...objective, candidateCount:context.candidates.length,
       materialCount:new Set(draft.steps.flatMap(s => s.resourceIds)).size, modelPlanned:model === MODEL,
+      missingPreferred: (objective.preferredCanonicalIds || []).filter(id=>!context.candidates.some(p=>p.canonical_id.toLowerCase()===id.toLowerCase())),
       steps:draft.steps.map(step => {
         const assigned = step.resourceIds.flatMap(id => papers.has(id) ? [{id,title:papers.get(id)!.title}] : []);
         const safe = presentLearningStepGuidance({ ...step, resources: assigned, guidanceStatus: step.guidanceReview ? "grounded" : "reading-task" });

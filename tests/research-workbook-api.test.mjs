@@ -137,6 +137,18 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await request(path, null, 404); await post({ action: "advance", workbookId: state.id }, 404);
       cookie = "pi_anonymous_workspace=workbook-fixture-owner-00001";
     });
+    await t.test("graph question is carried into a separate comparison and survives independent review", async () => {
+      const question = "Which assumptions differ for my selected Gaussian research task?";
+      const graphDraft = (await post({action:"prepare",paperIds:workbookSources.map(s=>s.id),focusQuestion:question})).workbook;
+      assert.notEqual(graphDraft.id,state.id);
+      assert.equal(graphDraft.status,"verifying"); assert.equal(graphDraft.stale,false);
+      const graphReady = (await post({action:"advance",workbookId:graphDraft.id})).workbook;
+      assert.equal(graphReady.status,"ready"); assert.equal(graphReady.stale,false);
+      const saved=await sql([{sql:"SELECT question FROM research_comparison_workbooks WHERE id=?",values:[graphReady.id]}]);
+      assert.ok(saved[0].results[0].question.includes(question));
+      assert.equal((await request(path+"&workbookId="+encodeURIComponent(graphReady.id))).workbook.stale,false);
+      // Keep following the original route comparison in subsequent withdrawal checks.
+    });
     await t.test("source changes invalidate saved content and guard artifacts", async () => {
       await sql([{ sql: "UPDATE paper_insights SET abstract_text = abstract_text || ' Revised.' WHERE paper_id = ?", values: [workbookSources[0].id] }]);
       assert.equal((await request(path)).workbook.stale, true);

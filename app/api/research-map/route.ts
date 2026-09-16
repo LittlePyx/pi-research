@@ -1862,7 +1862,10 @@ async function rebuildPaperNetwork(
       if (scholarlyEdges.length) sources.push("semantic-scholar-cache");
     }
     await writePaperNetworkState(database, space.id, "building", totalPaperCount, sources, errors.join("; ").slice(0, 800) || null, coverage);
-    if (effectivePhase === "verified") return;
+    if (effectivePhase === "verified") {
+      await writePaperNetworkState(database, space.id, errors.length ? "partial" : "ready", totalPaperCount, sources, errors.join("; ").slice(0,800) || null, coverage);
+      return;
+    }
   } else if (state?.error && /citation:|semantic scholar|citation lookup/i.test(state.error)) {
     errors.push(state.error);
   }

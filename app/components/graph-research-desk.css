@@ -1,0 +1,41 @@
+.pi-graph-desk { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:24px 32px; padding:24px 20px; color:#253f4b; }
+.pi-graph-question { display:grid; gap:18px; }
+.pi-graph-question label { display:grid; gap:8px; font-size:1rem; line-height:1.6; font-weight:600; }
+.pi-graph-question select,.pi-graph-question textarea { width:100%; min-width:0; padding:11px 12px; border:1px solid #b8cad5; border-radius:4px; background:white; color:#253f4b; font:inherit; font-weight:400; box-sizing:border-box; }
+.pi-graph-question textarea { resize:vertical; }
+.pi-graph-desk button,.pi-graph-desk a { font-size:.875rem; line-height:1.5; }
+.pi-graph-desk button { padding:8px 12px; border:1px solid #beced8; color:#315b76; border-radius:4px; background:white; cursor:pointer; }
+.pi-graph-desk button.primary { background:#315b76; color:white; border-color:#315b76; }
+.pi-graph-desk button:disabled { opacity:.5; cursor:default; }
+.pi-graph-desk-actions,.pi-graph-selection>div { display:flex; flex-wrap:wrap; gap:10px; }
+.pi-graph-selection { padding:18px; border:1px solid #c4d4df; border-top:3px solid #315b76; border-radius:4px; background:#f2f6f9; align-self:start; font-size:.875rem; line-height:1.7; }
+.pi-graph-selection strong { font-size:1rem; }
+.pi-graph-selection ol { padding:0 0 0 20px; }
+.pi-graph-selection li { padding:8px 0; overflow-wrap:anywhere; }
+.pi-graph-selection li button { border:0; padding:0 6px; background:none; }
+.pi-graph-selection>div { margin-top:14px; }
+.pi-graph-results { grid-column:1 / -1; min-width:0; }
+.pi-graph-results>header { display:flex; align-items:baseline; justify-content:space-between; gap:16px; padding:12px 0; border-bottom:2px solid #315b76; }
+.pi-graph-results h3 { font-size:1.25rem; margin:0; }
+.pi-graph-result-note { font-size:.875rem; line-height:1.7; color:#526b7a; }
+.pi-graph-results>article { padding:24px 0; border-bottom:1px solid #d8e2e8; max-width:1050px; }
+.pi-graph-paper-head { display:flex; flex-wrap:wrap; gap:16px; justify-content:space-between; font-size:.875rem; line-height:1.6; color:#576e7c; }
+.pi-graph-paper-head label { display:flex; align-items:center; gap:7px; cursor:pointer; }
+.pi-graph-paper-head input { width:18px; height:18px; accent-color:#315b76; }
+.pi-graph-results h4 { font-size:1.1875rem; line-height:1.65; margin:10px 0 6px; overflow-wrap:anywhere; }
+.pi-graph-results .authors { font-size:.875rem; color:#576e7c; line-height:1.6; margin:0; }
+.pi-graph-relations { display:flex; flex-wrap:wrap; gap:8px 18px; padding:10px 0; color:#315b76; font-size:.875rem; }
+.pi-graph-fit { margin:10px 0; border-left:3px solid #89a9bf; padding-left:18px; max-width:85ch; font-size:1rem; line-height:1.8; }
+.pi-graph-fit p { margin:6px 0; }
+.pi-graph-fit blockquote { margin:12px 0; padding:12px 16px; background:#f2f6f9; font-size:1rem; line-height:1.8; overflow-wrap:anywhere; }
+.pi-graph-results details { margin:12px 0; font-size:1rem; line-height:1.8; max-width:85ch; }
+.pi-graph-results footer { display:flex; gap:20px; align-items:center; margin-top:10px; }
+.pi-graph-diagnostics,.pi-graph-secondary { margin:8px 20px 20px; border-top:1px solid #d8e2e8; padding:14px 0; }
+.pi-graph-diagnostics>summary,.pi-graph-secondary>summary { cursor:pointer; font-size:.9375rem; color:#4b6574; }
+.pi-graph-secondary .v2-paper-discovery-list { display:none; }
+.pi-graph-secondary .v2-paper-network-stage.discovery-mode { grid-template-columns:minmax(0,1fr); }
+.pi-graph-secondary .v2-paper-network-stage.discovery-mode.has-drawer { grid-template-columns:minmax(0,1fr) 320px; }
+.pi-graph-handoff { border-left:3px solid #315b76; padding:12px 18px; margin:12px 0; background:#f1f6f9; font-size:1rem; line-height:1.75; }
+.pi-graph-handoff ul { padding-left:20px; }
+.pi-graph-desk :focus-visible { outline:2px solid #315b76; outline-offset:3px; }
+@media(max-width:900px) { .pi-graph-desk { grid-template-columns:minmax(0,1fr);padding:18px 12px;gap:20px; } .pi-graph-selection { width:auto; } .pi-graph-secondary .v2-paper-network-stage.discovery-mode.has-drawer { grid-template-columns:minmax(0,1fr); } }
