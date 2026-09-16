@@ -413,7 +413,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /当前优先事项/);
   assert.match(client, /历史奠基文献/);
   assert.match(client, /monitorPaperHorizonLabel/);
-  assert.match(client, /篇候选正在质量评估/);
+  assert.match(client, /<QualityReviewStatus monitor=\{monitor\}/);
   assert.match(css, /traceable route discovery and quality-review handoff/);
   assert.match(css, /\.v2-route-quality-flow/);
   assert.match(worker, /runScheduledMonitorSweep/);

@@ -14,7 +14,7 @@ test("primary pages use progressive disclosure instead of repeating internal pro
 
   assert.doesNotMatch(app, /<section className="v2-library-overview"/);
   assert.match(app, /SHOW_INTERNAL_QUALITY_UI && monitor\?\.queryPlan/);
-  assert.match(app, /v2-background-review-status/);
+  assert.match(app, /<QualityReviewStatus monitor=\{monitor\}/);
   assert.doesNotMatch(routeCards, /RoutePipelineFunnel|RouteLearningNote|v2-route-review-policy|<label><span>\{locale === "zh" \? "定位"/);
   assert.doesNotMatch(decisionPanel, /v2-research-decision-funnel|证据发生了什么变化/);
   assert.doesNotMatch(app, /<details className="v2-learning-guidance">/);

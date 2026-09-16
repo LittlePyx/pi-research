@@ -1,5 +1,7 @@
 "use client";
 
+import { QualityReviewStatus } from "./components/quality-review-status";
+
 import { FormEvent, type ReactNode, useEffect, useCallback, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { MathText } from "./components/math-text";
@@ -429,6 +431,7 @@ type MonitorState = {
   horizons: string[];
   preferences?: MonitorPreferences;
   papers: MonitorPaper[];
+  qualityQueue?: { pendingCount: number; verificationCount: number; retryCount: number; awaitingAbstractCount: number; abstractRetryAt: number | null; observedAt: string } | null;
   savedCandidatePapers?: MonitorPaper[];
   historyPapers?: MonitorPaper[];
   historyCounts?: { all: number; inbox: number; unseen: number; seen: number; snoozed: number; accepted: number; saved: number; dismissed: number; reading?: Record<string, number> };
@@ -5885,7 +5888,12 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
             </section>}
 
-            {Boolean(monitor?.savedCandidatePapers?.length) && <section className="v2-background-review-status" role="status"><i /><div><strong>{monitor?.savedCandidatePapers?.length || 0} {locale === "zh" ? "篇候选正在质量评估" : "candidates in quality review"}</strong><small>{locale === "zh" ? "通过后会自动进入今日；现在无需处理。" : "Passing papers enter Today automatically; no action is needed now."}</small></div></section>}
+            {Boolean(additionalTodayPapers.length) && <details className="v2-today-more v2-today-more-compact">
+              <summary><span><strong>{locale === "zh" ? "备选阅读" : "Further reading"}</strong><small>{locale === "zh" ? "已通过全部评审，可直接阅读" : "Passed all review gates; ready to read"}</small><span className="v2-more-preview">{additionalTodayPapers.slice(0, 2).map((paper) => <span key={paper.id}><MathText>{paper.title}</MathText></span>)}</span></span><b><span className="v2-more-expand">{locale === "zh" ? `展开 ${additionalTodayPapers.length} 篇` : `Show ${additionalTodayPapers.length} papers`} ↓</span><span className="v2-more-collapse">{locale === "zh" ? "收起列表" : "Collapse list"} ↑</span></b></summary>
+              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong><MathText>{paper.title}</MathText></strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
+            </details>}
+
+            <QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} />
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
               <summary><span><p className="v2-kicker">7D {locale === "zh" ? "阶段研究回顾" : "RESEARCH REVIEW"}</p><strong>{locale === "zh" ? monitor.weeklyReview.titleZh : monitor.weeklyReview.titleEn}</strong><small>{locale === "zh" ? `来自 ${monitor.weeklyReview.sourceDays} 天真实记录` : `Based on ${monitor.weeklyReview.sourceDays} days of real activity`}</small></span><b>＋</b></summary>
@@ -6006,10 +6014,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
             {!!monitor?.mapChanges?.length && <details className="v2-route-changes v2-route-changes-compact"><summary><span><strong>{locale === "zh" ? "研究路线变化" : "Research route changes"}</strong><small>{monitor.mapChanges.length} {locale === "zh" ? "项更新" : "updates"}</small></span><b>＋</b></summary><div>{monitor.mapChanges.slice(0, 3).map((change) => { const kind = routeChangeKindLabel(change.kind); return <article key={change.id}><InterfaceIcon name={kind.symbol} /><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {locale === "zh" ? kind.zh : kind.en}{change.kind === "new_evidence" ? ` · ${change.confidence}%` : ""}</small><h3>{change.kind === "new_evidence" ? change.paperTitle : locale === "zh" ? change.titleZh : change.titleEn}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>; })}</div><footer><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "查看研究路线" : "Open research routes"} →</button></footer></details>}
 
-            {Boolean(additionalTodayPapers.length) && <details className="v2-today-more v2-today-more-compact">
-              <summary><span><strong>{locale === "zh" ? "备选阅读" : "Further reading"}</strong><small>{locale === "zh" ? "已通过筛选，未列入今日主序" : "Passed review, outside today's primary order"}</small></span><b>{additionalTodayPapers.length} {locale === "zh" ? "篇" : "papers"} ＋</b></summary>
-              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong><MathText>{paper.title}</MathText></strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
-            </details>}
+
 
           </main>
         )}

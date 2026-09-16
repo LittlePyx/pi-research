@@ -5114,9 +5114,7 @@ button:disabled { cursor: not-allowed; }
 }
 
 /* Pi Research V150 — quieter working surfaces and visible evidence-gap progress */
-.v2-background-review-status { margin-top: 14px; padding: 12px 15px; border: 1px solid #d5dfd8; border-radius: 10px; background: #f6f9f6; display: flex; align-items: center; gap: 11px; }
-.v2-background-review-status > i { width: 8px; height: 8px; border-radius: 50%; background: #658772; box-shadow: 0 0 0 4px rgba(101,135,114,.12); flex: none; }
-.v2-background-review-status strong,.v2-background-review-status small { display: block; }
+
 .v2-background-review-status strong { color: #425a4d; font-size: 11px; }
 .v2-background-review-status small { margin-top: 2px; color: #7a867f; font-size: 9px; }
 
@@ -5444,3 +5442,34 @@ button:disabled { cursor: not-allowed; }
 .pi-learning-browse-note { font-size: .875rem; color: #4d5e66; }
 .pi-learning-browse-note button { margin-left: 12px; background: none; border: 0; text-decoration: underline; color: #315b76; font: inherit; cursor: pointer; }
 @media(max-width: 600px) { .pi-learning-stage-nav > button { grid-template-columns: 1.5rem minmax(0,1fr); } .pi-learning-stage-nav em { grid-column: 2; } }
+
+/* Approved reading stays visible; pending work has its own factual status. */
+.v2-today-more-compact { margin: 24px 0; border-radius: 4px; border-left: 3px solid #426656; background: #fff; }
+.v2-today-more-compact > summary { padding: 20px 24px; align-items: flex-start; }
+.v2-today-more-compact > summary > span { min-width: 0; }
+.v2-today-more-compact > summary strong { font: 600 18px/1.4 var(--font-sans, sans-serif); color: #2d4439; }
+.v2-today-more-compact > summary small { font-size: 13px; color: #58665f; margin-top: 5px; }
+.v2-today-more-compact > summary > b { padding: 9px 13px; border: 1px solid #738c7d; color: #315742; border-radius: 3px; font-size: 13px; }
+.v2-more-preview { display: grid; gap: 5px; margin-top: 14px; color: #39463f; font: 15px/1.5 Georgia, serif; }
+.v2-more-preview > span { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.v2-more-collapse, .v2-today-more-compact[open] .v2-more-expand, .v2-today-more-compact[open] .v2-more-preview { display: none; }
+.v2-today-more-compact[open] .v2-more-collapse { display: inline; }
+.v2-today-more-compact > summary:focus-visible { outline: 2px solid #315742; outline-offset: 3px; }
+.v2-background-review-status { margin: 24px 0; padding: 20px 24px; border: 1px solid #d8dfdc; border-radius: 4px; background: #f6f8f6; }
+.v2-background-review-status header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.v2-background-review-status h2 { margin: 0; font: 600 16px/1.5 var(--font-sans, sans-serif); color: #364d40; }
+.v2-background-review-status header > span { font-size: 13px; color: #4e6356; }
+.v2-background-review-status p, .v2-background-review-status li { font-size: 13px; line-height: 1.8; color: #58655d; }
+.v2-background-review-status p { margin: 8px 0; }
+.v2-review-stages { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 14px 0; font-size: 13px; color: #566159; }
+.v2-review-stages b { margin-left: 5px; color: #283e31; font-variant-numeric: tabular-nums; }
+.v2-background-review-status details { border-top: 1px solid #d8dfdc; padding-top: 12px; margin-top: 14px; }
+.v2-background-review-status summary { cursor: pointer; font-size: 13px; color: #345943; }
+.v2-background-review-status ol { padding-left: 22px; margin-bottom: 0; }
+.v2-background-review-status.overdue, .v2-background-review-status.unscheduled, .v2-background-review-status.retry { border-left: 3px solid #9a7145; }
+@media (max-width: 640px) {
+  .v2-today-more-compact > summary { padding: 16px; flex-wrap: wrap; gap: 12px; }
+  .v2-today-more-compact > summary > span { flex-basis: 100%; }
+  .v2-more-preview > span { -webkit-line-clamp: 2; }
+  .v2-background-review-status { padding: 16px; }
+}

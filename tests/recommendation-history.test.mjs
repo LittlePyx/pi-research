@@ -57,9 +57,9 @@ test("durable recommendation history protects prior results and keeps saved veri
   assert.match(route, /if \(!value\) return 0/);
   assert.match(route, /databaseTime\(right\.last_recommended_at\) - databaseTime\(left\.last_recommended_at\)/);
   assert.match(route, /\(paper\) => paper\.horizon,\s*6,\s*1,/);
-  assert.match(app, /v2-background-review-status/);
-  assert.match(app, /通过后会自动进入今日；现在无需处理/);
-  const reviewStatus = app.slice(app.indexOf("monitor?.savedCandidatePapers?.length"), app.indexOf("monitor?.weeklyReview"));
+  assert.match(app, /<QualityReviewStatus monitor=\{monitor\}/);
+  assert.doesNotMatch(app, /通过后会自动进入今日；现在无需处理/);
+  const reviewStatus = app.slice(app.indexOf("<QualityReviewStatus monitor="), app.indexOf("monitor?.weeklyReview"));
   assert.doesNotMatch(reviewStatus, /savedCandidatePapers\.map|积压候选复评/);
   assert.match(app, /timeValue\(second\.recommendedAt\) - timeValue\(first\.recommendedAt\)/);
 });

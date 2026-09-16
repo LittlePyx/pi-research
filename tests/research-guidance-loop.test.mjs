@@ -76,7 +76,7 @@ test("the interface explains the research-route and daily-discovery loop", async
   assert.match(app, /研究线索驱动的今日检索/);
   assert.match(app, /SHOW_INTERNAL_QUALITY_UI && monitor\?\.queryPlan/);
   assert.match(app, /ResearchGapDiscoveryStatus/);
-  assert.match(app, /篇候选正在质量评估/);
+  assert.match(app, /<QualityReviewStatus monitor=\{monitor\}/);
   assert.match(app, /discoveryOrigin/);
   assert.match(app, /RouteDiscoveryBadge/);
   assert.match(app, /result\.routeEvidence\?\.changed/);

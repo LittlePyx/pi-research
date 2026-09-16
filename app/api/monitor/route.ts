@@ -1,3 +1,4 @@
+import { pendingQualityCandidateCondition, qualityQueueCountsSql } from "../../../lib/monitor-quality-status-sql.mjs";
 import { ABSTRACT_BLOCK_REASON, recoverPaperAbstract } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
@@ -4295,25 +4296,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
   const explicitlyRestricted = canonicalIds !== undefined;
   const candidateCondition = explicitlyRestricted
     ? restrictedIds.length ? `p.canonical_id IN (${restrictedIds.map(() => "?").join(", ")})` : "0 = 1"
-    : `(i.analysis_model = ''
-       OR (i.analysis_source = 'deepseek_rejected' AND instr(i.screening_reason, 'Abstract evidence unavailable after bounded enrichment') > 0
-         AND NOT EXISTS (SELECT 1 FROM paper_abstract_recovery ar WHERE ar.paper_id=p.id AND (ar.retry_at > unixepoch()*1000 OR ar.lease_until > unixepoch()*1000)))
-       OR i.analysis_source = 'deepseek_screened'
-       OR i.analysis_source = 'deepseek_verification_pending'
-       OR (i.analysis_source = 'deepseek_rejected' AND i.verification_status = 'degraded'
-         AND (lower(i.screening_reason) LIKE '%timeout%' OR lower(i.screening_reason) LIKE '%aborted%'
-           OR lower(i.screening_reason) LIKE '%temporarily unavailable%'))
-       OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime('now', '-90 days'))
-       OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime(?)
-         AND i.llm_relevance_score >= 45 AND i.quality_score >= 48)
-       OR (i.analysis_source = 'deepseek_rejected' AND datetime(i.updated_at) < datetime(?) AND (
-         (i.llm_relevance_score <= 1 AND (
-           lower(i.screening_reason) LIKE '%directly relevant%' OR lower(i.screening_reason) LIKE '%direct fit%'
-           OR lower(i.screening_reason) LIKE '%moderate relevance%' OR lower(i.screening_reason) LIKE '%directly addresses%'
-           OR i.screening_reason LIKE '%直接相关%' OR i.screening_reason LIKE '%高度相关%'
-         ))
-         OR (length(trim(i.abstract_text)) = 0 AND lower(i.screening_reason) LIKE '%abstract missing%')
-       )))`;
+    : pendingQualityCandidateCondition;
   const candidateParameters = explicitlyRestricted ? restrictedIds : [MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT];
   // A frozen in-flight queue must keep a paper addressable after it becomes
   // recommended; final reconciliation and job counts still need that record.
@@ -4908,7 +4891,10 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}, focusPaperId: string | null = null) {
   const preference = await ensurePreference(database, space);
-  const [run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
+  const [qualityQueue, run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
+    database.prepare(qualityQueueCountsSql(activeResearchRouteSupplyPredicate("p")))
+      .bind(MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT, space.id)
+      .first<{ pendingCount: number; verificationCount: number; retryCount: number; awaitingAbstractCount: number; abstractRetryAt: number | null }>(),
     database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, active_job_id, lease_generation, lock_expires_at, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
       .bind(space.id).first<RunRow>(),
     database.prepare(
@@ -5590,6 +5576,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     .slice(0, 12);
   return {
     monitor: {
+      qualityQueue: qualityQueue ? { ...qualityQueue, observedAt: new Date(now).toISOString() } : null,
       status: run?.status || "idle",
       lastRunAt: run?.last_run_at || null,
       nextRunAt: run?.next_run_at || null,

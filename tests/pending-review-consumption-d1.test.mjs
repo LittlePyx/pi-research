@@ -6,6 +6,7 @@ import { Miniflare } from 'miniflare';
 import { enqueueMonitorCandidates } from '../lib/monitor-candidate-queue.ts';
 import { activeResearchRouteSupplyPredicate } from '../lib/research-map-curation.ts';
 import { parseResearchRouteExperimentQueryKey } from '../lib/research-route-experiment.ts';
+import { pendingQualityCandidateCondition, qualityQueueCountsSql } from '../lib/monitor-quality-status-sql.mjs';
 
 test('the actual monitor reader reloads enriched evidence for frozen jobs in both fixture spaces', { timeout: 30000 }, async () => {
   const source = await readFile(new URL('../app/api/monitor/route.ts', import.meta.url), 'utf8');
@@ -24,8 +25,8 @@ test('the actual monitor reader reloads enriched evidence for frozen jobs in bot
   const compiled = ts.transpileModule([...declarations, reader.getText(ast)].join('\n'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
   }).outputText;
-  const pendingCandidateQueue = new Function('activeResearchRouteSupplyPredicate', 'parseResearchRouteExperimentQueryKey',
-    `${compiled}\nreturn pendingCandidateQueue;`)(activeResearchRouteSupplyPredicate, parseResearchRouteExperimentQueryKey);
+  const pendingCandidateQueue = new Function('activeResearchRouteSupplyPredicate', 'parseResearchRouteExperimentQueryKey', 'pendingQualityCandidateCondition',
+    `${compiled}\nreturn pendingCandidateQueue;`)(activeResearchRouteSupplyPredicate, parseResearchRouteExperimentQueryKey, pendingQualityCandidateCondition);
   const repository = await readFile(new URL('../db/repository.ts', import.meta.url), 'utf8');
   const tables = ['research_spaces', 'research_tracks', 'research_track_papers', 'monitored_papers', 'paper_insights',
     'paper_abstract_recovery', 'monitor_candidate_sources', 'monitor_discovery_coverage', 'monitor_runs', 'paper_feedback'];
@@ -47,6 +48,10 @@ test('the actual monitor reader reloads enriched evidence for frozen jobs in bot
       const frozen = structuredClone(queued.canonicalIds);
       const { id } = await db.prepare('SELECT id FROM monitored_papers WHERE space_id=?').bind(space).first();
       await db.prepare("UPDATE paper_insights SET analysis_source=?,analysis_model='fixture-model' WHERE paper_id=?").bind(status, id).run();
+      const counts = await db.prepare(qualityQueueCountsSql(activeResearchRouteSupplyPredicate('p')))
+        .bind('2026-08-19', '2026-08-19', space).first();
+      assert.equal(counts.pendingCount, 1);
+      assert.equal(counts.verificationCount, status === 'deepseek_verification_pending' ? 1 : 0);
       assert.equal((await pendingCandidateQueue(db, space, frozen))[0].abstractText, '');
       const fresh = `New structured abstract for ${space}; QA evidence only, not a real recommendation.`;
       await enqueueMonitorCandidates(db, space, [{ ...candidate, abstractText: fresh,
@@ -63,6 +68,8 @@ test('the actual monitor reader reloads enriched evidence for frozen jobs in bot
       assert.deepEqual(await pendingCandidateQueue(db, space, []), []);
       assert.deepEqual(frozen, queued.canonicalIds, 'no replacement task or identity mutation required');
       await db.prepare('UPDATE paper_insights SET ever_recommended=1 WHERE paper_id=?').bind(id).run();
+      assert.equal((await db.prepare(qualityQueueCountsSql(activeResearchRouteSupplyPredicate('p')))
+        .bind('2026-08-19', '2026-08-19', space).first()).pendingCount, 0);
       assert.deepEqual(await pendingCandidateQueue(db, space), [], 'past recommendation is not fresh queue work');
       assert.equal((await pendingCandidateQueue(db, space, frozen))[0].abstractText, fresh, 'same-job reconciliation remains addressable');
       await db.prepare("INSERT INTO paper_feedback (id,space_id,paper_id,feedback) VALUES (?, ?, ?, 'not_relevant')").bind(space, space, id).run();
