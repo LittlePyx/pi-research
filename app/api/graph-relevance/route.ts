@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   if (!key) return Response.json({error:'Connect the model first'},{status:428});
   const call=async (prompt:string,input:unknown) => {
     const response=await fetch('https://api.deepseek.com/chat/completions',{method:'POST',signal:AbortSignal.timeout(55000),headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},
-      body:JSON.stringify({model:'deepseek-v4-pro',response_format:{type:'json_object'},max_tokens:6500,messages:[{role:'system',content:prompt},{role:'user',content:JSON.stringify(input)}]})});
+      body:JSON.stringify({model:'deepseek-flash',response_format:{type:'json_object'},max_tokens:6500,messages:[{role:'system',content:prompt},{role:'user',content:JSON.stringify(input)}]})});
     if(!response.ok) throw new Error('model_unavailable');
     const data=await response.json() as {choices?:{finish_reason?:string;message?:{content?:string}}[];usage?:{prompt_tokens?:number;completion_tokens?:number}};
     await database.prepare(`INSERT INTO ai_usage_daily (id,scope,usage_date,request_count,input_tokens,output_tokens) VALUES (?,?,?,1,?,?) ON CONFLICT(scope,usage_date) DO UPDATE SET request_count=request_count+1,input_tokens=input_tokens+excluded.input_tokens,output_tokens=output_tokens+excluded.output_tokens,updated_at=CURRENT_TIMESTAMP`)

@@ -10,7 +10,7 @@ test('graph question review checks ownership, independent rejection and changed 
   const quote='The construction in this isolated fixture assumes a positive definite covariance matrix throughout.';
   const mf=new Miniflare({cf:false,d1Databases:['DB'],compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],bindings:{DEEPSEEK_API_KEY:'sk-isolated-fixture-not-real'},modulesRoot:root,
     modules:[{type:'ESModule',path:root+'graph-fixture.js',contents:`import app from './index.js';export default{async fetch(r,e,c){if(new URL(r.url).pathname==='/fixture')return Response.json(await e.DB.batch((await r.json()).map(x=>e.DB.prepare(x.sql).bind(...(x.values||[])))));return app.fetch(r,e,c)}}`},...modules],
-    outboundService:async req=>{calls++;const body=await req.json();const input=JSON.parse(body.messages[1].content);assert.equal(input.question,'Which covariance assumptions are required?');
+    outboundService:async req=>{calls++;const body=await req.json();assert.equal(body.model,'deepseek-flash');const input=JSON.parse(body.messages[1].content);assert.equal(input.question,'Which covariance assumptions are required?');
       const audit=body.messages[0].content.startsWith('Independently');if(audit)await beforeReview();
       const result=audit?{checks:[{canonicalId:'doi:fixture',supported:!reject}]}:{assessments:[{canonicalId:'doi:fixture',relevance:'direct',quote,reasonZh:'隔离测试需要正定条件。',reasonEn:'The fixture requires positive definiteness.',limitationZh:'未核对全文。',limitationEn:'Full text not checked.'}]};
       return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(result)}}],usage:{prompt_tokens:1,completion_tokens:1}});

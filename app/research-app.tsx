@@ -622,7 +622,7 @@ const copy = {
     reviewed: "Pi 正在监控三个研究时间层级",
     matched: "每个空间超过 24 小时后，会在你首次打开时自动扫描。",
     attention: "篇为本轮新发现",
-    briefTime: "主题、重点期刊与学术图谱共同发现；DeepSeek Pro 负责筛选与撰写",
+    briefTime: "主题、重点期刊与学术图谱共同发现；DeepSeek 负责筛选与撰写",
     mustRead: "必须读",
     worthReading: "值得读",
     whyYou: "为什么与你有关",
@@ -728,8 +728,8 @@ const copy = {
     feedbackSaved: "已写入当前研究空间的记忆",
     profile: "工作区与设置",
     signOut: "退出",
-    liveMonitor: "DeepSeek Pro 审核后的真实论文",
-    monitorIntro: "主题、重点期刊、arXiv、OpenAlex、Semantic Scholar 与引用网络共同补充候选，DeepSeek Pro 按研究空间逐篇判断并撰写论文介绍和适读理由。",
+    liveMonitor: "DeepSeek 审核后的真实论文",
+    monitorIntro: "主题、重点期刊、arXiv、OpenAlex、Semantic Scholar 与引用网络共同补充候选，DeepSeek 按研究空间逐篇判断并撰写论文介绍和适读理由。",
     daysHorizon: "近 14 天",
     monthsHorizon: "近 6 个月",
     yearsHorizon: "近 5 年",
@@ -748,7 +748,7 @@ const copy = {
     knownPapers: "篇已去重记录",
     scannedPapers: "条入选候选",
     dedupeNote: "按 DOI 或标题指纹去重；新候选才会消耗完整评审 token。已通过的论文复用原有解读，未处理时按 1、3、14 天节奏再次提醒；被淘汰的候选仅在规则变化或满 90 天后重新审核。",
-    noLivePapers: "当前没有通过 DeepSeek Pro 严格评审的论文，Pi 不会用不相关结果填满列表。",
+    noLivePapers: "当前没有通过 DeepSeek 严格评审的论文，Pi 不会用不相关结果填满列表。",
     manualCooling: "手动扫描一小时内只执行一次，已返回缓存结果。",
     prioritySources: "重点期刊与会议",
     editSources: "设置重点来源",
@@ -765,7 +765,7 @@ const copy = {
     introLabel: "论文介绍",
     whySuitable: "为什么适合读",
     priorityVenueLabel: "重点来源",
-    aiBrief: "DeepSeek Pro 评审",
+    aiBrief: "DeepSeek 评审",
     metadataBrief: "等待模型评审",
     openOriginal: "打开原文",
     citations: "引用",
@@ -795,12 +795,12 @@ const copy = {
     importIntro: "让 Pi 从聊天记录、已发表论文和公开项目材料中提取真实关注、知识基础、未解问题，并扩展可继续研究的方向。",
     importSafetyTitle: "上传前请确认资料可以公开处理",
     importSafetyBody: "不要上传未发表稿件、投稿或审稿材料、未公开项目书、内部资料、专利前材料、个人隐私或任何涉密内容。",
-    importSafetyProcess: "文件仅在本次分析中提取文本并发送给 DeepSeek Pro；Pi 不保存原文件或原始正文。生成的画像草稿会暂存，放弃即删除，确认后才用于推荐。",
+    importSafetyProcess: "文件仅在本次分析中提取文本并发送给 DeepSeek；Pi 不保存原文件或原始正文。生成的画像草稿会暂存，放弃即删除，确认后才用于推荐。",
     singleFile: "选择单个或多个文件",
     folderUpload: "选择文件夹",
     pasteConversation: "也可以粘贴聊天记录",
     analyzeMaterials: "生成研究画像草稿",
-    analyzingMaterials: "DeepSeek Pro 正在分析资料",
+    analyzingMaterials: "DeepSeek 正在分析资料",
     confirmPublic: "我确认所选资料已经公开、可合法处理，不含未发表或涉密内容。",
     importDraftTitle: "研究画像草稿",
     importDraftNote: "这是 AI 推断，尚未影响推荐。请检查、修改或删除不准确的内容，再确认写入。",
@@ -844,7 +844,7 @@ const copy = {
     reviewed: "Pi monitors three research horizons",
     matched: "Each space scans on its first visit after the 24-hour window expires.",
     attention: "new in this scan",
-    briefTime: "Topics, priority journals, and academic graphs discover candidates; DeepSeek Pro screens and writes every recommendation",
+    briefTime: "Topics, priority journals, and academic graphs discover candidates; DeepSeek screens and writes every recommendation",
     mustRead: "Must read",
     worthReading: "Worth reading",
     whyYou: "Why it matters to you",
@@ -950,8 +950,8 @@ const copy = {
     feedbackSaved: "Saved to this research space's memory",
     profile: "Workspace & settings",
     signOut: "Sign out",
-    liveMonitor: "Real papers approved by DeepSeek Pro",
-    monitorIntro: "Topics, priority journals, arXiv, OpenAlex, Semantic Scholar, and citation frontiers supply candidates; DeepSeek Pro judges each one against this research space and writes the briefing.",
+    liveMonitor: "Real papers approved by DeepSeek",
+    monitorIntro: "Topics, priority journals, arXiv, OpenAlex, Semantic Scholar, and citation frontiers supply candidates; DeepSeek judges each one against this research space and writes the briefing.",
     daysHorizon: "Past 14 days",
     monthsHorizon: "Past 6 months",
     yearsHorizon: "Past 5 years",
@@ -970,7 +970,7 @@ const copy = {
     knownPapers: "deduplicated papers",
     scannedPapers: "shortlisted candidates",
     dedupeNote: "Deduplicated by DOI or title fingerprint. Only new candidates consume a full review. Approved papers reuse their existing brief and resurface after 1, 3, then 14 days while unresolved; rejected candidates are reconsidered only after rules change or 90 days.",
-    noLivePapers: "No paper passed DeepSeek Pro's strict review in this scan; Pi will not fill the list with weak matches.",
+    noLivePapers: "No paper passed DeepSeek's strict review in this scan; Pi will not fill the list with weak matches.",
     manualCooling: "Manual scans run at most once per hour; cached results were returned.",
     prioritySources: "Priority journals & conferences",
     editSources: "Set priority sources",
@@ -987,7 +987,7 @@ const copy = {
     introLabel: "Paper introduction",
     whySuitable: "Why it is worth reading",
     priorityVenueLabel: "Priority venue",
-    aiBrief: "DeepSeek Pro review",
+    aiBrief: "DeepSeek review",
     metadataBrief: "Awaiting AI review",
     openOriginal: "Open original",
     citations: "Citations",
@@ -1017,12 +1017,12 @@ const copy = {
     importIntro: "Let Pi infer real interests, knowledge, unresolved questions, and promising adjacent directions from chats, published papers, and public project materials.",
     importSafetyTitle: "Confirm these materials are safe for external processing",
     importSafetyBody: "Do not upload unpublished manuscripts, submissions, reviewer material, non-public proposals, internal documents, pre-patent material, personal data, or anything confidential.",
-    importSafetyProcess: "Text is extracted for this analysis and sent to DeepSeek Pro. Pi stores neither original files nor raw text. The profile draft is held until you discard or confirm it, and affects recommendations only after confirmation.",
+    importSafetyProcess: "Text is extracted for this analysis and sent to DeepSeek. Pi stores neither original files nor raw text. The profile draft is held until you discard or confirm it, and affects recommendations only after confirmation.",
     singleFile: "Choose files",
     folderUpload: "Choose folder",
     pasteConversation: "Or paste conversation text",
     analyzeMaterials: "Generate profile draft",
-    analyzingMaterials: "DeepSeek Pro is analyzing the materials",
+    analyzingMaterials: "DeepSeek is analyzing the materials",
     confirmPublic: "I confirm these materials are public, lawful to process, and contain nothing unpublished or confidential.",
     importDraftTitle: "Research profile draft",
     importDraftNote: "This is an AI inference and does not affect recommendations yet. Review, edit, or remove inaccurate items before confirming.",
@@ -1724,9 +1724,9 @@ function monitorPhaseLabel(status: MonitorStatus | undefined, locale: Locale) {
     discovering_months: { zh: "正在检索近 6 个月的高质量论文", en: "Searching the latest 6 months" },
     discovering_years: { zh: "正在回溯近 5 年的重要论文", en: "Reviewing the last 5 years" },
     deduplicating: { zh: "正在去重并排除已评审记录", en: "Deduplicating previously reviewed records" },
-    screening: { zh: "DeepSeek Pro 正在快速筛选候选", en: "DeepSeek Pro is triaging candidates" },
+    screening: { zh: "DeepSeek 正在快速筛选候选", en: "DeepSeek is triaging candidates" },
     deep_reviewing: { zh: "高潜力论文正在并行深度解读", en: "High-potential papers are being interpreted in parallel" },
-    reviewing: { zh: "DeepSeek Pro 正在逐篇筛选并撰写", en: "DeepSeek Pro is screening and writing each brief" },
+    reviewing: { zh: "DeepSeek 正在逐篇筛选并撰写", en: "DeepSeek is screening and writing each brief" },
     saving: { zh: "正在保存推荐与淘汰记录", en: "Saving recommendations and rejected records" },
     briefing: { zh: "Pi 正在生成今日研究简报", en: "Pi is writing today's research brief" },
     ready: { zh: "扫描完成", en: "Scan complete" },
@@ -1929,6 +1929,7 @@ async function advanceMonitorPipeline(
 }
 
 function modelDisplayName(model: string | null | undefined) {
+  if (model === "deepseek-flash") return "DeepSeek V4.1 Flash";
   if (model === "deepseek-v4-pro") return "DeepSeek V4 Pro";
   if (model === "evidence-summary") return "Evidence-first";
   return model || "DeepSeek";
@@ -3235,7 +3236,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const [mapBuildTrackId, setMapBuildTrackId] = useState<string | null>(null);
   const [, setMapBuildErrors] = useState<Record<string, boolean>>({});
   const [mapIntelligenceTrackId, setMapIntelligenceTrackId] = useState<string | null>(null);
-  const [learningState, setLearningState] = useState<LearningPathState>({ path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-v4-pro" });
+  const [learningState, setLearningState] = useState<LearningPathState>({ path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-flash" });
   const [learningMonitorWake, setLearningMonitorWake] = useState(0);
   const [learningTarget, setLearningTarget] = useState("");
   const [learningPlannerOpen, setLearningPlannerOpen] = useState(false);
@@ -3317,7 +3318,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const activeLearningReady = learningLoadedSpaceId === activeSpace.id;
   const activeLearningState: LearningPathState = activeLearningReady
     ? learningState
-    : { path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-v4-pro" };
+    : { path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-flash" };
   const activeLearningLoading = learningLoading || (activeSpaceSupportsLearning && !activeLearningReady);
   const activeLearningError = activeLearningReady ? learningError : "";
   const activeLearningTargetTrack = learningTargetTrackId ? researchMap.tracks.find((track) => track.id === learningTargetTrackId) || null : null;
@@ -4097,11 +4098,11 @@ export default function ResearchApp({ user }: { user: User }) {
     const stale = researchMap.paperNetwork.paperRevision
       ? researchMap.paperNetwork.builtPaperRevision !== researchMap.paperNetwork.paperRevision
       : researchMap.paperNetwork.builtPaperCount < researchMap.paperNetwork.paperCount;
-    const outdated = researchMap.paperNetwork.model !== "deepseek-v4-pro+coupling-v2";
+    const outdated = researchMap.paperNetwork.model !== "deepseek-flash+coupling-v2";
     if (researchMapMode !== "papers" || researchMap.paperNetwork.paperCount < 2
       || paperNetworkLoading || (!stale && !outdated && !["idle", "building"].includes(researchMap.paperNetwork.status))) return;
     const spaceId = activeSpace.id;
-    const attemptKey = `${spaceId}:${researchMap.paperNetwork.paperRevision || researchMap.paperNetwork.paperCount}:deepseek-v4-pro+coupling-v2`;
+    const attemptKey = `${spaceId}:${researchMap.paperNetwork.paperRevision || researchMap.paperNetwork.paperCount}:deepseek-flash+coupling-v2`;
     if (paperNetworkAutoAttemptRef.current.has(attemptKey)) return;
     paperNetworkAutoAttemptRef.current.add(attemptKey);
     const resumePi = false;
@@ -4249,7 +4250,7 @@ export default function ResearchApp({ user }: { user: User }) {
         })
         .catch(() => {
           if (cancelled) return;
-          setLearningState({ path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-v4-pro" });
+          setLearningState({ path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-flash" });
           const pendingIntent = learningIntentRef.current;
           if (pendingIntent?.spaceId === activeSpace.id) {
             setLearningTarget(pendingIntent.target);
@@ -4485,7 +4486,7 @@ export default function ResearchApp({ user }: { user: User }) {
     setPaperNetworkTrackId("all");
     setPaperNetworkOriginCanonicalIds([]);
     setDirectionOverviewId(null);
-    setLearningState({ path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-v4-pro" });
+    setLearningState({ path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-flash" });
     setLearningTarget("");
     setLearningTargetTrackId(null);
     setLearningScopeDirty(false);
@@ -5157,7 +5158,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const refreshPaperNetwork = async (refreshMode: "all" | "verified" | "pi" = "verified") => {
     if (paperNetworkLoading || researchMap.paperNetwork.paperCount < 2) return;
     const spaceId = activeSpace.id;
-    paperNetworkAutoAttemptRef.current.add(`${spaceId}:${researchMap.paperNetwork.paperRevision || researchMap.paperNetwork.paperCount}:deepseek-v4-pro+coupling-v2`);
+    paperNetworkAutoAttemptRef.current.add(`${spaceId}:${researchMap.paperNetwork.paperRevision || researchMap.paperNetwork.paperCount}:deepseek-flash+coupling-v2`);
     let failedPhase: Exclude<PaperNetworkBuildPhase, null> = refreshMode === "pi" ? "pi" : "verified";
     setPaperNetworkLoading(true);
     try {
@@ -5704,7 +5705,7 @@ export default function ResearchApp({ user }: { user: User }) {
       setConnectedModel(data.model || null);
       setModelCredentialSource(data.source || null);
       setToast(data.configured
-        ? (locale === "zh" ? "DeepSeek Pro 已连接" : "DeepSeek Pro is connected")
+        ? (locale === "zh" ? "DeepSeek 已连接" : "DeepSeek is connected")
         : (locale === "zh" ? "当前浏览器还没有可用的 API Key" : "This browser does not have a usable API key yet"));
     } catch (error) {
       const message = modelConnectionProblemCopy(modelConnectionFailureState(error), locale)?.title || (locale === "zh" ? "模型认证失败，请重新检测或更换 Key。" : "Model authentication failed. Check again or replace the key.");
@@ -5730,7 +5731,7 @@ export default function ResearchApp({ user }: { user: User }) {
       const data = await response.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
       if (!response.ok) throw new Error(data.error || "DeepSeek connection failed");
       setModelConnectionState("connected");
-      setConnectedModel(data.model || "deepseek-v4-pro");
+      setConnectedModel(data.model || "deepseek-flash");
       setModelCredentialSource("browser");
       setModelApiKey("");
       setShowModelApiKey(false);
@@ -6321,7 +6322,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={closeModelSettings} />
           <div className="v2-model-settings">
             <div className="v2-modal-head"><div><p className="v2-kicker">{locale === "zh" ? "模型连接" : "MODEL CONNECTION"}</p><h2>{locale === "zh" ? "连接 DeepSeek" : "Connect DeepSeek"}</h2></div><button type="button" onClick={closeModelSettings}>×</button></div>
-            <section className={`v2-model-status-card ${modelConnectionState}`} aria-live="polite"><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConnectionCopy.modal}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-v4-pro")}{modelCredentialSource ? ` · ${modelCredentialSource === "browser" ? (locale === "zh" ? "当前浏览器 Key" : "browser key") : (locale === "zh" ? "平台 Key" : "host key")}` : ""}</p></div><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{checkingModel ? (locale === "zh" ? "检测中…" : "Checking…") : (locale === "zh" ? "重新检测" : "Check again")}</button></section>
+            <section className={`v2-model-status-card ${modelConnectionState}`} aria-live="polite"><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConnectionCopy.modal}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-flash")}{modelCredentialSource ? ` · ${modelCredentialSource === "browser" ? (locale === "zh" ? "当前浏览器 Key" : "browser key") : (locale === "zh" ? "平台 Key" : "host key")}` : ""}</p></div><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{checkingModel ? (locale === "zh" ? "检测中…" : "Checking…") : (locale === "zh" ? "重新检测" : "Check again")}</button></section>
             {credentialFailureRecovered && <section className="v2-model-resume-card"><b>✓</b><div><strong>{locale === "zh" ? "连接已经恢复，扫描断点仍在" : "Connection restored; the scan checkpoint is intact"}</strong><p>{locale === "zh" ? `${monitor?.scanJob?.discoveredCount || 0} 篇候选和 ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} 篇筛选进度均已保留。` : `${monitor?.scanJob?.discoveredCount || 0} candidates and ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} screening progress are preserved.`}</p></div><button type="button" onClick={resumeAfterModelConnection}>{locale === "zh" ? "关闭并从断点继续" : "Close and resume"} →</button></section>}
             <form className="v2-model-key-form" onSubmit={(event) => { event.preventDefault(); void saveModelCredential(); }}>
               <label><span>{locale === "zh" ? (modelCredentialSource === "browser" ? "粘贴新 Key 以替换" : "DeepSeek API Key") : (modelCredentialSource === "browser" ? "Paste a new key to replace it" : "DeepSeek API key")}</span><div><input type={showModelApiKey ? "text" : "password"} value={modelApiKey} onChange={(event) => { setModelApiKey(event.target.value); setModelSettingsError(""); }} placeholder="sk-…" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowModelApiKey((current) => !current)}>{showModelApiKey ? (locale === "zh" ? "隐藏" : "Hide") : (locale === "zh" ? "显示" : "Show")}</button></div></label>

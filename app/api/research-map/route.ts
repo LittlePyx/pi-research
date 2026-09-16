@@ -414,15 +414,15 @@ class DeepSeekJsonResponseError extends Error {
 
   constructor(kind: DeepSeekJsonFailureKind, finishReason: string, cause?: unknown) {
     const detail = kind === "empty" ? "an empty JSON response" : kind === "truncated" ? "truncated JSON" : "invalid JSON";
-    super(`DeepSeek Pro returned ${detail} (finish: ${finishReason})`, cause === undefined ? undefined : { cause });
+    super(`DeepSeek returned ${detail} (finish: ${finishReason})`, cause === undefined ? undefined : { cause });
     this.name = "DeepSeekJsonResponseError";
     this.kind = kind;
     this.finishReason = finishReason;
   }
 }
 
-const MODEL = "deepseek-v4-pro";
-const NETWORK_MODEL = "deepseek-v4-pro+coupling-v2";
+const MODEL = "deepseek-flash";
+const NETWORK_MODEL = "deepseek-flash+coupling-v2";
 const PAPER_TYPES = new Set(["journal-article", "proceedings-article", "posted-content"]);
 const NON_PAPER_PHRASES = /(publication information|information for authors|instructions for authors|table of contents|editorial board|front matter|back matter|issue information|journal masthead|correction|erratum)/i;
 const ROLES = new Set<ResearchTrackRole>(["foundation", "milestone", "frontier"]);
@@ -721,7 +721,7 @@ async function recordResearchRouteReliabilityEvent(database: D1Database, spaceId
 }
 
 async function callDeepSeek<T>(database: D1Database, workspaceId: string, system: string, prompt: string, maxTokens: number, apiKey: string, options: DeepSeekCallOptions = {}) {
-  if (!apiKey) throw new Error("DeepSeek Pro is required to build the research map");
+  if (!apiKey) throw new Error("DeepSeek is required to build the research map");
   const date = new Date().toISOString().slice(0, 10);
   const workspaceScope = "research-map-workspace:" + workspaceId;
   const [globalCount, workspaceCount] = await Promise.all([
@@ -744,7 +744,7 @@ async function callDeepSeek<T>(database: D1Database, workspaceId: string, system
     signal: AbortSignal.timeout(Math.max(8_000, Math.min(55_000, options.timeoutMs || 52_000))),
   });
   const data = await response.json() as DeepSeekResponse;
-  if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro research-map analysis failed");
+  if (!response.ok) throw new Error(data.error?.message || "DeepSeek research-map analysis failed");
   await Promise.all([
     recordUsage(database, "research-map:global", date, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
     recordUsage(database, workspaceScope, date, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
@@ -1876,7 +1876,7 @@ async function rebuildPaperNetwork(
       const generated = await generatePaperNetworkEdges(database, workspaceId, space, memory, papers,
         scholarlyEdges.filter((edge) => edge.kind === "citation"), apiKey);
       const freshEdges = generated.edges;
-      if (!freshEdges.length) throw new Error("DeepSeek Pro returned no defensible paper relations");
+      if (!freshEdges.length) throw new Error("DeepSeek returned no defensible paper relations");
       const refreshedIds = new Set(generated.coveredPaperIds);
       curatedEdges = [
         ...curatedEdges.filter((edge) => !refreshedIds.has(edge.sourcePaperId) || !refreshedIds.has(edge.targetPaperId)),
@@ -2642,7 +2642,7 @@ export async function POST(request: Request) {
       if ((existing?.count || 0) > 0) return Response.json(await readMap(database, space.id, { cached: true, addedCount: 0 }));
       const generated = await generateDirections(database, workspaceId, space, memory, apiKey);
       const directions = generated.directions;
-      if (directions.length < 3) throw new Error("DeepSeek Pro did not return enough distinct research directions");
+      if (directions.length < 3) throw new Error("DeepSeek did not return enough distinct research directions");
       const trackIdByKey = new Map<string, string>();
       for (const direction of directions) trackIdByKey.set(direction.key, crypto.randomUUID());
       const outlineStatements = directions.map((direction, position) => database.prepare(

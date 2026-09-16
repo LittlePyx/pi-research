@@ -3,7 +3,7 @@ import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { WORKBOOK_POLICY, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, workbookDraftPrompt, workbookReviewFields, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
 
-const MODEL = "deepseek-v4-pro";
+const MODEL = "deepseek-flash";
 type Row = { id: string; question: string; source_revision: string; source_ids_json: string; draft_json: string; content_json: string; status: WorkbookState["status"]; retry_at: number; lease_until: number };
 type SourceRow = { id: string; canonical_id: string; title: string; authors: string; url: string; abstract_text: string; reading_focus_zh: string; reading_focus_en: string; route_member: number };
 const parse = (v: string) => { try { return JSON.parse(v); } catch { return null; } };

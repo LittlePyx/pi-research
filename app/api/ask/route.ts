@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     if (!space) return Response.json({ error: "Research space not found" }, { status: 404 });
 
     const credential = resolveDeepSeekCredential(request);
-    const model = "deepseek-v4-pro";
+    const model = "deepseek-flash";
     let answer: string;
     let mode: "deepseek" | "preview" = "preview";
     let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };

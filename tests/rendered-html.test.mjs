@@ -47,7 +47,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.match(queue, /INSERT INTO monitored_papers/);
   assert.match(route, /titleFingerprint/);
   assert.match(route, /reviewCandidates/);
-  assert.match(route, /MONITOR_MODEL = "deepseek-v4-pro"/);
+  assert.match(route, /MONITOR_MODEL = "deepseek-flash"/);
   assert.match(route, /response_format: \{ type: "json_object" \}/);
   assert.match(route, /thinking: \{ type: "disabled" \}/);
   assert.match(route, /max_tokens: Math\.min\(attempt === 0 \? 2600 : 1800/);
@@ -82,10 +82,10 @@ test("ships live monitoring, deduplication, and readable type", async () => {
   assert.doesNotMatch(client, /DEMO ANALYSIS CARDS|演示分析卡/);
   assert.doesNotMatch(client, /DeepSeek V4 Flash/);
   assert.match(client, /modelDisplayName/);
-  assert.match(client, /DeepSeek V4 Pro/);
+  assert.match(client, /DeepSeek V4.1 Flash/);
   assert.match(client, /startMonitorPolling/);
   assert.match(client, /window\.setInterval\(\(\) => void poll\(\), 5000\)/);
-  assert.match(client, /DeepSeek Pro 正在逐篇筛选并撰写/);
+  assert.match(client, /DeepSeek 正在逐篇筛选并撰写/);
   assert.match(client, /activeScanJob/);
   assert.match(client, /探索覆盖/);
   assert.match(client, /libraryFilter/);
@@ -146,7 +146,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(monitor, /upsertPendingResearchMapEvidence/);
   assert.match(monitor, /promoteAlreadyAcceptedResearchMapEvidence/);
   assert.doesNotMatch(monitor, /INSERT OR IGNORE INTO research_track_papers/);
-  assert.match(mapRoute, /MODEL = "deepseek-v4-pro"/);
+  assert.match(mapRoute, /MODEL = "deepseek-flash"/);
   assert.match(mapRoute, /reasoning_effort: options\.reasoningEffort \|\| "high"/);
   assert.match(mapRoute, /WORKSPACE_DAILY_LIMIT = 32/);
   assert.match(mapRoute, /Foundation = field-defining concepts or methods/);
@@ -436,7 +436,7 @@ test("builds persistent personalized learning paths from real research papers", 
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(route, /MODEL = "deepseek-v4-pro"/);
+  assert.match(route, /MODEL = "deepseek-flash"/);
   assert.match(route, /grounded only in supplied quality-approved paper IDs/);
   assert.match(route, /research_track_papers/);
   assert.match(route, /i\.ever_recommended = 1/);
@@ -492,7 +492,7 @@ test("creates immutable public snapshots with live paper links and independent m
   assert.match(route, /paperIds\.length > 6/);
   assert.match(route, /i\.llm_recommended = 1/);
   assert.match(route, /i\.analysis_source = 'deepseek'/);
-  assert.match(route, /i\.analysis_model = 'deepseek-v4-pro'/);
+  assert.match(route, /i\.analysis_model IN \('deepseek-flash', 'deepseek-v4-pro'\)/);
   assert.match(route, /INSERT INTO share_snapshots/);
   assert.match(snapshotStore, /JSON\.parse\(row\.payload\)/);
   assert.match(sharePage, /generateMetadata/);
@@ -522,7 +522,7 @@ test("imports public research materials into reviewed, space-isolated profile me
   assert.match(schema, /researchImports/);
   assert.match(schema, /idx_research_imports_space_hash/);
   assert.match(repository, /CREATE TABLE IF NOT EXISTS research_imports/);
-  assert.match(route, /IMPORT_MODEL = "deepseek-v4-pro"/);
+  assert.match(route, /IMPORT_MODEL = "deepseek-flash"/);
   assert.match(route, /MAX_FILES = 12/);
   assert.match(route, /MAX_TOTAL_CHARS = 180_000/);
   assert.match(route, /safetyConfirmed !== true/);
@@ -569,8 +569,8 @@ test("keeps a durable, view-aware paper inbox with reversible decisions", async 
   assert.match(client, /paperReturnView/);
   assert.match(client, /window\.history\.pushState/);
   assert.doesNotMatch(client, /<section className="v2-library-overview"/);
-  assert.match(ask, /const model = "deepseek-v4-pro"/);
-  assert.match(spaces, /modelConfigured \? "deepseek-v4-pro"/);
+  assert.match(ask, /const model = "deepseek-flash"/);
+  assert.match(spaces, /modelConfigured \? "deepseek-flash"/);
   assert.match(css, /Pi Research V7 — durable reading inbox and calmer navigation/);
   assert.match(css, /\.v2-library-paper-actions/);
   assert.match(css, /\.v2-library-paper-actions/);

@@ -4,7 +4,7 @@ import { upsertPreferenceSignal } from "../../../lib/preference-memory";
 import { reconcileResearchMapEvidenceStatements } from "../../../lib/research-map-evidence";
 
 const READING_STATUSES = new Set(["unread", "queued", "reading", "read", "mastered", "cited"]);
-const READING_MEMORY_MODEL = "deepseek-v4-pro";
+const READING_MEMORY_MODEL = "deepseek-flash";
 const READING_MEMORY_DAILY_LIMIT = 20;
 const READING_MEMORY_GLOBAL_DAILY_LIMIT = 100;
 
@@ -57,7 +57,7 @@ function parseJsonObject(content: string) {
   try { return JSON.parse(cleaned) as ReadingMemoryDraft; } catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
-    if (start < 0 || end <= start) throw new Error("DeepSeek Pro returned malformed reading-memory JSON");
+    if (start < 0 || end <= start) throw new Error("DeepSeek returned malformed reading-memory JSON");
     return JSON.parse(cleaned.slice(start, end + 1)) as ReadingMemoryDraft;
   }
 }
@@ -157,7 +157,7 @@ async function analyzeReadingNote(database: D1Database, space: { id: string; nam
       topicsZh: textArray(draft.topicsZh), topicsEn: textArray(draft.topicsEn),
       trackId: allowedTrackIds.has(cleanText(draft.trackId || "")) ? cleanText(draft.trackId || "") : "",
     };
-    if (!memory.takeawayZh || !memory.takeawayEn) throw new Error("DeepSeek Pro returned an incomplete reading memory");
+    if (!memory.takeawayZh || !memory.takeawayEn) throw new Error("DeepSeek returned an incomplete reading memory");
     await database.prepare(
       `UPDATE paper_reading_memories SET analysis_status = 'ready', takeaway_zh = ?, takeaway_en = ?,
        methods_zh = ?, methods_en = ?, questions_zh = ?, questions_en = ?, connections_zh = ?, connections_en = ?,

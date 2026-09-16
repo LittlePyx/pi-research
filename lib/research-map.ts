@@ -503,7 +503,7 @@ export function emptyResearchMapState(): ResearchMapState {
       updatedAt: null,
       error: null,
     },
-    model: "deepseek-v4-pro",
+    model: "deepseek-flash",
     generated: false,
   };
 }

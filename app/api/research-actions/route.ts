@@ -13,7 +13,7 @@ import {
   type ResearchActionKind,
 } from "../../../lib/research-action";
 
-const MODEL = "deepseek-v4-pro";
+const MODEL = "deepseek-flash";
 const GLOBAL_DAILY_LIMIT = 120;
 const WORKSPACE_DAILY_LIMIT = 20;
 
@@ -369,7 +369,7 @@ export async function POST(request: Request) {
     database = context.database;
     if (context.action.status !== "accepted") return Response.json({ error: "Accept this research action before Pi executes it" }, { status: 422 });
     const credential = resolveDeepSeekCredential(request);
-    if (!credential.apiKey) return Response.json({ modelRequired: true, error: "DeepSeek Pro is required" }, { status: 428 });
+    if (!credential.apiKey) return Response.json({ modelRequired: true, error: "DeepSeek is required" }, { status: 428 });
     const recentRunning = await database.prepare(
       "SELECT id, started_at FROM research_action_runs WHERE action_id = ? AND status IN ('queued','running') ORDER BY started_at DESC LIMIT 1",
     ).bind(actionId).first<{ id: string; started_at: string }>();

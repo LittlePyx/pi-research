@@ -55,7 +55,7 @@ type DeepSeekResponse = {
   error?: { message?: string };
 };
 
-const MODEL = "deepseek-v4-pro";
+const MODEL = "deepseek-flash";
 const GLOBAL_DAILY_LIMIT = 80;
 const WORKSPACE_DAILY_LIMIT = 12;
 
@@ -248,7 +248,7 @@ export async function POST(request: Request) {
       return Response.json({ synthesis: current.synthesis, cached: true });
     }
     const credential = resolveDeepSeekCredential(request);
-    if (!credential.apiKey) return Response.json({ synthesis: current.synthesis, modelRequired: true, error: "DeepSeek Pro is required" }, { status: 428 });
+    if (!credential.apiKey) return Response.json({ synthesis: current.synthesis, modelRequired: true, error: "DeepSeek is required" }, { status: 428 });
     const date = new Date().toISOString().slice(0, 10);
     const workspaceScope = `research-synthesis-workspace:${context.user.userId.replace(/^anonymous:/, "")}`;
     const [globalUsage, workspaceUsage] = await Promise.all([

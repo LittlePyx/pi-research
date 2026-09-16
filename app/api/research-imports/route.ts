@@ -30,7 +30,7 @@ type ImportRow = {
   confirmed_at: string | null;
 };
 
-const IMPORT_MODEL = "deepseek-v4-pro";
+const IMPORT_MODEL = "deepseek-flash";
 const MAX_FILES = 12;
 const MAX_FILE_CHARS = 50_000;
 const MAX_TOTAL_CHARS = 180_000;
@@ -239,7 +239,7 @@ export async function POST(request: Request) {
     if (existing) return Response.json({ import: toRecord(existing), cached: true, rawFilesStored: false });
 
     const credential = resolveDeepSeekCredential(request);
-    if (!credential.apiKey) return Response.json({ error: "DeepSeek Pro is not configured" }, { status: 503 });
+    if (!credential.apiKey) return Response.json({ error: "DeepSeek is not configured" }, { status: 503 });
     const usageDate = new Date().toISOString().slice(0, 10);
     const workspaceScope = "import-workspace:" + user.userId.slice("anonymous:".length);
     const [globalCount, workspaceCount] = await Promise.all([
@@ -286,12 +286,12 @@ export async function POST(request: Request) {
       }),
     });
     const data = await response.json() as DeepSeekResponse;
-    if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro import analysis failed");
+    if (!response.ok) throw new Error(data.error?.message || "DeepSeek import analysis failed");
     const content = data.choices?.[0]?.message?.content?.trim() || "";
-    if (!content) throw new Error("DeepSeek Pro returned an empty research profile");
+    if (!content) throw new Error("DeepSeek returned an empty research profile");
     const analysis = normalizeAnalysis(JSON.parse(content));
     if (!analysis.summaryZh || !analysis.summaryEn || !analysis.primaryDirectionZh || !analysis.primaryDirectionEn || !analysis.researchOpportunities.length) {
-      throw new Error("DeepSeek Pro returned an incomplete research profile");
+      throw new Error("DeepSeek returned an incomplete research profile");
     }
 
     const id = crypto.randomUUID();

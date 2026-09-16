@@ -1,7 +1,7 @@
 import { getRuntimeEnv } from "../db/repository";
 
 export const MODEL_KEY_COOKIE = "pi_deepseek_api_key";
-export const MODEL_NAME = "deepseek-v4-pro";
+export const MODEL_NAME = "deepseek-flash";
 
 type DeepSeekModelsResponse = { data?: Array<{ id?: string }>; error?: { message?: string } };
 type DeepSeekChatProbeResponse = { error?: { message?: string } };

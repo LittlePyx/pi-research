@@ -670,7 +670,7 @@ const MONITOR_MINIMUM_NEW_SCAN_ANALYSIS_CALLS = 16;
 const MONITOR_COMPACT_SCAN_MINIMUM_CALLS = 6;
 const MONITOR_SPACE_DAILY_BASE_RESERVE = 24;
 const MONITOR_SEMANTIC_SCHOLAR_DAILY_LIMIT = 90;
-const MONITOR_MODEL = "deepseek-v4-pro";
+const MONITOR_MODEL = "deepseek-flash";
 const RECOMMENDATION_THRESHOLD = 72;
 const DEEPSEEK_BALANCE_ERROR = "deepseek_insufficient_balance";
 const DEEPSEEK_CREDENTIAL_ERROR = "deepseek_credential_invalid";
@@ -2121,7 +2121,7 @@ async function readAutomationCounters(database: D1Database, spaceId: string) {
        FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
        LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
        LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
-       WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_model = ?
+       WHERE p.space_id = ? AND i.llm_recommended = 1 AND i.analysis_model IN (?, 'deepseek-v4-pro')
         AND COALESCE(f.saved, 0) = 0 AND COALESCE(f.feedback, '') = ''
         AND COALESCE(r.status, 'unread') = 'unread'`,
     ).bind(spaceId, MONITOR_MODEL).first<{ count: number }>(),
@@ -2171,7 +2171,7 @@ function parseJsonObject(content: string) {
   } catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
-    if (start < 0 || end <= start) throw new Error("DeepSeek Pro returned malformed planning JSON");
+    if (start < 0 || end <= start) throw new Error("DeepSeek returned malformed planning JSON");
     return JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
   }
 }
@@ -2377,7 +2377,7 @@ async function ensureDailyQueryPlan(
   let model = MONITOR_MODEL;
 
   if (!apiKey) {
-    error = "DeepSeek Pro is not configured; deterministic discovery remains active.";
+    error = "DeepSeek is not configured; deterministic discovery remains active.";
     model = "deterministic-fallback";
   } else {
     try {
@@ -2417,14 +2417,14 @@ async function ensureDailyQueryPlan(
         signal: AbortSignal.timeout(25_000),
       });
       const data = await response.json() as DeepSeekResponse;
-      if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro query planning failed");
+      if (!response.ok) throw new Error(data.error?.message || "DeepSeek query planning failed");
       const parsed = parseJsonObject(data.choices?.[0]?.message?.content || "");
       queries = {
         days: normalizePlannedQueries(parsed.days, queryLimit),
         months: normalizePlannedQueries(parsed.months, queryLimit),
         years: normalizePlannedQueries(parsed.years, queryLimit),
       };
-      if (Object.values(queries).some((items) => !items.length)) throw new Error("DeepSeek Pro query plan was incomplete");
+      if (Object.values(queries).some((items) => !items.length)) throw new Error("DeepSeek query plan was incomplete");
       rationaleZh = cleanText(String(parsed.rationaleZh || "")).slice(0, 700);
       rationaleEn = cleanText(String(parsed.rationaleEn || "")).slice(0, 900);
       await Promise.all([
@@ -2433,7 +2433,7 @@ async function ensureDailyQueryPlan(
         recordUsage(database, "monitor-space:" + space.id, planDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
       ]);
     } catch (caught) {
-      error = caught instanceof Error ? caught.message.slice(0, 280) : "DeepSeek Pro query planning failed";
+      error = caught instanceof Error ? caught.message.slice(0, 280) : "DeepSeek query planning failed";
       model = "deterministic-fallback";
     }
   }
@@ -2538,7 +2538,7 @@ function parseReviewPayload(content: string) {
   } catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
-    if (start < 0 || end <= start) throw new Error("DeepSeek Pro returned malformed JSON");
+    if (start < 0 || end <= start) throw new Error("DeepSeek returned malformed JSON");
     return JSON.parse(cleaned.slice(start, end + 1)) as { reviews?: Array<Partial<PaperReview>> };
   }
 }
@@ -3023,15 +3023,15 @@ async function quickScreenBatch(
       trace.headers(response.status);
       const data = await response.json() as DeepSeekResponse;
       trace.body(data);
-      if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro quick screening failed");
+      if (!response.ok) throw new Error(data.error?.message || "DeepSeek quick screening failed");
       const content = data.choices?.[0]?.message?.content || "";
-      if (!content.trim()) throw new Error("DeepSeek Pro returned an empty screening result");
+      if (!content.trim()) throw new Error("DeepSeek returned an empty screening result");
       const parsedScreens = parseQuickScreenPayload(content);
       trace.phase("validate");
       const { byId, diagnostics } = matchScreeningRecords(batch.map(candidate => candidate.canonicalId), parsedScreens);
       trace.validation(diagnostics);
       if (!byId.size || deliberate && byId.size !== batch.length) {
-        throw new Error("DeepSeek Pro did not screen every candidate with a unique valid identity");
+        throw new Error("DeepSeek did not screen every candidate with a unique valid identity");
       }
       // A missing/mistyped ID must not discard other fully validated records.
       // Fast screening already persists partial batches by canonical ID; leave
@@ -3043,7 +3043,7 @@ async function quickScreenBatch(
         const qualityScore = normalizeModelScore(item.qualityScore, scoreScale);
         const screeningReason = cleanText(item.screeningReason || "Fast screening completed").slice(0, 300);
         if (hasStrongFitScoreContradiction(relevanceScore, screeningReason)) {
-          throw new Error("DeepSeek Pro returned a screening score that contradicted its fit judgment");
+          throw new Error("DeepSeek returned a screening score that contradicted its fit judgment");
         }
         return {
           canonicalId: candidate.canonicalId,
@@ -3079,7 +3079,7 @@ async function quickScreenBatch(
     }
     if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 700));
   }
-  throw lastError instanceof Error ? lastError : new Error("DeepSeek Pro quick screening failed twice");
+  throw lastError instanceof Error ? lastError : new Error("DeepSeek quick screening failed twice");
 }
 
 async function quickScreenCandidates(
@@ -3091,7 +3091,7 @@ async function quickScreenCandidates(
   mode: "fast" | "rescue" = "fast",
   scanJobId?: string,
 ) {
-  if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be screened");
+  if (!apiKey) throw new Error("DeepSeek is required before papers can be screened");
   const usageDate = shanghaiDateKey(new Date());
   const workspaceScope = "monitor-workspace:" + userId.replace(/^anonymous:/, "");
   const spaceScope = "monitor-space:" + space.id;
@@ -3104,7 +3104,7 @@ async function quickScreenCandidates(
   if (!developmentAnalysisUnbounded() && (globalCount + groups.length > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount + groups.length > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
     || spaceCount + groups.length > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT)) {
-    throw new Error("DeepSeek Pro screening budget reached");
+    throw new Error("DeepSeek screening budget reached");
   }
   const settled = await Promise.allSettled(groups.map((group) => quickScreenBatch(database, space, userId, group, apiKey, mode, scanJobId)));
   const screens = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
@@ -3335,7 +3335,7 @@ async function persistRecommendationAuditBatch(
 
 async function reviewCandidates(database: D1Database, space: SpaceRow, userId: string, priorityVenues: string[], candidates: Candidate[], jobId: string, lockToken: string, apiKey: string, manageJobProgress = true) {
   if (!candidates.length) return [] as PaperReview[];
-  if (!apiKey) throw new Error("DeepSeek Pro is required before papers can be recommended");
+  if (!apiKey) throw new Error("DeepSeek is required before papers can be recommended");
   const usageDate = shanghaiDateKey(new Date());
   const workspaceScope = "monitor-workspace:" + userId.slice("anonymous:".length);
   const spaceScope = "monitor-space:" + space.id;
@@ -3350,7 +3350,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
   if (!developmentAnalysisUnbounded() && (globalCount + expectedCalls > MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount + expectedCalls > MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
     || spaceCount + expectedCalls > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT)) {
-    throw new Error("DeepSeek Pro review budget reached; unreviewed papers were not published");
+    throw new Error("DeepSeek review budget reached; unreviewed papers were not published");
   }
   const mapTracks = await database.prepare(
     "SELECT id, title_zh, title_en, summary_en, search_queries, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 6",
@@ -3487,7 +3487,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
           signal: AbortSignal.timeout(attempt === 0 ? DEEP_REVIEW_PRIMARY_TIMEOUT_MS : DEEP_REVIEW_RETRY_TIMEOUT_MS),
         });
         const data = await response.json() as DeepSeekResponse;
-        if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro review failed");
+        if (!response.ok) throw new Error(data.error?.message || "DeepSeek review failed");
         batchInputTokens = data.usage?.prompt_tokens || 0;
         batchOutputTokens = data.usage?.completion_tokens || 0;
         await Promise.all([
@@ -3496,7 +3496,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
           recordUsage(database, "monitor-space:" + space.id, usageDate, batchInputTokens, batchOutputTokens),
         ]);
         const content = data.choices?.[0]?.message?.content || "";
-        if (!content.trim()) throw new Error("DeepSeek Pro returned an empty review");
+        if (!content.trim()) throw new Error("DeepSeek returned an empty review");
         const nextParsed = parseReviewPayload(content);
         const nextScoreScale = inferModelScoreScale(nextParsed.reviews || []);
         const incomplete = (nextParsed.reviews || []).filter((item) => item.isPaper === true && item.recommended === true
@@ -3505,7 +3505,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
           .map((item) => ({ canonicalId: canonicalResponseId(item.canonicalId), missing: recommendationDraftMissingFields(item) }))
           .filter((item) => item.missing.length);
         if (incomplete.length) {
-          throw new Error(`DeepSeek Pro returned an incomplete recommended review: ${incomplete.map((item) => `${item.canonicalId || "unknown"} (${item.missing.join(", ")})`).join("; ")}`);
+          throw new Error(`DeepSeek returned an incomplete recommended review: ${incomplete.map((item) => `${item.canonicalId || "unknown"} (${item.missing.join(", ")})`).join("; ")}`);
         }
         parsed = nextParsed;
       } catch (error) {
@@ -3519,13 +3519,13 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         }
       }
     }
-    if (!parsed) throw lastError instanceof Error ? lastError : new Error("DeepSeek Pro review failed twice");
+    if (!parsed) throw lastError instanceof Error ? lastError : new Error("DeepSeek review failed twice");
     const parsedReviews = parsed.reviews || [];
     const scoreScale = inferModelScoreScale(parsedReviews);
     const byId = new Map(parsedReviews.map((item) => [item.canonicalId, item]));
     for (const candidate of batch) {
       const item = byId.get(candidate.canonicalId);
-      if (!item) throw new Error("DeepSeek Pro did not review every candidate");
+      if (!item) throw new Error("DeepSeek did not review every candidate");
       const relevanceScore = normalizeModelScore(item.relevanceScore, scoreScale);
       const qualityScore = normalizeModelScore(item.qualityScore, scoreScale);
       const summaryZh = cleanText(item.summaryZh || "").slice(0, 900);
@@ -3576,7 +3576,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
         summaryEn: recommended ? summaryEn : "",
         whyReadZh: recommended ? whyReadZh : "",
         whyReadEn: recommended ? whyReadEn : "",
-        screeningReason: cleanText(item.screeningReason || (recommended ? "Recommended by DeepSeek Pro" : "Rejected by DeepSeek Pro")).slice(0, 500),
+        screeningReason: cleanText(item.screeningReason || (recommended ? "Recommended by DeepSeek" : "Rejected by DeepSeek")).slice(0, 500),
         trackId: assignedTrackId,
         mapRole: paperReviewMapRole(item.mapRole),
         mapRationaleZh,
@@ -3700,7 +3700,7 @@ async function reconcileRecommendedReviewTracks(
       signal: AbortSignal.timeout(30_000),
     });
     const data = await response.json() as DeepSeekResponse;
-    if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro route reconciliation failed");
+    if (!response.ok) throw new Error(data.error?.message || "DeepSeek route reconciliation failed");
     await Promise.all([
       recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
       recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
@@ -3960,7 +3960,7 @@ async function generateDailyBrief(
   if (!apiKey || (!developmentAnalysisUnbounded() && (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
     || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT))) {
-    return saveEvidenceBrief(!apiKey ? "DeepSeek Pro is not configured" : "Daily brief analysis budget reached");
+    return saveEvidenceBrief(!apiKey ? "DeepSeek is not configured" : "Daily brief analysis budget reached");
   }
   try {
     const records = selected.map((review) => {
@@ -4016,9 +4016,9 @@ async function generateDailyBrief(
       signal: AbortSignal.timeout(50_000),
     });
     const data = await response.json() as DeepSeekResponse;
-    if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro daily brief failed");
+    if (!response.ok) throw new Error(data.error?.message || "DeepSeek daily brief failed");
     const content = data.choices?.[0]?.message?.content || "";
-    if (!content.trim()) throw new Error("DeepSeek Pro returned an empty daily brief");
+    if (!content.trim()) throw new Error("DeepSeek returned an empty daily brief");
     const parsed = parseJsonObject(content);
     await Promise.all([
       recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
@@ -4029,7 +4029,7 @@ async function generateDailyBrief(
     const headlineEn = cleanText(String(parsed.headlineEn || "")).slice(0, 240);
     const overviewZh = cleanText(String(parsed.overviewZh || "")).slice(0, 900);
     const overviewEn = cleanText(String(parsed.overviewEn || "")).slice(0, 1200);
-    if (!headlineZh || !headlineEn || !overviewZh || !overviewEn) throw new Error("DeepSeek Pro returned an incomplete daily brief");
+    if (!headlineZh || !headlineEn || !overviewZh || !overviewEn) throw new Error("DeepSeek returned an incomplete daily brief");
     await saveDailyBrief(database, {
       spaceId: space.id, briefDate, jobId, status: "ready", headlineZh, headlineEn, overviewZh, overviewEn,
       signalsZh: briefList(parsed.signalsZh, selected.length, 280), signalsEn: briefList(parsed.signalsEn, selected.length, 420),
@@ -4230,7 +4230,7 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
   if (!apiKey || (!developmentAnalysisUnbounded() && (globalCount >= MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT
     || workspaceCount >= MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT
     || spaceCount >= MONITOR_SPACE_DAILY_ANALYSIS_LIMIT))) {
-    review = await fallback(!apiKey ? "DeepSeek Pro is not configured" : "Weekly review analysis budget reached");
+    review = await fallback(!apiKey ? "DeepSeek is not configured" : "Weekly review analysis budget reached");
   } else {
     try {
       const response = await fetch("https://api.deepseek.com/chat/completions", {
@@ -4257,7 +4257,7 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
         signal: AbortSignal.timeout(75_000),
       });
       const data = await response.json() as DeepSeekResponse;
-      if (!response.ok) throw new Error(data.error?.message || "DeepSeek Pro weekly review failed");
+      if (!response.ok) throw new Error(data.error?.message || "DeepSeek weekly review failed");
       const parsed = parseJsonObject(data.choices?.[0]?.message?.content || "");
       await Promise.all([
         recordUsage(database, "monitor:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
@@ -4272,7 +4272,7 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
         gapsZh: briefList(parsed.gapsZh, 5), gapsEn: briefList(parsed.gapsEn, 5),
         nextStepsZh: briefList(parsed.nextStepsZh, 5), nextStepsEn: briefList(parsed.nextStepsEn, 5), error: null,
       };
-      if (!review.titleZh || !review.titleEn || !review.overviewZh || !review.overviewEn) throw new Error("DeepSeek Pro returned an incomplete weekly review");
+      if (!review.titleZh || !review.titleEn || !review.overviewZh || !review.overviewEn) throw new Error("DeepSeek returned an incomplete weekly review");
       await saveWeeklyReview(database, review);
     } catch (error) {
       review = await fallback(error instanceof Error ? error.message.slice(0, 260) : "Weekly review generation failed");
@@ -5200,7 +5200,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     ).bind(space.id).all<{ reason_code: string; feedback: string; count: number }>(),
     database.prepare(
       `SELECT recommendation_tier, COUNT(*) AS count FROM paper_insights
-       WHERE space_id = ? AND llm_recommended = 1 AND analysis_model = ? GROUP BY recommendation_tier`,
+       WHERE space_id = ? AND llm_recommended = 1 AND analysis_model IN (?, 'deepseek-v4-pro') GROUP BY recommendation_tier`,
     ).bind(space.id, MONITOR_MODEL).all<{ recommendation_tier: string; count: number }>(),
     database.prepare(
       `SELECT brief_date, status, headline_zh, headline_en, overview_zh, overview_en, signals_zh, signals_en,
@@ -5294,7 +5294,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const automationCounters = await readAutomationCounters(database, space.id);
   const now = Date.now();
   const duePapers = papers.results
-    .filter((paper) => paper.quality_stage === "recommended" && paper.analysis_model === MONITOR_MODEL && isPaperDue(paper, now))
+    .filter((paper) => paper.quality_stage === "recommended" && [MONITOR_MODEL, "deepseek-v4-pro"].includes(paper.analysis_model) && isPaperDue(paper, now))
     .sort((left, right) => databaseTime(right.last_recommended_at) - databaseTime(left.last_recommended_at)
       || left.show_count - right.show_count || right.discovery_route_interaction - left.discovery_route_interaction
       || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at));
@@ -6287,7 +6287,7 @@ async function loadCachedQuickScreens(database: D1Database, spaceId: string, can
            OR lower(i.screening_reason) LIKE '%draft is empty%'
            OR lower(i.screening_reason) LIKE '%empty draft%'
            OR lower(i.screening_reason) LIKE '%no populated substantive fields%'
-           OR lower(i.screening_reason) LIKE '%draft incomplete%'))) AND i.analysis_model = ?
+           OR lower(i.screening_reason) LIKE '%draft incomplete%'))) AND i.analysis_model IN (?, 'deepseek-v4-pro')
        AND p.canonical_id IN (${uniqueIds.map(() => "?").join(", ")})`,
   ).bind(spaceId, MONITOR_MODEL, ...uniqueIds).all<{
     canonical_id: string; horizon: Horizon; llm_relevance_score: number; quality_score: number; screening_reason: string;
@@ -6510,7 +6510,7 @@ async function runLegacyMonitor(request: Request) {
           attempt, trigger_source, resume_of_job_id, checkpoint)
          VALUES (?, ?, 'scanning', 4, 0, 0, 0, ?, ?, ?, 'scanning')`,
       ).bind(jobId, space.id, resumable ? Math.max(2, (previousJob?.attempt || 1) + 1) : 1, trigger, resumable ? previousJob?.id || null : null).run();
-      await setScanSource(database, jobId, "days", "DeepSeek Pro · daily query plan", 6, 0);
+      await setScanSource(database, jobId, "days", "DeepSeek · daily query plan", 6, 0);
       const queryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
       const batches: Array<{ candidates: Candidate[]; rawCount: number }> = [];
       let discoveredCount = 0;
@@ -7618,7 +7618,7 @@ export async function POST(request: Request) {
 
     try {
       if (job.checkpoint === "planning" || job.checkpoint === "queued") {
-        await setStage("planning", "scanning", 5, "DeepSeek Pro 正在规划本轮检索");
+        await setStage("planning", "scanning", 5, "DeepSeek 正在规划本轮检索");
         work.frozenQueryPlan = await ensureDailyQueryPlan(database, enrichedSpace, user.userId, preference, apiKey);
         await saveScanWorkQueue(database, job.id, work);
         await setStage("discovering_days", "discovering_days", 10, "正在检索近 14 天", "days");
@@ -7776,7 +7776,7 @@ export async function POST(request: Request) {
           const batchEnd = Math.min(work.screens.length + ids.length, work.candidateIds.length);
           await database.prepare(
             "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          ).bind(`DeepSeek Pro 正在筛选第 ${batchStart}–${batchEnd} / ${work.candidateIds.length} 篇；本批完成后自动保存`, job.id).run();
+          ).bind(`DeepSeek 正在筛选第 ${batchStart}–${batchEnd} / ${work.candidateIds.length} 篇；本批完成后自动保存`, job.id).run();
           const result = await quickScreenCandidates(database, enrichedSpace, user.userId, candidates, apiKey, "fast", job.id);
           const persistedScreens = await persistQuickScreens(database, space.id, result.screens);
           const byId = new Map(work.screens.map((screen) => [screen.canonicalId, screen]));
@@ -7806,7 +7806,7 @@ export async function POST(request: Request) {
         await database.prepare(
           "UPDATE monitor_scan_jobs SET reviewed_count = ?, rejected_count = ?, current_source = ?, progress = MAX(progress, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(work.screens.length, work.screens.filter((screen) => !screen.isPaper || screen.relevanceScore < 68 || screen.qualityScore < 55).length,
-          `DeepSeek Pro 已快速筛选 ${work.screens.length} / ${work.candidateIds.length}`, screeningProgress, job.id).run();
+          `DeepSeek 已快速筛选 ${work.screens.length} / ${work.candidateIds.length}`, screeningProgress, job.id).run();
         if (!screenRemaining.length) {
           const candidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
           const activeDeepLimit = work.freshLaneActive ? FRESH_LANE_DEEP_REVIEW_LIMIT : DEEP_REVIEW_LIMIT;
@@ -7973,7 +7973,7 @@ export async function POST(request: Request) {
           const batchEnd = Math.min(batchStart + ids.length - 1, work.deepIds.length);
           await database.prepare(
             "UPDATE monitor_scan_jobs SET current_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          ).bind(`DeepSeek Pro 正在解读第 ${batchStart}${batchEnd > batchStart ? `–${batchEnd}` : ""} / ${work.deepIds.length} 篇；任一篇完成都会立即保存`, job.id).run();
+          ).bind(`DeepSeek 正在解读第 ${batchStart}${batchEnd > batchStart ? `–${batchEnd}` : ""} / ${work.deepIds.length} 篇；任一篇完成都会立即保存`, job.id).run();
           const result = await runIncrementalDeepReview(database, enrichedSpace, user.userId, preference.priorityVenues, candidates, job.id, lockToken, apiKey, async (savedReviews) => {
             work.deepCompletedIds = Array.from(new Set([...work.deepCompletedIds, ...savedReviews.map((review) => review.canonicalId)]));
             work.deepFailureCount = 0;

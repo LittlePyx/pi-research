@@ -74,7 +74,7 @@ function unboundedDevelopmentRetries() {
   return developmentUnboundedEnabled(getRuntimeEnv().PI_DEVELOPMENT_UNBOUNDED);
 }
 
-const MODEL = "deepseek-v4-pro";
+const MODEL = "deepseek-flash";
 const FALLBACK_MODEL = "evidence-structure-v1";
 const STEP_KINDS = new Set<LearningStepKind>(["prerequisite", ...LEARNING_STAGE_ORDER]);
 const GLOBAL_DAILY_LIMIT = 120;
@@ -553,7 +553,7 @@ function extractJson(value: string) {
 }
 
 async function buildDraft(database: D1Database, workspaceId: string, space: SpaceRow, target: string, context: Awaited<ReturnType<typeof contextForSpace>>, apiKey: string, objective?: { goal: LearningGoal; background: string; preferredCanonicalIds?: string[] }) {
-  if (!apiKey) throw new Error("DeepSeek Pro is not configured");
+  if (!apiKey) throw new Error("DeepSeek is not configured");
   const date = new Date().toISOString().slice(0, 10);
   const workspaceScope = "learning-path-workspace:" + workspaceId;
   const [globalCount, workspaceCount] = await Promise.all([usageCount(database, "learning-path:global", date), usageCount(database, workspaceScope, date)]);
@@ -592,9 +592,9 @@ async function buildDraft(database: D1Database, workspaceId: string, space: Spac
     }),
   });
   const body = await response.json() as DeepSeekResponse;
-  if (!response.ok) throw new Error(body.error?.message || "DeepSeek Pro could not build the learning path");
+  if (!response.ok) throw new Error(body.error?.message || "DeepSeek could not build the learning path");
   const content = body.choices?.[0]?.message?.content;
-  if (!content) throw new Error("DeepSeek Pro returned an empty learning path");
+  if (!content) throw new Error("DeepSeek returned an empty learning path");
   const parsed = extractJson(content) as Partial<DraftPath>;
   const skeleton = evidenceSkeleton(context, target);
   const allowedIds = new Set(context.candidates.map((item) => item.resource_id));
@@ -984,7 +984,7 @@ export async function POST(request: Request) {
   if (preview && preview.source_revision !== sourceRevision) return Response.json({ error: "Materials changed since preview. Prepare a fresh preview." }, { status: 409 });
   const sameScope = Boolean(!preview && previous && (previous.learningGoal || "papers") === objective.goal && (previous.learnerBackground || "") === objective.background && previous.targetTrackId === targetTrackId && previous.target.trim().toLocaleLowerCase() === target.trim().toLocaleLowerCase());
   if (!preview && sameScope && previous?.sourceRevision && previous.sourceRevision === sourceRevision
-    && (context.candidates.length < 3 || (previous.model === MODEL
+    && (context.candidates.length < 3 || ([MODEL, "deepseek-v4-pro"].includes(previous.model)
       && previous.steps.every((step) => !step.resources.length || step.guidanceStatus === "grounded")))) {
     return Response.json(await stateFor(owned.database, owned.space));
   }

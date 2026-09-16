@@ -74,7 +74,7 @@ export async function GET(request: Request) {
       modelConfigured,
       modelConnectionState: modelConfigured ? "checking" : "unconfigured",
       provider: modelConfigured ? "deepseek" : null,
-      model: modelConfigured ? "deepseek-v4-pro" : null,
+      model: modelConfigured ? "deepseek-flash" : null,
       modelCredentialSource: credential.source,
     });
   } catch (error) {

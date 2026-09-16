@@ -11,7 +11,7 @@ import {
   sanitizeResearchProblemDraft,
 } from "../../../lib/research-problem";
 
-const MODEL = "deepseek-v4-pro";
+const MODEL = "deepseek-flash";
 const GLOBAL_DAILY_LIMIT = 80;
 const WORKSPACE_DAILY_LIMIT = 14;
 
@@ -328,7 +328,7 @@ export async function POST(request: Request) {
       return Response.json({ problemState: { problem: current.problem, hypotheses: current.hypotheses, assessment: current.assessment, actions: current.actions, evidence: current.evidence }, cached: true });
     }
     const credential = resolveDeepSeekCredential(request);
-    if (!credential.apiKey) return Response.json({ modelRequired: true, error: "DeepSeek Pro is required" }, { status: 428 });
+    if (!credential.apiKey) return Response.json({ modelRequired: true, error: "DeepSeek is required" }, { status: 428 });
     const budget = await assertBudget(context.database, context.user.userId);
     const statementIds = new Set(current.rawSynthesis.statements.map((item) => item.id));
 

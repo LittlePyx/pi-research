@@ -74,10 +74,10 @@ export async function POST(request: Request) {
       INNER JOIN paper_insights i ON i.paper_id = p.id AND i.space_id = p.space_id
       WHERE p.space_id = ? AND p.id IN (${placeholders})
         AND i.llm_recommended = 1 AND i.analysis_source = 'deepseek'
-        AND i.analysis_model = 'deepseek-v4-pro'
+        AND i.analysis_model IN ('deepseek-flash', 'deepseek-v4-pro')
     `).bind(space.id, ...paperIds).all<PaperRow>();
     if (rows.results.length !== paperIds.length) {
-      return Response.json({ error: "Only recommendations approved and written by DeepSeek Pro can be shared" }, { status: 400 });
+      return Response.json({ error: "Only recommendations approved and written by DeepSeek can be shared" }, { status: 400 });
     }
 
     const rowById = new Map(rows.results.map((row) => [row.id, row]));
