@@ -69,6 +69,10 @@ test("production queue count SQL respects scope, dismissal, existing recommendat
     db.exec("UPDATE paper_abstract_recovery SET retry_at=0");
     const resumed = db.prepare(qualityQueueCountsSql(activeResearchRouteSupplyPredicate("p"))).get("2026-08-19", "2026-08-19", "mine");
     assert.equal(resumed.pendingCount, 4); assert.equal(resumed.awaitingAbstractCount, 0);
+    db.exec("UPDATE paper_insights SET updated_at=datetime('now', '-91 days'), verification_status='degraded', screening_reason='unsupported claims' WHERE paper_id='rejected'");
+    const aged = db.prepare(qualityQueueCountsSql(activeResearchRouteSupplyPredicate("p"))).get("2026-08-19", "2026-08-19", "mine");
+    assert.equal(aged.pendingCount, 5);
+    assert.equal(aged.retryCount, 1, "an aged scientific rejection is a re-review, not a technical failure");
   } finally { db.close(); }
 });
 
