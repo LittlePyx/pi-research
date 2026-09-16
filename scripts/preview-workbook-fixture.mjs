@@ -43,7 +43,25 @@ const server = await createServer({ root, configFile: false, envDir: false,
         }
         if (url.pathname === "/api/research-map" && input.action === "read") result = { status: 200, body: routeReadingFixture() };
         if (url.pathname === "/api/monitor" && req.method === "POST") await new Promise(resolve => setTimeout(resolve, 10000));
-        if (url.pathname === "/api/learning-path" && data) { data.learning.path.targetTrackId = "kls"; result = { status: 200, body: data.learning }; }
+        if (url.pathname === "/api/learning-path" && data) {
+          data.learning.path.targetTrackId = "kls";
+          if (saved.has("learning:" + spaceId)) data.learning.path = saved.get("learning:" + spaceId);
+          result = { status: 200, body: data.learning };
+          if (input.action === "preview") {
+            const preview = { id: crypto.randomUUID(), target: input.target, trackId: input.trackId, goal: input.goal, background: input.background,
+              candidateCount: data.learning.availablePaperCount, materialCount: new Set(data.learning.path.steps.flatMap(s => s.resources.map(r => r.id))).size, modelPlanned: false,
+              steps: data.learning.path.steps.map(s => ({ ...s, papers: s.resources.map(r => ({id:r.id,title:r.title})) })) };
+            saved.set("preview:" + preview.id, preview); result = { status:200,body:{preview} };
+          }
+          if (input.action === "commit-preview") {
+            const preview = saved.get("preview:" + input.previewId);
+            if (!preview) result = {status:404,body:{error:"Sample preview not found"}};
+            else {
+              data.learning.path = {...data.learning.path,id:preview.id,target:preview.target,targetTrackId:preview.trackId,learningGoal:preview.goal,learnerBackground:preview.background};
+              saved.set("learning:" + spaceId,data.learning.path); result = {status:200,body:data.learning};
+            }
+          }
+        }
         if (url.pathname === "/api/monitor" && data) { data.monitor.historyPapers = workbookSources.map((s, i) => ({ ...data.monitor.historyPapers[i], id: s.id, title: s.title, authors: s.authors, url: s.url, ...(process.argv.includes("--paper-reviewed") ? { qualityStage:"reviewed", summaryZh:"", summaryEn:"", screeningReason:"Isolated review-state sample: not selected. This is not a live quality judgment." } : {}) })); if (process.argv.includes("--paper-not-preloaded") && !url.searchParams.get("paperId")) data.monitor.historyPapers = data.monitor.historyPapers.slice(1); result = { status: 200, body: { monitor: data.monitor } }; }
         if (url.pathname === "/api/research-workbook" && data) {
           const artifact = saved.get(spaceId) || null;

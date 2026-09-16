@@ -117,6 +117,8 @@ export type LearningPathStep = {
 };
 
 export type LearningPath = {
+  learningGoal?: import("./learning-goal").LearningGoal;
+  learnerBackground?: string;
   id: string;
   target: string;
   /** Null for an all-space path and for paths created before direction-scoped planning. */

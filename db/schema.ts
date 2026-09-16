@@ -1457,6 +1457,16 @@ export const researchNetworkExpansionStates = sqliteTable(
   ],
 );
 
+export const learningPlanPreviews = sqliteTable("learning_plan_previews", {
+  id: text("id").primaryKey(),
+  spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+  trackId: text("track_id"), target: text("target").notNull(), goal: text("goal").notNull(),
+  background: text("background").notNull().default(""), sourceRevision: text("source_revision").notNull(),
+  draftJson: text("draft_json").notNull(), model: text("model").notNull(),
+  basePathId: text("base_path_id"), appliedPathId: text("applied_path_id"),
+  createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+}, table => [uniqueIndex("idx_learning_preview_applied_path").on(table.appliedPathId)]);
+
 export const learningPaths = sqliteTable(
   "learning_paths",
   {

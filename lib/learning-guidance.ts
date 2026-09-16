@@ -68,7 +68,12 @@ export function presentLearningGuidance(path: LearningPath): LearningPath {
       rationaleZh: "按阶段阅读原始文献；缺失材料继续检索，结论以可获得的论文证据为依据。",
       rationaleEn: "Read the original papers by stage. Missing material stays in discovery; conclusions require available paper evidence.",
     } : {}),
-    steps: path.steps.map((step) => {
+    steps: path.steps.map(presentLearningStepGuidance),
+  };
+}
+
+export function presentLearningStepGuidance<T extends LearningGuidanceText & { resources: unknown[]; guidanceStatus?: "grounded" | "reading-task" }>(step: T): T {
+
       if (step.guidanceStatus === "grounded" && step.resources.length) return step;
       const [titleZh, titleEn, goalZh, goalEn] = tasks[step.kind];
       return {
@@ -81,6 +86,4 @@ export function presentLearningGuidance(path: LearningPath): LearningPath {
         checkpointZh: "用明确的论文依据说明判断；不能确定的内容保留为问题。",
         checkpointEn: "Support the judgment with specific paper evidence; keep uncertain points as questions.",
       };
-    }),
-  };
 }

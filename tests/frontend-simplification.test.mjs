@@ -109,7 +109,7 @@ test("learning, demo, share, and modal copy keep product facts ahead of interfac
   const learning = app.slice(app.indexOf('{view === "learn"'), app.indexOf('{view === "library"'));
 
   assert.match(app, /learnTitle: "学习路径"/);
-  assert.match(learning, /"当前路径" : "CURRENT PATH"/);
+  assert.match(learning, /<LearningPathHeader path=\{activeLearningState.path\}/);
   assert.doesNotMatch(learning, /证据驱动|Pi 正在规划|v2-learning-footer/);
   assert.match(demo, /index === 0 && <p>\{step\.detail\}<\/p>/);
   assert.match(demo, /公开演示 · 只读/);

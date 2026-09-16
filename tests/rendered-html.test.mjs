@@ -452,15 +452,15 @@ test("builds persistent personalized learning paths from real research papers", 
   assert.match(repository, /idx_learning_path_steps_path_position/);
   assert.match(client, /generateLearningPath/);
   assert.match(client, /updateLearningStep/);
-  assert.match(client, /JSON\.stringify\(\{ spaceId, target, trackId: targetTrackId \}\)/);
+  assert.match(client, /action: "commit-preview", previewId/);
   assert.match(client, /activeLearningState\.path/);
   assert.match(client, /learningRequestRef\.current !== requestId/);
   assert.match(client, /learningIntentRef\.current = \{ spaceId: activeSpace\.id, trackId: thread\.id, target \}/);
   assert.match(client, /data\.path\?\.targetTrackId \|\| null/);
-  assert.match(client, /v2-learning-target-scope/);
+  assert.match(client, /<LearningGoalPlanner/);
   assert.match(client, /activeLearningPathDirectionMismatch/);
   assert.match(client, /learningScopeDirty && activeLearningState\.path\.targetTrackId !== null/);
-  assert.match(client, /setLearningScopeDirty\(true\)/);
+
   assert.match(client, /你已切换为从全空间论文中规划/);
   assert.match(client, /按全空间重新规划/);
   assert.match(client, /activeLearningState\.path \? generateLearningPath\(activeLearningState\.path\.target, activeLearningState\.path\.targetTrackId\) : generateLearningPath\(learningTarget\)/);

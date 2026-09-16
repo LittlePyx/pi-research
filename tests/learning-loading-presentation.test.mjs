@@ -26,31 +26,23 @@ test('actual loading branch describes reading, not model generation, in both loc
   }
 });
 
-test('unloaded, loading and failed counts are unknown, not zero; real zero stays visible', () => {
-  const start = source.indexOf('{activeLearningReady && !activeLearningLoading && (!activeLearningError || Boolean(activeLearningState.path)) && <small>');
-  assert.ok(start >= 0);
-  const expression = source.slice(start + 1, source.indexOf('</small>}', start) + '</small>'.length);
-  for (const locale of ['zh', 'en']) {
-    const base = { locale, activeLearningReady: true, activeLearningLoading: false, activeLearningError: '', activeLearningState: { availablePaperCount: 0, waitingQualityCount: 0 } };
-    for (const override of [{ activeLearningReady: false }, { activeLearningLoading: true }, { activeLearningError: 'failed' }]) {
-      assert.equal(render(expression, { ...base, ...override }), '');
-    }
-    assert.match(render(expression, base), /<small>0 /);
-    const counts = render(expression, { ...base, activeLearningState: { availablePaperCount: 18, waitingQualityCount: 17 } });
-    assert.match(counts, /18 /);
-    assert.match(counts, /17 /);
-    const retained = render(expression, { ...base, activeLearningError: 'replan failed', activeLearningState: { path: { id: 'saved' }, availablePaperCount: 18, waitingQualityCount: 17 } });
-    assert.match(retained, /18 /);
-    assert.match(retained, /17 /);
-  }
+test('planning material counts are shown only after a preview response', async () => {
+  const planner = await readFile(new URL('../app/components/learning-goal-planner.tsx', import.meta.url), 'utf8');
+  assert.match(planner, /preview && <section/);
+  const expression = '<p>{preview.materialCount} selected papers / {preview.candidateCount} available</p>';
+  assert.match(render(expression, {preview:{materialCount:0,candidateCount:0}}), /0 selected papers \/ 0 available/);
+  assert.match(planner, /data\.preview/);
+  assert.doesNotMatch(planner, /candidateCount\s*\|\|\s*0/);
 });
 
-test('read and generate keep separate request and status channels', () => {
+test('read and generate keep separate request and status channels', async () => {
   const start = source.indexOf('const generateLearningPath = async');
   const generate = source.slice(start, source.indexOf('const updateLearningStep', start));
   assert.match(generate, /setLearningAction\("generate"\)/);
   assert.match(generate, /method: "POST"/);
   assert.doesNotMatch(generate, /setLearningLoading\(true\)/);
-  assert.match(source, /learningAction === "generate" \? \(locale === "zh" \? "正在生成…" : "Building…"\)/);
+  const planner = await readFile(new URL('../app/components/learning-goal-planner.tsx', import.meta.url), 'utf8');
+  assert.match(planner, /正在匹配材料与规划/);
+  assert.match(planner, /busy \? \(zh \? '正在保存…'/);
   assert.match(source, /fetch\("\/api\/learning-path\?spaceId="/);
 });

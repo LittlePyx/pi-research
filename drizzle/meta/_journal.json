@@ -435,6 +435,13 @@
       "when": 1789046152627,
       "tag": "0061_premium_proemial_gods",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1789545394223,
+      "tag": "0062_long_yellow_claw",
+      "breakpoints": true
     }
   ]
 }
