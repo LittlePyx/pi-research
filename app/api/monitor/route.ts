@@ -1,5 +1,6 @@
 import { researchSourcePlan, sourcePlanIssn, normalizeSourceTitle } from "../../../lib/research-source-plan";
 import { readDailyReviewProgress, needsDailyReviewTopup, dailyReviewTopupDue, DAILY_TOPUP_INTERVAL_MS } from "../../../lib/daily-review-target";
+import { CITATION_SCAN_SEEDS_SQL, citationDiscoveryDescription } from "../../../lib/citation-scan-seeds";
 import { pendingQualityCandidateCondition, qualityQueueCountsSql, qualityAbstractDetailsSql } from "../../../lib/monitor-quality-status-sql.mjs";
 import { ABSTRACT_BLOCK_REASON, recoverPaperAbstract, parseAbstractAttempts } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
@@ -379,6 +380,7 @@ type PaperRow = {
   track_id: string;
   discovery_provider: string;
   discovery_channels: string;
+  citation_origin?: string;
   discovery_source_key: string;
   discovery_route_id: string;
   discovery_route_interaction: number;
@@ -1924,25 +1926,20 @@ async function fetchCitationFrontier(
   discoveredBefore: number,
   relations: Array<"references" | "citations">,
 ) {
-  const seeds = await database.prepare(
-    `SELECT paper.track_id, paper.doi, paper.url, paper.title FROM research_track_papers paper
-     JOIN research_tracks track ON track.id = paper.track_id AND track.space_id = paper.space_id
-     WHERE paper.space_id = ? AND paper.curation_status = 'active'
-      AND COALESCE(track.monitoring_status, 'active') = 'active' AND (paper.doi IS NOT NULL OR paper.url LIKE '%arxiv.org/%')
-     ORDER BY CASE paper.role WHEN 'milestone' THEN 0 ELSE 1 END, paper.citation_count DESC, paper.created_at ASC LIMIT 24`,
-  ).bind(space.id).all<{ track_id: string; doi: string | null; url: string; title: string }>();
+  const seeds = await database.prepare(CITATION_SCAN_SEEDS_SQL)
+    .bind(space.id, space.id, space.id).all<{ canonical_id: string; track_id: string; doi: string | null; url: string; title: string }>();
   if (!seeds.results.length) return [] as Array<Omit<Candidate, "qualityScore" | "priorityVenue">>;
   const seed = selectCitationRouteSeed(seeds.results, horizon.key, round);
   if (!seed) return [];
-  const arxivId = arxivIdFromUrl(seed.url);
-  const paperId = seed.doi ? `DOI:${seed.doi}` : arxivId ? `ARXIV:${arxivId}` : "";
+  const arxivId = arxivIdFromUrl(seed.url) || (seed.canonical_id.startsWith("arxiv:") ? seed.canonical_id.slice(6) : "");
+  const paperId = seed.doi ? `DOI:${seed.doi}` : arxivId ? `ARXIV:${arxivId}` : seed.canonical_id.startsWith("s2:") ? seed.canonical_id.slice(3) : "";
   if (!paperId) return [];
   await setScanSource(database, jobId, horizon.key, `Citation frontier · ${cleanText(seed.title).slice(0, 70)}`, 53, discoveredBefore);
   const relationResults = await Promise.all(relations.map(async (relation) => {
     const plan: DiscoveryQuery = {
       key: `research-route-network-${relation}`,
       sourceKey: "research-route:network",
-      query: paperId,
+      query: JSON.stringify({ seedTitle: seed.title.slice(0, 180), seedId: paperId.slice(0, 100), relation }),
       sort: "relevance",
       rotating: true,
       channel: "citation",
@@ -1966,11 +1963,13 @@ async function fetchCitationFrontier(
       const queryKey = await discoveryQueryKey(plan);
       const normalizedCandidates = await Promise.all(papers.map(async (item) => {
         const candidate = await normalizeSemanticScholarItem(item, horizon.key);
-        return candidate && candidateWithinHorizon(candidate, horizon, now)
-          ? { ...candidate, discoveryChannel: "citation" as const, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, routeId: seed.track_id }] }
+        return candidate && candidate.canonicalId.toLowerCase() !== seed.canonical_id.toLowerCase() && candidateWithinHorizon(candidate, horizon, now)
+          ? { ...candidate, discoveryChannel: "citation" as const, provenance: [{ sourceKey: plan.sourceKey, channel: plan.channel, queryKey, queryText: plan.query, routeId: seed.track_id || undefined }] }
           : null;
       }));
-      const normalized = normalizedCandidates.filter((item): item is NonNullable<typeof item> => item !== null);
+      const eligible = normalizedCandidates.filter((item): item is NonNullable<typeof item> => item !== null);
+      const newIds = new Set(await findNewCandidateIds(database, space.id, eligible));
+      const normalized = eligible.filter(candidate => newIds.has(candidate.canonicalId));
       const nextOffset = await advanceDiscoveryOffset(database, space.id, horizon.key, plan, offset, limit);
       await recordDiscoveryCoverage(database, space.id, horizon.key, plan, nextOffset, normalized);
       return normalized;
@@ -4762,13 +4761,16 @@ function isPaperDue(paper: PaperRow, now: number) {
   return now - databaseTime(paper.last_shown_at) >= reminderDays * 24 * 60 * 60 * 1000;
 }
 
-function monitorDiscoverySources(provider: string, channels: string) {
+function monitorDiscoverySources(provider: string, channels: string, citationOrigin = "") {
   const sourceKinds = new Set(channels.split(",").map((item) => cleanText(item).toLocaleLowerCase()).filter(Boolean));
   const sources: Array<{ key: string; labelZh: string; labelEn: string }> = [];
   const add = (key: string, labelZh: string, labelEn: string) => {
     if (!sources.some((source) => source.key === key)) sources.push({ key, labelZh, labelEn });
   };
-  if (sourceKinds.has("citation")) add("citation", "核心论文引用追踪", "Citation tracking");
+  if (sourceKinds.has("citation")) {
+    const origin = citationDiscoveryDescription(citationOrigin);
+    add("citation", origin?.zh || "重点论文引用追踪", origin?.en || "Citation tracking");
+  }
   if (sourceKinds.has("journal")) add("journal", "重点期刊前向扫描", "Priority-journal scan");
   if (sourceKinds.has("author")) add("author", "作者与团队追踪", "Author and team tracking");
   if (provider === "datacite") add("datacite-arxiv", "DataCite 核验的 arXiv 元数据", "DataCite-verified arXiv metadata");
@@ -4840,7 +4842,7 @@ function toPaper(paper: PaperRow, now: number) {
     priorityVenue: Boolean(paper.priority_venue),
     analysisSource: paper.analysis_source,
     screeningReason: paper.screening_reason,
-    discoverySources: monitorDiscoverySources(paper.discovery_provider, paper.discovery_channels),
+    discoverySources: monitorDiscoverySources(paper.discovery_provider, paper.discovery_channels, paper.citation_origin),
     userState: paperUserState(paper, now),
     showCount: paper.show_count,
     saved: Boolean(paper.saved),
@@ -4918,6 +4920,10 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        p.source AS discovery_provider,
        COALESCE((SELECT group_concat(DISTINCT candidate_source.channel) FROM monitor_candidate_sources candidate_source
         WHERE candidate_source.space_id = p.space_id AND candidate_source.paper_id = p.id), '') AS discovery_channels,
+       COALESCE((SELECT coverage.query_text FROM monitor_candidate_sources cs
+        JOIN monitor_discovery_coverage coverage ON coverage.space_id=cs.space_id AND coverage.source_key=cs.source_key AND coverage.query_key=cs.query_key
+        WHERE cs.space_id=p.space_id AND cs.paper_id=p.id AND cs.channel='citation'
+        ORDER BY coverage.last_scanned_at DESC LIMIT 1),'') AS citation_origin,
        p.citation_count, p.relevance_score, p.discovered_at, i.last_recommended_at, COALESCE(i.abstract_text, '') AS abstract_text,
        COALESCE(i.summary_zh, '') AS summary_zh, COALESCE(i.summary_en, '') AS summary_en,
        COALESCE(i.why_read_zh, '') AS why_read_zh, COALESCE(i.why_read_en, '') AS why_read_en,

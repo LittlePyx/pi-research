@@ -219,7 +219,7 @@ test("today and its daily brief are capped at six and reranked across directions
   assert.match(client, /近期优质/);
   assert.match(client, /核心补读/);
   assert.match(monitor, /重点期刊前向扫描/);
-  assert.match(monitor, /核心论文引用追踪/);
+  assert.match(monitor, /重点论文引用追踪/);
   assert.match(client, /作者信息未提供/);
   assert.match(client, /"被引"/);
   assert.match(client, /<details key=\{paper\?\.id/);

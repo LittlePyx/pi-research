@@ -1253,7 +1253,8 @@ function PaperDiscoverySourceBadge({ paper, locale }: { paper: MonitorPaper; loc
   const sources = paper.discoverySources || [];
   if (!sources.length) return null;
   const labels = sources.map((source) => locale === "zh" ? source.labelZh : source.labelEn);
-  return <span className="v2-paper-discovery-source" title={labels.join(" · ")}><i />{labels[0]}{labels.length > 1 ? ` +${labels.length - 1}` : ""}</span>;
+  const primary = labels[0].length > 48 ? `${labels[0].slice(0, 48)}…` : labels[0];
+  return <span className="v2-paper-discovery-source" title={labels.join(" · ")} aria-label={labels.join(" · ")}><i />{primary}{labels.length > 1 ? ` +${labels.length - 1}` : ""}</span>;
 }
 
 function PaperFreshnessBadge({ paper, locale }: { paper: MonitorPaper; locale: Locale }) {
