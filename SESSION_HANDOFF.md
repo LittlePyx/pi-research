@@ -1,5 +1,14 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-17：v249 新闻简报密度与公式标题修复
+
+- 用户截图显示统计标题占用过大、正文居中留白、公式题名单独居中。今日简报改紧凑报头，日期/入选数/操作集中；evidence-summary的统计headline不再作主标题，保留真实overview于可展开依据。模型生成的研究headline保留为副标题，历史日期仍标明。
+- 论文标题与已有signal/whyRead构成新闻条目的标题/导语，不生成新研究结论；编号圆点隐藏，书目与新旧分布去标签背景。收紧今日与库头部、容器间距，窄屏报头保持左对齐。
+- math renderer新增inline选项，标题显式启用：$$/\[仍识别但以KaTeX行内渲染，正文默认保持display。同步今日、论文库、详情、路线、学习、综合、记忆、分享等已有MathText题名调用；原始字符串/身份与安全参数不变。新增测试覆盖标题inline/bodydisplay/source无损。
+- 隔离预览增加单篇dailyBrief和截图所示P_2(R^d)题名，实际查看1440/390展开依据及文章截图；公式DOM无katex-display，inline-flex，无横向溢出。截图outputs/v249-brief-{1440,390}.png与expanded版本；夹具不是生产评审记录。
+- 构建、653测试、完整lint通过。旧静态测试文案“最近一次研究判断”更新为“最近研究简报”，继续验证历史标识。业务95a6f1548ea77bdb207903599c41b16097bdf051已同步两仓库；版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_875796e20ca08191a154f7edf2992d49。部署appgdep_6aabac63b9008191a67d76e7a2482e49于09:01:37 UTC succeeded，public/环境修订6保持。CI35202663084全部success（状态连接曾EOF，重查确认）。
+- 无后台/数据库/阈值变动；用户docs/未动，邮件暂停、旧自动任务不恢复。未声称全站所有页面/状态视觉验收。
+
 ## 2026-09-17：v248 Apple / Google 规范参考下的今日与论文库重设计
 
 - 参考 Apple HIG Layout（https://developer.apple.com/design/human-interface-guidelines/layout）、WWDC25 design system（https://developer.apple.com/videos/play/wwdc2025/356/）、Google Material canonical layouts（https://m3.material.io/foundations/layout/canonical-examples/overview）和 Google Typography（https://design.google/library/choosing-web-fonts-beginners-guide）。学习对齐/分组/层级及任务版式，不仿品牌资产或添加装饰图片。
