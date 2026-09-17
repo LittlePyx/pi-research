@@ -5911,7 +5911,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
             {monitorReadNotice}
             <section className="v2-today-hero">
-              <div className="v2-today-hero-copy"><p className="v2-kicker">{formatTodayDate(locale)}</p><h1>{locale === "zh" ? "今日" : "Today"}</h1><p className="pi-page-purpose">{locale === "zh" ? "先读值得关注的论文，再处理研究提醒。扫描期间也可以阅读已有内容。" : "Read selected papers and act on research updates. Saved content remains available during discovery."}</p></div>
+              <div className="v2-today-hero-copy"><p className="v2-kicker">{formatTodayDate(locale)}</p><h1>{locale === "zh" ? "今日" : "Today"}</h1><p className="pi-page-purpose">{locale === "zh" ? "从一篇值得读的论文开始，沿研究路线继续深入。" : "Start with a worthwhile paper, then follow your research direction."}</p></div>
               <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{!monitor ? (locale === "zh" ? "正在读取已有内容" : "Loading saved content") : scanIsActive ? scanPhase : monitor?.status === "ready" ? monitorReadyLabel : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
             </section>
 
@@ -5921,7 +5921,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <header><p className="v2-kicker">{monitor.dailyBrief.isCurrent ? (locale === "zh" ? "今日研究判断" : "TODAY'S RESEARCH JUDGMENT") : (locale === "zh" ? "最近一次研究判断" : "LATEST RESEARCH JUDGMENT")}</p><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.model === "evidence-summary" ? (locale === "zh" ? "可核验证据简报" : "Evidence-first brief") : monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
                 <h2>{datedBriefText(locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn, monitor.dailyBrief)}</h2>
                 {!monitor.dailyBrief.isCurrent && <p className="v2-daily-brief-stale">{locale === "zh" ? `最近简报（${monitor.dailyBrief.date}），不计入今日数量。` : `Latest brief (${monitor.dailyBrief.date}); excluded from today's count.`}</p>}
-                <p className="v2-daily-brief-overview">{datedBriefText(locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn, monitor.dailyBrief)}</p>
+                <details className="pi-brief-context"><summary>{locale === "zh" ? "查看研判依据" : "Why these papers"}</summary><p className="v2-daily-brief-overview">{datedBriefText(locale === "zh" ? monitor.dailyBrief.overviewZh : monitor.dailyBrief.overviewEn, monitor.dailyBrief)}</p></details>
                 {Boolean(dailyBriefPapers.length) && <footer><button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "从第一篇开始" : "Start with the first paper"} →</button><button className="secondary" type="button" onClick={() => shareSnapshot("daily", dailyBriefPapers)} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily}</button></footer>}
               </div>
               <div className="v2-daily-paper-queue">
@@ -5938,7 +5938,7 @@ export default function ResearchApp({ user }: { user: User }) {
                   })}
                 </div>
                 {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{dailyBriefPaperIds.size ? (locale === "zh" ? "论文详情暂未加载" : "Paper details unavailable") : (locale === "zh" ? "本简报暂无入选" : "No selections in this brief")}</strong><p>{dailyBriefPaperIds.size ? (locale === "zh" ? "已保留入选记录，请稍后刷新查看。" : "Selections are preserved. Refresh to load their details.") : locale === "zh" ? `${latestQuickScreenedCount} 篇完成初筛，${latestDeepReviewedCount} 篇完成深评${latestDeepDeferredCount ? `，${latestDeepDeferredCount} 篇延后` : ""}；暂无论文通过全部质量门槛。` : `${latestQuickScreenedCount} screened, ${latestDeepReviewedCount} deeply reviewed${latestDeepDeferredCount ? `, ${latestDeepDeferredCount} deferred` : ""}; none cleared every quality gate.`}</p></div>}
-                {Boolean(briefRunStatus(monitor.dailyBrief, locale).length) && <aside><strong>{locale === "zh" ? `${monitor.dailyBrief.date} 简报保存时状态（末批）` : `${monitor.dailyBrief.date} status when saved (last run)`}</strong><ul>{briefRunStatus(monitor.dailyBrief, locale).map((item) => <li key={item}>{item}</li>)}</ul></aside>}
+                {Boolean(briefRunStatus(monitor.dailyBrief, locale).length) && <details className="pi-processing-details"><summary>{locale === "zh" ? "简报处理记录" : "Brief processing record"}</summary><aside><strong>{locale === "zh" ? `${monitor.dailyBrief.date} 简报保存时状态（末批）` : `${monitor.dailyBrief.date} status when saved (last run)`}</strong><ul>{briefRunStatus(monitor.dailyBrief, locale).map((item) => <li key={item}>{item}</li>)}</ul></aside></details>}
               </div>
             </section>}
 

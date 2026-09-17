@@ -1480,7 +1480,8 @@ async function prioritizeDiscoveryPlans(database: D1Database, spaceId: string, p
 }
 
 async function discoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery) {
-  if (!query.rotating) return 0;
+  // Moving recent windows must revisit the head, even for rotating route queries.
+  if (horizon === "days" || !query.rotating) return 0;
   const queryKey = await discoveryQueryKey(query);
   const row = await database.prepare(
     "SELECT next_offset FROM monitor_discovery_pages WHERE space_id = ? AND horizon = ? AND query_key = ? LIMIT 1",
@@ -1489,7 +1490,7 @@ async function discoveryOffset(database: D1Database, spaceId: string, horizon: H
 }
 
 async function advanceDiscoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery, offset: number, rows: number) {
-  if (!query.rotating) return 0;
+  if (horizon === "days" || !query.rotating) return 0;
   const queryKey = await discoveryQueryKey(query);
   const nextOffset = offset + rows >= DISCOVERY_OFFSET_LIMIT ? 0 : offset + rows;
   await database.prepare(
