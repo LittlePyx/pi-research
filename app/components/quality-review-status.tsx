@@ -32,7 +32,7 @@ export function QualityReviewStatus({ monitor, locale, failureMessage, phase, fo
     : status.state === "unscheduled" ? (zh ? "尚无可用的下次运行时间，需要检查调度状态。" : "No next run is recorded; scheduling needs attention.")
     : status.state === "evidence" ? (zh ? "以下论文暂缺可核对的摘要，尚未完成评审。后台会继续补找；不影响阅读已通过评审的论文。" : "These papers still need verifiable abstracts before review can finish. Recovery continues in the background; reviewed papers remain available.")
     : (zh ? "候选按批次筛选、深评和独立核对；本轮结束后，剩余材料接续处理。" : "Candidates are screened, reviewed, and independently checked in batches. Remaining work continues in later runs.");
-  return <section className={`v2-background-review-status ${status.state}`} aria-label={zh ? "候选评审进度" : "Candidate review progress"}>
+  return <details className="pi-processing-details"><summary>{zh ? "材料处理详情" : "Material processing details"}<span>{status.state === "paused" ? (zh ? "自动处理已暂停" : "Automatic processing paused") : (zh ? "不影响已保存内容" : "Saved content is preserved")}</span></summary><section className={`v2-background-review-status ${status.state}`} aria-label={zh ? "候选评审进度" : "Candidate review progress"}>
     <header><h2>{labels[status.state]}</h2><span>{status.pendingCount || status.awaitingAbstractCount} {status.pendingCount ? (zh ? "篇待评审" : "awaiting review") : (zh ? "篇待补摘要" : "awaiting abstracts")}</span></header>
     <p>{reason || (zh ? "自动评审暂未运行，已有进度保留。" : "Automatic review is not running; progress is preserved.")}</p>
     <div className="v2-review-stages">
@@ -58,5 +58,5 @@ export function QualityReviewStatus({ monitor, locale, failureMessage, phase, fo
         <li>{zh ? "书目与摘要依据通过独立核对；需要修订的内容修订后重新检查。分数达标本身不等于推荐通过。" : "Bibliographic and abstract evidence must pass an independent check, with corrections checked again. Scores alone do not qualify a recommendation."}</li>
         <li>{zh ? "通过后进入可推荐材料，再按优先级安排今日主序或备选阅读；未通过与待评估分别保存。" : "Passing papers become eligible for the primary reading order or further reading. Rejected and pending papers remain distinct."}</li></ol>
     </details>
-  </section>;
+  </section></details>;
 }
