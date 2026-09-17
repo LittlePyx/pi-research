@@ -5,6 +5,7 @@ import "katex/dist/katex.min.css";
 import "./math.css";
 import "./interface-theme.css";
 import "./workspace-design.css";
+import "./reading-workspace.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

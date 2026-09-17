@@ -5916,8 +5916,7 @@ export default function ResearchApp({ user }: { user: User }) {
         </header>
 
         {view === "today" && (
-          <main className="v2-page v2-today">
-            <EmailSubscription key={`email:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
+          <main className="v2-page v2-today pi-editorial-today">
 
             {monitorReadNotice}
             <section className="v2-today-hero">
@@ -5971,6 +5970,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
             <QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} />
             <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
+            <EmailSubscription key={`email:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
               <summary><span><p className="v2-kicker">7D {locale === "zh" ? "阶段研究回顾" : "RESEARCH REVIEW"}</p><strong>{locale === "zh" ? monitor.weeklyReview.titleZh : monitor.weeklyReview.titleEn}</strong><small>{locale === "zh" ? `来自 ${monitor.weeklyReview.sourceDays} 天真实记录` : `Based on ${monitor.weeklyReview.sourceDays} days of real activity`}</small></span><b>＋</b></summary>
@@ -6275,9 +6275,9 @@ export default function ResearchApp({ user }: { user: User }) {
         )}
 
         {view === "library" && (
-          <main className="v2-page v2-library-page">
+          <main className="v2-page v2-library-page pi-library-workspace">
             {monitorReadNotice}
-            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{t.libraryTitle}</h1><p className="pi-page-purpose">{locale === "zh" ? "查找已发现的论文，查看评审结果，安排阅读并留下笔记。" : "Find discovered papers, inspect reviews, plan reading and keep notes."}</p></div><details className="v2-library-export"><summary>{locale === "zh" ? "导出" : "Export"} ＋</summary><div className="v2-library-head-actions"><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=bibtex&scope=accepted`}>BibTeX ↓</a><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=ris&scope=accepted`}>RIS / Zotero ↓</a></div></details></section>
+            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{locale === "zh" ? "论文库" : "Library"}</h1><p className="pi-page-purpose">{locale === "zh" ? "查找已发现的论文，查看评审结果，安排阅读并留下笔记。" : "Find discovered papers, inspect reviews, plan reading and keep notes."}</p></div><details className="v2-library-export"><summary>{locale === "zh" ? "导出" : "Export"} ＋</summary><div className="v2-library-head-actions"><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=bibtex&scope=accepted`}>BibTeX ↓</a><a href={`/api/library?spaceId=${encodeURIComponent(activeSpace.id)}&format=ris&scope=accepted`}>RIS / Zotero ↓</a></div></details></section>
             <div className="v2-library-tabs">
               <button className={libraryFilter === "inbox" ? "active" : ""} aria-pressed={libraryFilter === "inbox"} type="button" onClick={() => { setLibraryFilter("inbox"); setLibraryStageFilter("all"); setInboxFilter("all"); }}>{t.inbox}<span>{monitor?.historyCounts?.inbox || 0}</span></button>
               <button className={libraryFilter === "accepted" ? "active" : ""} aria-pressed={libraryFilter === "accepted"} type="button" onClick={() => { setLibraryFilter("accepted"); setLibraryStageFilter("all"); }}>{t.accepted}<span>{monitor?.historyCounts?.accepted || 0}</span></button>
@@ -6291,20 +6291,23 @@ export default function ResearchApp({ user }: { user: User }) {
                 <option value="priority">{t.sortPriority}</option><option value="newest">{t.sortNewest}</option><option value="quality">{t.sortQuality}</option>
               </select>
             </div>
+            <p className="pi-library-result-count" role="status">{locale === "zh" ? `${libraryPapers.length} 篇论文` : `${libraryPapers.length} papers`}</p>
             <div className="v2-library-list">
               {visibleLibraryPapers.map((paper) => (
                 <article className={"v2-library-paper " + paper.userState} key={paper.id}>
                   <button className="v2-library-paper-main" type="button" onClick={() => openMonitorPaper(paper)}>
-                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(paper, locale) : archiveQualityStagePresentation(paper.qualityStage, locale).label}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span><PaperDiscoverySourceBadge paper={paper} locale={locale} /></div>
+
                     <h2><MathText>{paper.title}</MathText></h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p>
-                    <p className="v2-library-paper-why"><b>{isRecommendationQualityStage(paper.qualityStage) ? t.whySuitable : locale === "zh" ? "归档说明" : "Archive note"}</b>{isRecommendationQualityStage(paper.qualityStage) ? ((locale === "zh" ? paper.whyReadZh : paper.whyReadEn) || (locale === "zh" ? "正在共享质量队列中核对，尚未形成正式推荐。" : "This candidate is still being checked in the shared quality queue and is not yet a formal recommendation.")) : archiveQualityStagePresentation(paper.qualityStage, locale).note}</p>
+                    <div className="v2-library-paper-flags"><span className={"v2-history-state " + paper.userState}>{paper.userState === "unseen" ? t.unseen : paper.userState === "accepted" ? t.accepted : paper.userState === "dismissed" ? t.ignored : paper.userState === "snoozed" ? t.snoozed : t.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(paper, locale) : archiveQualityStagePresentation(paper.qualityStage, locale).label}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span></div>
+
                     <footer><b>{t.viewAnalysis} →</b></footer>
                   </button>
-                  <button type="button" onClick={() => { setLibraryGraphPaperId(paper.id); setResearchMapMode("papers"); setView("threads"); }}>{locale === "zh" ? "在图谱中探索" : "Explore in graph"}</button><details className="v2-library-paper-actions"><summary>{locale === "zh" ? "管理" : "Manage"} ＋</summary><div>
+                  <div className="pi-library-row-actions"><button type="button" onClick={() => { setLibraryGraphPaperId(paper.id); setResearchMapMode("papers"); setView("threads"); }}>{locale === "zh" ? "在图谱中探索" : "Explore in graph"}</button><details className="v2-library-paper-actions"><summary>{locale === "zh" ? "管理" : "Manage"} ＋</summary><div>
                     <select disabled={readingSaving} value={paper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(paper, event.target.value as MonitorPaper["readingStatus"])} aria-label={locale === "zh" ? "阅读状态" : "Reading status"}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select>
                     {!["accepted", "dismissed"].includes(paper.userState) ? <><button type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {t.relevant}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {t.notRelevant}</button></> : <button type="button" onClick={() => returnPaperToInbox(paper)}>↶ {t.returnPending}</button>}
                     <button type="button" onClick={() => shareSnapshot("paper", [paper])} disabled={Boolean(sharingSnapshot)}>↗ {t.sharePaper}</button>
-                  </div></details>
+                  </div></details></div>
+                  <details className="pi-library-context"><summary>{locale === "zh" ? "推荐理由与来源" : "Rationale & sources"}</summary><p className="v2-library-paper-why"><b>{isRecommendationQualityStage(paper.qualityStage) ? t.whySuitable : locale === "zh" ? "归档说明" : "Archive note"}</b>{isRecommendationQualityStage(paper.qualityStage) ? ((locale === "zh" ? paper.whyReadZh : paper.whyReadEn) || (locale === "zh" ? "正在共享质量队列中核对，尚未形成正式推荐。" : "This candidate is still being checked in the shared quality queue and is not yet a formal recommendation.")) : archiveQualityStagePresentation(paper.qualityStage, locale).note}</p><PaperDiscoverySourceBadge paper={paper} locale={locale} /></details>
                 </article>
               ))}
               {visibleLibraryPapers.length < libraryPapers.length && <button className="v2-library-load-more" type="button" onClick={() => setLibraryVisibleCount((count) => count + 60)}>{locale === "zh" ? `继续显示（剩余 ${libraryPapers.length - visibleLibraryPapers.length} 篇）` : `Show more (${libraryPapers.length - visibleLibraryPapers.length} remaining)`}</button>}
