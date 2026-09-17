@@ -5906,8 +5906,8 @@ export default function ResearchApp({ user }: { user: User }) {
 
         {view === "today" && (
           <main className="v2-page v2-today">
-            <EmailSubscription key={activeSpace.id} spaceId={activeSpace.id} locale={locale} />
-            <ResearchMaintenance key={activeSpace.id} spaceId={activeSpace.id} locale={locale} />
+            <EmailSubscription key={`email:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
+            <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
             {monitorReadNotice}
             <section className="v2-today-hero">
               <div className="v2-today-hero-copy"><p className="v2-kicker">{formatTodayDate(locale)}</p><h1>{locale === "zh" ? "今日" : "Today"}</h1><p className="pi-page-purpose">{locale === "zh" ? "先读值得关注的论文，再处理研究提醒。扫描期间也可以阅读已有内容。" : "Read selected papers and act on research updates. Saved content remains available during discovery."}</p></div>
