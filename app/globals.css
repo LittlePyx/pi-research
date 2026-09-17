@@ -1801,7 +1801,7 @@ main { min-width: 0; }
 .v2-ask-suggestions button { min-height: 34px; padding: 0 11px; border: 0; border-top: 1px solid #e2e4de; background: transparent; color: #626962; text-align: left; font: 9px Georgia, serif; }
 .v2-ask-suggestions button:hover { background: rgba(255,255,255,.6); }
 .v2-thinking { margin: 0 17px 17px; padding: 15px; border-radius: 6px; background: var(--v2-blue-soft); display: flex; align-items: center; gap: 11px; }
-.v2-thinking > span, .v2-answer > div > span {
+.v2-thinking > span, .v2-answer > div:first-child > span {
   width: 27px;
   height: 27px;
   border: 1px solid #7e9aab;

@@ -1,0 +1,29 @@
+.v2-app.pi-workspace .v2-ask-panel .v2-answer { background:#fff; padding:24px 28px; }
+.v2-app.pi-workspace .v2-answer .pi-answer-prose {
+  margin:22px 0; color:#28313c; font:400 16px/1.8 var(--font-sans,Arial,sans-serif);
+  text-align:left; white-space:normal; overflow-wrap:anywhere; min-width:0;
+}
+.v2-app.pi-workspace .pi-answer-prose :is(p,ul,ol,blockquote,pre,table) { margin:0 0 1em; }
+.v2-app.pi-workspace .pi-answer-prose :is(h3,h4,h5,h6) { margin:1.5em 0 .55em; font:600 18px/1.5 var(--font-sans,Arial,sans-serif); color:#18202a; }
+.v2-app.pi-workspace .pi-answer-prose > :first-child { margin-top:0; }
+.v2-app.pi-workspace .pi-answer-prose > :last-child { margin-bottom:0; }
+.v2-app.pi-workspace .pi-answer-prose strong { font-weight:650; color:#18202a; }
+.v2-app.pi-workspace .pi-answer-prose :is(ul,ol) { padding-left:1.5em; list-style-position:outside; }
+.v2-app.pi-workspace .pi-answer-prose ul { list-style-type:disc; }
+.v2-app.pi-workspace .pi-answer-prose ol { list-style-type:decimal; }
+.v2-app.pi-workspace .pi-answer-prose li { padding-left:.15em; margin:.3em 0; }
+.v2-app.pi-workspace .pi-answer-prose li > p { margin:.25em 0; }
+.v2-app.pi-workspace .pi-answer-prose blockquote { border-left:3px solid #d5dce5; padding:8px 16px; color:#586575; background:#f7f9fb; }
+.v2-app.pi-workspace .pi-answer-prose blockquote > :last-child { margin-bottom:0; }
+.v2-app.pi-workspace .pi-answer-prose a { color:#2459a9; text-decoration:underline; text-underline-offset:3px; }
+.v2-app.pi-workspace .pi-answer-prose pre { padding:14px; background:#f5f6f8; overflow:auto; white-space:pre; }
+.v2-app.pi-workspace .pi-answer-prose code { font-family:Consolas,monospace; font-size:.9em; }
+.v2-app.pi-workspace .pi-answer-prose :not(pre) > code { background:#f0f2f5; padding:2px 4px; }
+.v2-app.pi-workspace .pi-answer-table { max-width:100%; overflow:auto; }
+.v2-app.pi-workspace .pi-answer-prose table { border-collapse:collapse; width:100%; font-size:14px; }
+.v2-app.pi-workspace .pi-answer-prose :is(th,td) { border-bottom:1px solid #dce1e7; padding:9px 12px; text-align:left; }
+.v2-app.pi-workspace .pi-answer-prose .katex-display { overflow-x:auto; overflow-y:hidden; padding:4px 0; }
+.v2-app.pi-workspace .pi-answer-prose hr { border:0; border-top:1px solid #e1e5e9; margin:1.3em 0; }
+@media(max-width:640px) { .v2-app.pi-workspace .v2-ask-panel .v2-answer { margin:0 10px 14px; padding:18px; } }
+
+.v2-app.pi-workspace .pi-answer-prose .katex { white-space:nowrap; }

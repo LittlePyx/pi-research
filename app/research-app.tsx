@@ -1,5 +1,6 @@
 "use client";
 
+import { AnswerMarkdown } from "./components/answer-markdown";
 import { SectionNavigation } from "./components/section-navigation";
 import { LibraryExplorer } from "./components/library-explorer";
 import { ResearchMaintenance } from "./components/research-maintenance";
@@ -6542,7 +6543,7 @@ export default function ResearchApp({ user }: { user: User }) {
             {asking && <div className="v2-thinking"><InterfaceIcon name="loading" className="pi-state-mark" /><p>{t.thinking}<i><b /><b /><b /></i></p></div>}
             {(askContext.trackId || askContext.paperId) && <p className="pi-ask-context">{locale === "zh" ? "已关联当前选中的研究材料" : "Selected research materials attached"} <button type="button" disabled={asking} onClick={() => setAskContext({})}>{locale === "zh" ? "移除" : "Remove"}</button></p>}
             {askError && <div className="pi-ask-error" role="alert"><p>{askError}</p><button type="button" disabled={asking} onClick={() => void submitQuestion()}>{locale === "zh" ? "重新回答" : "Retry"}</button></div>}
-            {answer && <div className="v2-answer"><div><InterfaceIcon name="synthesis" className="pi-state-mark" /><p className="v2-kicker">{answerMode === "deepseek" ? t.modelAnswer : t.previewMode}</p><small>{answerMode === "deepseek" ? modelDisplayName(answerModel || connectedModel) : t.setupRequired}</small></div><p>{answer}</p><div><i />{t.isolated}</div></div>}
+            {answer && <div className="v2-answer"><div><InterfaceIcon name="synthesis" className="pi-state-mark" /><p className="v2-kicker">{answerMode === "deepseek" ? t.modelAnswer : t.previewMode}</p><small>{answerMode === "deepseek" ? modelDisplayName(answerModel || connectedModel) : t.setupRequired}</small></div><AnswerMarkdown>{answer}</AnswerMarkdown><div><i />{t.isolated}</div></div>}
             {!answer && !asking && !askError && <div className="v2-ask-suggestions">{[t.askExample, locale === "zh" ? "这篇论文与我收藏的结果有什么直接关系？" : "How does this paper relate to results I saved?", locale === "zh" ? "这个方向最近真正改变了什么？" : "What actually changed in this field recently?"].map((item) => <button type="button" key={item} onClick={() => setQuestion(item)}>↗ {item}</button>)}</div>}
           </div>
         </div>
