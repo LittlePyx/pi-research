@@ -8,7 +8,7 @@ const escaped = (text: string, at: number) => {
 };
 
 /** Presentation only: preserve source, isolate macros, and never enable trusted HTML/URLs. */
-export function renderMathText(text: string): MathTextPart[] {
+export function renderMathText(text: string, options: { inline?: boolean } = {}): MathTextPart[] {
   if (text.length > 100_000) return [{ source: text }];
   const parts: MathTextPart[] = [];
   const openings = /\$\$|\$|\\\(|\\\[|`+/g;
@@ -33,7 +33,7 @@ export function renderMathText(text: string): MathTextPart[] {
     if (!value.trim() || (open === "$" && (/^\s|\s$/.test(value) || value.includes("\n")))) continue;
     const source = text.slice(start, end + close.length);
     parts.push({ source: text.slice(cursor, start) });
-    const display = open === "$$" || open === "\\[";
+    const display = !options.inline && (open === "$$" || open === "\\[");
     try {
       if (value.length > 4096) throw new Error("formula_too_large");
       parts.push({ source, display, html: renderToString(value, {

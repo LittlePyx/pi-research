@@ -23,12 +23,12 @@ export function ResearchLeads({ tracks, locale, onOpen, onLearn }: {
           const material = routeMaterialState(track);
           const papers = track.papers.filter(p => material.paperIds.includes(p.id));
           return <article key={track.id} className="pi-lead-row">
-            <div className="pi-lead-main"><button type="button" onClick={() => onOpen(track)}><h3><MathText>{zh ? track.titleZh : track.titleEn}</MathText></h3></button>
+            <div className="pi-lead-main"><button type="button" onClick={() => onOpen(track)}><h3><MathText inline>{zh ? track.titleZh : track.titleEn}</MathText></h3></button>
               <p>{zh ? track.summaryZh : track.summaryEn}</p>
               <div className="pi-lead-meta"><span>{papers.length} {zh ? "篇收录材料" : "collected papers"}</span>{material.pendingConfirmationCount > 0 && <span>{material.pendingConfirmationCount} {zh ? "篇待你选用" : "awaiting selection"}</span>}{track.monitoringStatus === "paused" && <span>{zh ? "发现已暂停" : "Discovery paused"}</span>}</div>
             </div>
             <div className="pi-lead-reading"><small>{zh ? "从这里开始" : "START HERE"}</small>
-              {papers.length ? <p><MathText>{papers[0].title}</MathText></p> : <p>{zh ? "尚无可展示的材料，先检查收集进度。" : "No collected paper is available yet. Check collection progress."}</p>}
+              {papers.length ? <p><MathText inline>{papers[0].title}</MathText></p> : <p>{zh ? "尚无可展示的材料，先检查收集进度。" : "No collected paper is available yet. Check collection progress."}</p>}
               <div><button type="button" className="pi-research-primary" onClick={() => onOpen(track)}>{zh ? "进入研究" : "Open research"} →</button>{papers.length > 0 && <button type="button" onClick={() => onLearn(track)}>{zh ? "学习这条路线" : "Study this route"}</button>}</div>
             </div>
           </article>;

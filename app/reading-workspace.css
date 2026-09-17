@@ -95,3 +95,44 @@
  .v2-app.pi-workspace .pi-editorial-today .pi-reading-list > article:first-child h3 > button { font-size:23px !important; }
  .v2-app.pi-workspace .pi-library-row-actions .v2-library-paper-actions > div { right:auto; left:0; min-width:0; width:200px; }
 }
+/* News brief: compact masthead, article headlines and readable standfirsts. */
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead { display:block; padding:20px 28px; min-height:0; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > header { display:flex; justify-content:space-between; align-items:center; margin:0; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > header h2 { font-size:22px; line-height:1.4; margin:4px 0 0; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead .v2-kicker { margin:0; font-size:12px; font-weight:500; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead :is(p,summary) { text-align:left; }
+.v2-app.pi-workspace .pi-editorial-today .pi-brief-context { margin:12px 0 0; padding:0; }
+.v2-app.pi-workspace .pi-editorial-today .pi-brief-context > summary { display:list-item; width:fit-content; padding:4px 0; font-size:13px; }
+.v2-app.pi-workspace .pi-editorial-today .pi-brief-context .v2-daily-brief-overview { margin:8px 0; padding:0; font:400 14px/1.75 var(--font-geist-sans,Arial),sans-serif; max-width:80ch; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > footer { margin:12px 0 0; padding:0; gap:16px; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > footer button { min-height:36px; padding:6px 12px; font-size:14px !important; font-weight:600; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > footer .secondary { border:0; background:transparent; font-weight:400; }
+.v2-app.pi-workspace .pi-editorial-today .pi-brief-editorial-headline { font-size:19px; font-weight:600; line-height:1.6; margin:16px 0 0; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-paper-queue { padding:0 28px 20px; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-paper-queue > header { display:none; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-freshness-summary { padding:12px 0; gap:20px; border:0; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-freshness-summary span { border:0; background:transparent; border-radius:0; padding:0; color:#62666d; font-size:12px; font-weight:400; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-list > details > summary { grid-template-columns:minmax(0,1fr) 24px; gap:16px; padding:24px 0 16px; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-list > details > summary > span { display:none; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-list h3 { max-width:950px; font-size:24px; line-height:1.45; font-weight:650; margin:8px 0 10px; text-align:left; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-paper-flags { margin:0 0 6px; gap:16px; }
+.v2-app.pi-workspace .pi-editorial-today .pi-news-standfirst { max-width:85ch; font:400 16px/1.8 var(--font-geist-sans,Arial),sans-serif; margin:0 0 12px; text-align:left; color:#43474d; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-paper-publication { margin-top:6px; gap:8px 16px; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-paper-publication > span { border:0; padding:0; background:transparent; font-size:13px; line-height:1.6; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-paper-authors { margin:8px 0 0; font-size:13px; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-paper-analysis { margin:0; padding:16px 0; border-radius:0; border-top:1px solid #e0e2e6; background:transparent; }
+.v2-app.pi-workspace .pi-editorial-today .v2-today-hero { margin-bottom:16px; }
+.v2-app.pi-workspace .pi-editorial-today .pi-section-navigation { margin-bottom:24px; padding-bottom:12px; }
+.v2-app.pi-workspace .pi-editorial-today .pi-unread-recommendations { margin:28px 0; }
+.v2-app.pi-workspace .pi-editorial-today .pi-reading-list > article:first-child { padding:24px; }
+.v2-app.pi-workspace .pi-library-workspace .v2-page-head { margin-bottom:16px; }
+.v2-app.pi-workspace .pi-library-workspace .v2-library-tabs { min-height:48px; }
+@media(max-width:760px) {
+ .v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead { padding:18px; }
+ .v2-app.pi-workspace .pi-editorial-today .v2-daily-paper-queue { padding:0 18px 16px; }
+ .v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-list h3 { font-size:21px; }
+ .v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-list > details > summary { gap:8px; padding-top:18px; }
+}
+.v2-app.pi-workspace .pi-editorial-today .pi-news-standfirst { font-size:16px !important; line-height:1.8 !important; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > header { flex-direction:row; text-align:left; align-items:center; }
+.v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > header > div { text-align:left; }

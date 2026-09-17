@@ -31,9 +31,12 @@ const server = await createServer({
           const result = fixtureResponse(req.url, req.method, url.searchParams.get('spaceId') || input.spaceId || spaces[0].id);
           if (url.pathname === '/api/monitor' && result.body.monitor) {
             const sample = result.body.monitor.historyPapers[0];
-            const titles = ['Quantum Clock Synchronization for Future NASA Deep Space Quantum Links and Fundamental Science', 'Extending the dynamic range in quantum frequency estimation with sequential weak measurements', 'Quantum Protocols for Time Synchronisation and Distribution: A Critical Assessment', 'On the Rate–Distortion–Perception Function for Gaussian Processes', '量子网络中的时间传递与同步：方法、误差界及实验条件'];
+            const titles = [String.raw`Sharp inequalities between Zolotarev and Wasserstein distances in $$\mathcal{P}_2(\mathbb{R}^d)$$`, 'Quantum Clock Synchronization for Future NASA Deep Space Quantum Links and Fundamental Science', 'Extending the dynamic range in quantum frequency estimation with sequential weak measurements', 'Quantum Protocols for Time Synchronisation and Distribution: A Critical Assessment', 'On the Rate–Distortion–Perception Function for Gaussian Processes', '量子网络中的时间传递与同步：方法、误差界及实验条件'];
             result.body.monitor.historyPapers = titles.map((title,i)=>({...sample,id:'reading-fixture-'+i,title,authors:'QA 示例作者 · 仅用于布局验收',venue:'Preview fixture',whyReadZh:'这是一段用于检查排版的示例文字。阅读时关注模型假设、误差来源与适用条件，比较它与当前研究问题之间的联系。',recommendedAt:'2026-09-16T08:00:00Z',publishedAt:'2026-06-10',userState:'unseen',verificationStatus:'verified'}));
-            result.body.monitor.historyCounts={inbox:5,accepted:0,dismissed:0};
+            const lead = result.body.monitor.historyPapers[0];
+            result.body.monitor.papers = [lead];
+            result.body.monitor.dailyBrief = {date:'2026-09-17',isCurrent:true,status:'ready',headlineZh:'今天 1 篇已确认',headlineEn:'One paper confirmed',overviewZh:'QA 排版样例：从候选论文中进行筛选与评审。统计过程仅作为简报说明，不能取代研究内容。',overviewEn:'QA layout sample only.',signalsZh:['比较两类概率距离之间的不等式。阅读时核对适用的概率测度、矩条件与常数依赖。此段为排版样例，不是真实评审。'],signalsEn:['QA standfirst only.'],readingPlanZh:['核对原文假设与适用边界。'],readingPlanEn:['Check the assumptions.'],watchlistZh:[],watchlistEn:[],paperIds:[lead.id],metrics:{},model:'evidence-summary',error:null,updatedAt:'2026-09-17T00:00:00Z'};
+            result.body.monitor.historyCounts={inbox:6,accepted:0,dismissed:0};
           }
           // A deliberate read delay makes the actual loading branch observable.
           if (url.pathname === '/api/learning-path' && req.method === 'GET') await new Promise((resolve) => setTimeout(resolve, 1000));

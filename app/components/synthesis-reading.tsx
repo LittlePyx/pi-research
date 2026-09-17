@@ -17,12 +17,12 @@ export function SynthesisReading({ synthesis: s, locale, onScanGap }: { synthesi
     <section className="pi-synthesis-question"><p className="pi-synthesis-eyebrow">{zh ? "这组论文回答什么" : "THE QUESTION"}</p><h3><MathText>{zh ? s.questionZh : s.questionEn}</MathText></h3><p><MathText>{zh ? s.overviewZh : s.overviewEn}</MathText></p><small>{zh ? `基于 ${s.sourcePaperCount} 篇论文 · 按下方出处核对` : `Based on ${s.sourcePaperCount} papers · check the sources below`}</small></section>
     <section className="pi-synthesis-findings" aria-label={zh ? "证据判断与来源" : "Findings and sources"}>
       {s.statements.map((item, index) => <article className="pi-synthesis-finding" key={item.id}>
-        <header><span className="pi-synthesis-index">{String(index + 1).padStart(2, "0")}</span><div><p className="pi-synthesis-eyebrow">{labels[item.kind] || item.kind}</p><h3><MathText>{zh ? item.titleZh : item.titleEn}</MathText></h3></div></header>
+        <header><span className="pi-synthesis-index">{String(index + 1).padStart(2, "0")}</span><div><p className="pi-synthesis-eyebrow">{labels[item.kind] || item.kind}</p><h3><MathText inline>{zh ? item.titleZh : item.titleEn}</MathText></h3></div></header>
         <div className="pi-synthesis-finding-body"><p><MathText>{zh ? item.textZh : item.textEn}</MathText></p>
           <details className="pi-synthesis-source-disclosure"><summary>{zh ? `核对出处 · ${new Set(item.sources.map(source => source.paperId)).size} 篇论文` : `Check sources · ${new Set(item.sources.map(source => source.paperId)).size} papers`}</summary>
             <div className="pi-synthesis-source-list">{item.sources.map(source => <article key={source.claimId}>
               <p className="pi-synthesis-eyebrow">{source.evidenceLevel === "abstract" ? (zh ? "摘要片段" : "ABSTRACT EXCERPT") : (zh ? "已保存的证据片段" : "SAVED EVIDENCE EXCERPT")}</p>
-              <h4><MathText>{source.title}</MathText></h4><p className="pi-synthesis-bibliography">{[source.authors, source.publishedAt?.slice(0, 4), source.venue].filter(Boolean).join(" · ")}</p>
+              <h4><MathText inline>{source.title}</MathText></h4><p className="pi-synthesis-bibliography">{[source.authors, source.publishedAt?.slice(0, 4), source.venue].filter(Boolean).join(" · ")}</p>
               <blockquote><MathText>{source.evidenceQuote}</MathText></blockquote>
               <footer><span>{source.locator || (zh ? "具体位置待核对" : "Exact location needs checking")}</span>{/^https?:\/\//i.test(source.sourceUrl) && <a href={source.sourceUrl} target="_blank" rel="noreferrer">{zh ? "打开来源" : "Open source"} ↗</a>}</footer>
             </article>)}</div>

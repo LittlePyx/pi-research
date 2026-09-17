@@ -23,7 +23,7 @@ const informationPapers = DEMO_PAPERS.filter((paper) => paper.route === "informa
 function PaperTitle({ paper, compact = false }: { paper: (typeof DEMO_PAPERS)[number]; compact?: boolean }) {
   const content = <>
     <span className={styles.paperMeta}>{paper.year} · {paper.venue}</span>
-    <strong><MathText>{paper.title}</MathText></strong>
+    <strong><MathText inline>{paper.title}</MathText></strong>
     {!compact && <small>{paper.authors}</small>}
   </>;
   return paper.href

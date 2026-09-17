@@ -27,7 +27,7 @@ export function ResearchMemoryNotebook({ spaceId, locale, onOpenPaper, onQuestio
       <p className="pi-memory-count">{zh ? `共 ${result?.total || 0} 条${query ? "匹配记录" : "阅读笔记"}` : `${result?.total || 0} ${query ? "matching records" : "reading notes"}`}</p>
       {!result?.items.length && <div className="pi-memory-empty"><h3>{query ? (zh ? "没有匹配的笔记" : "No matching notes") : (zh ? "先留下一条值得再次使用的笔记" : "Start with a note worth reusing")}</h3><p>{zh ? "可以记录：这篇解决了什么、关键假设是什么、哪一步仍不明白。保存原笔记就会出现在这里，不必等待 Pi 整理完成。" : "Capture the problem solved, key assumptions, or a step you do not understand. Saved notes appear here even before Pi finishes organizing them."}</p></div>}
       {result?.items.map(item => <article className="pi-memory-entry" key={item.paperId}>
-        <header><span>{statusLabels[item.status]}</span><time>{item.updatedAt.slice(0, 10)}</time></header><h3><MathText>{item.title}</MathText></h3>
+        <header><span>{statusLabels[item.status]}</span><time>{item.updatedAt.slice(0, 10)}</time></header><h3><MathText inline>{item.title}</MathText></h3>
         <div className="pi-memory-original"><strong>{zh ? "我的原始笔记" : "My original note"}</strong><p>{item.note}</p></div>
         {item.status === "ready" && <details><summary>{zh ? "Pi 整理的方法与疑问" : "Methods and questions organized by Pi"}</summary><p>{zh ? item.takeawayZh : item.takeawayEn}</p>
           {(zh ? item.methodsZh : item.methodsEn).length > 0 && <section><h4>{zh ? "可复用方法" : "Reusable methods"}</h4><ul>{(zh ? item.methodsZh : item.methodsEn).map((method, index) => <li key={index}>{method}</li>)}</ul></section>}

@@ -30,3 +30,13 @@ test('invalid and hostile expressions fail safely with bounded isolated expansio
   renderMathText(String.raw`$\gdef\secretmacro{x}$`);
   assert.equal(renderMathText(String.raw`$\secretmacro$`).some(p => p.html), false);
 });
+
+test('title context renders display delimiters inline while body retains display math', () => {
+  const title = String.raw`Sharp inequalities in $$\mathcal{P}_2(\mathbb{R}^d)$$ and \[x^2\]`;
+  const inline = renderMathText(title, { inline: true });
+  assert.equal(inline.map(p => p.source).join(''), title);
+  assert.equal(inline.filter(p => p.html).length, 2);
+  assert.ok(inline.filter(p => p.html).every(p => p.display === false));
+  assert.doesNotMatch(inline.map(p => p.html || '').join(''), /katex-display/);
+  assert.ok(renderMathText(title).filter(p => p.html).every(p => p.display === true));
+});
