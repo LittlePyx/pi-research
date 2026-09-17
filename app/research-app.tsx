@@ -10,6 +10,7 @@ import { ResearchSourceSuggestions } from "./components/research-source-suggesti
 import { ResearchMemoryNotebook } from "./components/research-memory-notebook";
 import "./components/research-memory-sources.css";
 import { QualityReviewStatus, type AbstractPaperStatus } from "./components/quality-review-status";
+import { supplementaryReading } from "../lib/supplementary-reading.mjs";
 
 import { FormEvent, type ReactNode, useEffect, useCallback, useMemo, useRef, useState } from "react";
 import Image from "next/image";
@@ -3491,7 +3492,7 @@ export default function ResearchApp({ user }: { user: User }) {
   const latestDeepReviewedCount = briefFunnel.deepReviewed ?? "—";
   const latestDeepDeferredCount = monitor?.dailyBrief?.metrics.deepDeferred ?? 0;
   const dailyBriefPaperIds = new Set(monitor?.dailyBrief?.paperIds || []);
-  const additionalTodayPapers = rankedMonitorPapers.filter((paper) => !dailyBriefPaperIds.has(paper.id)).slice(0, 6);
+  const additionalTodayPapers: MonitorPaper[] = supplementaryReading([...rankedMonitorPapers, ...historyPapers], [...dailyBriefPaperIds]);
   const pendingActionNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => ACTION_NOTIFICATION_KINDS.has(notification.kind) && !notification.readAt), [monitor?.notifications]);
   const activityGroups = useMemo(() => {
     const groups = new Map<string, { key: string; primary: ResearchNotification; recovered: boolean }>();
@@ -5914,8 +5915,8 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{!monitor ? (locale === "zh" ? "正在读取已有内容" : "Loading saved content") : scanIsActive ? scanPhase : monitor?.status === "ready" ? monitorReadyLabel : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
             </section>
 
-            <SectionNavigation label={locale === "zh" ? "本页" : "On this page"} items={[...(monitor?.dailyBrief ? [{ label: locale === "zh" ? "推荐阅读" : "Reading", target: ".v2-ai-daily-brief" }] : []), ...(monitorQualityReviewStatus(monitor) ? [{ label: locale === "zh" ? "评审进度" : "Review status", target: ".v2-background-review-status" }] : []), { label: locale === "zh" ? "扫描与来源" : "Discovery & sources", target: ".v2-monitor-panel" }]} />
-            {monitor?.dailyBrief && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
+            <SectionNavigation label={locale === "zh" ? "本页" : "On this page"} items={[...((monitor?.dailyBrief || additionalTodayPapers.length) ? [{ label: locale === "zh" ? "推荐阅读" : "Reading", target: !dailyBriefEntryCount && additionalTodayPapers.length ? ".v2-today-more" : ".v2-ai-daily-brief" }] : []), ...(monitorQualityReviewStatus(monitor) ? [{ label: locale === "zh" ? "评审进度" : "Review status", target: ".v2-background-review-status" }] : []), { label: locale === "zh" ? "扫描与来源" : "Discovery & sources", target: ".v2-monitor-panel" }]} />
+            {monitor?.dailyBrief && (dailyBriefEntryCount > 0 || !additionalTodayPapers.length) && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
               <div className="v2-daily-brief-lead">
                 <header><p className="v2-kicker">{monitor.dailyBrief.isCurrent ? (locale === "zh" ? "今日研究判断" : "TODAY'S RESEARCH JUDGMENT") : (locale === "zh" ? "最近一次研究判断" : "LATEST RESEARCH JUDGMENT")}</p><span>{monitor.dailyBrief.date} · {monitor.dailyBrief.model === "evidence-summary" ? (locale === "zh" ? "可核验证据简报" : "Evidence-first brief") : monitor.dailyBrief.status === "degraded" ? (locale === "zh" ? "证据摘要" : "Evidence summary") : modelDisplayName(monitor.dailyBrief.model)}</span></header>
                 <h2>{datedBriefText(locale === "zh" ? monitor.dailyBrief.headlineZh : monitor.dailyBrief.headlineEn, monitor.dailyBrief)}</h2>
@@ -5941,8 +5942,8 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
             </section>}
 
-            {Boolean(additionalTodayPapers.length) && <details className="v2-today-more v2-today-more-compact">
-              <summary><span><strong>{locale === "zh" ? "备选阅读" : "Further reading"}</strong><small>{locale === "zh" ? "已通过全部评审，可直接阅读" : "Passed all review gates; ready to read"}</small><span className="v2-more-preview">{additionalTodayPapers.slice(0, 2).map((paper) => <span key={paper.id}><MathText>{paper.title}</MathText></span>)}</span></span><b><span className="v2-more-expand">{locale === "zh" ? `展开 ${additionalTodayPapers.length} 篇` : `Show ${additionalTodayPapers.length} papers`} ↓</span><span className="v2-more-collapse">{locale === "zh" ? "收起列表" : "Collapse list"} ↑</span></b></summary>
+            {Boolean(additionalTodayPapers.length) && <details className="v2-today-more v2-today-more-compact" open={!dailyBriefEntryCount || undefined}>
+              <summary><span><strong>{dailyBriefEntryCount ? (locale === "zh" ? "备选阅读" : "Further reading") : (locale === "zh" ? "补充阅读" : "Supplementary reading")}</strong><small>{dailyBriefEntryCount ? (locale === "zh" ? "已通过全部评审，可直接阅读" : "Passed all review gates; ready to read") : (locale === "zh" ? "来自已通过评审的未读材料，不计为今日新入选" : "Previously reviewed, unread papers; not new selections today")}</small><span className="v2-more-preview">{additionalTodayPapers.slice(0, 2).map((paper) => <span key={paper.id}><MathText>{paper.title}</MathText></span>)}</span></span><b><span className="v2-more-expand">{locale === "zh" ? `展开 ${additionalTodayPapers.length} 篇` : `Show ${additionalTodayPapers.length} papers`} ↓</span><span className="v2-more-collapse">{locale === "zh" ? "收起列表" : "Collapse list"} ↑</span></b></summary>
               <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong><MathText>{paper.title}</MathText></strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
             </details>}
 

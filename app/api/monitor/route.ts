@@ -1,4 +1,5 @@
 import { researchSourcePlan, sourcePlanIssn, normalizeSourceTitle } from "../../../lib/research-source-plan";
+import { readDailyReviewProgress, needsDailyReviewTopup, dailyReviewTopupDue, DAILY_TOPUP_INTERVAL_MS } from "../../../lib/daily-review-target";
 import { pendingQualityCandidateCondition, qualityQueueCountsSql, qualityAbstractDetailsSql } from "../../../lib/monitor-quality-status-sql.mjs";
 import { ABSTRACT_BLOCK_REASON, recoverPaperAbstract, parseAbstractAttempts } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
@@ -3624,6 +3625,13 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     }
     const draftedBatchReviews = batchReviews.map((review) => pendingRecommendationReview(review));
     const persistedBatchReviews = await persistReviewBatch(database, space.id, jobId, batch, draftedBatchReviews);
+    const dailyCompletedIds = persistedBatchReviews.filter(review => review.isPaper
+      && !isRetryableEmptyDraftDegradation(review)
+      && review.summaryZh.trim() && review.summaryEn.trim()).map(review => review.canonicalId);
+    if (dailyCompletedIds.length) await recordReliabilityEvent(database, {
+      spaceId: space.id, scanJobId: jobId, kind: "daily_deep_review_completed",
+      stage: "deep_reviewing", outcome: "success", metadata: { canonicalIds: dailyCompletedIds },
+    });
     completed.push(...persistedBatchReviews);
     try {
       await persistRecommendationAuditBatch(database, space.id, jobId, batch, persistedBatchReviews, batchInputTokens, batchOutputTokens);
@@ -4894,6 +4902,7 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}, focusPaperId: string | null = null) {
   const preference = await ensurePreference(database, space);
+  const dailyReview = await readDailyReviewProgress(database, space.id, Date.now());
   const abstractDetails = await database.prepare(qualityAbstractDetailsSql(activeResearchRouteSupplyPredicate("p")))
     .bind(space.id, MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT)
     .all<{ id: string; title: string; status: string; attempted_json: string; retry_at: number; updated_at: string | null }>();
@@ -5751,6 +5760,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       })),
       readingMemories,
       dailyBrief,
+      dailyReview,
       weeklyReview,
       notifications,
       unreadNotificationCount: notifications.filter((notification) => !notification.readAt).length,
@@ -6863,9 +6873,13 @@ export async function POST(request: Request) {
         && previousWork.scanMode === "fresh_only"
         && Boolean(previousJob?.status === "ready" && previousTime)
         && shanghaiDateKey(now) !== shanghaiDateKey(new Date(previousTime));
+      const dailyProgress = await readDailyReviewProgress(database, space.id, now.getTime());
+      const dailyTopup = trigger !== "manual" && previousJob?.status === "ready"
+        && previousWork.scanMode !== "fresh_only"
+        && dailyReviewTopupDue(dailyProgress, now.getTime(), previous?.last_run_at || null, previous?.next_run_at || null);
       const minimumAge = developmentAnalysisUnbounded() && trigger === "manual"
         ? 0 : compactResetEligible ? 0 : payload.force ? MANUAL_COOLDOWN_MS : CADENCE_MS;
-      if (!qualityCarryover && !qualityQueueContinuation && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
+      if (!dailyTopup && !qualityCarryover && !qualityQueueContinuation && !pipelineOutdated && previousJob?.status !== "error" && previousTime >= MONITOR_LLM_REVIEW_RELEASED_AT && now.getTime() - previousTime < minimumAge) {
         return Response.json(await readState(database, space, {
           cached: true,
           throttled: Boolean(payload.force),
@@ -7336,7 +7350,7 @@ export async function POST(request: Request) {
         previousLastRunAt: validatedRun?.last_run_at || null,
         completedAt: completedAt.toISOString(),
       });
-      const nextRunAt = nextMonitorRunAt({
+      let nextRunAt = nextMonitorRunAt({
         now: completedAt.getTime(),
         lastSourceScanAt,
         verificationPending,
@@ -7346,6 +7360,10 @@ export async function POST(request: Request) {
         cadenceMs: CADENCE_MS,
         continuationMs: BACKGROUND_VERIFICATION_RETRY_MS,
       });
+      const dailyProgress = await readDailyReviewProgress(database, space.id, completedAt.getTime());
+      if (work.scanMode !== "fresh_only" && needsDailyReviewTopup(dailyProgress)) {
+        nextRunAt = new Date(Math.min(Date.parse(nextRunAt), completedAt.getTime() + DAILY_TOPUP_INTERVAL_MS)).toISOString();
+      }
       if (recommended && !firstRecommendationAt) {
         firstRecommendationAt = completedAt.toISOString();
         await database.prepare(

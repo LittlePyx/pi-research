@@ -64,7 +64,7 @@ test("Today leads with selected reading while scan detail and secondary lists st
   assert.match(today, /v2-monitor-run-funnel/);
   assert.match(scanDetails, /v2-monitor-run-funnel[\s\S]*v2-horizon-strip[\s\S]*v2-source-profile/);
   assert.match(today, /<details className="v2-route-changes v2-route-changes-compact">/);
-  assert.match(today, /<details className="v2-today-more v2-today-more-compact">/);
+  assert.match(today, /<details className="v2-today-more v2-today-more-compact" open=\{!dailyBriefEntryCount \|\| undefined\}>/);
 });
 
 test("library and paper detail keep reading primary while management and audit stay on demand", async () => {
