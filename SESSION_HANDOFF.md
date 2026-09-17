@@ -1,5 +1,12 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-17：v255 Pi回答Markdown与公式排版
+
+- 用户截图中的回答此前直接放在<p>{answer}</p>，Markdown标记原样显示。本轮新增AnswerMarkdown，使用锁定react-markdown10.1.0/remark-gfm4.0.1/remark-math6.0.0/rehype-katex7.0.1，支持标题、加粗、列表、引用、链接、表格、代码与数学公式。纯展示正规化模型加粗边缘空格和LaTeX括号分隔符，跳过代码块/行内代码，不改数据库保存内容。
+- raw HTML不解析、危险链接默认过滤、图片仅显示alt、KaTeX trust=false且限制展开。回答正文16px无衬线、白底、适度段落间距，长表/独立公式横向滚动。缩小全局.v2-answer图标span选择器，避免display公式被错误设置成27px圆点。
+- 662测试通过（新增真实组件SSR覆盖强强调/标题/列表/表格/链接/双类公式与不安全HTML/URL）；全量lint仅新增表格tabIndex规则失败，已移除，变更模块lint通过，CI完整lint已通过。最后展示属性/CSS修复后重建成功。隔离实际问答窗口1200/390截图outputs/v255-answer-*.png已目视检查，含两类公式，无正文横向溢出，非生产模型科学答复。
+- 业务e018fdec61def9c9e3689180918ac074a08d750d已推送GitHub/Sites；v255版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_5a169ea4019881919d17e46cbe424703，部署appgdep_6aabd0b8fc208191b971ef51d13f65f4，于11:36:39 UTC succeeded，public/环境修订6保持；CI35216434059全部success（lint、构建、662测试、离线发现基准）。本地预览已停止，浏览器交接queued。仅展示与依赖，无数据库/模型/后台判断变动；docs/不动，旧自动任务不恢复、邮件暂停。
+
 ## 2026-09-17：v254 摘要补全与路线阶段证据
 
 - 用户展示的问答已真实返回，但主要在为旧foundation标签作推断。本轮修复选篇与定位：取消初始化必须覆盖三阶段的数量压力；独立审计新增roleEvidence（阶段/摘要35–900字原句/具体理由），后端逐字核对。新节点必须有通过校验的阶段依据，borderline高置信且明确background可作为背景材料保留。
