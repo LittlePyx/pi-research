@@ -1,3 +1,5 @@
+import { BACKGROUND_ROLE_UPDATE_SQL, ROUTE_ROLE_EVIDENCE_PROMPT } from "../../../lib/route-role-evidence";
+import { recoverPaperAbstract } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 import { routeMaterialState } from "../../../lib/route-material-state";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
@@ -1107,14 +1109,14 @@ async function selectPapers(
   }));
   const selectionPrompt = [
       "Return {\"selections\":[...],\"directionIntelligence\":[...]} using only supplied canonicalId and directionKey values.",
-      "Each selection needs directionKey, canonicalId, role (foundation|milestone|frontier), summaryZh, summaryEn, rationaleZh, rationaleEn.",
+      "Each selection needs directionKey, canonicalId, role (foundation|milestone|frontier|background), summaryZh, summaryEn, rationaleZh, rationaleEn.",
       "Each directionIntelligence item needs directionKey, assessmentZh/En, opportunityZh/En, watchSignalZh/En, evidenceGapZh/En, nextSearchQuery, confidence (0-100), and evidenceCanonicalIds (1-6 exact IDs from supplied candidates or existing accepted papers).",
       "Assessment must synthesize the direction's current intellectual state or unresolved tension. Opportunity must propose one concrete high-value research move for this user. Watch signal must name an observable result, method, benchmark, theorem, or shift that would change the assessment.",
       "Evidence gap must identify what the current route cannot yet establish, and nextSearchQuery must be one concise English scholarly query designed to close that exact gap.",
       "Also return gapSubjectZh and gapSubjectEn: a short neutral topic noun phrase (at most 96 characters), identifying the specific theorem, assumption or method to investigate. No Boolean query, absence claim or proposed conclusion. Keep nextSearchQuery separate.",
       RESEARCH_GAP_SCOPE_PROMPT,
       "Ground every intelligence statement in the supplied evidence. If metadata is incomplete, say what is uncertain and lower confidence. Do not present inference as a paper's stated result.",
-      mode === "initialize" ? "Choose 5-8 papers per direction with coverage across all three roles." : "Choose 3-6 genuinely additive papers for this direction; do not fill a quota with weak records.",
+      mode === "initialize" ? "Choose only well-supported papers; stages may remain empty. Useful surveys/tools are background, never substitutes for original foundational results." : "Choose 3-6 genuinely additive papers for this direction; do not fill a quota with weak records.",
       "Foundation = field-defining concepts or methods; milestone = a decisive development or branch point; frontier = a recent representative work that shows the current direction.",
       "Reject publication information, mastheads, editorials, corrections, calls for papers, vague matches, and records whose title/abstract do not establish a substantive research paper.",
       "Citation count is a noisy signal, not proof. Prefer intellectual representativeness and direct fit. A famous paper outside the exact direction must be rejected.",
@@ -1127,6 +1129,7 @@ async function selectPapers(
       `Candidate records: ${JSON.stringify(compact)}`,
     ].join("\n");
   const precisionPrompt = [
+    ROUTE_ROLE_EVIDENCE_PROMPT,
     "Return {\"judgments\":[...]} with exactly one judgment for every supplied candidate.",
     "Each judgment needs directionKey, canonicalId, verdict (direct|borderline|off_topic), confidence (0-100), reasonZh, reasonEn, and evidenceTerms (0-8 short title/abstract terms).",
     "This is an independent semantic precision gate, not a quality ranking. direct means the paper's central question, theorem, method, or result belongs to the exact route and it can represent that route. borderline means a useful bridge or background connection exists but the paper should remain a review candidate rather than an active representative route node. off_topic means the connection depends on metaphor, a generic word, a broad methodological analogy, or a different research field.",
@@ -1134,7 +1137,7 @@ async function selectPapers(
     `Research space: ${space.name} — ${space.description}`,
     `Directions: ${JSON.stringify(directions)}`,
   ];
-  const precisionBatches = Array.from({ length: Math.ceil(compact.length / 18) }, (_, index) => compact.slice(index * 18, index * 18 + 18));
+  const precisionBatches = Array.from({ length: Math.ceil(compact.length / 6) }, (_, index) => compact.slice(index * 6, index * 6 + 6));
   const [parsed, precisionResponses] = await Promise.all([
     callDeepSeek<{ selections?: Array<Partial<Selection>>; directionIntelligence?: Array<Partial<DirectionIntelligenceDraft>> }>(
       database,
@@ -1150,7 +1153,7 @@ async function selectPapers(
         workspaceId,
         "You are Pi Research's independent route-paper semantic precision auditor. Return strict JSON without chain-of-thought.",
         [...precisionPrompt, `Candidate records: ${JSON.stringify(batch)}`].join("\n"),
-        Math.min(3300, 900 + batch.length * 120),
+        Math.min(4800, 900 + batch.length * 600),
         apiKey,
         { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 44_000 },
       ))),
@@ -1159,6 +1162,7 @@ async function selectPapers(
   const precisionJudgments = sanitizeResearchRoutePrecisionJudgments(
     precisionResponses.flatMap((response) => Array.isArray(response.judgments) ? response.judgments : []),
     allowed,
+    new Map(candidates.map(c => [c.directionKey+":"+c.canonicalId,c.abstractText])),
   );
   if (precisionJudgments.length !== allowed.size) throw new Error("Route semantic precision audit returned incomplete coverage");
   const precisionByIdentity = new Map(precisionJudgments.map((judgment) => [routePrecisionJudgmentIdentity(judgment), judgment]));
@@ -1172,7 +1176,9 @@ async function selectPapers(
     rationaleEn: cleanText(item.rationaleEn || "").slice(0, 950),
   })).filter((item) => allowed.has(item.directionKey + ":" + item.canonicalId) && item.summaryZh && item.summaryEn
     && item.rationaleZh && item.rationaleEn && !routePaperSelectionContradiction(item)
-    && routePrecisionAcceptedForActiveNode(precisionByIdentity.get(item.directionKey + ":" + item.canonicalId)));
+    && routePrecisionAcceptedForActiveNode(precisionByIdentity.get(item.directionKey + ":" + item.canonicalId))
+    && precisionByIdentity.get(item.directionKey + ":" + item.canonicalId)?.roleEvidence)
+    .map(item => { const audit=precisionByIdentity.get(item.directionKey+":"+item.canonicalId)!; return {...item,role:audit.roleEvidence!.role,rationaleZh:audit.reasonZh,rationaleEn:audit.reasonEn}; });
   const allowedEvidence = new Set([...selections.map((item) => item.canonicalId), ...existingEvidence.map((item) => item.canonicalId)]);
   const intelligence = directions.map((direction) => sanitizeIntelligence(
     (parsed.directionIntelligence || []).find((item) => cleanText(item.directionKey || "") === direction.key),
@@ -1191,6 +1197,8 @@ async function auditExistingResearchRoutePrecision(
   // Applying only a previously persisted shadow keeps automated curation
   // two-phase: one visit records the report, a later visit may act on it.
   const appliedCount = await applyStoredResearchRoutePrecisionAudits(database, space.id);
+  const missing = await database.prepare(`SELECT p.id FROM research_track_papers tp JOIN monitored_papers p ON p.space_id=tp.space_id AND p.canonical_id=tp.canonical_id JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id LEFT JOIN paper_abstract_recovery r ON r.paper_id=p.id AND r.space_id=p.space_id WHERE tp.space_id=? AND tp.curation_status='active' AND length(i.abstract_text)<400 AND COALESCE(r.retry_at,0)<=? ORDER BY COALESCE(r.updated_at,'') LIMIT 2`).bind(space.id,Date.now()).all<{id:string}>();
+  for(const paper of missing.results) await recoverPaperAbstract(database,space.id,paper.id);
   const rows = await database.prepare(
     `SELECT paper.id, paper.track_id, paper.canonical_id, paper.title, paper.authors, paper.venue, paper.published_at,
      COALESCE((SELECT insight.abstract_text FROM monitored_papers monitored
@@ -1200,7 +1208,7 @@ async function auditExistingResearchRoutePrecision(
      paper.role, paper.summary_en, paper.rationale_en, track.title_zh AS track_title_zh, track.title_en AS track_title_en,
      track.summary_zh AS track_summary_zh, track.summary_en AS track_summary_en, track.search_queries
      FROM research_track_papers paper JOIN research_tracks track ON track.id = paper.track_id AND track.space_id = paper.space_id
-     WHERE paper.space_id = ? AND paper.curation_status = 'active'
+     WHERE paper.space_id = ? AND paper.curation_status = 'active' AND track.monitoring_status='active'
       AND NOT EXISTS (
        SELECT 1 FROM research_map_evidence_proposals proposal
        JOIN monitored_papers monitored ON monitored.id = proposal.paper_id AND monitored.space_id = proposal.space_id
@@ -1210,7 +1218,7 @@ async function auditExistingResearchRoutePrecision(
        SELECT 1 FROM research_track_paper_precision_audits audit
        WHERE audit.track_paper_id = paper.id AND audit.gate_version = ?
         AND datetime(audit.created_at) >= datetime(COALESCE(paper.curation_updated_at, paper.created_at))
-      ) ORDER BY track.position, paper.position, paper.created_at LIMIT 32`,
+      ) ORDER BY length(abstract_text)>=120 DESC, track.position, paper.position, paper.created_at LIMIT 6`,
   ).bind(space.id, RESEARCH_ROUTE_PRECISION_GATE_VERSION).all<ExistingPrecisionPaperRow>();
   let shadowedCount = 0;
   let directCount = 0;
@@ -1240,6 +1248,7 @@ async function auditExistingResearchRoutePrecision(
         storedRationale: row.rationale_en,
       }));
       const auditPrompt = [
+          ROUTE_ROLE_EVIDENCE_PROMPT,
           "Return {\"judgments\":[...]} with exactly one judgment for every supplied paper.",
           "Each judgment needs directionKey, canonicalId, verdict (direct|borderline|off_topic), confidence (0-100), reasonZh, reasonEn, and evidenceTerms (0-8 short title/abstract terms).",
           "direct means the paper's central question, theorem, method, or result belongs to the exact route and can represent it. borderline means a useful bridge or background connection exists but it is not clearly representative. off_topic means the claimed connection relies on metaphor, generic terminology, a loose methodological analogy, or a different field.",
@@ -1253,7 +1262,7 @@ async function auditExistingResearchRoutePrecision(
           workspaceId,
           "You are Pi Research's independent route-paper semantic precision auditor. Return strict JSON without chain-of-thought.",
           [...auditPrompt, `Papers: ${JSON.stringify(batch)}`].join("\n"),
-          Math.min(2200, 800 + batch.length * 150),
+          Math.min(4800, 900 + batch.length * 600),
           apiKey,
           { reasoningEffort: "medium", thinking: "disabled", timeoutMs: 44_000 },
         )));
@@ -1263,6 +1272,7 @@ async function auditExistingResearchRoutePrecision(
           ? response.value.judgments
           : []),
         allowed,
+        new Map(rows.results.map(p => [p.track_id+":"+p.canonical_id,p.abstract_text])),
       );
       const auditedIdentities = new Set(judgments.map(routePrecisionJudgmentIdentity));
       auditDegraded = auditResponses.some((response) => response.status === "rejected")
@@ -1272,14 +1282,19 @@ async function auditExistingResearchRoutePrecision(
       const affectedTracks = new Map<string, "precision_audit_pending" | "precision_boundary_pending">();
       for (const judgment of judgments) {
         const paper = paperByIdentity.get(routePrecisionJudgmentIdentity(judgment));
-        if (!paper) continue;
+        if (!paper || !judgment.roleEvidence) { auditDegraded=true; continue; }
         statements.push(database.prepare(
           `INSERT INTO research_track_paper_precision_audits
            (id, space_id, track_id, track_paper_id, gate_version, verdict, confidence, reason_zh, reason_en, evidence_json, model, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'shadow')`,
         ).bind(crypto.randomUUID(), space.id, paper.track_id, paper.id, RESEARCH_ROUTE_PRECISION_GATE_VERSION,
           judgment.verdict, judgment.confidence, judgment.reasonZh, judgment.reasonEn,
-          JSON.stringify(judgment.evidenceTerms), MODEL));
+          JSON.stringify({terms:judgment.evidenceTerms,roleEvidence:judgment.roleEvidence}), MODEL));
+        if (judgment.roleEvidence.role === "background" && judgment.verdict !== "off_topic" && judgment.confidence >= 80) {
+          statements.push(database.prepare(BACKGROUND_ROLE_UPDATE_SQL)
+            .bind(judgment.reasonZh,judgment.reasonEn,paper.id,space.id,paper.role,paper.abstract_text,paper.title,paper.track_title_en,paper.track_title_zh));
+          affectedTracks.set(paper.track_id,"precision_boundary_pending");
+        }
         shadowedCount += 1;
         if (judgment.verdict === "direct") directCount += 1;
         if (judgment.verdict === "borderline") {
@@ -1291,6 +1306,7 @@ async function auditExistingResearchRoutePrecision(
           if (routePrecisionAutoDeactivates(judgment)) affectedTracks.set(paper.track_id, "precision_audit_pending");
         }
       }
+      for (const trackId of affectedTracks.keys()) statements.push(database.prepare("UPDATE research_tracks SET intelligence_status='pending',intelligence_attempt_count=0,intelligence_retry_at=NULL,intelligence_lock_token=NULL,intelligence_lock_expires_at=NULL,intelligence_refresh_requested_at=CURRENT_TIMESTAMP WHERE id=? AND space_id=?").bind(trackId,space.id));
       for (const [trackId, issue] of affectedTracks) statements.push(database.prepare(
         "UPDATE research_tracks SET build_status = 'partial', build_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND build_status = 'ready'",
       ).bind(issue, trackId, space.id));
@@ -2920,7 +2936,7 @@ export async function POST(request: Request) {
            (id, space_id, track_id, track_paper_id, gate_version, verdict, confidence, reason_zh, reason_en, evidence_json, model, status)
            VALUES (?, ?, ?, ?, ?, 'direct', ?, ?, ?, ?, ?, 'shadow')`,
         ).bind(crypto.randomUUID(), space.id, track.id, trackPaperId, RESEARCH_ROUTE_PRECISION_GATE_VERSION,
-          precision.confidence, precision.reasonZh, precision.reasonEn, JSON.stringify(precision.evidenceTerms), MODEL).run();
+          precision.confidence, precision.reasonZh, precision.reasonEn, JSON.stringify({terms:precision.evidenceTerms,roleEvidence:precision.roleEvidence}), MODEL).run();
         addedCount += 1;
       }
     }

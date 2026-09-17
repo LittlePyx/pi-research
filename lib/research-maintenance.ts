@@ -10,7 +10,7 @@ export type MaintenanceReview=(input:{spaceId:string;workspaceId:string;question
 export type MaintenanceGraph=(input:{spaceId:string;workspaceId:string;paperId:string})=>Promise<{status:string;relations:number;updated?:boolean}>;
 
 /** Runs outside page requests. One small batch per lease, spaces and lanes rotate. */
-export async function runResearchMaintenance(database:D1Database,review?:MaintenanceReview,now=Date.now(),refreshGraph?:MaintenanceGraph) {
+export async function runResearchMaintenance(database:D1Database,review?:MaintenanceReview,now=Date.now(),refreshGraph?:MaintenanceGraph,refreshRoles?:(input:{spaceId:string;workspaceId:string})=>Promise<void>) {
   await database.prepare(`INSERT OR IGNORE INTO research_maintenance(space_id) SELECT id FROM (${MAINTENANCE_ELIGIBLE_SQL})`).run();
   const due=await database.prepare(`SELECT m.space_id,m.attempts,m.result_json,e.owner_user_id FROM research_maintenance m
     JOIN (${MAINTENANCE_ELIGIBLE_SQL}) e ON e.id=m.space_id
@@ -36,7 +36,10 @@ export async function runResearchMaintenance(database:D1Database,review?:Mainten
       if(paper&&refreshGraph){const result=await refreshGraph({spaceId:due.space_id,workspaceId:due.owner_user_id.slice('anonymous:'.length),paperId:paper.id});status=result.status;graphProgress=result.updated===true;detail={...detail,paperId:paper.id,title:paper.title,relations:result.relations||0};}
       else if(paper)status='unconfigured';
     } else if(!review) {status='unconfigured';}
-    else {
+    else if(refreshRoles && due.attempts % 4 === 1) {
+      await refreshRoles({spaceId:due.space_id,workspaceId:due.owner_user_id.slice('anonymous:'.length)});
+      status='reviewed';
+    } else {
       // Read the entire library over successive batches, not just title keyword hits.
       const query=`FROM research_tracks t JOIN monitored_papers p ON p.space_id=t.space_id
         LEFT JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id

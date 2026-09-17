@@ -1,3 +1,4 @@
+import { publisherAbstractUrl, parsePublisherAbstract } from "./publisher-abstract";
 import { parseDataCiteArxivRecords } from "./discovery/datacite";
 import { arxivIdFromUrl, normalizeWorkTitle, parseArxivAtom } from "./discovery/arxiv";
 import { ExternalSourceCooldownError, fetchExternalSource } from "./external-source-throttle";
@@ -71,6 +72,14 @@ export async function lookupAbstract(paper: AbstractIdentity, request: (url: str
       });
     }
   }
+  const publisherUrl = !preprintOnly ? publisherAbstractUrl(paper.doi) : null;
+  if (!hit && publisherUrl) {
+    hit = await attempt("springer", publisherUrl, async response => {
+      if (Number(response.headers.get("content-length")||0)>2000000) return null;
+      const html=await response.text();
+      return html.length<=2000000 ? valid(parsePublisherAbstract(html,paper.doi!),publisherUrl) : null;
+    });
+  }
   if (!hit && !preprintOnly) {
     const endpoint = new URL("https://api.crossref.org/works");
     endpoint.searchParams.set("query.title", paper.title); endpoint.searchParams.set("rows", "3");
@@ -117,7 +126,7 @@ export async function readAbstractRecovery(db: D1Database, spaceId: string, pape
 }
 
 // A per-paper lease complements the existing shared provider cooldowns.
-export async function recoverPaperAbstract(db: D1Database, spaceId: string, paperId: string, preprintOnly = false) {
+export async function recoverPaperAbstract(db: D1Database, spaceId: string, paperId: string, preprintOnly = false, budgetMs = 24000) {
   const paper = await db.prepare(`SELECT p.doi,p.title,p.authors,p.url,i.abstract_text FROM monitored_papers p JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id WHERE p.id=? AND p.space_id=?`).bind(paperId, spaceId).first<AbstractIdentity & { abstract_text: string }>();
   if (!paper || paper.abstract_text.trim().length >= 400) return readAbstractRecovery(db, spaceId, paperId);
   const existing = await readAbstractRecovery(db, spaceId, paperId);
@@ -126,8 +135,8 @@ export async function recoverPaperAbstract(db: D1Database, spaceId: string, pape
   await db.prepare("INSERT OR IGNORE INTO paper_abstract_recovery (paper_id,space_id) VALUES (?,?)").bind(paperId, spaceId).run();
   const lock = await db.prepare(`UPDATE paper_abstract_recovery SET status='searching',lock_token=?,lease_until=?,updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND lease_until<=? AND retry_at<=?`).bind(token, now + 90000, paperId, spaceId, now, now).run();
   if (!lock.meta.changes) return readAbstractRecovery(db, spaceId, paperId);
-  const deadline = AbortSignal.timeout(24000);
-  const result = await lookupAbstract(paper, (url, sourceKey) => fetchExternalSource(url, { headers: { Accept: sourceKey === "arxiv" ? "application/atom+xml" : "application/json" }, signal: AbortSignal.any([deadline, AbortSignal.timeout(7000)]) }, { database: db, sourceKey, maxRetries: 0, maxInlineWaitMs: 500 }), preprintOnly);
+  const deadline = AbortSignal.timeout(budgetMs);
+  const result = await lookupAbstract(paper, (url, sourceKey) => fetchExternalSource(url, { headers: { Accept: sourceKey === "springer" ? "text/html" : sourceKey === "arxiv" ? "application/atom+xml" : "application/json" }, signal: AbortSignal.any([deadline, AbortSignal.timeout(7000)]) }, { database: db, sourceKey, maxRetries: 0, maxInlineWaitMs: 500 }), preprintOnly);
   const retryAt = result.hit ? 0 : Date.now() + Math.max(result.retryMs, result.related ? 24 * 3600000 : result.failed ? 5 * 60000 : 6 * 3600000);
   const status = result.hit ? "found" : result.related ? "related_version" : result.failed ? "source_error" : "not_found";
   const statements = [];

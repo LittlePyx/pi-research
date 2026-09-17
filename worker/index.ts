@@ -596,7 +596,13 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     if(!response.ok)throw new Error('graph_unavailable');
     const result=await response.json() as {status:string;items?:unknown[];updated?:boolean};
     return {status:response.status===202?'busy':result.status,relations:result.items?.length||0,updated:result.updated===true};
-  }).catch(() => {console.error('Research maintenance could not complete');}) : Promise.resolve();
+  }, env.DEEPSEEK_API_KEY ? async input => {
+    const response=await handler.fetch(new Request("https://pi-research.internal/api/research-map",{
+      method:'POST',headers:{'Content-Type':'application/json',Cookie:`pi_anonymous_workspace=${input.workspaceId}`},
+      body:JSON.stringify({spaceId:input.spaceId,action:'audit-precision'}),
+    }),env,ctx);
+    if(!response.ok)throw new Error('role_review_unavailable');
+  } : undefined).catch(() => {console.error('Research maintenance could not complete');}) : Promise.resolve();
   const { tickId, leaseToken } = lease;
   let dueSpaceCount = 0;
   let startedCount = 0;

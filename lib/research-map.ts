@@ -1,6 +1,6 @@
 import type { ResearchRouteEffectiveness } from "./research-route-effectiveness";
 
-export type ResearchTrackRole = "foundation" | "milestone" | "frontier";
+export type ResearchTrackRole = "foundation" | "milestone" | "frontier" | "background";
 export type ResearchDirectionRole = "core" | "support" | "explore";
 export type ResearchHeatLevel = "hot" | "rising" | "steady" | "quiet";
 export type ResearchTrackBuildStatus = "queued" | "retryable" | "partial" | "empty" | "failed" | "ready";
@@ -87,7 +87,7 @@ export function selectResearchPaperCoverage(
     bucket.push(paper.id);
     return true;
   };
-  const roleRank: Record<ResearchTrackRole, number> = { foundation: 3, milestone: 2, frontier: 1 };
+  const roleRank: Record<ResearchTrackRole, number> = { foundation: 3, milestone: 2, frontier: 1, background: 0 };
   const corePaperIds: string[] = [];
   const latestPaperIds: string[] = [];
   const rotatingPaperIds: string[] = [];

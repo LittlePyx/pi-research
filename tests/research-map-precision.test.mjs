@@ -110,11 +110,11 @@ function createPrecisionFixture() {
     INSERT INTO research_map_evidence_proposals VALUES ('proposal-confirmed', 'space-a', 'track-a', 'monitor-confirmed', 'confirmed');
     INSERT INTO research_track_paper_precision_audits
       (id, space_id, track_id, track_paper_id, gate_version, verdict, confidence, reason_zh, reason_en, evidence_json) VALUES
-      ('audit-direct', 'space-a', 'track-a', 'direct', 'semantic-v1', 'direct', 96, '直接相关', 'Direct', '["strong converse"]'),
-      ('audit-boundary', 'space-a', 'track-a', 'boundary', 'semantic-v1', 'borderline', 87, '边界', 'Boundary', '["bridge"]'),
-      ('audit-high', 'space-a', 'track-a', 'drift-high', 'semantic-v1', 'off_topic', 96, '明确跑题', 'Clearly off topic', '["image dehazing"]'),
-      ('audit-low', 'space-a', 'track-a', 'drift-low', 'semantic-v1', 'off_topic', 89, '置信度不足', 'Insufficient confidence', '[]'),
-      ('audit-confirmed', 'space-a', 'track-a', 'confirmed', 'semantic-v1', 'off_topic', 99, '模型误判也不得覆盖确认', 'Confirmed evidence remains protected', '[]');
+      ('audit-direct', 'space-a', 'track-a', 'direct', 'semantic-role-v2', 'direct', 96, '直接相关', 'Direct', '["strong converse"]'),
+      ('audit-boundary', 'space-a', 'track-a', 'boundary', 'semantic-role-v2', 'borderline', 87, '边界', 'Boundary', '["bridge"]'),
+      ('audit-high', 'space-a', 'track-a', 'drift-high', 'semantic-role-v2', 'off_topic', 96, '明确跑题', 'Clearly off topic', '["image dehazing"]'),
+      ('audit-low', 'space-a', 'track-a', 'drift-low', 'semantic-role-v2', 'off_topic', 89, '置信度不足', 'Insufficient confidence', '[]'),
+      ('audit-confirmed', 'space-a', 'track-a', 'confirmed', 'semantic-role-v2', 'off_topic', 99, '模型误判也不得覆盖确认', 'Confirmed evidence remains protected', '[]');
   `);
   return { sqlite, database: d1Database(sqlite) };
 }
@@ -177,7 +177,7 @@ test("the precision migration is additive and the API gates persistence before q
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(route, /const \[parsed, precisionResponses\] = await Promise\.all/);
-  assert.match(route, /Math\.ceil\(compact\.length \/ 18\)/);
+  assert.match(route, /Math\.ceil\(compact\.length \/ 6\)/);
   assert.match(route, /timeoutMs: 44_000/);
   assert.match(route, /Route semantic precision audit returned incomplete coverage/);
   assert.match(route, /routePrecisionAcceptedForActiveNode/);

@@ -35,7 +35,7 @@ function fixture() {
   }
   const review=async input=>input.canonicalIds.map(canonicalId=>({canonicalId,relevance:'direct',quote:abstract.slice(0,91),reasonZh:'对象与条件相关',reasonEn:'Objects and conditions match',limitationZh:'尚未核对全文',limitationEn:'Full text not checked'}));
   const graph=async input=>{db.prepare('INSERT OR REPLACE INTO library_graph_checks VALUES(?,?,0,0,?)').run(input.paperId,input.spaceId,Date.now()+604800000);return {status:'ready',relations:2};};
-  return {db,database,addSpace,review,run:(reviewer=review,now=Date.now())=>context.runResearchMaintenance(database,reviewer,now,graph)};
+  return {db,database,addSpace,review,run:(reviewer=review,now=Date.now(),roles)=>context.runResearchMaintenance(database,reviewer,now,graph,roles)};
 }
 test('route scheduler rotates all three existing lanes instead of starving retries',()=>{assert.deepEqual([1,2,3,4].map(n=>scheduledRouteTaskOrder(n)[0]),['routeIntelligence','routeEvolution','routeRetry','routeIntelligence']);});
 test('background maintenance rotates spaces, respects inactivity, exclusions and source changes without formal writes',async()=>{
@@ -70,4 +70,17 @@ test('changed source and a newly excluded paper are rejected at publication time
     await f.run(async input=>{f.db.exec("UPDATE paper_insights SET abstract_text='modified' WHERE paper_id='a0'; INSERT INTO research_route_library VALUES('ta','a1','excluded')");return f.review(input);});
     assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM research_route_library_reviews WHERE paper_id IN ('a0','a1')").get().n,0);
   }finally{f.db.close();}
+});
+
+test('existing maintenance alternates stage repair with library review without a browser visit',async()=>{
+ const f=fixture();try{
+  f.addSpace('a');let calls=0;
+  const repair=async input=>{assert.equal(input.spaceId,'a');calls++;};
+  await f.run(undefined,Date.now(),repair);
+  f.db.exec('UPDATE research_maintenance SET next_at=0');
+  await f.run(undefined,Date.now(),repair);assert.equal(calls,1);
+  f.db.exec('UPDATE research_maintenance SET next_at=0');await f.run(undefined,Date.now(),repair);
+  f.db.exec('UPDATE research_maintenance SET next_at=0');const reviewed=await f.run(undefined,Date.now(),repair);
+  assert.equal(reviewed.reviewed,4);assert.equal(calls,1);
+ }finally{f.db.close();}
 });

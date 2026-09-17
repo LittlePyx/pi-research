@@ -1,4 +1,5 @@
-export const RESEARCH_ROUTE_PRECISION_GATE_VERSION = "semantic-v1";
+import { groundedRouteRole, type RoleEvidence } from "./route-role-evidence.ts";
+export const RESEARCH_ROUTE_PRECISION_GATE_VERSION = "semantic-role-v2";
 export const RESEARCH_ROUTE_PRECISION_AUTO_DEACTIVATE_CONFIDENCE = 90;
 
 export type ResearchRoutePrecisionVerdict = "direct" | "borderline" | "off_topic";
@@ -11,6 +12,7 @@ export type ResearchRoutePrecisionJudgment = {
   reasonZh: string;
   reasonEn: string;
   evidenceTerms: string[];
+  roleEvidence?: RoleEvidence | null;
 };
 
 function cleanText(value: unknown, limit: number) {
@@ -30,6 +32,7 @@ function boundedConfidence(value: unknown) {
 export function sanitizeResearchRoutePrecisionJudgments(
   raw: unknown,
   allowedIdentities: Set<string>,
+  sources?: Map<string,string>,
 ): ResearchRoutePrecisionJudgment[] {
   if (!Array.isArray(raw)) return [];
   const judgments = new Map<string, ResearchRoutePrecisionJudgment>();
@@ -45,6 +48,7 @@ export function sanitizeResearchRoutePrecisionJudgments(
     if (!allowedIdentities.has(identity) || !["direct", "borderline", "off_topic"].includes(verdict)
       || !reasonZh || !reasonEn || judgments.has(identity)) continue;
     judgments.set(identity, {
+      roleEvidence: sources ? groundedRouteRole(record.roleEvidence, sources.get(identity) || "") : undefined,
       directionKey,
       canonicalId,
       verdict,
@@ -64,7 +68,8 @@ export function routePrecisionJudgmentIdentity(judgment: Pick<ResearchRoutePreci
 }
 
 export function routePrecisionAcceptedForActiveNode(judgment: ResearchRoutePrecisionJudgment | undefined) {
-  return judgment?.verdict === "direct" && judgment.confidence >= 60;
+  return (judgment?.verdict === "direct" && judgment.confidence >= 60)
+    || (judgment?.verdict === "borderline" && judgment.confidence >= 80 && judgment.roleEvidence?.role === "background");
 }
 
 export function routePrecisionAutoDeactivates(judgment: ResearchRoutePrecisionJudgment | undefined) {
@@ -86,7 +91,8 @@ type StoredPrecisionAuditRow = {
 function parseEvidenceTerms(value: string) {
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed.map((item) => cleanText(item, 100)).filter(Boolean).slice(0, 8) : [];
+    const terms = Array.isArray(parsed) ? parsed : (parsed && typeof parsed === "object" && "terms" in parsed ? parsed.terms : []);
+    return Array.isArray(terms) ? terms.map((item) => cleanText(item, 100)).filter(Boolean).slice(0, 8) : [];
   } catch {
     return [];
   }
