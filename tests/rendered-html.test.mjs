@@ -569,7 +569,7 @@ test("keeps a durable, view-aware paper inbox with reversible decisions", async 
   assert.match(client, /paperReturnView/);
   assert.match(client, /window\.history\.pushState/);
   assert.doesNotMatch(client, /<section className="v2-library-overview"/);
-  assert.match(ask, /const model = "deepseek-flash"/);
+  assert.match(ask, /const model = credential\.model/);
   assert.match(spaces, /modelConfigured \? "deepseek-flash"/);
   assert.match(css, /Pi Research V7 — durable reading inbox and calmer navigation/);
   assert.match(css, /\.v2-library-paper-actions/);

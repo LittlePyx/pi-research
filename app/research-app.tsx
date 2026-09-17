@@ -3304,6 +3304,9 @@ export default function ResearchApp({ user }: { user: User }) {
   const [showModelApiKey, setShowModelApiKey] = useState(false);
   const [modelSettingsError, setModelSettingsError] = useState("");
   const [askOpen, setAskOpen] = useState(false);
+  const [askContext, setAskContext] = useState<{trackId?: string; routePaperId?: string; paperId?: string}>({});
+  const [askError, setAskError] = useState("");
+  const askRequest = useRef(0);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [answerMode, setAnswerMode] = useState<"deepseek" | "preview" | null>(null);
@@ -4472,6 +4475,7 @@ export default function ResearchApp({ user }: { user: User }) {
       if (document.querySelector("[data-pi-dialog]")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        setAskContext({});
         setAskOpen(true);
       }
       if (event.key === "Escape") {
@@ -4545,6 +4549,10 @@ export default function ResearchApp({ user }: { user: User }) {
     navigate("today");
     setAnswer("");
     setAnswerModel(null);
+    askRequest.current++;
+    setAsking(false);
+    setAskContext({});
+    setAskError("");
     setQuestion("");
     setSelectedMonitorPaper(null);
     setWorkbookTrackId(null);
@@ -4585,7 +4593,9 @@ export default function ResearchApp({ user }: { user: User }) {
   const submitQuestion = async (event?: FormEvent) => {
     event?.preventDefault();
     if (!question.trim() || asking) return;
+    const requestNumber = ++askRequest.current;
     setAsking(true);
+    setAskError("");
     setAnswer("");
     setAnswerMode(null);
     setAnswerModel(null);
@@ -4593,10 +4603,12 @@ export default function ResearchApp({ user }: { user: User }) {
       const response = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, question, locale }),
+        body: JSON.stringify({ spaceId: activeSpace.id, question, locale, ...askContext }),
+        signal: AbortSignal.timeout(60000),
       });
-      const data = await response.json() as { answer?: string; mode?: "deepseek" | "preview"; model?: string | null; error?: string };
-      if (!response.ok || !data.answer) throw new Error(data.error || "ask failed");
+      const data = await response.json().catch(() => ({})) as { answer?: string; mode?: "deepseek" | "preview"; model?: string | null; code?: string };
+      if (requestNumber !== askRequest.current) return;
+      if (!response.ok || !data.answer) throw new Error(data.code || (response.status === 401 ? "session_expired" : "request_failed"));
       setAnswer(data.answer);
       setAnswerMode(data.mode || "preview");
       setAnswerModel(data.model || null);
@@ -4604,11 +4616,24 @@ export default function ResearchApp({ user }: { user: User }) {
         setModelConnectionState("connected");
         setConnectedModel(data.model || connectedModel);
       }
-    } catch {
-      setAnswer(locale === "zh" ? "暂时无法连接 Pi。你的问题仍停留在当前研究空间，没有写入其他方向。" : "Pi could not connect just now. Your question remains scoped to this research space and was not written into any other direction.");
-      setAnswerMode("preview");
+    } catch (error) {
+      if (requestNumber !== askRequest.current) return;
+      const code = error instanceof Error ? error.message : "request_failed";
+      const messages: Record<string, [string,string]> = {
+        model_unconfigured: ["尚未配置模型，请打开模型设置。", "Configure a model in model settings."],
+        credential_invalid: ["模型凭据未通过验证，请检查模型设置。", "Check the credential in model settings."],
+        insufficient_balance: ["模型服务余额不足，请检查服务账户。", "The model provider reports insufficient balance."],
+        daily_limit: ["今日问答额度已用完，请明天再试。", "Today's question allowance is used. Try tomorrow."],
+        provider_busy: ["模型服务繁忙，请稍后重试。", "The model service is busy. Try again shortly."],
+        timeout: ["本次回答超时，问题已保留，可以重试。", "The request timed out. Your question is retained; retry."],
+        context_unavailable: ["对应研究材料已变化，请重新打开论文后提问。", "The research context changed. Reopen the paper and ask again."],
+        session_expired: ["当前会话已失效，请刷新页面后重试。", "Your session expired. Refresh and retry."],
+        empty_response: ["模型没有返回可显示的回答，请重试。", "The model returned no answer. Please retry."],
+      };
+      setAskError((messages[code] || (error instanceof Error && error.name === "TimeoutError" ? messages.timeout : ["这次回答未完成，问题已保留，请重试。", "The answer could not be completed. Your question is retained; retry."]))[locale === "zh" ? 0 : 1]);
+      setAnswerMode(null);
     } finally {
-      setAsking(false);
+      if (requestNumber === askRequest.current) setAsking(false);
     }
   };
 
@@ -5178,6 +5203,11 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const askAboutMonitorPaper = (paper: MonitorPaper) => {
+    askRequest.current++;
+    setAsking(false);
+    setAskContext({paperId:paper.id});
+    setAskError("");
+    setAnswer("");
     recordPaperEngagement(paper, "ask_pi", { context: "paper_detail" });
     setQuestion(locale === "zh" ? `请结合当前研究空间分析这篇论文：${paper.title}` : `Analyze this paper in the context of the current research space: ${paper.title}`);
     setAskOpen(true);
@@ -5242,6 +5272,11 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const askAboutNetworkPaper = (node: NetworkPaperNode) => {
+    askRequest.current++;
+    setAsking(false);
+    setAskContext({trackId:node.track.id,routePaperId:node.paper.id});
+    setAskError("");
+    setAnswer("");
     setQuestion(locale === "zh"
       ? `请结合当前研究空间，解释《${node.paper.title}》在“${node.track.titleZh}”发展路线中的位置，以及它与前后代表论文的关键关系。`
       : `Explain where “${node.paper.title}” sits in the “${node.track.titleEn}” development route and its key relationships to representative work before and after it.`);
@@ -5249,6 +5284,11 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const askAboutResearchRoute = (thread: ResearchTrack, focus: "assessment" | "gap" | "agenda" = "assessment") => {
+    askRequest.current++;
+    setAsking(false);
+    setAskContext({trackId:thread.id});
+    setAskError("");
+    setAnswer("");
     const title = locale === "zh" ? thread.titleZh : thread.titleEn;
     const focusPrompt = focus === "gap"
       ? (locale === "zh" ? `请基于当前真实论文，分析“${title}”的证据缺口，解释还缺什么证据，并给出下一步可核验的检索和阅读建议。` : `Using the current real papers, analyze the evidence gap in “${title}” and propose a verifiable next search and reading plan.`)
@@ -5260,6 +5300,11 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const askAboutRoutePaper = (thread: ResearchTrack, paper: ResearchTrackPaper) => {
+    askRequest.current++;
+    setAsking(false);
+    setAskContext({trackId:thread.id,routePaperId:paper.id});
+    setAskError("");
+    setAnswer("");
     setQuestion(locale === "zh"
       ? `请结合“${thread.titleZh}”这条研究路线，解释《${paper.title}》为什么位于“${researchRoleLabel(paper.role, locale)}”阶段，它支撑了什么判断，还留下了什么问题。`
       : `In the “${thread.titleEn}” route, explain why “${paper.title}” belongs to the ${researchRoleLabel(paper.role, locale)} stage, what assessment it supports, and what questions remain.`);
@@ -5909,7 +5954,7 @@ export default function ResearchApp({ user }: { user: User }) {
           <button className="v2-mobile-menu" type="button" aria-label="Menu" onClick={() => setMobileNav(true)}>≡</button>
           <div className="v2-breadcrumb"><span>{defaultSpaceName(activeSpace.name, locale)}</span><b>/</b><strong>{navItems.find((item) => item.id === activeNav)?.label}</strong>{["paper-detail", "thread-detail", "workbook"].includes(view) && <><b>/</b><span className="pi-breadcrumb-detail">{view === "paper-detail" ? (locale === "zh" ? "论文详情" : "Paper details") : view === "workbook" ? (locale === "zh" ? "论文比较" : "Paper comparison") : (locale === "zh" ? selectedThread?.titleZh : selectedThread?.titleEn)}</span></>}</div>
           <div className="v2-top-actions">
-            <button className="v2-ask-trigger v2-command-trigger" type="button" aria-label={t.askPi} title={`${t.askPi} · Ctrl+K / ⌘K`} onClick={() => setAskOpen(true)}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 13h5"/></svg><span className="v2-command-copy"><strong>{t.askPi}</strong></span></button>
+            <button className="v2-ask-trigger v2-command-trigger" type="button" aria-label={t.askPi} title={`${t.askPi} · Ctrl+K / ⌘K`} onClick={() => { setAskContext({}); setAskOpen(true); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 13h5"/></svg><span className="v2-command-copy"><strong>{t.askPi}</strong></span></button>
             {pendingActionNotifications.length > 0 && <button className="v2-alert-link" type="button" aria-label={`${locale === "zh" ? "待处理研究提醒" : "Pending research alerts"}: ${pendingActionNotifications.length}`} onClick={() => { navigate("today"); setNotificationsExpanded(false); window.setTimeout(() => document.querySelector(".v2-action-inbox")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg><span>{locale === "zh" ? "提醒" : "Alerts"}</span><b>{pendingActionNotifications.length > 99 ? "99+" : pendingActionNotifications.length}</b></button>}
             <div className="v2-language" role="group" aria-label={locale === "zh" ? "界面语言" : "Interface language"}><button className={locale === "zh" ? "active" : ""} aria-pressed={locale === "zh"} type="button" onClick={() => setLocale("zh")}>中文</button><button className={locale === "en" ? "active" : ""} aria-pressed={locale === "en"} type="button" onClick={() => setLocale("en")}>EN</button></div>
           </div>
@@ -6494,8 +6539,10 @@ export default function ResearchApp({ user }: { user: User }) {
             <div className="v2-modal-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {t.privateSpace}</p><h2>{t.askTitle}</h2><p>{t.askScope}</p></div><button type="button" aria-label={t.close} onClick={() => setAskOpen(false)}>×</button></div>
             <form onSubmit={submitQuestion}><textarea aria-label={locale === "zh" ? "向 Pi 提问" : "Your question for Pi"} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={t.askExample} /><div><span className={"v2-space-avatar tiny " + activeSpace.accent}>{initials(activeSpace.name)}</span><small>{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</small><button type="submit" disabled={!question.trim() || asking}>{asking ? "···" : t.send + " ↑"}</button></div></form>
             {asking && <div className="v2-thinking"><InterfaceIcon name="loading" className="pi-state-mark" /><p>{t.thinking}<i><b /><b /><b /></i></p></div>}
+            {(askContext.trackId || askContext.paperId) && <p className="pi-ask-context">{locale === "zh" ? "已关联当前选中的研究材料" : "Selected research materials attached"} <button type="button" disabled={asking} onClick={() => setAskContext({})}>{locale === "zh" ? "移除" : "Remove"}</button></p>}
+            {askError && <div className="pi-ask-error" role="alert"><p>{askError}</p><button type="button" disabled={asking} onClick={() => void submitQuestion()}>{locale === "zh" ? "重新回答" : "Retry"}</button></div>}
             {answer && <div className="v2-answer"><div><InterfaceIcon name="synthesis" className="pi-state-mark" /><p className="v2-kicker">{answerMode === "deepseek" ? t.modelAnswer : t.previewMode}</p><small>{answerMode === "deepseek" ? modelDisplayName(answerModel || connectedModel) : t.setupRequired}</small></div><p>{answer}</p><div><i />{t.isolated}</div></div>}
-            {!answer && !asking && <div className="v2-ask-suggestions">{[t.askExample, locale === "zh" ? "这篇论文与我收藏的结果有什么直接关系？" : "How does this paper relate to results I saved?", locale === "zh" ? "这个方向最近真正改变了什么？" : "What actually changed in this field recently?"].map((item) => <button type="button" key={item} onClick={() => setQuestion(item)}>↗ {item}</button>)}</div>}
+            {!answer && !asking && !askError && <div className="v2-ask-suggestions">{[t.askExample, locale === "zh" ? "这篇论文与我收藏的结果有什么直接关系？" : "How does this paper relate to results I saved?", locale === "zh" ? "这个方向最近真正改变了什么？" : "What actually changed in this field recently?"].map((item) => <button type="button" key={item} onClick={() => setQuestion(item)}>↗ {item}</button>)}</div>}
           </div>
         </div>
       )}
