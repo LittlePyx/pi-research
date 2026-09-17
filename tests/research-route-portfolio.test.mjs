@@ -46,7 +46,7 @@ test("route priority uses the same compact count model on desktop and narrow scr
 
   assert.equal(client.match(/<RoutePortfolioOverview portfolio=/g)?.length, 1);
   assert.match(client, /onAction=\{handleRouteAttention\}/);
-  assert.match(client, /当前优先事项/);
+  assert.match(client, /下一步研究/);
   assert.match(client, /onClick=\{onAction\}/);
   assert.match(client, /const routePortfolio = researchMap\.routePortfolio;/);
   assert.match(client, /const monitorReadyLabel = monitorScanCompletionLabel\(monitor, locale\);/);

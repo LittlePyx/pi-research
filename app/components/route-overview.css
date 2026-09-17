@@ -1,0 +1,49 @@
+.v2-app.pi-workspace .pi-route-next { display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px 32px;margin:24px 0;padding:24px 0;border-block:1px solid #dce2e8;background:transparent;color:#202832; }
+.v2-app.pi-workspace .pi-route-next-content > small { font:600 12px/1.5 var(--font-sans, sans-serif);color:#637183; }
+.v2-app.pi-workspace .pi-route-next h2 { margin:6px 0 12px;font:600 22px/1.4 var(--font-sans,sans-serif);letter-spacing:-.025em; }
+.v2-app.pi-workspace .pi-route-next-content > strong { font:500 15px/1.6 var(--font-sans,sans-serif); }
+.v2-app.pi-workspace .pi-route-next p { margin:5px 0 0;font:400 14px/1.7 var(--font-sans,sans-serif);color:#657180;text-align:left; }
+.v2-app.pi-workspace .pi-route-next > button { align-self:center;border:0;border-radius:6px;background:#245ac6;color:white;padding:11px 17px;font-size:14px;font-weight:600; }
+.v2-app.pi-workspace .pi-route-next > details { grid-column:1/-1;font-size:13px;color:#657180; }
+.v2-app.pi-workspace .pi-route-next summary { cursor:pointer;width:fit-content; }
+.v2-app.pi-workspace .pi-route-next dl { display:flex;gap:32px;flex-wrap:wrap;margin:16px 0 8px; }
+.v2-app.pi-workspace .pi-route-next dd { margin:4px 0;font-size:17px;color:#253548; }
+.v2-app.pi-workspace .v2-route-map-assist { margin:24px 0;border:0;border-block:1px solid #dce2e8;border-radius:0;background:transparent;box-shadow:none; }
+.v2-app.pi-workspace .v2-route-map-assist > summary { padding:20px 0;display:flex;align-items:center;justify-content:space-between;gap:16px;cursor:pointer; }
+.v2-app.pi-workspace .v2-route-map-assist > summary strong { font:600 19px/1.5 var(--font-sans,sans-serif);color:#202832; }
+.v2-app.pi-workspace .v2-route-map-assist > summary p { margin:4px 0 0;font:400 14px/1.6 var(--font-sans,sans-serif);color:#657180; }
+.v2-app.pi-workspace .v2-route-map-assist > summary b { white-space:nowrap;font-size:13px;font-weight:500;color:#245ac6; }
+.v2-app.pi-workspace .v2-route-map-assist > summary .pi-assist-open { display:none; }
+.v2-app.pi-workspace .v2-route-map-assist[open] > summary .pi-assist-open { display:inline; }
+.v2-app.pi-workspace .v2-route-map-assist[open] > summary .pi-assist-closed { display:none; }
+.v2-app.pi-workspace .pi-route-connections { color:#202832;background:white;padding:0 24px;font-family:var(--font-sans,sans-serif); }
+.v2-app.pi-workspace .pi-route-connections-toolbar { display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 0;border-bottom:1px solid #e5e9ee; }
+.v2-app.pi-workspace .pi-route-connections-toolbar label { display:flex;gap:12px;align-items:center;font-size:13px;color:#657180; }
+.v2-app.pi-workspace .pi-route-connections select { max-width:360px;padding:9px 30px 9px 12px;border:1px solid #dce2e8;border-radius:5px;background:white;color:#202832;font-size:14px; }
+.v2-app.pi-workspace .pi-route-connections-toolbar > span { max-width:340px;font-size:12px;line-height:1.6;color:#657180; }
+.v2-app.pi-workspace .pi-route-connections article { display:grid;grid-template-columns:80px minmax(0,1fr) auto;gap:20px;padding:24px 0;border-bottom:1px solid #e5e9ee; }
+.v2-app.pi-workspace .pi-route-connections article:last-child { border:0; }
+.v2-app.pi-workspace .pi-route-connections article > small { padding-top:3px;color:#657180;font-size:12px; }
+.v2-app.pi-workspace .pi-route-connections h3 { margin:0 0 8px;font-size:17px;font-weight:600;line-height:1.5; }
+.v2-app.pi-workspace .pi-route-connections p { margin:0 0 10px;max-width:780px;color:#596574;font-size:14px;line-height:1.8;text-align:left; }
+.v2-app.pi-workspace .pi-route-connections button { align-self:start;background:transparent;border:0;padding:3px 0;color:#245ac6;font-size:13px;white-space:nowrap; }
+.v2-app.pi-workspace .pi-route-connections details { font-size:12px;color:#657180; }
+.v2-app.pi-workspace .pi-route-connections details summary { cursor:pointer;margin:12px 0; }
+.v2-app.pi-workspace .pi-route-connections details button { margin-right:24px; }
+.v2-app.pi-workspace .pi-route-connections-empty { padding:24px 0; }
+.v2-app.pi-workspace .pi-route-connections-empty button { display:block;margin-top:12px; }
+.v2-app.pi-workspace .pi-route-diagram { padding:18px 0;font-size:13px;color:#657180; }
+.v2-app.pi-workspace .pi-route-diagram > summary { cursor:pointer; }
+.v2-app.pi-workspace .pi-route-diagram .v2-direction-path-panel > header { padding:16px;min-height:0; }
+.v2-app.pi-workspace .pi-route-diagram .v2-direction-path-panel > header p { margin:0;font-size:13px; }
+@media(max-width:700px) {
+  .v2-app.pi-workspace .pi-route-next { grid-template-columns:1fr;gap:14px;padding:20px 0; }
+  .v2-app.pi-workspace .pi-route-next > button { justify-self:start; }
+  .v2-app.pi-workspace .pi-route-next h2 { font-size:20px; }
+  .v2-app.pi-workspace .pi-route-connections { padding:0 16px; }
+  .v2-app.pi-workspace .pi-route-connections-toolbar { flex-direction:column;align-items:start;gap:10px; }
+  .v2-app.pi-workspace .pi-route-connections-toolbar label { display:block;width:100%; }
+  .v2-app.pi-workspace .pi-route-connections select { display:block;width:100%;max-width:100%;margin-top:8px; }
+  .v2-app.pi-workspace .pi-route-connections article { grid-template-columns:1fr;gap:7px; }
+  .v2-app.pi-workspace .pi-route-connections article > button { justify-self:start; }
+}

@@ -272,7 +272,7 @@ export type ResearchGapDiscoveryProgress = {
   updatedAt: string;
 };
 
-export type ResearchRouteAttentionKind = "recover" | "today" | "quality_review" | "confirm_evidence" | "evidence_gap" | "maintain";
+export type ResearchRouteAttentionKind = "recover" | "today" | "quality_review" | "confirm_evidence" | "evidence_gap" | "maintain" | "read_material";
 
 export type ResearchRouteAttention = {
   trackId: string;
@@ -286,18 +286,12 @@ export function researchRouteAttention(track: ResearchTrack): ResearchRouteAtten
   const visibleEvidence = track.papers.length;
   const inQualityReview = Math.max(0, track.queuedForReviewCount) + Math.max(0, track.reviewingForReviewCount);
   const unhandledRecommendations = Math.max(0, track.recommendedCandidateCount - track.discoveryEffect.acceptedCount);
-  if (!visibleEvidence || ["retryable", "empty", "failed"].includes(track.buildStatus)) {
-    return { trackId: track.id, kind: "recover", count: visibleEvidence, priority: 600 + Number(!visibleEvidence) * 50 };
-  }
-  if (track.buildStatus === "partial") return { trackId: track.id, kind: "recover", count: visibleEvidence, priority: 560 };
+  // User actions take precedence over automatic maintenance, even on partial routes.
   if (unhandledRecommendations > 0) return { trackId: track.id, kind: "today", count: unhandledRecommendations, priority: 500 };
-  if (inQualityReview > 0) return { trackId: track.id, kind: "quality_review", count: inQualityReview, priority: 440 };
-  if (track.pendingEvidenceCount > 0) return { trackId: track.id, kind: "confirm_evidence", count: track.pendingEvidenceCount, priority: 380 };
-  if (track.intelligence?.evidenceGapZh || track.intelligence?.evidenceGapEn) {
-    return { trackId: track.id, kind: "evidence_gap", count: 1, priority: 300 };
-  }
-  const staleBonus = track.discoveryEffect.staleDays !== null && track.discoveryEffect.staleDays >= 7 ? 80 : 0;
-  return { trackId: track.id, kind: "maintain", count: 0, priority: 100 + staleBonus };
+  if (track.pendingEvidenceCount > 0) return { trackId: track.id, kind: "confirm_evidence", count: track.pendingEvidenceCount, priority: 450 };
+  if (visibleEvidence > 0) return { trackId: track.id, kind: "read_material", count: visibleEvidence, priority: 300 + Number(track.userRole === "core") * 20 };
+  if (inQualityReview > 0) return { trackId: track.id, kind: "quality_review", count: inQualityReview, priority: 90 };
+  return { trackId: track.id, kind: "recover", count: 0, priority: 50 };
 }
 
 export function selectResearchRouteAttention(tracks: ResearchTrack[]) {

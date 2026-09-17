@@ -29,6 +29,7 @@ import { LearningStageNavigation } from "./components/learning-stage-navigation"
 import { LearningStageGuidance } from "./components/learning-stage-guidance";
 import { LearningNextTask } from "./components/learning-next-task";
 import { ResearchWorkbook } from "./components/research-workbook";
+import { RouteRelationships } from "./components/route-relationships";
 import { ResearchLeads } from "./components/research-leads";
 import { PaperReadingContent } from "./components/paper-reading-content";
 import { SynthesisReading } from "./components/synthesis-reading";
@@ -1350,79 +1351,29 @@ function ResearchGapDiscoveryStatus({ track, locale }: { track: ResearchTrack; l
   return <div className={`v2-gap-discovery-status ${status}`} role="status"><i /><span><strong>{title}</strong><small>{detail}</small></span></div>;
 }
 
-function researchRouteAttentionTitle(kind: ResearchRouteAttentionKind, locale: Locale) {
-  const labels: Record<ResearchRouteAttentionKind, Localized> = {
-    recover: { zh: "先恢复证据不足的路线", en: "Recover the route with insufficient evidence" },
-    today: { zh: "先处理今日中的路线论文", en: "Handle route papers in Today first" },
-    quality_review: { zh: "等待共享质量队列完成评估", en: "Let the shared quality queue finish reviewing" },
-    confirm_evidence: { zh: "确认待回流的路线证据", en: "Confirm route evidence awaiting feedback" },
-    evidence_gap: { zh: "把关键证据缺口变成下一轮检索", en: "Turn the key evidence gap into the next search" },
-    maintain: { zh: "继续轮换深挖稳定路线", en: "Continue rotating discovery on the stable route" },
-  };
-  return labels[kind][locale];
-}
-
-function RoutePortfolioOverview({
-  portfolio,
-  todayCount,
-  attentionKind,
-  attentionTrack,
-  locale,
-  onAction,
-}: {
-  portfolio: ResearchRoutePortfolio;
-  todayCount: number;
-  attentionKind: ResearchRouteAttentionKind;
-  attentionTrack: ResearchTrack;
-  locale: Locale;
-  onAction: () => void;
+function RoutePortfolioOverview({ portfolio, todayCount, attentionKind, attentionTrack, locale, onAction, children }: {
+  portfolio: ResearchRoutePortfolio; todayCount: number; attentionKind: ResearchRouteAttentionKind;
+  attentionTrack: ResearchTrack; locale: Locale; onAction: () => void; children?: ReactNode;
 }) {
   const inReview = portfolio.queuedCount + portfolio.reviewingCount;
-  const status = portfolio.degradedRouteCount > 0
-    ? (locale === "zh" ? `${portfolio.degradedRouteCount} 条路线待补证据` : `${portfolio.degradedRouteCount} routes need evidence`)
-    : portfolio.pausedRouteCount > 0
-      ? (locale === "zh" ? `${portfolio.pausedRouteCount} 条路线已暂停，其余继续运行` : `${portfolio.pausedRouteCount} routes paused; the rest keep running`)
-    : inReview > 0
-      ? (locale === "zh" ? `${inReview} 篇等待或正在质量评估` : `${inReview} awaiting or in quality review`)
-      : todayCount > 0
-        ? (locale === "zh" ? `今日有 ${todayCount} 篇路线推荐` : `${todayCount} route papers in Today`)
-        : (locale === "zh" ? "路线闭环持续运行" : "Route loop is running");
-  const actionCopy: Record<ResearchRouteAttentionKind, { labelZh: string; labelEn: string; bodyZh: string; bodyEn: string }> = {
-    recover: {
-      labelZh: "重试补充", labelEn: "Retry evidence",
-      bodyZh: "这条路线证据不足或来源曾降级；现有节点和候选会保留，补齐前不会假装完成。",
-      bodyEn: "This route lacks enough evidence or had a degraded source. Existing nodes remain, and it will not appear complete before recovery.",
-    },
-    today: {
-      labelZh: "前往今日", labelEn: "Open Today",
-      bodyZh: "已有路线论文通过质量门槛，等待你的阅读与判断；确认后才回流正式路线证据。",
-      bodyEn: "Route papers passed the quality gate and await your judgment. Only confirmation feeds formal route evidence.",
-    },
-    quality_review: {
-      labelZh: "查看路线", labelEn: "Review route",
-      bodyZh: "候选正在共享质量队列中后台评估，不需要你逐篇确认；通过后才会出现在今日。",
-      bodyEn: "Candidates are being reviewed in the shared quality queue without requiring approval. Only passing papers reach Today.",
-    },
-    confirm_evidence: {
-      labelZh: "前往今日", labelEn: "Open Today",
-      bodyZh: "这条路线已有待确认论文；你的接受、保存或完成阅读会决定是否写入正式证据。",
-      bodyEn: "This route has papers awaiting confirmation. Accepting, saving, or completing them determines formal evidence updates.",
-    },
-    evidence_gap: {
-      labelZh: "查看证据缺口", labelEn: "Review evidence gap",
-      bodyZh: "当前最值得推进的是把 Pi 识别出的关键不确定性变成下一轮可核验检索。",
-      bodyEn: "The best next step is turning Pi's key uncertainty into the next verifiable search.",
-    },
-    maintain: {
-      labelZh: "继续深挖", labelEn: "Mine deeper",
-      bodyZh: "路线当前稳定，可继续轮换前沿、奠基文献、证据缺口和引用网络。",
-      bodyEn: "This route is stable and can continue rotating frontier, foundation, gap, and citation-network discovery.",
-    },
-  }[attentionKind];
-  return <section className="v2-route-portfolio compact" aria-label={locale === "zh" ? "当前路线优先事项" : "Current route priority"}>
-    <header><div><p className="v2-kicker">{locale === "zh" ? "当前优先事项" : "CURRENT PRIORITY"}</p><h2>{researchRouteAttentionTitle(attentionKind, locale)}</h2></div><span className={portfolio.degradedRouteCount > 0 ? "degraded" : portfolio.pausedRouteCount > 0 ? "paused" : "healthy"}><i />{status}</span></header>
-    <aside><div><strong>{locale === "zh" ? attentionTrack.titleZh : attentionTrack.titleEn}</strong><p>{actionCopy[locale === "zh" ? "bodyZh" : "bodyEn"]}</p></div><button type="button" onClick={onAction}>{actionCopy[locale === "zh" ? "labelZh" : "labelEn"]} →</button></aside>
-    <footer><span>{portfolio.discoveredCount} {locale === "zh" ? "候选" : "candidates"}</span><span>{inReview} {locale === "zh" ? "评估中" : "in review"}</span><span>{todayCount} {locale === "zh" ? "今日" : "in Today"}</span><span>{portfolio.formalEvidenceCount} {locale === "zh" ? "正式证据" : "formal evidence"}</span></footer>
+  const zh = locale === "zh";
+  const reading = attentionKind === "read_material";
+  const recommended = attentionKind === "today" || attentionKind === "confirm_evidence";
+  const title = recommended ? (zh ? "看看新推荐，决定读哪篇" : "Choose your next paper")
+    : reading ? (zh ? "从现有材料继续研究" : "Continue with available materials")
+    : (zh ? "先明确这条路线要解决什么" : "Explore this route’s research question");
+  const body = recommended ? (zh ? "从推荐理由与摘要开始，再决定是否纳入自己的研究。" : "Start with the rationale and abstract, then decide what belongs in your research.")
+    : reading ? (zh ? `这条路线有 ${attentionTrack.papers.length} 篇材料，可以查看定位、比较方法并留下问题。` : `${attentionTrack.papers.length} papers are available to inspect, compare and annotate.`)
+    : (zh ? "先查看方向与研究范围；材料处理情况可在下方按需查看。" : "Explore the scope first; processing details are available below.");
+  return <section className="pi-route-next" aria-label={zh ? "下一步研究" : "Next research action"}>
+    <div className="pi-route-next-content"><small>{zh ? "下一步" : "NEXT STEP"}</small><h2>{title}</h2>
+      <strong><MathText inline>{zh ? attentionTrack.titleZh : attentionTrack.titleEn}</MathText></strong><p>{body}</p></div>
+    <button type="button" onClick={onAction}>{recommended ? (zh ? "查看推荐" : "View recommendations") : reading ? (zh ? "查看路线材料" : "Explore materials") : (zh ? "了解路线" : "Explore route")} →</button>
+    <details><summary>{zh ? "发现与处理记录" : "Discovery and processing records"}</summary>
+      <dl><div><dt>{zh ? "已发现候选" : "Discovered"}</dt><dd>{portfolio.discoveredCount}</dd></div><div><dt>{zh ? "评估队列" : "Review queue"}</dt><dd>{inReview}</dd></div><div><dt>{zh ? "今日推荐" : "In Today"}</dt><dd>{todayCount}</dd></div><div><dt>{zh ? "已确认的路线证据" : "Confirmed evidence"}</dt><dd>{portfolio.formalEvidenceCount}</dd></div></dl>
+      <p>{zh ? `${portfolio.degradedRouteCount} 条路线仍需补充材料，${portfolio.pausedRouteCount} 条已暂停。候选数不代表已推荐或已确认的论文数。` : `${portfolio.degradedRouteCount} routes need more materials; ${portfolio.pausedRouteCount} are paused. Candidates are not recommendations or confirmed evidence.`}</p>
+      {children}
+    </details>
   </section>;
 }
 
@@ -5895,8 +5846,8 @@ export default function ResearchApp({ user }: { user: User }) {
     if (!routeAttention || !routeAttentionTrack) return;
     if (["today", "confirm_evidence"].includes(routeAttention.kind)) navigate("today");
     else if (routeAttention.kind === "evidence_gap") openThread(routeAttentionTrack, "gaps");
-    else if (routeAttention.kind === "quality_review") openThread(routeAttentionTrack);
-    else void expandResearchTrack(routeAttentionTrack);
+    else if (routeAttention.kind === "read_material") openThread(routeAttentionTrack, "evidence");
+    else openThread(routeAttentionTrack);
   };
 
   const activeDialogKind = askOpen ? "ask" : importOpen ? "import" : feedbackPrompt ? "feedback" : modelSettingsOpen ? "model" : sourceSettingsOpen ? "sources" : spaceDialog ? "space" : mobileNav ? "mobile" : null;
@@ -6154,20 +6105,20 @@ export default function ResearchApp({ user }: { user: User }) {
                 {researchMapMode === "directions" ? <>
                   <ResearchLeads tracks={researchMap.tracks} locale={locale} onOpen={openThread} onLearn={openRouteLearningPath} />
 
-                  <details className="pi-route-secondary">
-                    <summary>{locale === "zh" ? "发现进度与待处理事项" : "Discovery progress and pending actions"}</summary>
+                  {routeAttention && routeAttentionTrack && <RoutePortfolioOverview portfolio={routePortfolio} todayCount={routeTodayPaperCount} attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={handleRouteAttention}>
                   {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress v2-route-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes await evidence`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成内容已经保存" : "Completed work is saved")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i></section> : null}
                   {((researchMap.intelligenceProgress && researchMap.intelligenceProgress.ready < researchMap.intelligenceProgress.total) || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress v2-route-build-progress" role="status"><div><InterfaceIcon name={mapIntelligenceTrackId ? "loading" : "clock"} className="pi-state-mark" /><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "方向研判中" : "Assessing direction") : (locale === "zh" ? "部分方向待更新" : "Some assessments need refresh")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "已有路线和研判已保留" : "Existing routes and assessments are retained")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i></section> : null}
                   {Boolean((researchMap.buildProgress?.partialTrackIds?.length || 0) + (researchMap.buildProgress?.emptyTrackIds?.length || 0) + (researchMap.buildProgress?.failedTrackIds?.length || 0)) && <details className="pi-processing-details"><summary>{locale === "zh" ? "路线材料处理详情" : "Route material details"}</summary><section className="v2-map-build-progress v2-route-build-degraded"><div><span className="paused"><i>!</i></span><div><strong>{locale === "zh" ? "部分路线待补充" : "Some routes need evidence"}</strong><p>{locale === "zh" ? "已有论文已保留；无可见证据的路线不会标记为完成。" : "Existing papers are retained; routes without visible evidence are not marked complete."}</p></div></div></section></details>}
 
-                  {routeAttention && routeAttentionTrack && <RoutePortfolioOverview portfolio={routePortfolio} todayCount={routeTodayPaperCount} attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={handleRouteAttention} />}
 
-                  </details>
+                  </RoutePortfolioOverview>}
 
                   <details className="v2-route-map-assist">
-                    <summary><span><small>{locale === "zh" ? "辅助视图" : "SUPPORTING VIEW"}</small><strong>{locale === "zh" ? "查看方向之间的演化与关系" : "Explore evolution and cross-direction relationships"}</strong><p>{locale === "zh" ? "需要理解全局结构时再展开；Pi 推断关系与真实论文证据保持区分。" : "Expand only when you need the global structure; Pi-inferred links remain separate from paper evidence."}</p></span><b>{researchMap.edges.length} {locale === "zh" ? "条关系" : "links"} ＋</b></summary>
+                    <summary><span><strong>{locale === "zh" ? "方向之间的联系" : "Connections between directions"}</strong><p>{locale === "zh" ? "选择方向，查看可借鉴的方法与交叉问题。" : "Choose a direction to explore shared methods and questions."}</p></span><b><span className="pi-assist-closed">{locale === "zh" ? "展开" : "Explore"} ＋</span><span className="pi-assist-open">{locale === "zh" ? "收起" : "Collapse"} −</span></b></summary>
+                    <RouteRelationships tracks={researchMap.tracks} edges={researchMap.edges} locale={locale} onOpen={track => openThread(track, "evidence")} />
+                    <details className="pi-route-diagram"><summary>{locale === "zh" ? "查看路线阶段图" : "View route stage diagram"}</summary>
                     <section className={`v2-direction-path-panel ${directionOverviewTrack ? "has-inspector" : ""}`}>
-                      <header><div><p className="v2-kicker">{locale === "zh" ? "领域演化" : "FIELD EVOLUTION"}</p><h2>{locale === "zh" ? "从理论奠基走到当前前沿" : "From foundations to the current frontier"}</h2><p>{locale === "zh" ? "点击方向查看解释；悬停或聚焦关系时再显示发展承接、跨向桥接与方法支撑。" : "Select a direction for context; inferred builds-on, bridge, and support links appear only on focus."}</p></div><div className="v2-direction-path-legend"><span><i className="solid" />{locale === "zh" ? "方向主线" : "Direction"}</span><span><i className="paper" />{locale === "zh" ? "真实论文" : "Real paper"}</span><span><i className="gap" />{locale === "zh" ? "待补证据" : "Evidence gap"}</span></div></header>
+                      <header><p>{locale === "zh" ? "按路线定位排列材料，不代表完整历史或真实引用链。点击方向查看详情。" : "Materials grouped by route role, not a complete history or citation chain. Select a direction to inspect."}</p></header>
                       <div className="v2-direction-path-stage">
                         <DirectionPathMap map={researchMap} locale={locale} selectedTrackId={directionOverviewId} focusedEdgeId={directionRelationFocusId || directionPinnedRelationId} onSelect={(trackId) => { setDirectionOverviewId(trackId); setDirectionRelationFocusId(null); setDirectionPinnedRelationId(null); }} onClear={() => { setDirectionOverviewId(null); setDirectionRelationFocusId(null); setDirectionPinnedRelationId(null); }} />
                         {directionOverviewTrack && <aside className="v2-direction-path-inspector"><div><span className={`v2-direction-heat ${directionOverviewTrack.heatLevel}`}><i />{directionHeatLabel(directionOverviewTrack.heatLevel, locale)}</span><small>{directionRoleLabel(directionOverviewTrack.userRole, locale)}</small></div><h2>{locale === "zh" ? directionOverviewTrack.titleZh : directionOverviewTrack.titleEn}</h2><p>{locale === "zh" ? directionOverviewTrack.summaryZh : directionOverviewTrack.summaryEn}</p><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{directionOverviewTrack.depthScore}</dd></div><div><dt>{locale === "zh" ? "路线论文" : "Papers"}</dt><dd>{directionOverviewTrack.papers.length}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{directionOverviewTrack.recentPaperCount}</dd></div></dl>
@@ -6175,6 +6126,7 @@ export default function ResearchApp({ user }: { user: User }) {
                           {directionOverviewTrack.intelligence && <blockquote><small>{locale === "zh" ? "Pi 当前判断" : "Pi assessment"}</small><p>{locale === "zh" ? directionOverviewTrack.intelligence.assessmentZh : directionOverviewTrack.intelligence.assessmentEn}</p></blockquote>}<footer><button type="button" onClick={() => openThread(directionOverviewTrack)}>{locale === "zh" ? "进入方向工作区" : "Open route workspace"} →</button><button type="button" onClick={() => void expandResearchTrack(directionOverviewTrack)} disabled={Boolean(mapAction || mapBuildTrackId || directionOverviewTrack.monitoringStatus === "paused")}>{directionOverviewTrack.monitoringStatus === "paused" ? (locale === "zh" ? "已暂停" : "Paused") : (locale === "zh" ? "继续深挖" : "Mine deeper")} ＋</button></footer></aside>}
                       </div>
                     </section>
+                    </details>
                   </details>
 
                 </> : <section className="v2-paper-network-panel">

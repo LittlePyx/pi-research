@@ -559,24 +559,26 @@ function routeAttentionFixture(overrides = {}) {
   };
 }
 
-test("route attention stays honest and prioritizes recovery before downstream actions", () => {
+test("route attention prioritizes usable work over background recovery", () => {
   assert.deepEqual(researchRouteAttention(routeAttentionFixture({ id: "empty", papers: [] })), {
-    trackId: "empty", kind: "recover", count: 0, priority: 650,
+    trackId: "empty", kind: "recover", count: 0, priority: 50,
   });
-  assert.equal(researchRouteAttention(routeAttentionFixture({ id: "partial", buildStatus: "partial" })).kind, "recover");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ id: "partial", buildStatus: "partial" })).kind, "read_material");
   assert.equal(researchRouteAttention(routeAttentionFixture({ recommendedCandidateCount: 2 })).kind, "today");
-  assert.equal(researchRouteAttention(routeAttentionFixture({ queuedForReviewCount: 2, reviewingForReviewCount: 1 })).kind, "quality_review");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ papers: [], queuedForReviewCount: 2, reviewingForReviewCount: 1 })).kind, "quality_review");
   assert.equal(researchRouteAttention(routeAttentionFixture({ pendingEvidenceCount: 1 })).kind, "confirm_evidence");
-  assert.equal(researchRouteAttention(routeAttentionFixture({ intelligence: { evidenceGapZh: "缺少反例" } })).kind, "evidence_gap");
-  assert.equal(researchRouteAttention(routeAttentionFixture({ discoveryEffect: { acceptedCount: 0, staleDays: 9 } })).priority, 180);
+  assert.equal(researchRouteAttention(routeAttentionFixture({ intelligence: { evidenceGapZh: "缺少反例" } })).kind, "read_material");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ discoveryEffect: { acceptedCount: 0, staleDays: 9 } })).priority, 300);
 
+  assert.equal(researchRouteAttention(routeAttentionFixture({ buildStatus: "partial", recommendedCandidateCount: 2 })).kind, "today");
+  assert.equal(researchRouteAttention(routeAttentionFixture({ papers: [], buildStatus: "retryable", pendingEvidenceCount: 1 })).kind, "confirm_evidence");
   const selected = selectResearchRouteAttention([
     routeAttentionFixture({ id: "today", recommendedCandidateCount: 4 }),
     routeAttentionFixture({ id: "degraded", buildStatus: "retryable" }),
     routeAttentionFixture({ id: "review", reviewingForReviewCount: 3 }),
   ]);
-  assert.equal(selected.trackId, "degraded");
-  assert.equal(selected.kind, "recover");
+  assert.equal(selected.trackId, "today");
+  assert.equal(selected.kind, "today");
 
   assert.equal(selectResearchRouteAttention([
     routeAttentionFixture({ id: "paused-empty", monitoringStatus: "paused", papers: [] }),

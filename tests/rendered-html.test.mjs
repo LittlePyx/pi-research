@@ -410,7 +410,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-route-workspace-tabs/);
   assert.match(css, /\.v2-route-evidence-chain/);
   assert.match(client, /v2-route-discovery-origin/);
-  assert.match(client, /当前优先事项/);
+  assert.match(client, /下一步研究/);
   assert.match(client, /历史奠基文献/);
   assert.match(client, /monitorPaperHorizonLabel/);
   assert.match(client, /<QualityReviewStatus monitor=\{monitor\}/);
