@@ -3,6 +3,7 @@
 import { SectionNavigation } from "./components/section-navigation";
 import { LibraryExplorer } from "./components/library-explorer";
 import { ResearchMaintenance } from "./components/research-maintenance";
+import { ResearchStart } from "./components/research-start";
 import { EmailSubscription } from "./components/email-subscription";
 import { focusCitationRelations } from "../lib/library-graph";
 import { focusWorkspaceSection } from "../lib/workspace-section-navigation";
@@ -5265,7 +5266,7 @@ export default function ResearchApp({ user }: { user: User }) {
     setAskOpen(true);
   };
 
-  const openRouteLearningPath = (thread: ResearchTrack, task?: GraphTaskContext) => {
+  const openRouteLearningPath = (thread: Pick<ResearchTrack, "id" | "titleZh" | "titleEn">, task?: GraphTaskContext) => {
     setLearningTask(task);
     setLearningPlannerOpen(true);
     const target = locale === "zh" ? thread.titleZh : thread.titleEn;
@@ -5274,6 +5275,14 @@ export default function ResearchApp({ user }: { user: User }) {
     setLearningTargetTrackId(thread.id);
     setLearningScopeDirty(false);
     navigate("learn");
+  };
+
+  const startRecommendedResearch = (track: Pick<ResearchTrack, "id" | "titleZh" | "titleEn">, task: GraphTaskContext) => {
+    if (task.spaceId !== activeSpace.id) return;
+    openRouteLearningPath(track, task);
+    void readResearchMapState(task.spaceId).then(data => {
+      if (paperNetworkSpaceRef.current === task.spaceId) setResearchMap(data);
+    }).catch(() => {});
   };
 
   const addNetworkPaperToLearningPath = (node: NetworkPaperNode) => {
@@ -5958,6 +5967,8 @@ export default function ResearchApp({ user }: { user: User }) {
               })}</div>
             </section>}
 
+            {!activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-") && <ResearchStart key={activeSpace.id} spaceId={activeSpace.id} locale={locale} onRead={id => void openRoutePaper(id, "today")} onStart={startRecommendedResearch} />}
+
             <QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} />
             <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
 
@@ -6243,12 +6254,13 @@ export default function ResearchApp({ user }: { user: User }) {
           <main className="v2-page v2-learn-page">
             <header className="v2-page-head"><div><h1>{t.learnTitle}</h1><p className="pi-page-purpose">{locale === "zh" ? "确定学习目标，按阶段阅读与练习，完成后再推进下一步。" : "Set your goal, work through reading and exercises, then move to the next stage."}</p></div></header>
             {activeLearningState.path?.targetTrackId && <div className="pi-study-path-links"><button type="button" onClick={() => { const track = researchMap.tracks.find(t => t.id === activeLearningState.path?.targetTrackId); if (track) openThread(track); }} disabled={!researchMap.tracks.some(t => t.id === activeLearningState.path?.targetTrackId)}>{locale === "zh" ? "返回所属研究路线" : "Back to research route"}</button><button type="button" onClick={() => openWorkbook(activeLearningState.path!.targetTrackId!)}>{locale === "zh" ? "比较论文与学习练习" : "Paper comparison & exercise"}</button></div>}
-            <LearningGoalPlanner key={`${activeSpace.id}:${activeLearningState.path?.id || "new"}:${learningTargetTrackId || "custom"}:${learningTarget}:${JSON.stringify(learningTask || null)}`} spaceId={activeSpace.id} tracks={researchMap.tracks} target={learningTarget} trackId={learningTargetTrackId} path={activeLearningState.path} taskContext={learningTask?.spaceId === activeSpace.id ? learningTask : undefined} locale={locale} open={learningPlannerOpen || !activeLearningState.path || activeLearningPathDirectionMismatch} onOpen={setLearningPlannerOpen} onCommit={id => generateLearningPath(undefined, undefined, id)} busy={Boolean(learningAction) || activeLearningLoading} />
+            <LearningGoalPlanner onRead={id => void openRoutePaper(id, "learn")} key={`${activeSpace.id}:${activeLearningState.path?.id || "new"}:${learningTargetTrackId || "custom"}:${learningTarget}:${JSON.stringify(learningTask || null)}`} spaceId={activeSpace.id} tracks={learningTargetTrackId && !researchMap.tracks.some(t => t.id === learningTargetTrackId) ? [...researchMap.tracks, {id:learningTargetTrackId,titleZh:learningTarget,titleEn:learningTarget}] : researchMap.tracks} target={learningTarget} trackId={learningTargetTrackId} path={activeLearningState.path} taskContext={learningTask?.spaceId === activeSpace.id ? learningTask : undefined} locale={locale} open={learningPlannerOpen || !activeLearningState.path || activeLearningPathDirectionMismatch} onOpen={setLearningPlannerOpen} onCommit={id => generateLearningPath(undefined, undefined, id)} busy={Boolean(learningAction) || activeLearningLoading} />
             {activeLearningLoading ? <section className="v2-learning-loading" role="status"><InterfaceIcon name="loading" className="pi-state-mark" /><div><strong>{locale === "zh" ? "正在载入学习路径" : "Loading the learning path"}</strong><i><b /></i></div></section> : activeLearningError && !activeLearningState.path ? <div className="v2-learning-empty error" role="alert"><InterfaceIcon name="warning" className="pi-state-mark" /><h2>{locale === "zh" ? "学习路径载入失败" : "Learning path failed to load"}</h2><p>{activeLearningError}</p><button type="button" onClick={() => setLearningReloadNonce((current) => current + 1)}>{locale === "zh" ? "重新载入" : "Retry"} →</button></div> : activeLearningState.path ? (
               <section className="v2-learning-path">
                 {activeLearningState.path.model === "evidence-structure-v1" && <p role="status">{learningPathResultMessage(activeLearningState.path, locale)} <button type="button" disabled={Boolean(learningAction)} onClick={() => setLearningPlannerOpen(true)}>{locale === "zh" ? "重试规划" : "Retry planning"}</button></p>}
                 {activeLearningPathDirectionMismatch && <div className="v2-reading-order-warning direction" role="status"><span>↔</span><p>{!learningTargetTrackId && learningScopeDirty ? (locale === "zh" ? `下面的旧路径限定于“${activeLearningState.path.target}”；你已切换为从全空间论文中规划。重新规划前，旧进度不会被冒充为全空间结果。` : `The saved path below is scoped to “${activeLearningState.path.target}”; you have switched to planning from the full workspace. Existing progress will not be presented as a workspace-wide result before replanning.`) : (locale === "zh" ? `下面是此前保存的“${activeLearningState.path.target}”路径；你现在准备规划“${activeLearningTargetTrack?.titleZh || learningTarget}”。点击重新规划前，旧进度不会被冒充为当前范围。` : `The path below was saved for “${activeLearningState.path.target}”; you are now preparing “${activeLearningTargetTrack?.titleEn || learningTarget}”. Existing progress will not be presented as the selected scope before replanning.`)}</p><button type="button" disabled={Boolean(learningAction)} onClick={() => setLearningPlannerOpen(true)}>{learningTargetTrackId ? (locale === "zh" ? "按当前方向重新规划" : "Replan this direction") : (locale === "zh" ? "按全空间重新规划" : "Replan across the workspace")}</button></div>}
                 {activeLearningError && <div className="v2-reading-order-warning" role="status"><span>!</span><p>{locale === "zh" ? "上次更新没有完成；下面仍是当前空间中已保存的版本。" : "The last update did not finish; the saved version for this space remains below."} {activeLearningError}</p><button type="button" onClick={() => setLearningReloadNonce((current) => current + 1)}>{locale === "zh" ? "重新载入" : "Reload"}</button></div>}
+                {activeLearningState.path.targetTrackId && researchMap.tracks.some(t => t.id === activeLearningState.path!.targetTrackId) && <button type="button" className="pi-learning-route-return" onClick={() => { const route=researchMap.tracks.find(t => t.id === activeLearningState.path!.targetTrackId); if(route)openThread(route); }}>{locale === "zh" ? "返回关联研究路线" : "Return to research route"} →</button>}
                 <LearningPathHeader path={activeLearningState.path} locale={locale} busy={Boolean(learningAction)} onAdjust={() => { setLearningPlannerOpen(true); document.getElementById("learning-goal-planner")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} onRefresh={() => void generateLearningPath(activeLearningState.path!.target, activeLearningState.path!.targetTrackId)} />
                 <div className="pi-study-layout">
                 <LearningStageNavigation steps={activeLearningState.path.steps} selectedId={activeLearningStep?.id} currentId={currentLearningStep?.id} locale={locale} label={learningEvidenceLabel} onSelect={(stepId) => setLearningBrowseSelection({ scope: learningBrowseScope, stepId })} />
@@ -6331,6 +6343,7 @@ export default function ResearchApp({ user }: { user: User }) {
             <div className="v2-paper-detail-grid">
               <div>
                 <PaperReadingContent key={`${activeSpace.id}:${selectedMonitorPaper.id}`} spaceId={activeSpace.id} paperId={selectedMonitorPaper.id} locale={locale} stage={selectedMonitorPaper.qualityStage} reason={selectedMonitorPaper.screeningReason} onReviewStage={updateOpenedPaperReviewStage} />
+                {selectedMonitorPaper.qualityStage === "recommended" && <ResearchStart key={activeSpace.id+selectedMonitorPaper.id} spaceId={activeSpace.id} paperId={selectedMonitorPaper.id} locale={locale} onRead={() => document.querySelector(".v2-paper-analysis")?.scrollIntoView({behavior:"smooth"})} onStart={startRecommendedResearch} />}
                 {isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <section className="v2-content-section v2-paper-fit-summary"><p className="v2-kicker warm">{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? t.whySuitable : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).kicker}</p><h2>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? ((locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn) || (locale === "zh" ? "仍在共享质量队列中核对，尚未形成正式推荐。" : "Still under review in the shared quality queue; this is not yet a formal recommendation.")) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).note}</h2>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && selectedMonitorPaper.researchProblemId && <details className="v2-paper-problem-impact"><summary><span>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active research problem"}</span><b>＋</b></summary><div><h3>{locale === "zh" ? selectedMonitorPaper.researchProblemImpactZh : selectedMonitorPaper.researchProblemImpactEn}</h3><p><small>{locale === "zh" ? "读完后应该决定" : "DECISION AFTER READING"}</small><strong>{locale === "zh" ? selectedMonitorPaper.researchDecisionZh : selectedMonitorPaper.researchDecisionEn}</strong></p></div></details>}<footer><span>{defaultSpaceName(activeSpace.name, locale)}</span>{selectedMonitorPaper.qualityStage === "recommended" && <strong>{t.qualityScore} {displayQualityScore(selectedMonitorPaper.qualityScore)}</strong>}</footer></section>}
                 <details className="v2-content-section v2-paper-record"><summary>{locale === "zh" ? "与路线的关联" : "Route connection"}</summary><RouteImpactNote paper={selectedMonitorPaper} locale={locale} /></details>
                 {Boolean(locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn) && <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><p className="pi-paper-summary"><MathText>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</MathText></p></section>}

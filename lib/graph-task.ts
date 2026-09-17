@@ -1,5 +1,5 @@
 export type GraphTaskPaper = { canonicalId: string; title: string };
-export type GraphTaskContext = { spaceId: string; question: string; papers: GraphTaskPaper[] };
+export type GraphTaskContext = { spaceId: string; question: string; papers: GraphTaskPaper[]; readingTask?: {paperId:string;focusZh:string;focusEn:string} };
 export type GraphRelevance = { canonicalId: string; relevance: 'direct' | 'partial' | 'unrelated' | 'insufficient'; reasonZh: string; reasonEn: string; quote: string; limitationZh: string; limitationEn: string };
 
 /** Exact identities only; an unavailable selection must never turn into a different paper. */

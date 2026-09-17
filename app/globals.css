@@ -5481,6 +5481,23 @@ button:disabled { cursor: not-allowed; }
 .pi-reading-list footer details > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 .pi-reading-list footer > button { flex-shrink: 0; min-height: 40px; padding: 8px 14px; border: 1px solid #bdd0dd; border-radius: 6px; background: #f3f7fa; color: #315d78; font: 600 14px/1.5 var(--font-sans, sans-serif); cursor: pointer; }
 .pi-reading-list button:focus-visible, .pi-reading-list summary:focus-visible { outline: 2px solid #316c94; outline-offset: 4px; }
+.pi-research-start { margin: 28px 0; padding: 24px; border: 1px solid #d8e2ea; border-radius: 10px; background: #fff; }
+.pi-research-start h2 { margin: 0; font: 650 22px/1.5 var(--font-sans, sans-serif); color: #203b50; }
+.pi-research-start p { color: #526573; font-size: 16px; line-height: 1.8; }
+.pi-start-options { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,280px),1fr)); gap: 24px; margin-top: 20px; }
+.pi-start-options article { min-width: 0; border-top: 2px solid #b9cedb; padding-top: 16px; }
+.pi-start-options h3 { margin: 0; font: 600 18px/1.6 var(--font-sans, sans-serif); color: #203b50; overflow-wrap: anywhere; }
+.pi-research-start button, .pi-learning-route-return { min-height: 40px; padding: 8px 14px; border: 1px solid #bdd0dd; border-radius: 6px; background: #f3f7fa; color: #315d78; font: 600 14px/1.6 var(--font-sans, sans-serif); cursor: pointer; }
+.pi-research-start .pi-start-source { background: transparent; border: 0; padding: 0; text-align: left; font-weight: 400; overflow-wrap: anywhere; }
+.pi-start-options details { margin: 12px 0; }
+.pi-start-options summary { cursor: pointer; font-size: 14px; color: #607180; padding: 8px 0; }
+.pi-start-options details p { font-size: 14px; }
+.pi-start-confirm { margin-top: 24px; border-top: 1px solid #d8e2ea; padding-top: 24px; }
+.pi-start-confirm label { display: block; color: #203b50; font-size: 16px; font-weight: 600; }
+.pi-start-confirm textarea { display: block; box-sizing: border-box; width: 100%; margin-top: 10px; border: 1px solid #b9cedb; border-radius: 6px; padding: 12px; font: 400 16px/1.6 var(--font-sans, sans-serif); }
+.pi-research-start button:disabled { opacity: .55; cursor: default; }
+.pi-research-start button:focus-visible, .pi-research-start summary:focus-visible { outline: 2px solid #316c94; outline-offset: 3px; }
+@media(max-width:600px) { .pi-research-start { padding:16px; } }
 @media (max-width: 600px) {
   .pi-unread-recommendations { padding: 16px; }
   .pi-reading-list h3 > button { font-size: 18px; }
