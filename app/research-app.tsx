@@ -5899,7 +5899,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
         <div className="v2-sidebar-bottom">
           <a className="v2-demo-entry" href="/demo"><InterfaceIcon name="demo" /><strong>{locale === "zh" ? "演示空间" : "Demo workspace"}</strong><b>↗</b></a>
-          <button className={`v2-openai-state ${modelConnectionState}`} type="button" onClick={() => { setMobileNav(false); setModelSettingsOpen(true); }} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong><MathText inline>{modelConnectionCopy.title}</MathText></strong><small>{modelConnectionCopy.detail}</small></span><b>›</b></button>
+          <button className={`v2-openai-state ${modelConnectionState}`} type="button" onClick={() => { setMobileNav(false); setModelSettingsOpen(true); }} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{modelConnectionState === "connected" ? modelConnectionCopy.detail : modelConnectionCopy.title}</strong><small>{modelConnectionState === "connected" ? (locale === "zh" ? "模型设置 · 已连接" : "Model settings · Connected") : modelConnectionCopy.detail}</small></span><b>›</b></button>
           <button className="v2-account" type="button" onClick={() => { setMobileNav(false); setSpaceDialog(true); }}><InterfaceIcon name="workspace" /><span><strong>{locale === "zh" ? "管理研究空间" : "Manage workspaces"}</strong><small>{activeSpace.memberName}</small></span><b>→</b></button>
         </div>
       </aside>
