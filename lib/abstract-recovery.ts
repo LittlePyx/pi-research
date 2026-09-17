@@ -6,6 +6,10 @@ export const ABSTRACT_BLOCK_REASON = "Abstract evidence unavailable after bounde
 export type AbstractIdentity = { doi: string | null; title: string; authors: string; url: string };
 type Hit = { abstractText: string; sourceUrl: string };
 type RelatedAbstract = Hit & { doi: string };
+export type AbstractAttempt = { source: string; outcome: string; retryAt?: number };
+export function parseAbstractAttempts(value: string): AbstractAttempt[] {
+  try { const rows = JSON.parse(value); return Array.isArray(rows) ? rows.map(row => typeof row === "string" ? { source: row, outcome: "unknown" } : row).filter(row => row && typeof row.source === "string" && typeof row.outcome === "string") : []; } catch { return []; }
+}
 export type Recovery = { status: string; source_url: string; retry_at: number; attempted_json: string; result_json?: string; related?: RelatedAbstract | null };
 const clean = (text: string) => text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 12000);
 const doiKey = (value: string) => value.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "").trim().toLowerCase();
@@ -17,17 +21,34 @@ export function matchesAbstractIdentity(paper: AbstractIdentity, record: { doi?:
   return record.authors.some(author => { const name = normalizeWorkTitle(author); return name.length >= 5 && known.includes(name); });
 }
 
-export async function lookupAbstract(paper: AbstractIdentity, request: (url: string, source: string) => Promise<Response>, preprintOnly = false): Promise<{ hit: Hit | null; failed: boolean; attempted: string[]; retryMs: number; related: RelatedAbstract | null }> {
+export async function lookupAbstract(paper: AbstractIdentity, request: (url: string, source: string) => Promise<Response>, preprintOnly = false): Promise<{ hit: Hit | null; failed: boolean; attempted: string[]; diagnostics: AbstractAttempt[]; retryMs: number; related: RelatedAbstract | null }> {
   let related: RelatedAbstract | null = null;
   const attempted: string[] = []; let failed = false; let retryMs = 0;
+  const diagnostics: AbstractAttempt[] = [];
+  let current: AbstractAttempt | null = null;
   const attempt = async (source: string, url: string, read: (response: Response) => Promise<Hit | null>) => {
     attempted.push(source);
-    try { const response = await request(url, source); if (response.status === 404) return null; if (!response.ok) throw new Error("source unavailable"); return await read(response); }
-    catch (error) { failed = true; if (error instanceof ExternalSourceCooldownError) retryMs = Math.max(retryMs, error.retryAfterSeconds * 1000); return null; }
+    const detail: AbstractAttempt = { source, outcome: "not_found" }; diagnostics.push(detail); current = detail;
+    try {
+      const response = await request(url, source);
+      if (response.status === 404) return null;
+      if (!response.ok) { detail.outcome = response.status === 429 ? "rate_limited" : "source_error"; failed = true; return null; }
+      const hit = await read(response); if (hit) detail.outcome = "found"; return hit;
+    } catch (error) {
+      failed = true;
+      if (error instanceof ExternalSourceCooldownError) {
+        detail.outcome = error.lastStatus === 429 ? "rate_limited" : "cooldown";
+        detail.retryAt = Date.now() + error.retryAfterSeconds * 1000;
+        // Retry other providers independently; their own gates still enforce cooldowns.
+        retryMs = Math.min(5 * 60000, Math.max(retryMs, error.retryAfterSeconds * 1000));
+      } else detail.outcome = error instanceof Error && /timeout|abort/i.test(error.name) ? "timeout" : "source_error";
+      return null;
+    }
   };
   let shortHit: Hit | null = null;
   const valid = (abstractText: string, sourceUrl: string): Hit | null => {
     const candidate = { abstractText: clean(abstractText), sourceUrl };
+    if (current && candidate.abstractText.length > 0 && candidate.abstractText.length < 120) current.outcome = "too_short";
     if (candidate.abstractText.length >= 400) return candidate;
     if (candidate.abstractText.length >= 120 && candidate.abstractText.length > (shortHit?.abstractText.length || 0)) shortHit = candidate;
     return null;
@@ -62,7 +83,7 @@ export async function lookupAbstract(paper: AbstractIdentity, request: (url: str
       return null;
     });
   }
-  if (related) return { hit: null, failed, attempted, retryMs, related };
+  // Continue looking for the exact work even if another version has an abstract.
   if (!hit) {
     const endpoint = new URL("https://api.datacite.org/dois");
     endpoint.searchParams.set("query", `prefix:10.48550 AND titles.title:"${normalizeWorkTitle(paper.title)}"`);
@@ -86,7 +107,7 @@ export async function lookupAbstract(paper: AbstractIdentity, request: (url: str
       return valid(rows[0].abstract, rows[0].url.replace(/^http:/, "https:"));
     });
   }
-  return { hit: hit || shortHit, failed, attempted, retryMs, related };
+  return { hit: hit || shortHit, failed, attempted, diagnostics, retryMs, related };
 }
 
 export async function readAbstractRecovery(db: D1Database, spaceId: string, paperId: string) {
@@ -117,7 +138,7 @@ export async function recoverPaperAbstract(db: D1Database, spaceId: string, pape
     AND EXISTS(SELECT 1 FROM paper_abstract_recovery WHERE paper_id=? AND lock_token=?)`)
     .bind(result.hit.abstractText, paperId, spaceId, result.hit.abstractText, paperId, token));
   statements.push(db.prepare("UPDATE paper_abstract_recovery SET status=?,source_url=?,retry_at=?,attempted_json=?,result_json=?,lock_token=NULL,lease_until=0,updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND lock_token=?")
-    .bind(status, result.hit?.sourceUrl || "", retryAt, JSON.stringify(result.attempted), result.related ? JSON.stringify(result.related) : "", paperId, spaceId, token));
+    .bind(status, result.hit?.sourceUrl || "", retryAt, JSON.stringify(result.diagnostics), result.related ? JSON.stringify(result.related) : "", paperId, spaceId, token));
   await db.batch(statements);
   return readAbstractRecovery(db, spaceId, paperId);
 }

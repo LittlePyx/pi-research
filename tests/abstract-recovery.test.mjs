@@ -37,3 +37,25 @@ test('a fuller abstract under another DOI stays separate from the original recor
   assert.equal(result.related.doi, '10.1234/other-version');
   assert.ok(result.related.abstractText.length >= 400);
 });
+
+test('a limited provider does not prevent an exact abstract from another provider', async () => {
+  const result = await lookupAbstract(paper, async (_url, source) => {
+    if (source === 'crossref') return new Response('', { status: 429 });
+    if (source === 'openalex') return new Response('', { status: 404 });
+    if (source === 'datacite') return Response.json({ data: [] });
+    return new Response(`<feed><entry><id>http://arxiv.org/abs/2506.18613</id><title>${paper.title}</title><summary>${'Verified test abstract. '.repeat(30)}</summary><author><name>Ada Lovelace</name></author></entry></feed>`);
+  });
+  assert.ok(result.hit);
+  assert.equal(result.diagnostics[0].outcome, 'rate_limited');
+  assert.equal(result.diagnostics.at(-1).outcome, 'found');
+});
+
+test('finding another version does not stop the exact work search', async () => {
+  const result = await lookupAbstract(paper, async (url, source) => {
+    if (source === 'crossref' && new URL(url).pathname === '/works') return Response.json({ message: { items: [{ DOI:'10.1234/other-version', title:[paper.title], author:[{given:'Ada',family:'Lovelace'},{given:'Test',family:'Author'}], abstract:'Other version. '.repeat(40) }] } });
+    if (source === 'arxiv') return new Response(`<feed><entry><id>http://arxiv.org/abs/2506.18613</id><title>${paper.title}</title><summary>${'Exact work. '.repeat(45)}</summary><author><name>Ada Lovelace</name></author></entry></feed>`);
+    return new Response('', { status:404 });
+  });
+  assert.ok(result.related);
+  assert.ok(result.hit, 'continue to the exact preprint instead of waiting 24 hours');
+});

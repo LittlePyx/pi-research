@@ -9,7 +9,7 @@ import { focusWorkspaceSection } from "../lib/workspace-section-navigation";
 import { ResearchSourceSuggestions } from "./components/research-source-suggestions";
 import { ResearchMemoryNotebook } from "./components/research-memory-notebook";
 import "./components/research-memory-sources.css";
-import { QualityReviewStatus } from "./components/quality-review-status";
+import { QualityReviewStatus, type AbstractPaperStatus } from "./components/quality-review-status";
 
 import { FormEvent, type ReactNode, useEffect, useCallback, useMemo, useRef, useState } from "react";
 import Image from "next/image";
@@ -440,7 +440,7 @@ type MonitorState = {
   horizons: string[];
   preferences?: MonitorPreferences;
   papers: MonitorPaper[];
-  qualityQueue?: { pendingCount: number; verificationCount: number; retryCount: number; awaitingAbstractCount: number; abstractRetryAt: number | null; observedAt: string } | null;
+  qualityQueue?: { pendingCount: number; verificationCount: number; retryCount: number; awaitingAbstractCount: number; abstractRetryAt: number | null; observedAt: string; abstractPapers?: AbstractPaperStatus[] } | null;
   savedCandidatePapers?: MonitorPaper[];
   historyPapers?: MonitorPaper[];
   historyCounts?: { all: number; inbox: number; unseen: number; seen: number; snoozed: number; accepted: number; saved: number; dismissed: number; reading?: Record<string, number> };
@@ -5946,7 +5946,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong><MathText>{paper.title}</MathText></strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
             </details>}
 
-            <QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} />
+            <QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} />
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
               <summary><span><p className="v2-kicker">7D {locale === "zh" ? "阶段研究回顾" : "RESEARCH REVIEW"}</p><strong>{locale === "zh" ? monitor.weeklyReview.titleZh : monitor.weeklyReview.titleEn}</strong><small>{locale === "zh" ? `来自 ${monitor.weeklyReview.sourceDays} 天真实记录` : `Based on ${monitor.weeklyReview.sourceDays} days of real activity`}</small></span><b>＋</b></summary>

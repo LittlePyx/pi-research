@@ -5446,6 +5446,14 @@ button:disabled { cursor: not-allowed; }
 .v2-background-review-status summary { cursor: pointer; font-size: 13px; color: #345943; }
 .v2-background-review-status ol { padding-left: 22px; margin-bottom: 0; }
 .v2-background-review-status.overdue, .v2-background-review-status.unscheduled, .v2-background-review-status.retry { border-left: 3px solid #9a7145; }
+.v2-abstract-wait-list { list-style: none; padding: 0; margin: 16px 0; }
+.v2-abstract-wait-list > li { padding: 18px 0; border-top: 1px solid #d8e2ea; }
+.v2-abstract-wait-title { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.v2-abstract-wait-title h3 { margin: 0; font: 600 16px/1.6 var(--font-sans, sans-serif); color: #203b50; overflow-wrap: anywhere; }
+.v2-abstract-wait-title button { flex-shrink: 0; min-height: 40px; padding: 6px 12px; border: 1px solid #b8ccd9; border-radius: 6px; background: white; color: #305b76; font: inherit; cursor: pointer; }
+.v2-background-review-status .v2-abstract-wait-list p, .v2-background-review-status .v2-abstract-wait-list li, .v2-background-review-status .v2-abstract-wait-list summary { font-size: 14px; }
+.v2-background-review-status .v2-abstract-wait-list details { border: 0; padding: 0; margin: 6px 0; }
+@media (max-width: 600px) { .v2-abstract-wait-title { flex-direction: column; gap: 8px; } }
 @media (max-width: 640px) {
   .v2-today-more-compact > summary { padding: 16px; flex-wrap: wrap; gap: 12px; }
   .v2-today-more-compact > summary > span { flex-basis: 100%; }

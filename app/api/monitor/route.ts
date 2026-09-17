@@ -1,6 +1,6 @@
 import { researchSourcePlan, sourcePlanIssn, normalizeSourceTitle } from "../../../lib/research-source-plan";
-import { pendingQualityCandidateCondition, qualityQueueCountsSql } from "../../../lib/monitor-quality-status-sql.mjs";
-import { ABSTRACT_BLOCK_REASON, recoverPaperAbstract } from "../../../lib/abstract-recovery";
+import { pendingQualityCandidateCondition, qualityQueueCountsSql, qualityAbstractDetailsSql } from "../../../lib/monitor-quality-status-sql.mjs";
+import { ABSTRACT_BLOCK_REASON, recoverPaperAbstract, parseAbstractAttempts } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
 import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs";
 import { createScreeningRequestTrace } from "../../../lib/screening-request-trace.mjs";
@@ -4894,6 +4894,9 @@ function toPaper(paper: PaperRow, now: number) {
 
 async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}, focusPaperId: string | null = null) {
   const preference = await ensurePreference(database, space);
+  const abstractDetails = await database.prepare(qualityAbstractDetailsSql(activeResearchRouteSupplyPredicate("p")))
+    .bind(space.id, MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT)
+    .all<{ id: string; title: string; status: string; attempted_json: string; retry_at: number; updated_at: string | null }>();
   const [qualityQueue, run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
     database.prepare(qualityQueueCountsSql(activeResearchRouteSupplyPredicate("p")))
       .bind(MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT, space.id)
@@ -5579,7 +5582,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
     .slice(0, 12);
   return {
     monitor: {
-      qualityQueue: qualityQueue ? { ...qualityQueue, observedAt: new Date(now).toISOString() } : null,
+      qualityQueue: qualityQueue ? { ...qualityQueue, abstractPapers: abstractDetails.results.map(row => ({ id: row.id, title: row.title, status: row.status, retryAt: row.retry_at || null, checkedAt: row.updated_at, attempts: parseAbstractAttempts(row.attempted_json) })), observedAt: new Date(now).toISOString() } : null,
       status: run?.status || "idle",
       lastRunAt: run?.last_run_at || null,
       nextRunAt: run?.next_run_at || null,
