@@ -75,7 +75,7 @@ test("production scheduler has three triggers, a lease, and stale-job recovery",
   assert.match(worker, /x-pi-scheduled-route-evolution/);
   assert.match(worker, /action: "propose-evolution"/);
   assert.match(worker, /research_route_evolution/);
-  assert.match(worker, /if \(!routeIntelligence\.attempted\) routeEvolution/);
+  assert.match(worker, /scheduledRouteTaskOrder\(ordinal\?\.count\)/);
   assert.match(worker, /if \(attempted\) break/);
   const schedulerSweep = worker.slice(worker.indexOf("async function runScheduledMonitorSweep"));
   assert.match(schedulerSweep, /visitSchedulerTaskOrder\(ordinal\?\.count\)/);

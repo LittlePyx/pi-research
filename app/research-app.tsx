@@ -2,6 +2,7 @@
 
 import { SectionNavigation } from "./components/section-navigation";
 import { LibraryExplorer } from "./components/library-explorer";
+import { ResearchMaintenance } from "./components/research-maintenance";
 import { EmailSubscription } from "./components/email-subscription";
 import { focusCitationRelations } from "../lib/library-graph";
 import { focusWorkspaceSection } from "../lib/workspace-section-navigation";
@@ -5906,6 +5907,7 @@ export default function ResearchApp({ user }: { user: User }) {
         {view === "today" && (
           <main className="v2-page v2-today">
             <EmailSubscription key={activeSpace.id} spaceId={activeSpace.id} locale={locale} />
+            <ResearchMaintenance key={activeSpace.id} spaceId={activeSpace.id} locale={locale} />
             {monitorReadNotice}
             <section className="v2-today-hero">
               <div className="v2-today-hero-copy"><p className="v2-kicker">{formatTodayDate(locale)}</p><h1>{locale === "zh" ? "今日" : "Today"}</h1><p className="pi-page-purpose">{locale === "zh" ? "先读值得关注的论文，再处理研究提醒。扫描期间也可以阅读已有内容。" : "Read selected papers and act on research updates. Saved content remains available during discovery."}</p></div>
@@ -6183,6 +6185,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
               <nav className="v2-route-workspace-tabs" aria-label={locale === "zh" ? "路线工作区" : "Route workspace"}>{(["start", "evidence", "assessment", "problem", "gaps", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" aria-current={researchRouteTab === tab ? "page" : undefined} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><strong>{tab === "start" ? (locale === "zh" ? "概览" : "Overview") : tab === "problem" ? (locale === "zh" ? "研究问题" : "Research problem") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "材料与比较" : "Materials & comparison") : tab === "gaps" ? (locale === "zh" ? "材料补充" : "Collect materials") : (locale === "zh" ? "研究计划" : "Research plan")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{routeMaterialState(selectedThread).paperIds.length}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</nav>
 
+              {researchRouteTab === "start" && <ResearchMaintenance key={activeSpace.id+selectedThread.id} spaceId={activeSpace.id} trackId={selectedThread.id} locale={locale} />}
               {researchRouteTab === "start" && <RouteStart track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} failed={Boolean(researchSynthesisError)} locale={locale} onEvidence={() => setResearchRouteTab("evidence")} onMaterials={() => setResearchRouteTab("gaps")} onSynthesis={() => setResearchRouteTab("assessment")} onPaperOpen={() => recordMapPaperOpen(selectedThread.id)} onCompare={() => openWorkbook(selectedThread.id)} onProblem={() => setResearchRouteTab("problem")} onLearn={() => openRouteLearningPath(selectedThread)} question={researchProblemState?.problem?.status === "active" ? researchProblemState.problem.question : undefined} />}
 
               {researchRouteTab === "problem" && <ResearchProblemWorkbench key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} synthesis={researchSynthesis} loading={researchProblemLoading} action={researchProblemAction || (mapAction === `problem:${selectedThread.id}` ? "scan-problem" : null)} error={researchProblemError} locale={locale} onSynthesis={() => setResearchRouteTab("assessment")} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onScanProblem={() => void scanResearchProblemGap(selectedThread)} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} onExecuteAction={(item) => void executeResearchProblemAction(item)} />}

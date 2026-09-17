@@ -14,6 +14,7 @@ import {
   VISIT_SCHEDULER_ORDINAL_SQL,
   mergeScheduledMonitorSpaces,
   visitSchedulerTaskOrder,
+  ROUTE_SCHEDULER_ORDINAL_SQL, scheduledRouteTaskOrder,
 } from "../lib/monitor-scheduler.mjs";
 
 const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
@@ -41,6 +42,7 @@ function harness({ available = visitSchedulerTaskOrder(1), fail = null, savedErr
       },
       async first() {
         if (sql === VISIT_SCHEDULER_ORDINAL_SQL) return { count: state.ordinal };
+        if (sql === ROUTE_SCHEDULER_ORDINAL_SQL) return { count: state.ordinal };
         if (sql === SCHEDULED_MONITOR_ERROR_SPACE_SQL) return savedError ? { id: "saved-error", owner_user_id: "anonymous:saved" } : null;
         if (sql === SCHEDULED_MONITOR_INCIDENT_SPACE_SQL
           || sql === SCHEDULED_MONITOR_RECOVERY_SPACE_SQL
@@ -62,6 +64,8 @@ function harness({ available = visitSchedulerTaskOrder(1), fail = null, savedErr
     SCHEDULED_MONITOR_SPACE_SQL, SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
     SCHEDULED_MONITOR_RECOVERY_SPACE_SQL,
     VISIT_SCHEDULER_ORDINAL_SQL, visitSchedulerTaskOrder, mergeScheduledMonitorSpaces,
+    ROUTE_SCHEDULER_ORDINAL_SQL, scheduledRouteTaskOrder,
+    runResearchMaintenance: async () => ({status:'idle'}),
     SCHEDULED_SPACE_BATCH_SIZE: 1, SCHEDULED_ADVANCE_STEPS: 1,
     MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL: "sentinel-target",
     reconcileExpiredSchedulerTicks: async () => {},
@@ -93,7 +97,7 @@ function harness({ available = visitSchedulerTaskOrder(1), fail = null, savedErr
     } },
   });
   vm.runInContext(compiled, context);
-  return { calls, finalizations, state, attempts, snapshots, run: (trigger = "visit_backstop") => context.runScheduledMonitorSweep({ DB: database }, {}, trigger) };
+  return { calls, finalizations, state, attempts, snapshots, run: (trigger = "visit_backstop") => context.runScheduledMonitorSweep({ DB: database }, {waitUntil:()=>{}}, trigger) };
 }
 
 test("saved-error repair does not claim unused visits or block healthy work after a failed start", async () => {

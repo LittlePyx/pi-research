@@ -1588,6 +1588,7 @@ export const researchRouteLibrary = sqliteTable("research_route_library", {
   id:text('id').primaryKey(),spaceId:text('space_id').notNull().references(()=>researchSpaces.id,{onDelete:'cascade'}),trackId:text('track_id').notNull().references(()=>researchTracks.id,{onDelete:'cascade'}),paperId:text('paper_id').notNull().references(()=>monitoredPapers.id,{onDelete:'cascade'}),status:text('status').notNull(),category:text('category').notNull().default('related'),updatedAt:text('updated_at').notNull().default(sql.raw('CURRENT_TIMESTAMP')),
 },t=>[uniqueIndex('idx_route_library_track_paper').on(t.trackId,t.paperId),index('idx_route_library_space').on(t.spaceId,t.trackId)]);
 export const libraryGraphChecks = sqliteTable('library_graph_checks', {
+  autoNextAt:integer('auto_next_at').notNull().default(0),
   paperId:text('paper_id').primaryKey().references(()=>monitoredPapers.id,{onDelete:'cascade'}),spaceId:text('space_id').notNull().references(()=>researchSpaces.id,{onDelete:'cascade'}),status:text('status').notNull().default('pending'),resultJson:text('result_json').notNull().default('{}'),checkedAt:text('checked_at'),retryAt:integer('retry_at').notNull().default(0),leaseUntil:integer('lease_until').notNull().default(0),lockToken:text('lock_token'),
 },t=>[index('idx_library_graph_space').on(t.spaceId)]);
 export const emailSubscriptions = sqliteTable('email_subscriptions', {
@@ -1609,3 +1610,21 @@ export const paperAbstractRecovery = sqliteTable("paper_abstract_recovery", {
   lockToken: text("lock_token"),
   updatedAt: text("updated_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
 });
+
+export const researchMaintenance = sqliteTable('research_maintenance', {
+  spaceId:text('space_id').primaryKey().references(()=>researchSpaces.id,{onDelete:'cascade'}),
+  attempts:integer('attempts').notNull().default(0), nextAt:integer('next_at').notNull().default(0),
+  leaseUntil:integer('lease_until').notNull().default(0), lockToken:text('lock_token'),
+  lastAttemptAt:integer('last_attempt_at').notNull().default(0),lastSuccessAt:integer('last_success_at').notNull().default(0),
+  status:text('status').notNull().default('pending'),lane:text('lane').notNull().default('graph'),
+  resultJson:text('result_json').notNull().default('{}'),
+},t=>[index('idx_research_maintenance_due').on(t.nextAt,t.leaseUntil)]);
+
+export const researchRouteLibraryReviews = sqliteTable('research_route_library_reviews', {
+  id:text('id').primaryKey(),spaceId:text('space_id').notNull().references(()=>researchSpaces.id,{onDelete:'cascade'}),
+  trackId:text('track_id').notNull().references(()=>researchTracks.id,{onDelete:'cascade'}),
+  paperId:text('paper_id').notNull().references(()=>monitoredPapers.id,{onDelete:'cascade'}),
+  paperTitle:text('paper_title').notNull(),abstractText:text('abstract_text').notNull(),routeTitle:text('route_title').notNull(),
+  relevance:text('relevance').notNull().default('insufficient'),assessmentJson:text('assessment_json').notNull().default('{}'),
+  retryAt:integer('retry_at').notNull().default(0),checkedAt:integer('checked_at').notNull(),
+},t=>[uniqueIndex('idx_route_library_review_pair').on(t.trackId,t.paperId),index('idx_route_library_review_space').on(t.spaceId,t.trackId)]);

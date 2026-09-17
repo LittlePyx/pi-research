@@ -22,9 +22,10 @@ test('library, route collections, graph checks and opted-in email delivery isola
   const sql=rows=>call('/fixture',rows),ins=(table,v)=>({sql:`INSERT INTO ${table}(${Object.keys(v).join(',')}) VALUES(${Object.keys(v).map(()=>'?').join(',')})`,values:Object.values(v)});
   try{
     await call('/api/research-memory?spaceId=mine',null,404);
-    const migration=await readFile(new URL('../drizzle/0063_fair_kulan_gath.sql',import.meta.url),'utf8');await sql(migration.split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean).map(sql=>({sql})));
+    const migration=(await readFile(new URL('../drizzle/0063_fair_kulan_gath.sql',import.meta.url),'utf8'))+'\n--> statement-breakpoint\n'+(await readFile(new URL('../drizzle/0064_watery_veda.sql',import.meta.url),'utf8'));await sql(migration.split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean).map(sql=>({sql})));
     await sql([ins('research_spaces',{id:'mine',owner_user_id:'anonymous:library-email-owner-00001',name:'Gaussian entropy',member_name:'QA'}),ins('research_spaces',{id:'other',owner_user_id:'anonymous:other-library-owner-0002',name:'Other',member_name:'QA'}),ins('research_tracks',{id:'route',space_id:'mine',title_en:'Gaussian entropy inequalities',title_zh:'高斯熵不等式'})]);
     const papers=[];for(let n=0;n<27;n++)papers.push(ins('monitored_papers',{id:`p${n}`,space_id:'mine',canonical_id:`doi:10.1234/p${n}`,doi:n===26?null:`10.1234/p${n}`,title:n===26?'unrelated 100% topic':`Gaussian entropy comparison ${n}`,horizon:'days'}));await sql(papers);
+    await call('/api/research-maintenance?spaceId=other',null,404); const maintenance=await call('/api/research-maintenance?spaceId=mine');assert.equal(maintenance.graph.total,27);assert.equal(maintenance.routes.total,27);
     const catalog=await call('/api/library-catalog?spaceId=mine');assert.equal(catalog.total,27);assert.equal(catalog.items.length,24);assert.equal(catalog.coverage.checked,0);assert.equal((await call('/api/library-catalog?spaceId=mine&offset=24')).items.length,3);
     assert.equal((await call('/api/library-catalog?spaceId=mine&q=100%25')).total,1);
     await call('/api/library-catalog?spaceId=other',null,404);await call('/api/library-graph?spaceId=other&paperId=p0',null,404);
@@ -59,5 +60,11 @@ test('library, route collections, graph checks and opted-in email delivery isola
     const get=await mf.dispatchFetch(`http://localhost/api/email-subscription/unsubscribe?token=${token}`);assert.equal(get.status,200);assert.equal((await call('/api/email-subscription?spaceId=mine')).subscription.enabled,1);
     const unsub=await mf.dispatchFetch(`http://localhost/api/email-subscription/unsubscribe?token=${token}`,{method:'POST'});assert.equal(unsub.status,200);assert.equal((await call('/api/email-subscription?spaceId=mine')).subscription.enabled,0);
     assert.equal((await sql([{sql:'SELECT COUNT(*) AS n FROM research_map_evidence_proposals'}]))[0].results[0].n,0);
+    const abstract='This is a sufficiently detailed abstract with a directly relevant construction and explicit assumptions. The shared source remains authoritative.';
+    const assessment={canonicalId:'doi:10.1234/p25',relevance:'direct',quote:abstract.slice(0,70),reasonZh:'原摘要支持路线相关性',reasonEn:'Relevant under stated assumptions',limitationZh:'不是正式证据',limitationEn:'Not formal evidence'};
+    await sql([{sql:"UPDATE monitored_papers SET title='No keyword overlap' WHERE id='p25'"},ins('paper_insights',{paper_id:'p25',space_id:'mine',abstract_text:abstract}),ins('research_route_library_reviews',{id:'review',space_id:'mine',track_id:'route',paper_id:'p25',paper_title:'No keyword overlap',abstract_text:abstract,route_title:'Gaussian entropy inequalities\n高斯熵不等式',relevance:'direct',assessment_json:JSON.stringify(assessment),checked_at:Date.now()})]);
+    const related=await call('/api/library-catalog?spaceId=mine&trackId=route&q=No%20keyword');assert.equal(related.total,1);assert.equal(related.items[0].relevance,'direct');assert.equal(JSON.parse(related.items[0].assessmentJson).quote,assessment.quote);
+    await sql([{sql:"UPDATE paper_insights SET abstract_text='Changed evidence' WHERE paper_id='p25'"}]);
+    assert.equal((await call('/api/library-catalog?spaceId=mine&trackId=route&q=No%20keyword')).total,0,'stale classification never appears as current relevance');
   }finally{await mf.dispose();}
 });

@@ -443,3 +443,10 @@
  .v2-app.pi-workspace :is(input:not([type=checkbox],[type=radio],[type=file]),select,textarea) { font-size:16px; }
  .v2-app.pi-workspace .v2-command-trigger { grid-column:auto; }
 }
+
+.pi-workspace .pi-research-maintenance {margin:1rem 0 1.5rem;padding:1rem 1.25rem;border-left:3px solid #355d73;background:#f0f5f8;color:#294251;}
+.pi-workspace .pi-research-maintenance>div {display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:baseline;}
+.pi-workspace .pi-research-maintenance p,.pi-workspace .pi-research-maintenance summary {font-size:.875rem;line-height:1.65;margin:.5rem 0;}
+.pi-workspace .pi-route-relevance {margin:.65rem 0;max-width:70ch;}
+.pi-workspace .pi-route-relevance summary {cursor:pointer;font-size:.875rem;color:#355d73;}
+.pi-workspace .pi-route-relevance blockquote {margin:.7rem 0;padding:.5rem 1rem;border-left:2px solid #9db4c2;overflow-wrap:anywhere;}

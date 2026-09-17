@@ -27,6 +27,7 @@ const server = await createServer({ root, configFile: false, envDir: false,
         const spaceId = url.searchParams.get("spaceId") || input.spaceId || spaces[0].id;
         let result = fixtureResponse(req.url, req.method, spaceId);
         const data = learningFixture(spaceId);
+        if (url.pathname === "/api/research-maintenance") result = {status:200,body:{state:null,monitor:{pausedAt:null,active:1},graph:{total:3,complete:1,partial:1,pending:1,blocked:0},routes:{total:3,checked:2,related:1,insufficient:1}}};
         if (url.pathname === "/api/library-catalog") result = { status:200, body:{items:workbookSources.map(p=>({id:p.id,canonicalId:p.canonicalId,title:p.title,authors:p.authors,venue:"隔离内容样本",url:p.url,doi:null,publishedAt:null,abstractText:p.abstractText,recommended:0,verified:0,inRoute:0,membership:null,category:null,graphStatus:null,checkedAt:null,matchTerms:[]})),total:workbookSources.length,nextOffset:null,coverage:{total:workbookSources.length,checked:0,noLinks:0,blocked:0},terms:[]} };
         if (url.pathname === "/api/email-subscription") result = { status:200, body:{configured:false,subscription:null,deliveries:[]} };
         if (url.pathname === "/api/library-graph") result = { status:200, body:{status:"pending",checkedAt:null,retryAt:0,busy:false,items:[],offsets:{references:0,citations:0},errors:[],limited:false} };

@@ -15,6 +15,8 @@ import {
   shouldWakeMonitorScheduler,
   VISIT_SCHEDULER_ORDINAL_SQL,
   visitSchedulerTaskOrder,
+  ROUTE_SCHEDULER_ORDINAL_SQL,
+  scheduledRouteTaskOrder,
 } from "../lib/monitor-scheduler.mjs";
 import {
   MONITOR_OPERATIONAL_SENTINEL_TARGET_SQL,
@@ -28,6 +30,8 @@ import { SCHEDULED_RESEARCH_ROUTE_EVOLUTION_SQL } from "../lib/research-route-ev
 import { developmentUnboundedEnabled } from "../lib/development-policy.mjs";
 import { runLearningStageScheduler } from "../lib/learning-stage-scheduler";
 import { runEmailDigests } from "../lib/email-digest";
+import { runResearchMaintenance } from "../lib/research-maintenance";
+import type { GraphRelevance } from "../lib/graph-task";
 import {
   claimResearchGapDiscovery,
   completeResearchGapDiscovery,
@@ -577,6 +581,22 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
   const lease = await acquireSchedulerLease(env, trigger);
   if (!lease.acquired) return { acquired: false, trigger };
   if (env.RESEND_API_KEY && env.EMAIL_FROM) ctx.waitUntil(runEmailDigests(env).catch(() => { console.error('Email digest dispatch failed'); }));
+  const maintenanceWork = trigger !== "visit_backstop" ? runResearchMaintenance(env.DB, env.DEEPSEEK_API_KEY ? async input => {
+    const response = await handler.fetch(new Request("https://pi-research.internal/api/graph-relevance", {
+      method: "POST", headers: { "Content-Type": "application/json", Cookie: `pi_anonymous_workspace=${input.workspaceId}` },
+      body: JSON.stringify({spaceId:input.spaceId,question:input.question,canonicalIds:input.canonicalIds}),
+    }),env,ctx);
+    if(!response.ok) throw new Error('relevance_unavailable');
+    return ((await response.json()) as {assessments:GraphRelevance[]}).assessments;
+  } : undefined, Date.now(), async input => {
+    const response=await handler.fetch(new Request("https://pi-research.internal/api/library-graph",{
+      method:'POST',headers:{'Content-Type':'application/json',Cookie:`pi_anonymous_workspace=${input.workspaceId}`},
+      body:JSON.stringify({spaceId:input.spaceId,paperId:input.paperId,action:'refresh'}),
+    }),env,ctx);
+    if(!response.ok)throw new Error('graph_unavailable');
+    const result=await response.json() as {status:string;items?:unknown[];updated?:boolean};
+    return {status:response.status===202?'busy':result.status,relations:result.items?.length||0,updated:result.updated===true};
+  }).catch(() => {console.error('Research maintenance could not complete');}) : Promise.resolve();
   const { tickId, leaseToken } = lease;
   let dueSpaceCount = 0;
   let startedCount = 0;
@@ -609,10 +629,11 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
   try {
     recoveredJobCount = await recoverStaleMonitorJobs(env);
     if (trigger !== "visit_backstop") {
-      routeIntelligence = await runScheduledResearchRouteIntelligence(env, ctx);
-      if (!routeIntelligence.attempted) routeEvolution = await runScheduledResearchRouteEvolution(env, ctx);
-      if (!routeIntelligence.attempted && !routeEvolution?.attempted) {
-        routeRetry = await runScheduledResearchRouteRetry(env, ctx);
+      const ordinal = await env.DB.prepare(ROUTE_SCHEDULER_ORDINAL_SQL).first<{count:number}>();
+      for (const lane of scheduledRouteTaskOrder(ordinal?.count)) {
+        if(lane === 'routeIntelligence') {routeIntelligence = await runScheduledResearchRouteIntelligence(env, ctx); if(routeIntelligence.attempted) break;}
+        if(lane === 'routeEvolution') {routeEvolution = await runScheduledResearchRouteEvolution(env, ctx); if(routeEvolution.attempted) break;}
+        if(lane === 'routeRetry') {routeRetry = await runScheduledResearchRouteRetry(env, ctx); if(routeRetry.attempted) break;}
       }
       gapDiscovery = await runScheduledResearchGapDiscovery(env, ctx, "due");
       gapRecovery = await runScheduledResearchGapDiscovery(env, ctx, "stalled");
@@ -768,6 +789,7 @@ async function runScheduledMonitorSweep(env: Env, ctx: ExecutionContext, trigger
     failedCount += 1;
   } finally {
     await learningStageWork;
+    await maintenanceWork;
     await env.DB.prepare(
       `UPDATE monitor_scheduler_ticks SET completed_at = ?, due_space_count = ?, started_count = ?, advanced_count = ?,
        completed_count = ?, paused_count = ?, failed_count = ?, recovered_job_count = ?, error = ?,
