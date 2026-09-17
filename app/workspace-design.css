@@ -534,3 +534,11 @@
 .v2-app.pi-workspace .v2-sidebar-bottom > :is(a,button) > svg { width:18px; height:18px; color:#737b85; }
 .v2-app.pi-workspace .v2-sidebar-bottom .v2-openai-state > i { width:6px; height:6px; margin:0; justify-self:center; border-radius:50%; box-shadow:none; }
 .v2-app.pi-workspace .v2-sidebar-bottom .v2-account > span { min-width:0; }
+
+/* Ask failures are actionable notices, never model answers. */
+.v2-app.pi-workspace .pi-ask-context { margin:16px 24px; color:#6b7280; font-size:12px; display:flex; gap:12px; align-items:center; }
+.v2-app.pi-workspace .pi-ask-context button { color:#245dc1; font-size:12px; }
+.v2-app.pi-workspace .pi-ask-error { margin:16px 24px 24px; padding:16px 0 0; border-top:1px solid #e3e6eb; display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.v2-app.pi-workspace .pi-ask-error p { margin:0; font-size:14px; line-height:1.7; }
+.v2-app.pi-workspace .pi-ask-error button { white-space:nowrap; padding:8px 12px; color:#245dc1; border:1px solid #d8dde5; border-radius:5px; }
+@media(max-width:600px) { .v2-app.pi-workspace .pi-ask-error { align-items:flex-start; flex-direction:column; } }
