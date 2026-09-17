@@ -27,9 +27,9 @@ export function ResearchLeads({ tracks, locale, onOpen, onLearn }: {
               <p>{zh ? track.summaryZh : track.summaryEn}</p>
               <div className="pi-lead-meta"><span>{papers.length} {zh ? "篇收录材料" : "collected papers"}</span>{material.pendingConfirmationCount > 0 && <span>{material.pendingConfirmationCount} {zh ? "篇待你选用" : "awaiting selection"}</span>}{track.monitoringStatus === "paused" && <span>{zh ? "发现已暂停" : "Discovery paused"}</span>}</div>
             </div>
-            <div className="pi-lead-reading"><small>{zh ? "从这里开始" : "START HERE"}</small>
-              {papers.length ? <p><MathText inline>{papers[0].title}</MathText></p> : <p>{zh ? "尚无可展示的材料，先检查收集进度。" : "No collected paper is available yet. Check collection progress."}</p>}
-              <div><button type="button" className="pi-research-primary" onClick={() => onOpen(track)}>{zh ? "进入研究" : "Open research"} →</button>{papers.length > 0 && <button type="button" onClick={() => onLearn(track)}>{zh ? "学习这条路线" : "Study this route"}</button>}</div>
+            <div className="pi-lead-reading">
+              <button type="button" className="pi-lead-open" onClick={() => onOpen(track)} aria-label={`${zh ? "进入研究：" : "Open research: "}${zh ? track.titleZh : track.titleEn}`}>{zh ? "进入研究" : "Open research"} <span aria-hidden="true">→</span></button>
+              {papers.length > 0 && <button type="button" onClick={() => onLearn(track)}>{zh ? "学习路径" : "Learning path"}</button>}
             </div>
           </article>;
         })}

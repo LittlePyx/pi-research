@@ -35,7 +35,7 @@ test("route workspace keeps one decision surface and moves supporting context be
   assert.match(decisionPanel, /v2-research-decision-next/);
   assert.doesNotMatch(decisionPanel, /v2-research-decision-grid/);
   assert.match(workspace, /<details className="v2-route-summary">/);
-  assert.match(workspace, /<nav className="v2-route-workspace-tabs"/);
+  assert.match(workspace, /<nav className="v2-route-workspace-tabs pi-route-navigation"/);
   assert.doesNotMatch(workspace, /String\(tabIndex \+ 1\)/);
   assert.match(app, /useState\(Boolean\(proposed \|\| track\.monitoringStatus === "paused"\)\)/);
   assert.match(css, /@media \(max-width: 780px\)[\s\S]*\.v2-route-workspace-tabs \{ display: flex; overflow-x: auto;/);
@@ -47,7 +47,8 @@ test("route overview cards show one summary and one state-aware action", async (
   const routeCards = await readFile(new URL("../app/components/research-leads.tsx", import.meta.url), "utf8");
   assert.match(routeOverview, /ResearchLeads tracks=/);
   assert.match(routeCards, /routeMaterialState/);
-  assert.match(routeCards, /papers\[0\]\.title/);
+  assert.match(routeCards, /papers\.length/);
+  assert.match(routeCards, /aria-label=\{`\$\{zh \? "进入研究："/);
   assert.match(routeCards, /onOpen\(track\)/);
   assert.match(routeCards, /onLearn\(track\)/);
   assert.doesNotMatch(routeCards, /intelligence\.assessment|heatLevel|<dl>/);
