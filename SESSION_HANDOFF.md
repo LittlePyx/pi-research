@@ -1,5 +1,14 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-17：v252 路线候选展示与摘要补全回流修复
+
+- 路线library-catalog默认不再通过title/abstract词项匹配直接展示未经核实候选。保留当前direct/partial相关性判断、显式用户included及既有active正式路线节点；scope=all仍允许主动从全库查找。现有路线评审current-source校验和人工排除保留。
+- abstract-recovery只对deepseek_rejected、ever_recommended=0且带明确ABSTRACT_BLOCK_REASON的记录清空模型/重回screened；实质性否决仍可更新摘要，但不改评审身份。此次没有批量改写历史错误回流记录，不能声称截图中那篇的线上状态已逐条修复。
+- 路线维护prompt明确共享Gaussian等关键词不足以证明相关，要求对象/假设/结果对应或具体可迁移步骤及原摘要出处；保留既有groundedGraphRelevance引文核对。后台全库小批次评估、轮转、暂停策略未变；旧分类不批量重置，后续有效重评使用新问题。
+- 默认集合说明更新中英文字。新增SQLite回归覆盖词项候选隐藏、已核实direct/partial保留、全库探索/手动选择/人工排除，以及摘要回填不复活实质性否决。已有真实API用例同步检查新语义，继续验证鉴权、出处及缺摘要补回队列。
+- 构建、655测试、完整lint通过。业务a6d55ab2d5b6ff752b804c12af5ea4806cb1b700已推送两仓库。v252版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_b4588c1313948191b7a3d081f1e773e8；部署appgdep_6aabb7cfffd88191b22e4968142bcf89于09:50:18 UTC succeeded，环境修订6/public保持。CI35207205136全部success（含离线发现基准）。
+- docs/未动；邮件仍暂停；未恢复旧自动任务；无数据库迁移、用户数据删除或批量重评。
+
 ## 2026-09-17：v251 研究线索与路线六页阅读层级
 
 - 研究线索改为分组列表：单一标题、范围说明、材料数，进入研究与学习路径固定操作列；删除重复首篇论文预览。路线标题直接显示范围，收录与更新状态折叠；六项导航统一桌面横排、手机三列两行。
