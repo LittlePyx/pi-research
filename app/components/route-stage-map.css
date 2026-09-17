@@ -1,0 +1,46 @@
+.v2-app.pi-workspace .pi-stage-map { margin-top:16px;background:#fff;padding:24px;color:#202832;font-family:var(--font-sans,sans-serif); }
+.v2-app.pi-workspace .pi-stage-map > header { display:flex;justify-content:space-between;align-items:center;gap:20px; }
+.v2-app.pi-workspace .pi-stage-map label { display:flex;align-items:center;gap:12px;font-size:13px;color:#637183;min-width:0; }
+.v2-app.pi-workspace .pi-stage-map select { min-width:0;max-width:440px;padding:10px 30px 10px 12px;border:1px solid #dce2e8;border-radius:5px;background:#fff;color:#202832;font-size:14px; }
+.v2-app.pi-workspace .pi-stage-map button { border:0;background:transparent;color:#245ac6;font-size:13px;padding:0;cursor:pointer;text-align:left; }
+.v2-app.pi-workspace .pi-stage-map > header > button { white-space:nowrap; }
+.v2-app.pi-workspace .pi-stage-scope { max-width:850px;margin:16px 0 6px;font-size:15px;line-height:1.7;color:#465260; }
+.v2-app.pi-workspace .pi-stage-note { margin:0 0 24px;font-size:12px;line-height:1.6;color:#75808d; }
+.v2-app.pi-workspace .pi-stage-columns { display:grid;grid-template-columns:repeat(3,minmax(0,1fr)); }
+.v2-app.pi-workspace .pi-stage-columns > section { padding:0 20px;min-width:0;border-left:1px solid #e3e7ec; }
+.v2-app.pi-workspace .pi-stage-columns > section:first-child { border:0;padding-left:0; }
+.v2-app.pi-workspace .pi-stage-columns > section:last-child { padding-right:0; }
+.v2-app.pi-workspace .pi-stage-columns > section > header { display:flex;align-items:start;gap:10px;padding:0 0 18px;border-bottom:2px solid #e3e7ec; }
+.v2-app.pi-workspace .pi-stage-columns header > span { font-size:12px;color:#8290a0;padding-top:4px; }
+.v2-app.pi-workspace .pi-stage-map h3 { margin:0;font-size:16px;font-weight:600;line-height:1.5; }
+.v2-app.pi-workspace .pi-stage-columns header p { margin:4px 0 0;font-size:12px;line-height:1.5;color:#75808d; }
+.v2-app.pi-workspace .pi-stage-columns header > small { margin-left:auto;font-size:12px;color:#75808d;padding-top:4px; }
+.v2-app.pi-workspace .pi-stage-paper { padding:22px 0;border-bottom:1px solid #e3e7ec; }
+.v2-app.pi-workspace .pi-stage-paper:last-child { border-bottom:0; }
+.v2-app.pi-workspace .pi-stage-paper time { display:block;margin-bottom:7px;font-size:12px;color:#75808d; }
+.v2-app.pi-workspace .pi-stage-paper h4 { margin:0 0 10px; }
+.v2-app.pi-workspace .pi-stage-paper h4 button { color:#202832;font-size:16px;line-height:1.55;font-weight:600;overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-stage-paper h4 button:hover { color:#245ac6; }
+.v2-app.pi-workspace .pi-stage-paper p { margin:8px 0;font-size:14px;line-height:1.75;color:#596574;text-align:left;overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-stage-paper details { margin:12px 0;color:#657180;font-size:12px; }
+.v2-app.pi-workspace .pi-stage-paper summary { cursor:pointer; }
+.v2-app.pi-workspace .pi-stage-paper details small { display:block;font-size:12px;line-height:1.6;color:#75808d; }
+.v2-app.pi-workspace .pi-stage-paper details button { display:block;margin-top:10px; }
+.v2-app.pi-workspace .pi-stage-paper .pi-stage-read { margin-top:6px; }
+.v2-app.pi-workspace .pi-stage-empty { padding:22px 0;margin:0;font-size:13px;color:#8a929d;line-height:1.6; }
+.v2-app.pi-workspace .pi-stage-background { margin-top:28px;padding-top:20px;border-top:1px solid #dce2e8; }
+.v2-app.pi-workspace .pi-stage-background > header { display:flex;gap:12px;align-items:center; }
+.v2-app.pi-workspace .pi-stage-background > header > span { color:#75808d;font-size:12px; }
+.v2-app.pi-workspace .pi-stage-background > div { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 28px; }
+@media(max-width:1050px) {
+ .v2-app.pi-workspace .pi-stage-columns { grid-template-columns:1fr; }
+ .v2-app.pi-workspace .pi-stage-columns > section { border:0;padding:0 0 20px; }
+ .v2-app.pi-workspace .pi-stage-columns > section > header { padding-top:12px; }
+}
+@media(max-width:600px) {
+ .v2-app.pi-workspace .pi-stage-map { padding:18px 16px; }
+ .v2-app.pi-workspace .pi-stage-map > header { align-items:start;flex-direction:column;gap:12px; }
+ .v2-app.pi-workspace .pi-stage-map label { display:block;width:100%; }
+ .v2-app.pi-workspace .pi-stage-map select { display:block;max-width:100%;width:100%;margin-top:8px; }
+ .v2-app.pi-workspace .pi-stage-background > div { grid-template-columns:1fr; }
+}
