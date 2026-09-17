@@ -1,9 +1,11 @@
 # Pi Research 新任务交接（2026-09-10）
 
-## 2026-09-17：v238：今日重复邮件入口的组件标识修复（发布准备）
+## 2026-09-17：v238：今日重复邮件入口的组件标识修复（已发布）
 
 - 用户截图出现两个每日邮件简报。源码只有一个EmailSubscription调用，但它与同级ResearchMaintenance都使用key={activeSpace.id}；重复key破坏React兄弟节点身份，在导航/空间切换时可能错误复用或遗留节点。分别改为email:spaceId与maintenance:spaceId，保留空间隔离和唯一邮件入口。
 - 只改前端组件身份；没有创建第二份订阅、配置发件服务或恢复邮件接入。用户原有docs/保留，旧自动任务不恢复。本轮不声称已通过浏览器复现或视觉验收。
+
+- 发布：业务 b9cc012745f13738d102cbdb29ff68c731de2fc4 已推送 GitHub/Sites；v238 版本 appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_a6275dd7cffc8191872d4f162c19c399；部署 appgdep_6aab691438188191b078a303fef7527c 于 2026-09-17 04:14:24 UTC succeeded，保留 public/环境修订6。构建与11项相关检查通过；CI 35181110812 完整 lint、构建、643测试及离线发现基准全部 success。未执行浏览器复现验证。
 
 ## 2026-09-17：v237：顶部工具栏视觉层级（已发布）
 
