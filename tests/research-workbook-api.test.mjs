@@ -54,7 +54,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       insert("monitored_papers", { id: "unreviewed", space_id: "math", canonical_id: "unreviewed", title: "KLS unreviewed", horizon: "years" }),
       insert("paper_insights", { paper_id: "unreviewed", space_id: "math", ever_recommended: 0, abstract_text: workbookSources[0].abstractText }),
     ]);
-    await t.test("missing abstract recovery preserves owner scope, requeues reviews based on superseded short evidence and persists its source", async () => {
+    await t.test("missing abstract recovery preserves owner scope, requeues only missing-evidence reviews and persists its source", async () => {
       await sql([
         insert("monitored_papers", { id: "abstract-fixture", space_id: "math", canonical_id: "doi:10.9999/abstract-fixture", doi: "10.9999/abstract-fixture", title: "Isolated abstract recovery", authors: "Fixture author", horizon: "years" }),
         insert("paper_insights", { paper_id: "abstract-fixture", space_id: "math", analysis_source: "deepseek_rejected", analysis_model: "old-review", screening_reason: "Abstract evidence unavailable after bounded enrichment" }),
@@ -77,7 +77,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await sql([{ sql: "UPDATE paper_abstract_recovery SET retry_at=0 WHERE paper_id='abstract-fixture'" }]);
       await request("/api/paper-reading", { spaceId: "math", paperId: "abstract-fixture" });
       const preserved = await sql([{ sql: "SELECT analysis_source,analysis_model FROM paper_insights WHERE paper_id='abstract-fixture'" }]);
-      assert.deepEqual(preserved[0].results[0], { analysis_source:"deepseek_screened", analysis_model:"" });
+      assert.deepEqual(preserved[0].results[0], { analysis_source:"deepseek_rejected", analysis_model:"real-review" });
     });
     await t.test("alternate DOI abstracts stay separate and do not overwrite or requeue the original record", async () => {
       await sql([

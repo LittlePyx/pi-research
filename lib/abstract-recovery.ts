@@ -132,8 +132,8 @@ export async function recoverPaperAbstract(db: D1Database, spaceId: string, pape
   const status = result.hit ? "found" : result.related ? "related_version" : result.failed ? "source_error" : "not_found";
   const statements = [];
   if (result.hit) statements.push(db.prepare(`UPDATE paper_insights SET abstract_text=?,
-    analysis_model=CASE WHEN analysis_source='deepseek_rejected' AND ever_recommended=0 THEN '' ELSE analysis_model END,
-    analysis_source=CASE WHEN analysis_source='deepseek_rejected' AND ever_recommended=0 THEN 'deepseek_screened' ELSE analysis_source END,
+    analysis_model=CASE WHEN analysis_source='deepseek_rejected' AND ever_recommended=0 AND instr(screening_reason, '${ABSTRACT_BLOCK_REASON}')>0 THEN '' ELSE analysis_model END,
+    analysis_source=CASE WHEN analysis_source='deepseek_rejected' AND ever_recommended=0 AND instr(screening_reason, '${ABSTRACT_BLOCK_REASON}')>0 THEN 'deepseek_screened' ELSE analysis_source END,
     updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND length(trim(abstract_text)) < length(?)
     AND EXISTS(SELECT 1 FROM paper_abstract_recovery WHERE paper_id=? AND lock_token=?)`)
     .bind(result.hit.abstractText, paperId, spaceId, result.hit.abstractText, paperId, token));

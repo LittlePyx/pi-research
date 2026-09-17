@@ -29,11 +29,12 @@ test('library, route collections, graph checks and opted-in email delivery isola
     const catalog=await call('/api/library-catalog?spaceId=mine');assert.equal(catalog.total,27);assert.equal(catalog.items.length,24);assert.equal(catalog.coverage.checked,0);assert.equal((await call('/api/library-catalog?spaceId=mine&offset=24')).items.length,3);
     assert.equal((await call('/api/library-catalog?spaceId=mine&q=100%25')).total,1);
     await call('/api/library-catalog?spaceId=other',null,404);await call('/api/library-graph?spaceId=other&paperId=p0',null,404);
-    assert.equal((await call('/api/library-catalog?spaceId=mine&trackId=route')).total,26);
+    assert.equal((await call('/api/library-catalog?spaceId=mine&trackId=route')).total,0,'keyword-only candidates stay outside the default route');
     await call('/api/library-catalog',{spaceId:'mine',trackId:'route',paperId:'p0',status:'excluded',category:'related'});
-    assert.equal((await call('/api/library-catalog?spaceId=mine&trackId=route')).total,25);
+    assert.equal((await call('/api/library-catalog?spaceId=mine&trackId=route')).total,0);
+    assert.equal((await call('/api/library-catalog?spaceId=mine&trackId=route&scope=all')).total,27);
     await call('/api/library-catalog',{spaceId:'mine',trackId:'route',paperId:'p26',status:'included',category:'background'});
-    assert.equal((await call('/api/library-catalog?spaceId=mine&trackId=route')).total,26);
+    assert.equal((await call('/api/library-catalog?spaceId=mine&trackId=route')).total,1,'explicit user selection remains visible');
     assert.equal((await sql([{sql:'SELECT COUNT(*) AS n FROM research_track_papers'}]))[0].results[0].n,0);
     assert.equal((await call('/api/library-graph?spaceId=mine&paperId=p0')).status,'pending');
     const graph=await call('/api/library-graph',{spaceId:'mine',paperId:'p0'});assert.equal(graph.status,'ready');assert.equal(graph.items[0].paperId,'p1');assert.equal(graph.items[0].kind,'reference');assert.equal(graphCalls,2);
