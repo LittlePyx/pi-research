@@ -89,10 +89,10 @@ test("production queue count SQL respects scope, dismissal, existing recommendat
   } finally { db.close(); }
 });
 
-test("approved further reading stays above utilities with collapsed previews and explicit toggle", () => {
+test("approved unread recommendations stay visible above utilities with review details on demand", () => {
   const app = readFileSync(new URL("../app/research-app.tsx", import.meta.url), "utf8");
-  assert.ok(app.indexOf('className="v2-today-more v2-today-more-compact"') < app.indexOf('<QualityReviewStatus monitor='));
-  assert.match(app, /v2-more-preview[\s\S]*additionalTodayPapers.slice\(0, 2\)/);
-  assert.match(app, /已通过全部评审，可直接阅读/);
+  assert.ok(app.indexOf('className="v2-today-more pi-unread-recommendations"') < app.indexOf('<QualityReviewStatus monitor='));
+  assert.match(app, /pi-reading-list[\s\S]*additionalTodayPapers.map/);
+  assert.match(app, /已通过评审，留给你继续阅读/);
   assert.doesNotMatch(app, /篇候选正在质量评估|通过后会自动进入今日；现在无需处理/);
 });

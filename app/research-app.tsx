@@ -5943,10 +5943,20 @@ export default function ResearchApp({ user }: { user: User }) {
               </div>
             </section>}
 
-            {Boolean(additionalTodayPapers.length) && <details className="v2-today-more v2-today-more-compact" open={!dailyBriefEntryCount || undefined}>
-              <summary><span><strong>{dailyBriefEntryCount ? (locale === "zh" ? "备选阅读" : "Further reading") : (locale === "zh" ? "补充阅读" : "Supplementary reading")}</strong><small>{dailyBriefEntryCount ? (locale === "zh" ? "已通过全部评审，可直接阅读" : "Passed all review gates; ready to read") : (locale === "zh" ? "来自已通过评审的未读材料，不计为今日新入选" : "Previously reviewed, unread papers; not new selections today")}</small><span className="v2-more-preview">{additionalTodayPapers.slice(0, 2).map((paper) => <span key={paper.id}><MathText>{paper.title}</MathText></span>)}</span></span><b><span className="v2-more-expand">{locale === "zh" ? `展开 ${additionalTodayPapers.length} 篇` : `Show ${additionalTodayPapers.length} papers`} ↓</span><span className="v2-more-collapse">{locale === "zh" ? "收起列表" : "Collapse list"} ↑</span></b></summary>
-              <div className="v2-compact-list">{additionalTodayPapers.map((paper) => <button type="button" key={paper.id} data-paper-impression={paper.id} onClick={() => openMonitorPaper(paper)}><span className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span><strong><MathText>{paper.title}</MathText></strong><small>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")} · {formatPaperDate(paper.publishedAt, locale)} · {paper.citationCount || 0} {t.citations}</small><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></span><span className="v2-thread-chip">{paper.readMinutes || 15} min</span><b>→</b></button>)}</div>
-            </details>}
+            {Boolean(additionalTodayPapers.length) && <section className="v2-today-more pi-unread-recommendations">
+              <header className="pi-unread-heading"><div><h2>{locale === "zh" ? "推荐阅读" : "Recommended reading"}</h2><p>{locale === "zh" ? "已通过评审，留给你继续阅读" : "Reviewed papers to continue reading"}</p></div><span>{additionalTodayPapers.length} {locale === "zh" ? "篇未读" : "unread"}</span></header>
+              {monitor?.dailyBrief?.isCurrent && !dailyBriefPaperIds.size && <p className="pi-reading-date-note">{locale === "zh" ? `${monitor.dailyBrief.date} 简报没有新增推荐，以下保留此前的未读推荐。` : `No new selections in the ${monitor.dailyBrief.date} brief. Your unread recommendations remain below.`}</p>}
+              <div className="pi-reading-list">{additionalTodayPapers.map((paper) => {
+                const reason = locale === "zh" ? paper.whyReadZh : paper.whyReadEn;
+                return <article key={paper.id} data-paper-impression={paper.id}>
+                  <div className="pi-reading-meta"><span>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span>{paper.readMinutes || 15} min</span>{paper.recommendedAt && <span>{locale === "zh" ? "推荐于 " : "Recommended "}{formatPaperDate(paper.recommendedAt, locale)}</span>}</div>
+                  <h3><button type="button" onClick={() => openMonitorPaper(paper)}><MathText>{paper.title}</MathText></button></h3>
+                  <p className="pi-reading-bibliography">{paper.authors}{paper.publishedAt && <> · {formatPaperDate(paper.publishedAt, locale)}</>}</p>
+                  {reason && <p className="pi-reading-reason"><MathText>{reason}</MathText></p>}
+                  <footer><details><summary>{locale === "zh" ? "来源与评审" : "Sources & review"}</summary><div><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div></details><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "阅读与笔记" : "Read & take notes"} →</button></footer>
+                </article>;
+              })}</div>
+            </section>}
 
             <QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} />
             <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />

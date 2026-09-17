@@ -31,7 +31,7 @@ test("library keeps reading progress and exports citation-manager formats", asyn
   assert.match(library, /application\/x-bibtex/);
   assert.match(library, /application\/x-research-info-systems/);
   assert.match(client, /v2-daily-paper-queue/);
-  assert.match(client, /v2-today-more-compact/);
+  assert.match(client, /pi-unread-recommendations/);
   assert.match(client, /v2-paper-analysis/);
   assert.match(client, /RIS \/ Zotero/);
 });
