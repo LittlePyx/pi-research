@@ -1,5 +1,15 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-17：v248 Apple / Google 规范参考下的今日与论文库重设计
+
+- 参考 Apple HIG Layout（https://developer.apple.com/design/human-interface-guidelines/layout）、WWDC25 design system（https://developer.apple.com/videos/play/wwdc2025/356/）、Google Material canonical layouts（https://m3.material.io/foundations/layout/canonical-examples/overview）和 Google Typography（https://design.google/library/choosing-web-fonts-beginners-guide）。学习对齐/分组/层级及任务版式，不仿品牌资产或添加装饰图片。
+- 今日使用已有排序第一篇作为视觉阅读重心，其余推荐桌面双列/窄屏单列；简报采用独立白色内容区域，统一字阶、行长、间距。邮件设置移至阅读之后，后台功能保留。
+- 论文库改为一个列表区域：标题、书目、状态、操作有固定层级；理由和来源折叠但可访问；图谱与管理归为同行操作，修复原三子元素/两列grid错位及旧管理入口70px高度。标题改为论文库。质量、阅读状态及后台逻辑不变。
+- 新app/reading-workspace.css限定主要版式到今日/库，共享颜色改中性白灰与蓝色强调。修复标题button继承15px!important造成视觉层级失效。无数据库迁移。
+- 本地隔离预览 scripts/preview-reading-fixture.mjs 使用实际React页面与CSS，全部API终止于夹具、不载env。Playwright使用安装的Edge无头模式，查看1440/390截图，检查长英文/中英文标题、理由展开、管理菜单，无横向溢出。截图outputs/v248-{today,library}-{desktop,mobile}.png；是样例视觉检查，不是线上用户数据验收；未验证所有空状态及英文整页。
+- 构建及652测试通过。完整lint的大模块批次通过；剩余批次首次仅被outputs临时截图脚本require语法触发，删除本轮临时脚本后剩余批次通过。CI 35201454258 全部success。业务64df09ccb47604359a7f901dff6fcec7e6fa205c推送两仓库，v248版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_f3db329926888191804e8eee638e9b34，部署appgdep_6aaba93d6ae88191a09fba9719ad4c60于08:48:55 UTC succeeded，public与环境修订6保持。
+- 未恢复旧自动任务，邮件仍暂停，用户docs/未动。此次完成今日/论文库重点版式，不能声称全站逐页视觉验收完成。
+
 ## 2026-09-17：v247 清爽阅读界面（已发布，视觉验收待完成）
 
 - 按用户偏好减少同级圆角容器：今日、研究线索/路线、学习、论文详情、研究记忆和图谱改为留白与细分隔线；导航使用下划线选中态，核验/时效/层级标签降为行内文字。保留提示事实、键盘焦点及操作可达性，强调色收敛到深绿。
