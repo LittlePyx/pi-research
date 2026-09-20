@@ -81,3 +81,29 @@
 .v2-app.pi-workspace .pi-paper-workspace .pi-bibliography dt { color:#62666d; }
 .v2-app.pi-workspace .pi-paper-workspace .pi-bibliography dd { margin:6px 0 0; overflow-wrap:anywhere; }
 @media(max-width:760px) { .v2-app.pi-workspace .pi-paper-workspace .pi-bibliography dl { grid-template-columns:1fr; } }
+/* Bring the reading surface into the same visual scale as research memory. */
+.v2-app.pi-workspace .v2-page.pi-paper-workspace { max-width:1000px; }
+.v2-app.pi-workspace .pi-paper-workspace .v2-paper-detail-grid { display:block; }
+.v2-app.pi-workspace .pi-paper-workspace .v2-paper-fit-summary { margin:24px 0; padding:22px 24px; background:#f0f4f4; border:1px solid #e0e7e8; border-radius:10px; }
+.v2-app.pi-workspace .pi-paper-workspace .v2-paper-fit-summary h2 { font:500 16px/1.8 Arial,"Microsoft YaHei",sans-serif; margin:10px 0; letter-spacing:0; }
+.v2-app.pi-workspace .pi-paper-workspace .v2-paper-fit-summary .v2-kicker { font-size:12px; color:#627c82; margin:0; }
+.v2-app.pi-workspace .pi-paper-workspace .v2-paper-fit-summary footer { border:0; margin-top:14px; font-size:12px; color:#849096; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-paper-reading-tools { max-width:none; margin:28px 0; padding:0 24px 24px; background:white; border:1px solid #e0e6e9; border-radius:10px; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-paper-reading-tools>summary { font-size:16px; font-weight:600; color:#30434b; padding:20px 0; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-paper-reading-tools .v2-detail-aside { padding:0; margin:0; border:0; background:none; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-paper-reading-tools .v2-kicker { display:none; }
+.v2-app.pi-workspace .pi-paper-workspace .v2-reading-field>span { font-size:13px; color:#677a84; }
+.v2-app.pi-workspace .pi-paper-workspace .v2-reading-field textarea { min-height:150px; border:1px solid #dce3e7; border-radius:7px; padding:14px; font:14px/1.85 Arial,"Microsoft YaHei",sans-serif; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-note-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-note-actions button { padding:9px 14px; border-radius:6px; font-size:13px; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-note-actions button:first-child { background:#365f6c; color:white; border:1px solid #365f6c; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-note-actions button:last-child { background:#fff; color:#536b77; border:1px solid #dce3e7; }
+.v2-app.pi-workspace .pi-paper-workspace .pi-note-actions button:disabled { opacity:.45; cursor:default; }
+@media(max-width:700px) {
+ .v2-app.pi-workspace .v2-page.pi-paper-workspace { padding:24px 20px 40px; }
+ .v2-app.pi-workspace .pi-paper-workspace .v2-paper-head h1 { font-size:25px; line-height:1.4; }
+ .v2-app.pi-workspace .pi-paper-workspace .v2-paper-top { flex-wrap:wrap; }
+ .v2-app.pi-workspace .pi-paper-workspace .v2-paper-fit-summary { padding:18px; }
+ .v2-app.pi-workspace .pi-paper-workspace .pi-paper-reading-tools { padding:0 18px 18px; }
+ .v2-app.pi-workspace .pi-paper-workspace .pi-section-navigation { gap:18px; }
+}

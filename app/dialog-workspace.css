@@ -153,3 +153,18 @@
 .v2-app.pi-workspace .pi-model-panel .pi-model-recovery { margin-top:20px; padding:14px; background:#f3f7f5; border-radius:7px; font-size:13px; }
 .v2-app.pi-workspace .pi-model-panel .pi-model-recovery p { margin:6px 0; line-height:1.7; }
 @media(max-width:620px) { .v2-app.pi-workspace .pi-dialog-workspace > .pi-model-panel { max-height:calc(100dvh - 32px); } .v2-app.pi-workspace .pi-model-panel .pi-model-heading { padding:20px 20px 0; } .v2-app.pi-workspace .pi-model-panel .pi-model-content { padding:20px; } .v2-app.pi-workspace .pi-model-panel .pi-model-provider { padding:12px; gap:9px; } .v2-app.pi-workspace .pi-model-panel .pi-model-symbol { display:none; } }
+.v2-app.pi-workspace .pi-dialog-workspace>.v2-feedback-reason { width:min(560px,100%); padding:0 26px 24px; max-height:calc(100dvh - 48px); }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-reason .v2-modal-head { padding:24px 0 18px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-reason .v2-modal-head h2 { font-size:21px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-reason .v2-modal-head p { font-size:13px; color:#75838a; overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-reason>label { display:block; margin:0 0 18px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-reason>label>span { font-size:12px; color:#78868c; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-reason textarea { min-height:74px; padding:10px 12px; font-size:14px !important; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-options { display:grid; grid-template-columns:minmax(0,1fr); gap:0; margin:0 0 16px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-options button { border:0; border-bottom:1px solid #edf0f2; border-radius:0; background:none; padding:13px 0; gap:12px; text-align:left; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-options button>span { display:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-options button strong { font-size:14px; font-weight:500; color:#344953; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-options button>b { font-size:14px; color:#89999f; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-options button:hover { background:#f6f8f9; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-feedback-reason>small { display:block; color:#829096; font-size:12px; line-height:1.7; }
+@media(max-width:620px) { .v2-app.pi-workspace .pi-dialog-workspace>.v2-feedback-reason { padding:0 20px 20px; max-height:calc(100dvh - 32px); } }

@@ -84,3 +84,5 @@
  .v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list article { align-items:start; gap:12px; }
  .v2-app.pi-workspace .v2-learn-page .pi-lesson-exercise { padding:16px; }
 }
+/* Keep short stages from collapsing the document while browsing the stage rail. */
+.v2-app.pi-workspace .v2-learn-page .pi-study-session { min-height:calc(100svh - 80px); }
