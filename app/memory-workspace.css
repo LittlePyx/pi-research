@@ -1,0 +1,60 @@
+.v2-app.pi-workspace .pi-memory-workspace { max-width: 1240px; margin-inline: auto; }
+.v2-app.pi-workspace .pi-memory-workspace :is(h2,h3,h4,p,li,strong,small,button,label) { font-family: Arial,"PingFang SC","Microsoft YaHei",sans-serif; }
+.v2-app.pi-workspace .pi-memory-workspace h2 { font-size: 21px; line-height: 1.45; letter-spacing: -.025em; margin: 0 0 10px; }
+.v2-app.pi-workspace .pi-memory-workspace h3 { font-size: 18px; line-height: 1.55; margin: 0 0 12px; }
+.v2-app.pi-workspace .pi-memory-workspace h4 { font-size: 15px; line-height: 1.65; margin: 0 0 8px; }
+.v2-app.pi-workspace .pi-memory-workspace p { font-size: 15px; line-height: 1.8; margin: 8px 0 16px; max-width: 78ch; }
+.v2-app.pi-workspace .pi-memory-workspace small { font-size: 12px; line-height: 1.65; color: #667085; }
+.v2-app.pi-workspace .pi-memory-nav { display: flex; gap: 28px; border-bottom: 1px solid #dce1e8; margin-bottom: 26px; }
+.v2-app.pi-workspace .pi-memory-nav button { padding: 12px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: #647084; font-size: 15px; cursor: pointer; }
+.v2-app.pi-workspace .pi-memory-nav button[aria-current] { color: #2459c5; border-bottom-color: #2459c5; }
+.v2-app.pi-workspace .pi-memory-workspace button:focus-visible { outline: 2px solid #2459c5; outline-offset: 4px; }
+.v2-app.pi-workspace .pi-memory-workspace :is(.pi-memory-notebook,.pi-memory-profile,.pi-memory-preferences) { margin: 28px 0; padding: 0; border: 0; background: none; }
+.v2-app.pi-workspace .pi-memory-workspace :is(.pi-memory-notebook,.pi-memory-profile)>header { display: flex; flex-wrap: wrap; align-items: start; gap: 8px 24px; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-profile>header { display: block; }
+.v2-app.pi-workspace .pi-memory-workspace :is(.pi-memory-notebook,.pi-memory-profile)>header p { font-size: 14px; color: #667085; }
+.v2-app.pi-workspace .pi-memory-workspace :is(.pi-memory-notebook,.pi-memory-profile)>header button { background: transparent; color: #2459c5; border: 0; padding: 6px 0; font-size: 14px; cursor: pointer; }
+.v2-app.pi-workspace .pi-memory-search { max-width: 720px; margin: 22px 0 14px; }
+.v2-app.pi-workspace .pi-memory-search button { background: #2459c5; border-color: #2459c5; color: #fff; }
+.v2-app.pi-workspace .pi-memory-search input { padding: 10px 12px; border-color: #c9d2e0; }
+.v2-app.pi-workspace .pi-memory-entry { max-width: none; padding: 26px 0; border-color: #dce1e8; }
+.v2-app.pi-workspace .pi-memory-entry>header { justify-content: flex-start; gap: 16px; color: #667085; }
+.v2-app.pi-workspace .pi-memory-entry>h3 { font-size: 20px; font-weight: 600; max-width: 78ch; margin: 10px 0 20px; }
+.v2-app.pi-workspace .pi-memory-original { border: 0; padding: 0; max-width: 78ch; }
+.v2-app.pi-workspace .pi-memory-original strong { color: #667085; font-weight: 500; font-size: 12px; }
+.v2-app.pi-workspace .pi-memory-original p { color: #283343; }
+.v2-app.pi-workspace .pi-memory-synthesis { margin: 20px 0; padding: 20px 24px; background: #f1f4f8; border-radius: 4px; max-width: 78ch; }
+.v2-app.pi-workspace .pi-memory-synthesis>h4 { color: #465b78; font-weight: 500; font-size: 13px; }
+.v2-app.pi-workspace .pi-memory-synthesis ul { padding-left: 22px; }
+.v2-app.pi-workspace .pi-memory-synthesis li { font-size: 15px; line-height: 1.8; margin: 8px 0; }
+.v2-app.pi-workspace .pi-memory-entry .pi-memory-question { margin: 0; padding: 12px 0; border: 0; border-top: 1px solid #dce1e8; border-radius: 0; color: #2459c5; background: transparent; font-size: 15px; }
+.v2-app.pi-workspace .pi-memory-entry footer { justify-content: flex-start; flex-wrap: wrap; }
+.v2-app.pi-workspace .pi-memory-entry footer button { border: 0; padding: 6px 0; color: #2459c5; background: transparent; }
+.v2-app.pi-workspace .pi-memory-entry .pi-memory-note-hint { font-size: 13px; color: #667085; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-empty { border: 0; border-top: 1px solid #dce1e8; border-radius: 0; padding: 24px 0; background: none; }
+.v2-app.pi-workspace .pi-memory-profile { border-top: 1px solid #dce1e8; padding-top: 28px; }
+.v2-app.pi-workspace .pi-memory-profile-group { margin: 28px 0; }
+.v2-app.pi-workspace .pi-memory-profile-group article { padding: 18px 0; border-top: 1px solid #dce1e8; max-width: 900px; }
+.v2-app.pi-workspace .pi-memory-profile-group article p { color: #526073; }
+.v2-app.pi-workspace .pi-memory-profile-group article ul { padding-left: 22px; font-size: 15px; line-height: 1.8; }
+.v2-app.pi-workspace .pi-memory-focus { padding: 0 0 24px; border-top: 0; border-bottom-color: #dce1e8; }
+.v2-app.pi-workspace .pi-memory-focus-actions { gap: 10px; }
+.v2-app.pi-workspace .pi-memory-focus-actions button { color: #2459c5; background: #fff; border-color: #dce1e8; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-layered-memory { background: transparent; border: 0; padding: 0; margin: 32px 0; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-layered-memory>div { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-layered-memory>div>section { padding: 0; border: 0; background: transparent; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-layered-memory article { padding: 18px 0; border-top: 1px solid #dce1e8; background: transparent; border-radius: 0; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-layered-memory article strong { font-size: 15px; line-height: 1.6; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-layered-memory article button { background: transparent; border: 0; color: #647084; padding: 6px; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-layered-memory h3 span { background: transparent; color: #667085; margin-left: 10px; font-size: 13px; }
+.v2-app.pi-workspace .pi-memory-scope { padding-top: 20px; border-top: 1px solid #dce1e8; color: #667085; }
+.v2-app.pi-workspace .pi-memory-scope button { border: 0; background: none; color: #2459c5; margin-left: 12px; }
+@media(max-width:700px) {
+  .v2-app.pi-workspace .pi-memory-nav { gap: 24px; }
+  .v2-app.pi-workspace .pi-memory-workspace .v2-layered-memory>div { grid-template-columns: minmax(0,1fr); }
+  .v2-app.pi-workspace .pi-memory-focus { grid-template-columns: minmax(0,1fr); gap: 18px; }
+  .v2-app.pi-workspace .pi-memory-focus-actions { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; }
+  .v2-app.pi-workspace .pi-memory-synthesis { padding: 18px; }
+  .v2-app.pi-workspace .pi-memory-entry>h3 { font-size: 18px; }
+  .v2-app.pi-workspace .pi-memory-workspace :is(p,li,strong,h3,h4,small) { overflow-wrap: anywhere; }
+}
