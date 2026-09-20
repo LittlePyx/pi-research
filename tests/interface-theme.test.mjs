@@ -76,8 +76,8 @@ test("theme is presentation-only and cannot hide statuses, rewrite graph encodin
 test("the existing app, demo and share surfaces use the same documented visual tokens", () => {
   assert.ok(layout.indexOf('"./interface-theme.css"') > layout.indexOf('"./globals.css"'));
   assert.match(globals, /--v2-canvas: var\(--pi-canvas\)/);
-  assert.match(demo, /--demo-ink: var\(--pi-ink\)/);
-  assert.match(demo, /border-radius: var\(--pi-label-radius\)/);
+  assert.match(demo, /var\(--pi-muted\)/);
+  assert.match(demo, /var\(--pi-accent-soft\)/);
   assert.equal(declarations(ruleFor(".share-page .share-badges")).background, "var(--pi-surface-subtle)");
   for (const value of [theme, globals, demo]) {
     for (const [, name] of value.matchAll(/var\((--pi-[\w-]+)/g)) assert.ok(name in tokens, `Undefined token ${name}`);

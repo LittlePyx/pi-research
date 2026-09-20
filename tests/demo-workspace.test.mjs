@@ -15,11 +15,9 @@ test("the public demo opens a populated read-only research journey", async () =>
     readFile(appUrl, "utf8"),
   ]);
 
-  for (const label of ["今日", "研究", "学习", "论文库", "研究记忆", "概览", "材料", "问题与判断", "任务"]) assert.ok(page.includes(label));
-  assert.match(page, /刷新后重置，不写入正式空间/);
-  assert.match(page, /保存示例笔记/);
-  assert.match(page, /不调用模型/);
-  assert.match(page, /href="\/"/);
+  assert.match(page, /import ResearchApp from "..\/research-app"/);
+  assert.match(page, /<ResearchApp demo user=/);
+  assert.match(app, /不影响正式资料/);
   assert.doesNotMatch(page, /fetch\(|\/api\//);
   assert.ok((data.match(/id: "/g) || []).length >= 14);
   assert.match(data, /Isoperimetric Problems for Convex Bodies and a Localization Lemma/);
@@ -28,5 +26,5 @@ test("the public demo opens a populated read-only research journey", async () =>
   assert.match(app, /<a className="v2-demo-entry" href="\/demo">/);
   assert.match(app, /"演示空间" : "Demo workspace"/);
   assert.match(css, /@media \(max-width: 620px\)/);
-  assert.match(css, /\.compare \{ grid-template-columns:1fr; \}/);
+  assert.doesNotMatch(css, /\.shell|\.paperList|\.hero/);
 });

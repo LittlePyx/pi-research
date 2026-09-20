@@ -1,4 +1,6 @@
 "use client";
+import { workspaceFetch as fetch } from "../lib/workspace-request";
+
 
 import { DraftRecovery } from "./components/draft-recovery";
 import { sessionDraftKey, writeSessionDraft, clearSessionDraft } from "../lib/session-draft";
@@ -1081,6 +1083,7 @@ function initials(value: string) {
 }
 
 function ensureAnonymousWorkspace() {
+  if (window.location.pathname.replace(/\/$/, "") === "/demo") return;
   const storageKey = "pi-anonymous-workspace";
   let workspaceId = window.localStorage.getItem(storageKey) ?? "";
   if (!/^[a-zA-Z0-9-]{20,64}$/.test(workspaceId)) {
@@ -3065,7 +3068,7 @@ function ResearchProblemWorkbench({
   </section>;
 }
 
-export default function ResearchApp({ user }: { user: User }) {
+export default function ResearchApp({ user, demo = false }: { user: User; demo?: boolean }) {
   const [locale, setLocale] = useState<Locale>("zh");
   const [view, setView] = useState<View>("today");
   const [memorySection, setMemorySection] = useState<"reading" | "insights" | "preferences">("reading");
@@ -3725,9 +3728,9 @@ export default function ResearchApp({ user }: { user: User }) {
   useEffect(() => {
     ensureAnonymousWorkspace();
     const hydrationTimer = window.setTimeout(() => {
-      const savedLocale = window.localStorage.getItem("pi-locale");
+      const savedLocale = window.localStorage.getItem(demo ? "pi-demo-locale" : "pi-locale");
       if (savedLocale === "en" || savedLocale === "zh") setLocale(savedLocale);
-      const savedSpace = window.localStorage.getItem("pi-active-space");
+      const savedSpace = window.localStorage.getItem(demo ? "pi-demo-active-space" : "pi-active-space");
       if (savedSpace) setActiveSpaceId(savedSpace);
     }, 0);
 
@@ -3744,7 +3747,7 @@ export default function ResearchApp({ user }: { user: User }) {
       .then((data) => {
         if (data.spaces?.length) {
           setSpaces(data.spaces);
-          const savedSpace = window.localStorage.getItem("pi-active-space");
+          const savedSpace = window.localStorage.getItem(demo ? "pi-demo-active-space" : "pi-active-space");
           if (!savedSpace || !data.spaces.some((space) => space.id === savedSpace)) {
             setActiveSpaceId(data.spaces[0].id);
           }
@@ -3776,12 +3779,12 @@ export default function ResearchApp({ user }: { user: User }) {
       });
 
     return () => window.clearTimeout(hydrationTimer);
-  }, []);
+  }, [demo]);
 
   useEffect(() => {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
-    window.localStorage.setItem("pi-locale", locale);
-  }, [locale]);
+    window.localStorage.setItem(demo ? "pi-demo-locale" : "pi-locale", locale);
+  }, [locale, demo]);
 
   useEffect(() => {
     const restore = () => { restoredLocation.current = ""; setNavigationRevision(n => n + 1); };
@@ -4466,7 +4469,7 @@ export default function ResearchApp({ user }: { user: User }) {
     setLearningError("");
     setLearningLoading(false);
     setLearningAction(null);
-    window.localStorage.setItem("pi-active-space", space.id);
+    window.localStorage.setItem(demo ? "pi-demo-active-space" : "pi-active-space", space.id);
     setSpaceDialog(false);
     navigationScroll.current.clear();
     navigate("today", null, { space: space.id });
@@ -4484,7 +4487,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const submitSpace = async (event: FormEvent) => {
     event.preventDefault();
-    if (!newSpace.name.trim()) return;
+    if (demo || !newSpace.name.trim()) return;
     setCreatingSpace(true);
     try {
       const response = await fetch("/api/spaces", {
@@ -4515,7 +4518,7 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const submitQuestion = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (!question.trim() || asking) return;
+    if (demo || !question.trim() || asking) return;
     const requestNumber = ++askRequest.current;
     setAsking(true);
     setAskError("");
@@ -4562,7 +4565,7 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const runManualMonitor = async () => {
-    if (monitoring || manualCooldownBlocked) return;
+    if (demo || monitoring || manualCooldownBlocked) return;
     if (activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) {
       setToast(locale === "zh" ? "研究空间尚未连接，请刷新页面后再试" : "The research space is not connected yet. Refresh the page and try again.");
       return;
@@ -5886,13 +5889,14 @@ export default function ResearchApp({ user }: { user: User }) {
         </nav>
 
         <div className="v2-sidebar-bottom">
-          <a className="v2-demo-entry" href="/demo"><InterfaceIcon name="demo" /><strong>{locale === "zh" ? "演示空间" : "Demo workspace"}</strong><b>↗</b></a>
-          <button className={`v2-openai-state ${modelConnectionState}`} type="button" onClick={() => { setMobileNav(false); setModelSettingsOpen(true); }} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{modelConnectionState === "connected" ? modelConnectionCopy.detail : modelConnectionCopy.title}</strong><small>{modelConnectionState === "connected" ? (locale === "zh" ? "模型设置 · 已连接" : "Model settings · Connected") : modelConnectionCopy.detail}</small></span><b>›</b></button>
+          {demo ? <button type="button" className="v2-demo-entry" onClick={() => window.location.assign("/")}><InterfaceIcon name="workspace" /><strong>返回正式工作区</strong><b>↗</b></button> : <a className="v2-demo-entry" href="/demo"><InterfaceIcon name="demo" /><strong>{locale === "zh" ? "演示空间" : "Demo workspace"}</strong><b>↗</b></a>}
+          <button className={`v2-openai-state ${modelConnectionState}`} type="button" onClick={() => { setMobileNav(false); setModelSettingsOpen(true); }} aria-label={locale === "zh" ? "打开 AI 模型设置" : "Open AI model settings"}><i /><span><strong>{demo ? (locale === "zh" ? "演示模式" : "Demo mode") : modelConnectionState === "connected" ? modelConnectionCopy.detail : modelConnectionCopy.title}</strong><small>{demo ? (locale === "zh" ? "查看模型设置" : "View model settings") : modelConnectionState === "connected" ? (locale === "zh" ? "模型设置 · 已连接" : "Model settings · Connected") : modelConnectionCopy.detail}</small></span><b>›</b></button>
           <button className="v2-account" type="button" onClick={() => { setMobileNav(false); setSpaceDialog(true); }}><InterfaceIcon name="workspace" /><span><strong>{locale === "zh" ? "管理研究空间" : "Manage workspaces"}</strong><small>{activeSpace.memberName}</small></span><b>→</b></button>
         </div>
       </aside>
 
       <div className="v2-main" id="workspace-content" tabIndex={-1}>
+        {demo && <div className="pi-demo-notice">演示空间 · 与正式产品共用界面；文献与状态为样例。操作不影响正式资料，扫描、模型与邮件不执行。示例保存刷新后重置，未保存草稿仅保留在本标签页。</div>}
         {navigationIssue && <section className="pi-navigation-notice" role="alert" tabIndex={-1}><strong>{navigationIssue === "space" ? (locale === "zh" ? "这个链接属于另一个研究空间" : "This link belongs to another workspace") : navigationIssue === "missing" ? (locale === "zh" ? "暂时找不到这条研究路线" : "This research route is unavailable") : (locale === "zh" ? "论文暂时无法读取" : "This paper could not be loaded")}</strong><p>{navigationIssue === "space" ? (locale === "zh" ? "当前空间没有改变。仅能切换到你有权访问的空间。" : "Your current workspace is unchanged. You can switch only to an accessible workspace.") : (locale === "zh" ? "已有内容保留，你可以重试或返回当前空间。" : "Saved content is preserved. Retry or return to your workspace.")}</p>{navigationIssue === "space" ? spaces.some(space => space.id === requestedLocation?.space) && <button type="button" onClick={() => { const target = spaces.find(space => space.id === requestedLocation?.space); if (!target || !requestedLocation) return; const destination = workspaceHash(requestedLocation); switchSpace(target); window.history.replaceState(null, "", destination); restoredLocation.current = ""; setNavigationRevision(n => n + 1); }}>{locale === "zh" ? "切换并打开链接" : "Switch and open link"}</button> : <button type="button" onClick={() => { if (navigationIssue === "missing") navigate("threads"); else { if (requestedLocation) window.history.pushState(null, "", workspaceHash(requestedLocation)); restoredLocation.current = ""; setNavigationRevision(n => n + 1); } }}>{navigationIssue === "missing" ? (locale === "zh" ? "查看路线总览" : "View routes") : (locale === "zh" ? "重试" : "Retry")}</button>}<button type="button" onClick={() => navigate("today")}>{locale === "zh" ? "返回当前空间" : "Return to current workspace"}</button></section>}
 
         <header className="v2-topbar">
@@ -5974,7 +5978,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{!monitor ? (locale === "zh" ? "正在读取已有内容" : "Loading saved content") : scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? monitorReadyLabel : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
-<button type="button" onClick={runManualMonitor} disabled={!monitor || scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgressLabel}` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
+<button type="button" onClick={runManualMonitor} title={demo ? "演示不执行扫描" : undefined} disabled={demo || !monitor || scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgressLabel}` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
                 </div>
               </div>
               {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><InterfaceIcon name="clock" /><p>{locale === "zh" ? "今天的完整扫描额度已用完；Pi 会在刷新后继续，现有论文、偏好与断点均已保留。" : "Today's full-scan budget is exhausted. Pi will continue after the reset; papers, preferences, and checkpoints are preserved."}</p></div>}
@@ -6381,7 +6385,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <p className="v2-kicker">{t.createSpaceTitle}</p>
               <div><label><span>{t.spaceName}</span><input required value={newSpace.name} onChange={(event) => setNewSpace((current) => ({ ...current, name: event.target.value }))} placeholder={locale === "zh" ? "例如：量子信息" : "e.g. Quantum Information"} /></label><label><span>{t.memberName}</span><input value={newSpace.memberName} onChange={(event) => setNewSpace((current) => ({ ...current, memberName: event.target.value }))} placeholder={user.displayName} /></label></div>
               <label><span>{t.spaceScope}</span><textarea value={newSpace.description} onChange={(event) => setNewSpace((current) => ({ ...current, description: event.target.value }))} placeholder={locale === "zh" ? "这个空间只关注哪些具体问题？" : "Which specific questions belong in this space?"} /></label>
-              <div className="v2-form-actions"><button type="button" onClick={() => setSpaceDialog(false)}>{t.cancel}</button><button type="submit" disabled={creatingSpace || !newSpace.name.trim()}>{creatingSpace ? t.creating : t.create} →</button></div>
+              <div className="v2-form-actions"><button type="button" onClick={() => setSpaceDialog(false)}>{t.cancel}</button><button type="submit" title={demo ? "请返回正式工作区创建空间" : undefined} disabled={demo || creatingSpace || !newSpace.name.trim()}>{creatingSpace ? t.creating : t.create} →</button></div>
             </form>
           </div>
         </div>
@@ -6413,8 +6417,9 @@ export default function ResearchApp({ user }: { user: User }) {
             <div className="v2-modal-head"><div><h2>{locale === "zh" ? "模型设置" : "Model settings"}</h2></div><button type="button" aria-label={t.close} onClick={closeModelSettings}>×</button></div>
             <section className={`v2-model-status-card ${modelConnectionState}`} aria-live="polite"><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConnectionCopy.modal}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-flash")}{modelCredentialSource ? ` · ${modelCredentialSource === "browser" ? (locale === "zh" ? "当前浏览器 Key" : "browser key") : (locale === "zh" ? "平台 Key" : "host key")}` : ""}</p></div><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{checkingModel ? (locale === "zh" ? "检测中…" : "Checking…") : (locale === "zh" ? "重新检测" : "Check again")}</button></section>
             {credentialFailureRecovered && <section className="v2-model-resume-card"><b>✓</b><div><strong>{locale === "zh" ? "连接已经恢复，扫描断点仍在" : "Connection restored; the scan checkpoint is intact"}</strong><p>{locale === "zh" ? `${monitor?.scanJob?.discoveredCount || 0} 篇候选和 ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} 篇筛选进度均已保留。` : `${monitor?.scanJob?.discoveredCount || 0} candidates and ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} screening progress are preserved.`}</p></div><button type="button" onClick={resumeAfterModelConnection}>{locale === "zh" ? "关闭并从断点继续" : "Close and resume"} →</button></section>}
+            {demo && <p role="note">演示不连接模型，请勿输入真实 Key。请返回正式工作区配置。</p>}
             <form className="v2-model-key-form" onSubmit={(event) => { event.preventDefault(); void saveModelCredential(); }}>
-              <label><span>{locale === "zh" ? (modelCredentialSource === "browser" ? "粘贴新 Key 以替换" : "DeepSeek API Key") : (modelCredentialSource === "browser" ? "Paste a new key to replace it" : "DeepSeek API key")}</span><div><input type={showModelApiKey ? "text" : "password"} value={modelApiKey} onChange={(event) => { setModelApiKey(event.target.value); setModelSettingsError(""); }} placeholder="sk-…" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowModelApiKey((current) => !current)}>{showModelApiKey ? (locale === "zh" ? "隐藏" : "Hide") : (locale === "zh" ? "显示" : "Show")}</button></div></label>
+              <label><span>{locale === "zh" ? (modelCredentialSource === "browser" ? "粘贴新 Key 以替换" : "DeepSeek API Key") : (modelCredentialSource === "browser" ? "Paste a new key to replace it" : "DeepSeek API key")}</span><div><input disabled={demo} type={showModelApiKey ? "text" : "password"} value={modelApiKey} onChange={(event) => { setModelApiKey(event.target.value); setModelSettingsError(""); }} placeholder="sk-…" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowModelApiKey((current) => !current)}>{showModelApiKey ? (locale === "zh" ? "隐藏" : "Hide") : (locale === "zh" ? "显示" : "Show")}</button></div></label>
               {modelSettingsError && <p className="v2-model-key-error" role="alert">{modelSettingsError}</p>}
               <div className="v2-model-key-actions">{modelCredentialSource === "browser" ? <button className="remove" type="button" onClick={() => void removeBrowserModelCredential()} disabled={checkingModel}>{locale === "zh" ? "删除当前浏览器 Key" : "Remove browser key"}</button> : <span /> }<button className="save" type="submit" disabled={checkingModel || !modelApiKey.trim()}>{checkingModel ? (locale === "zh" ? "正在验证…" : "Verifying…") : (locale === "zh" ? "测试并保存" : "Test & save")} →</button></div>
             </form>
@@ -6485,7 +6490,8 @@ export default function ResearchApp({ user }: { user: User }) {
           {compactAsk && <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setAskOpen(false)} />}
           <div className="v2-ask-panel">
             <div className="v2-modal-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {t.privateSpace}</p><h2>{t.askTitle}</h2><p>{t.askScope}</p></div><button type="button" aria-label={t.close} onClick={() => setAskOpen(false)}>×</button></div>
-            <DraftRecovery key={sessionDraftKey(user.userId, activeSpace.id, "ask")} storageKey={sessionDraftKey(user.userId, activeSpace.id, "ask")} current={JSON.stringify({ question, context: askContext })} base="" locale={locale} onRestore={value => { try { const draft = JSON.parse(value); if (typeof draft.question === "string" && draft.context && Object.entries(draft.context).every(([key, id]) => ["paperId", "trackId", "routePaperId"].includes(key) && typeof id === "string")) { setQuestion(draft.question); setAskContext(draft.context); } } catch { setAskError(locale === "zh" ? "草稿暂时无法读取" : "Draft unavailable"); } }} /><form onSubmit={submitQuestion}><textarea aria-label={locale === "zh" ? "向 Pi 提问" : "Your question for Pi"} value={question} onChange={(event) => { setQuestion(event.target.value); if (!writeSessionDraft(sessionDraftKey(user.userId, activeSpace.id, "ask"), "", JSON.stringify({ question: event.target.value, context: askContext }))) setAskError(locale === "zh" ? "无法暂存问题，请在离开前复制保留。" : "Draft storage unavailable. Copy your question before leaving."); }} placeholder={t.askExample} /><div><span className={"v2-space-avatar tiny " + activeSpace.accent}>{initials(activeSpace.name)}</span><small>{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</small><button type="submit" disabled={!question.trim() || asking}>{asking ? "···" : t.send + " ↑"}</button></div></form>
+            {demo && <p className="pi-demo-action-note">演示可试写问题和切换上下文；发送需返回正式工作区，演示不调用模型。</p>}
+            <DraftRecovery key={sessionDraftKey(user.userId, activeSpace.id, "ask")} storageKey={sessionDraftKey(user.userId, activeSpace.id, "ask")} current={JSON.stringify({ question, context: askContext })} base="" locale={locale} onRestore={value => { try { const draft = JSON.parse(value); if (typeof draft.question === "string" && draft.context && Object.entries(draft.context).every(([key, id]) => ["paperId", "trackId", "routePaperId"].includes(key) && typeof id === "string")) { setQuestion(draft.question); setAskContext(draft.context); } } catch { setAskError(locale === "zh" ? "草稿暂时无法读取" : "Draft unavailable"); } }} /><form onSubmit={submitQuestion}><textarea aria-label={locale === "zh" ? "向 Pi 提问" : "Your question for Pi"} value={question} onChange={(event) => { setQuestion(event.target.value); if (!writeSessionDraft(sessionDraftKey(user.userId, activeSpace.id, "ask"), "", JSON.stringify({ question: event.target.value, context: askContext }))) setAskError(locale === "zh" ? "无法暂存问题，请在离开前复制保留。" : "Draft storage unavailable. Copy your question before leaving."); }} placeholder={t.askExample} /><div><span className={"v2-space-avatar tiny " + activeSpace.accent}>{initials(activeSpace.name)}</span><small>{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</small><button type="submit" disabled={demo || !question.trim() || asking}>{asking ? "···" : t.send + " ↑"}</button></div></form>
             {asking && <div className="v2-thinking"><InterfaceIcon name="loading" className="pi-state-mark" /><p>{t.thinking}<i><b /><b /><b /></i></p></div>}
             {(askContext.trackId || askContext.paperId) && <p className="pi-ask-context">{locale === "zh" ? "当前关联：" : "Attached: "}{askContext.paperId ? (historyPapers.find(paper => paper.id === askContext.paperId)?.title || (selectedMonitorPaper?.id === askContext.paperId ? selectedMonitorPaper.title : (locale === "zh" ? "所选论文" : "Selected paper"))) : (() => { const route = researchMap.tracks.find(track => track.id === askContext.trackId); const paper = route?.papers.find(item => item.id === askContext.routePaperId); return paper?.title || (route ? locale === "zh" ? route.titleZh : route.titleEn : locale === "zh" ? "所选路线" : "Selected route"); })()} <button type="button" disabled={asking} onClick={attachCurrentAskContext}>{locale === "zh" ? "改用当前页面" : "Use current page"}</button> <button type="button" disabled={asking} onClick={() => setAskContext({})}>{locale === "zh" ? "移除" : "Remove"}</button></p>}
             {askError && <div className="pi-ask-error" role="alert"><p>{askError}</p><button type="button" disabled={asking} onClick={() => void submitQuestion()}>{locale === "zh" ? "重新回答" : "Retry"}</button></div>}

@@ -1,4 +1,6 @@
 'use client';
+import { workspaceFetch as fetch } from "../../lib/workspace-request";
+
 import {useEffect,useId,useRef,useState} from 'react';
 import type {ResearchStartSource} from '../../lib/research-start';
 import type {GraphTaskContext} from '../../lib/graph-task';

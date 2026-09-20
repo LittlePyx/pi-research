@@ -1,4 +1,6 @@
 'use client';
+import { workspaceFetch as fetch } from "../../lib/workspace-request";
+
 import {useEffect,useRef,useState} from 'react';
 import type {LibraryPaper} from '../../lib/library-catalog';
 import type {LibraryGraphResult} from '../../lib/library-graph';

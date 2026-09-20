@@ -1,4 +1,6 @@
 'use client';
+import { workspaceFetch as fetch } from "../../lib/workspace-request";
+
 import {useEffect,useState} from 'react';
 type Settings={configured:boolean;subscription:null|{email:string;enabled:number;verifiedAt:string|null;sendTime:string;nextSendAt:number;codeExpires:number;verificationSentAt:number};deliveries:{date:string;status:string;sentAt:number|null;error:string}[]};
 export function EmailSubscription({spaceId,locale}:{spaceId:string;locale:'zh'|'en'}) {

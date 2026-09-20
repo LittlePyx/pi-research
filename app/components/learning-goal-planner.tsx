@@ -1,4 +1,6 @@
 'use client';
+import { workspaceFetch as fetch } from "../../lib/workspace-request";
+
 
 import { useEffect, useRef, useState } from 'react';
 import { LEARNING_GOALS, type LearningGoal, type LearningPlanPreview } from '../../lib/learning-goal';

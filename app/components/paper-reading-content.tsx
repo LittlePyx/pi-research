@@ -1,3 +1,4 @@
+import { workspaceFetch as fetch } from "../../lib/workspace-request";
 import { useEffect, useState } from "react";
 import { MathText } from "./math-text";
 import "./paper-reading.css";
