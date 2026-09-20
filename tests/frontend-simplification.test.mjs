@@ -9,7 +9,7 @@ const mapModelUrl = new URL("../lib/research-map.ts", import.meta.url);
 
 test("primary pages use progressive disclosure instead of repeating internal process detail", async () => {
   const [app, css] = await Promise.all([readFile(appUrl, "utf8"), readFile(cssUrl, "utf8")]);
-  const routeCards = app.slice(app.indexOf('<section className="v2-route-groups">'), app.indexOf('<details className="v2-route-map-assist">'));
+  const routeCards = app.slice(app.indexOf('<section className="v2-route-groups">'), app.indexOf('<RouteReferenceViews key='));
   const decisionPanel = app.slice(app.indexOf("function ResearchLeadDecisionPanel"), app.indexOf("function routeManagementNeedsAttention"));
 
   assert.doesNotMatch(app, /<section className="v2-library-overview"/);

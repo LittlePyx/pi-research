@@ -1,0 +1,25 @@
+.v2-app.pi-workspace .pi-route-reference { margin:28px 0;background:white;border-block:1px solid #dce2e8;padding:0 24px; }
+.v2-app.pi-workspace .pi-route-reference > header { display:flex;justify-content:space-between;align-items:center;gap:20px;border-bottom:1px solid #e3e7ec; }
+.v2-app.pi-workspace .pi-route-reference-switch { display:flex;gap:24px; }
+.v2-app.pi-workspace .pi-route-reference-switch button { padding:20px 0 17px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;color:#657180;font-size:16px;font-weight:500; }
+.v2-app.pi-workspace .pi-route-reference-switch button[aria-pressed="true"] { border-bottom-color:#245ac6;color:#202832;font-weight:600; }
+.v2-app.pi-workspace .pi-route-reference label { display:flex;gap:10px;align-items:center;font-size:12px;color:#657180; }
+.v2-app.pi-workspace .pi-route-reference select { max-width:330px;min-width:0;padding:8px 28px 8px 10px;border:1px solid #dce2e8;border-radius:4px;background:white;color:#202832;font-size:13px; }
+.v2-app.pi-workspace .pi-route-reference-context { display:flex;align-items:start;justify-content:space-between;gap:24px;padding:18px 0 8px; }
+.v2-app.pi-workspace .pi-route-reference-context p { margin:0;max-width:800px;font-size:14px;line-height:1.7;color:#657180;text-align:left; }
+.v2-app.pi-workspace .pi-route-reference-context button { padding:3px 0;border:0;background:transparent;color:#245ac6;white-space:nowrap;font-size:13px; }
+.v2-app.pi-workspace .pi-route-reference .pi-stage-map { padding:16px 0;margin:0; }
+.v2-app.pi-workspace .pi-route-reference .pi-route-connections { padding:0; }
+.v2-app.pi-workspace .pi-connections-note { padding:12px 0;font-size:12px;color:#75808d; }
+.v2-app.pi-workspace .pi-route-reference .pi-stage-contribution { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden; }
+.v2-app.pi-workspace .pi-route-update-records { margin:24px 0;font-size:13px;color:#657180; }
+.v2-app.pi-workspace .pi-route-update-records > summary { cursor:pointer;padding:14px 0;border-top:1px solid #dce2e8; }
+.v2-app.pi-workspace .pi-route-update-records dl { display:flex;gap:28px;flex-wrap:wrap; }
+.v2-app.pi-workspace .pi-route-update-records dd { margin:4px 0;font-size:16px;color:#202832; }
+@media(max-width:800px) {
+ .v2-app.pi-workspace .pi-route-reference { padding:0 16px; }
+ .v2-app.pi-workspace .pi-route-reference > header { flex-direction:column;align-items:stretch;gap:12px;padding-bottom:14px; }
+ .v2-app.pi-workspace .pi-route-reference label { width:100%; }
+ .v2-app.pi-workspace .pi-route-reference select { flex:1;width:0;max-width:none; }
+ .v2-app.pi-workspace .pi-route-reference-context { flex-direction:column;gap:10px; }
+}

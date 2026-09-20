@@ -238,13 +238,13 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /这条路线目前可以怎样判断/);
   assert.match(client, /论文网络/);
   assert.match(client, /引用关系/);
-  assert.match(client, /查看路线阶段图/);
+  assert.match(client, /RouteReferenceViews/);
   assert.match(client, /PaperNetworkGraph/);
   assert.match(client, /PAPER_NETWORK_ACTIVE_NODE_LIMIT = 72/);
   assert.match(client, /selectPaperNetworkActiveNodeIds/);
   assert.match(client, /builtPaperRevision !== researchMap\.paperNetwork\.paperRevision/);
   assert.doesNotMatch(client, /return Array\.from\(unique\.values\(\)\)\.slice\(0, 40\)/);
-  assert.match(client, /RouteStageMap/);
+  assert.match(await readFile(new URL("../app/components/route-reference-views.tsx", import.meta.url), "utf8"), /RouteStageMap/);
   assert.match(client, /相似性地图/);
   assert.match(client, /起始论文/);
   assert.match(client, /"all" \| "one-hop" \| "multi-seed"/);
@@ -353,7 +353,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(css, /\.v2-research-network-source-state\.empty/);
   assert.doesNotMatch(css, /#b69a69|#a98d68/);
   assert.ok(css.lastIndexOf(".v2-paper-network-node.origin .state-ring") > css.lastIndexOf(".v2-paper-network-node.external-ghost:not(.selected):not(.accepted):not(.origin) .state-ring"));
-  assert.match(client, /RouteRelationships/);
+  assert.match(await readFile(new URL("../app/components/route-reference-views.tsx", import.meta.url), "utf8"), /RouteRelationships/);
   assert.match(client, /当前仍保留 \$\{verifiedCount\} 条数据库关系/);
   assert.doesNotMatch(client, /className="v2-direction-bridges"/);
   assert.doesNotMatch(client, /v2-direction-live-relations/);

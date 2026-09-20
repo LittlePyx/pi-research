@@ -44,7 +44,7 @@ test("route priority uses the same compact count model on desktop and narrow scr
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.equal(client.match(/<RoutePortfolioOverview portfolio=/g)?.length, 1);
+  assert.equal(client.match(/<RoutePortfolioOverview attentionKind=/g)?.length, 1);
   assert.match(client, /onAction=\{handleRouteAttention\}/);
   assert.match(client, /下一步研究/);
   assert.match(client, /onClick=\{onAction\}/);
