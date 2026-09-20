@@ -16,7 +16,8 @@
     "test:release": "npm run lint && npm run test:live && npm run test:discovery:live && npm test",
     "lint": "node scripts/lint-workspace.mjs",
     "db:generate": "drizzle-kit generate",
-    "test:agent": "node scripts/run-agent-evaluation.mjs"
+    "test:agent": "node scripts/run-agent-evaluation.mjs",
+    "eval:personalization": "node scripts/run-personalization-pilot.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

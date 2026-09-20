@@ -1637,3 +1637,11 @@ export const readingCalendarEvents = sqliteTable("reading_calendar_events", {
   kind: text("kind").notNull(),
   occurredAt: text("occurred_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
 }, table => [uniqueIndex("idx_reading_calendar_daily").on(table.spaceId, table.day, table.paperId, table.kind)]);
+
+// Isolated, bounded experiment records. No links to user research data.
+export const personalizationPilotRuns = sqliteTable('personalization_pilot_runs', {
+  id:text('id').primaryKey(),experimentHash:text('experiment_hash').notNull(),
+  sourceCommit:text('source_commit').notNull(),caseId:text('case_id').notNull(),variant:text('variant').notNull(),
+  status:text('status').notNull().default('pending'),resultJson:text('result_json').notNull().default('{}'),
+  createdAt:integer('created_at').notNull(),
+});

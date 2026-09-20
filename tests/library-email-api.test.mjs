@@ -45,7 +45,8 @@ test('library, route collections, graph checks and opted-in email delivery isola
     await call('/api/email-subscription',{spaceId:'mine',action:'request-code',email:'reader@example.test'},429);
     const code=messages[0].body.text.match(/\b\d{6}\b/)[0];
     const verified=await call('/api/email-subscription',{spaceId:'mine',action:'verify',email:'reader@example.test',code,enabled:true,sendTime:'10:00'});assert.equal(verified.subscription.enabled,1);assert.ok(verified.subscription.verifiedAt);assert.equal(verified.subscription.sendTime,'10:00');
-    const now=Date.now();await sql([{sql:'UPDATE email_subscriptions SET next_send_at=? WHERE space_id=?',values:[now-1,'mine']}]);
+    // This scenario tests same-day retry, not a retry that crosses the Shanghai date boundary.
+    const now=Date.parse(new Date().toISOString().slice(0,10)+'T04:00:00Z');await sql([{sql:'UPDATE email_subscriptions SET next_send_at=? WHERE space_id=?',values:[now-1,'mine']}]);
     const results=await Promise.all([call(`/dispatch?now=${now}`),call(`/dispatch?now=${now}`)]);assert.equal(results.reduce((n,r)=>n+r.sent,0),1);assert.equal(messages.length,2);assert.match(messages[1].body.text,/尚未就绪/);
     await call(`/dispatch?now=${now+1000}`);assert.equal(messages.length,2);
     const tomorrow=now+86400000;await sql([

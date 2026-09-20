@@ -1,0 +1,203 @@
+{
+  "version": "abstract-pilot-v1",
+  "papers": [
+    {
+      "id": "arxiv:1807.03465",
+      "domain": "mathematics",
+      "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+      "abstract": "The Kannan-Lovász-Simonovits conjecture says that the Cheeger constant of any logconcave density is achieved to within a universal, dimension-independent constant factor by a hyperplane-induced subset. Here we survey the origin and consequences of the conjecture (in geometry, probability, information theory and algorithms) as well as recent progress resulting in the current best bounds. The conjecture has lead to several techniques of general interest.",
+      "sourceUrl": "https://arxiv.org/abs/1807.03465",
+      "sourceVersion": "v1",
+      "retrievedAt": "2026-09-20T15:27:52.547028+00:00",
+      "sourceHtmlSha256": "9f8fa1819a2eec3c4555890342429c00d893407719abbdcb72c6ba58481d3814",
+      "abstractSha256": "562cd6e0aa34934e71e3c50686284c993c38157ff203496fb71c9df801e26397"
+    },
+    {
+      "id": "arxiv:math/0605014",
+      "domain": "mathematics",
+      "title": "A Central Limit Theorem for Convex Sets",
+      "abstract": "Suppose X is a random vector, that is distributed uniformly in some n-dimensional convex set. It was conjectured that when the dimension n is very large, there exists a non-zero vector u, such that the distribution of the real random variable <X,u> is close to the gaussian distribution. A well-understood situation, is when X is distributed uniformly over the n-dimensional cube. In this case, <X,u> is approximately gaussian for, say, the vector u = (1,...,1) / sqrt(n), as follows from the classical central limit theorem. We prove the conjecture for a general convex set. Moreover, when the expectation of X is zero, and the covariance of X is the identity matrix, we show that for 'most' unit vectors u, the random variable <X,u> is distributed approximately according to the gaussian law. We argue that convexity - and perhaps geometry in general - may replace the role of independence in certain aspects of the phenomenon represented by the central limit theorem.",
+      "sourceUrl": "https://arxiv.org/abs/math/0605014",
+      "sourceVersion": "v2",
+      "retrievedAt": "2026-09-20T15:27:57.690408+00:00",
+      "sourceHtmlSha256": "c1ea5fdc0aaf829c56972bf7764f791f7ee2f9fde33bbe2e2fd36cf882b22893",
+      "abstractSha256": "85260282e9531211165104557248b84808bacfd7fb0d66fef69b8a9a859c72fd"
+    },
+    {
+      "id": "arxiv:math/0611577",
+      "domain": "mathematics",
+      "title": "Power-law estimates for the central limit theorem for convex sets",
+      "abstract": "We investigate the rate of convergence in the central limit theorem for convex sets. We obtain bounds with a power-law dependence on the dimension. These bounds are asymptotically better than the logarithmic estimates which follow from the original proof of the central limit theorem for convex sets.",
+      "sourceUrl": "https://arxiv.org/abs/math/0611577",
+      "sourceVersion": "v2",
+      "retrievedAt": "2026-09-20T15:28:02.688032+00:00",
+      "sourceHtmlSha256": "484e543ac96eb35de9c4be5d594b5a10217cc42a2d6a156110b10c2b89bd1fdc",
+      "abstractSha256": "bc119596d5254a26af24b5654e78bb3b0b66badac364d3989b9906159b99a928"
+    },
+    {
+      "id": "arxiv:1104.2791",
+      "domain": "mathematics",
+      "title": "Poincare Inequalities and Moment Maps",
+      "abstract": "We propose a new method for obtaining Poincare-type inequalities on arbitrary convex bodies in R^n. Our technique involves a dual version of Bochner's formula and a certain moment map, and it also applies to some non-convex sets. In particular, we generalize the central limit theorem for convex bodies to a class of non-convex domains, including the unit balls of L_p-spaces in R^n for 0 < p < 1.",
+      "sourceUrl": "https://arxiv.org/abs/1104.2791",
+      "sourceVersion": "v3",
+      "retrievedAt": "2026-09-20T15:28:09.054910+00:00",
+      "sourceHtmlSha256": "c487cc8015f34b118664604a0cf33fb35acd3bb692856136e654f0be54cd6c0c",
+      "abstractSha256": "32b83e90ecd6579a109bac65d94166f9b9da287ba78e5f2ee37ca0e3ad9bc0ca"
+    },
+    {
+      "id": "arxiv:2303.14938",
+      "domain": "mathematics",
+      "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+      "abstract": "We prove that the Bourgain slicing conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture in $\\mathbb{R}^n$ hold true up to a factor of $\\sqrt{\\log n}$. A new ingredient used in the proof is an improved log-concave Lichnerowicz inequality.",
+      "sourceUrl": "https://arxiv.org/abs/2303.14938",
+      "sourceVersion": "v2",
+      "retrievedAt": "2026-09-20T15:28:15.189252+00:00",
+      "sourceHtmlSha256": "e8b3af60e501f831026ef424a24f487267fd6d754294631cf53e89090a60031f",
+      "abstractSha256": "1562dfe71ae0b13b72b77e97f882fe0f59e2d66eedce8fb0775850064bbe9910"
+    },
+    {
+      "id": "arxiv:2305.10690",
+      "domain": "mathematics",
+      "title": "Sampling, Diffusions, and Stochastic Localization",
+      "abstract": "Diffusions are a successful technique to sample from high-dimensional distributions. The target distribution can be either explicitly given or learnt from a collection of samples. They implement a diffusion process whose endpoint is a sample from the target distribution. The drift of the diffusion process is typically represented as a neural network. Stochastic localization is a successful technique to prove mixing of Markov Chains and other functional inequalities in high dimension. An algorithmic version of stochastic localization was recently proposed in order to sample from certain statistical mechanics models. This expository article has three objectives: $(i)$~Generalize the algorithmic construction to other stochastic localization processes. This construction is both simple and broadly applicable; $(ii)$~Clarify the connection between diffusions and stochastic localization. This allows to derive several known sampling schemes in a unified fashion; $(iii)$~Describe the insights that follow from this unified viewpoint.",
+      "sourceUrl": "https://arxiv.org/abs/2305.10690",
+      "sourceVersion": "v2",
+      "retrievedAt": "2026-09-20T15:28:20.190993+00:00",
+      "sourceHtmlSha256": "2fa29eb101cbd4e12636fd2865ae670871f576e39a5633add88eb122f6829bf2",
+      "abstractSha256": "d6171e7710a8f3a20d25f7066e2eb5c155d0e2adc8aa9b5b8754565e2ddf4759"
+    },
+    {
+      "id": "arxiv:2402.10758",
+      "domain": "mathematics",
+      "title": "Stochastic Localization via Iterative Posterior Sampling",
+      "abstract": "Building upon score-based learning, new interest in stochastic localization techniques has recently emerged. In these models, one seeks to noise a sample from the data distribution through a stochastic process, called observation process, and progressively learns a denoiser associated to this dynamics. Apart from specific applications, the use of stochastic localization for the problem of sampling from an unnormalized target density has not been explored extensively. This work contributes to fill this gap. We consider a general stochastic localization framework and introduce an explicit class of observation processes, associated with flexible denoising schedules. We provide a complete methodology, $\\textit{Stochastic Localization via Iterative Posterior Sampling}$ (SLIPS), to obtain approximate samples of this dynamics, and as a by-product, samples from the target distribution. Our scheme is based on a Markov chain Monte Carlo estimation of the denoiser and comes with detailed practical guidelines. We illustrate the benefits and applicability of SLIPS on several benchmarks of multi-modal distributions, including Gaussian mixtures in increasing dimensions, Bayesian logistic regression and a high-dimensional field system from statistical-mechanics.",
+      "sourceUrl": "https://arxiv.org/abs/2402.10758",
+      "sourceVersion": "v3",
+      "retrievedAt": "2026-09-20T15:28:26.266108+00:00",
+      "sourceHtmlSha256": "9f77f748b692792c9a0f331799496dc801c8fa640949c27034ad7a53521fb214",
+      "abstractSha256": "079fd754ae055d3990bc5175904fbadb7f8faf70df6bc7148efcfc8f7d3e520a"
+    },
+    {
+      "id": "arxiv:2011.13661",
+      "domain": "mathematics",
+      "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+      "abstract": "We prove an almost constant lower bound of the isoperimetric coefficient in the KLS conjecture. The lower bound has the dimension dependency $d^{-o_d(1)}$. When the dimension is large enough, our lower bound is tighter than the previous best bound which has the dimension dependency $d^{-1/4}$. Improving the current best lower bound of the isoperimetric coefficient in the KLS conjecture has many implications, including improvements of the current best bounds in Bourgain's slicing conjecture and in the thin-shell conjecture, better concentration inequalities for Lipschitz functions of log-concave measures and better mixing time bounds for MCMC sampling algorithms on log-concave measures.",
+      "sourceUrl": "https://arxiv.org/abs/2011.13661",
+      "sourceVersion": "v2",
+      "retrievedAt": "2026-09-20T15:28:31.293690+00:00",
+      "sourceHtmlSha256": "7a694448d6d785c343c5dd94aca7cfe8ea757aa099a781e5d52f8199d120e9b7",
+      "abstractSha256": "8e54726e6604c20729e9f3b93f9e1c6caff3530e9c54f1e0482c225f7b71eb55"
+    },
+    {
+      "id": "arxiv:2203.15551",
+      "domain": "mathematics",
+      "title": "Bourgain's slicing problem and KLS isoperimetry up to polylog",
+      "abstract": "We prove that Bourgain's hyperplane conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture hold true up to a factor that is polylogarithmic in the dimension.",
+      "sourceUrl": "https://arxiv.org/abs/2203.15551",
+      "sourceVersion": "v2",
+      "retrievedAt": "2026-09-20T15:28:38.153613+00:00",
+      "sourceHtmlSha256": "0fd9f98e25bf12c9766ea3b5d80f31087b0f6fb88aa1915de6d5238a6fd0504e",
+      "abstractSha256": "52c24a48aad68d8218fe711cd9ad96e01fd91c3e28430355744a70748242fb0a"
+    },
+    {
+      "id": "arxiv:1102.3944",
+      "domain": "information",
+      "title": "Fixed-length lossy compression in the finite blocklength regime",
+      "abstract": "This paper studies the minimum achievable source coding rate as a function of blocklength $n$ and probability $\\epsilon$ that the distortion exceeds a given level $d$. Tight general achievability and converse bounds are derived that hold at arbitrary fixed blocklength. For stationary memoryless sources with separable distortion, the minimum rate achievable is shown to be closely approximated by $R(d) + \\sqrt{\\frac{V(d)}{n}} Q^{-1}(\\epsilon)$, where $R(d)$ is the rate-distortion function, $V(d)$ is the rate dispersion, a characteristic of the source which measures its stochastic variability, and $Q^{-1}(\\epsilon)$ is the inverse of the standard Gaussian complementary cdf.",
+      "sourceUrl": "https://arxiv.org/abs/1102.3944",
+      "sourceVersion": "v3",
+      "retrievedAt": "2026-09-20T15:28:43.297275+00:00",
+      "sourceHtmlSha256": "23a2b2fe7a9e9e86c362ea83a1ca457879ca73892ab23936f3de0c22e7e52141",
+      "abstractSha256": "f2724abf5251e432c1141c8e217c69223b782da236383a9ca4e90c66e7bde94b"
+    },
+    {
+      "id": "arxiv:1209.1317",
+      "domain": "information",
+      "title": "Lossy joint source-channel coding in the finite blocklength regime",
+      "abstract": "This paper finds new tight finite-blocklength bounds for the best achievable lossy joint source-channel code rate, and demonstrates that joint source-channel code design brings considerable performance advantage over a separate one in the non-asymptotic regime. A joint source-channel code maps a block of $k$ source symbols onto a length$-n$ channel codeword, and the fidelity of reproduction at the receiver end is measured by the probability $\\epsilon$ that the distortion exceeds a given threshold $d$. For memoryless sources and channels, it is demonstrated that the parameters of the best joint source-channel code must satisfy $nC - kR(d) \\approx \\sqrt{nV + k \\mathcal V(d)} Q(\\epsilon)$, where $C$ and $V$ are the channel capacity and channel dispersion, respectively; $R(d)$ and $\\mathcal V(d)$ are the source rate-distortion and rate-dispersion functions; and $Q$ is the standard Gaussian complementary cdf. Symbol-by-symbol (uncoded) transmission is known to achieve the Shannon limit when the source and channel satisfy a certain probabilistic matching condition. In this paper we show that even when this condition is not satisfied, symbol-by-symbol transmission is, in some cases, the best known strategy in the non-asymptotic regime.",
+      "sourceUrl": "https://arxiv.org/abs/1209.1317",
+      "sourceVersion": "v2",
+      "retrievedAt": "2026-09-20T15:28:48.295365+00:00",
+      "sourceHtmlSha256": "3db358b86a8895939875ef43ffd9466f80e14355f884b040045036afb4296421",
+      "abstractSha256": "ea5dfbab57f2ebe75ed0a6e2e931ded4c7bc25657fc47ecb79da5ccd1aa5eef7"
+    },
+    {
+      "id": "arxiv:1510.02190",
+      "domain": "information",
+      "title": "Data compression with low distortion and finite blocklength",
+      "abstract": "This paper considers lossy source coding of $n$-dimensional memoryless sources and shows an explicit approximation to the minimum source coding rate required to sustain the probability of exceeding distortion $d$ no greater than $\\epsilon$, which is simpler than known dispersion-based approximations. Our approach takes inspiration in the celebrated classical result stating that the Shannon lower bound to rate-distortion function becomes tight in the limit $d \\to 0$. We formulate an abstract version of the Shannon lower bound that recovers both the classical Shannon lower bound and the rate-distortion function itself as special cases. Likewise, we show that a nonasymptotic version of the abstract Shannon lower bound recovers all previously known nonasymptotic converses. A necessary and sufficient condition for the Shannon lower bound to be attained exactly is presented. It is demonstrated that whenever that condition is met, the rate-dispersion function is given simply by the varentropy of the source. Remarkably, all finite alphabet sources with balanced distortion measures satisfy that condition in the range of low distortions. Most continuous sources violate that condition. Still, we show that lattice quantizers closely approach the nonasymptotic Shannon lower bound, provided that the source density is smooth enough and the distortion is low. This implies that fine multidimensional lattice coverings are nearly optimal in the rate-distortion sense even at finite $n$. The achievability proof technique is based on a new bound on the output entropy of lattice quantizers in terms of the differential entropy of the source, the lattice cell size and a smoothness parameter of the source density. The technique avoids both the usual random coding argument and the simplifying assumption of the presence of a dither signal.",
+      "sourceUrl": "https://arxiv.org/abs/1510.02190",
+      "sourceVersion": "v4",
+      "retrievedAt": "2026-09-20T15:28:53.281115+00:00",
+      "sourceHtmlSha256": "46c9d8ba546aba5661f7984a7dc5e5f865f798b7a4122178515b3e2b0a4a0d04",
+      "abstractSha256": "b01c1adefadd05a054f09ee7b8795a968bac44a83e15a4c5e388181680e8233a"
+    },
+    {
+      "id": "arxiv:1508.06025",
+      "domain": "information",
+      "title": "Strong data-processing inequalities for channels and Bayesian networks",
+      "abstract": "The data-processing inequality, that is, $I(U;Y) \\le I(U;X)$ for a Markov chain $U \\to X \\to Y$, has been the method of choice for proving impossibility (converse) results in information theory and many other disciplines. Various channel-dependent improvements (called strong data-processing inequalities, or SDPIs) of this inequality have been proposed both classically and more recently. In this note we first survey known results relating various notions of contraction for a single channel. Then we consider the basic extension: given SDPI for each constituent channel in a Bayesian network, how to produce an end-to-end SDPI? Our approach is based on the (extract of the) Evans-Schulman method, which is demonstrated for three different kinds of SDPIs, namely, the usual Ahslwede-Gács type contraction coefficients (mutual information), Dobrushin's contraction coefficients (total variation), and finally the $F_I$-curve (the best possible non-linear SDPI for a given channel). Resulting bounds on the contraction coefficients are interpreted as probability of site percolation. As an example, we demonstrate how to obtain SDPI for an $n$-letter memoryless channel with feedback given an SDPI for $n=1$. Finally, we discuss a simple observation on the equivalence of a linear SDPI and comparison to an erasure channel (in the sense of \"less noisy\" order). This leads to a simple proof of a curious inequality of Samorodnitsky (2015), and sheds light on how information spreads in the subsets of inputs of a memoryless channel.",
+      "sourceUrl": "https://arxiv.org/abs/1508.06025",
+      "sourceVersion": "v4",
+      "retrievedAt": "2026-09-20T15:28:58.545655+00:00",
+      "sourceHtmlSha256": "90372c6b549d5faec72ade204a766c89e1b536e73526c63f6f7aaad9ffe7ab6c",
+      "abstractSha256": "54bc3dbeeb7a4a64704a9159bfaad8c6630d5b51911a9c6f31b8dbf6bcca6182"
+    },
+    {
+      "id": "arxiv:1410.2687",
+      "domain": "information",
+      "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+      "abstract": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder. We first provide non-asymptotic bounds for this problem and then specialize the non-asymptotic bounds for three different scenarios: discrete memoryless sources, Gaussian sources, and Markov sources. We obtain the second-order coding rates for these settings. It is interesting to observe that the second-order coding rate for Gaussian source coding with Gaussian side information available at both the encoder and the decoder is the same as that for Gaussian source coding without side information. Furthermore, regardless of the variance of the side information, the dispersion is $1/2$ nats squared per source symbol.",
+      "sourceUrl": "https://arxiv.org/abs/1410.2687",
+      "sourceVersion": "v1",
+      "retrievedAt": "2026-09-20T15:29:03.534685+00:00",
+      "sourceHtmlSha256": "ba23a9b39d3003fe03d682f7e3caea8651d22adc592da43a59a523319aa1ac98",
+      "abstractSha256": "b1fb57316935ee2694fe315a6ca70bdbddd6f50d8a6cdc3d31105b97a6ac6b3a"
+    },
+    {
+      "id": "arxiv:1203.3217",
+      "domain": "information",
+      "title": "Channel simulation via interactive communications",
+      "abstract": "In this paper, we study the problem of channel simulation via interactive communication, known as the coordination capacity, in a two-terminal network. We assume that two terminals observe i.i.d.\\ copies of two random variables and would like to generate i.i.d.\\ copies of two other random variables jointly distributed with the observed random variables. The terminals are provided with two-way communication links, and shared common randomness, all at limited rates. Two special cases of this problem are the interactive function computation studied by Ma and Ishwar, and the tradeoff curve between one-way communication and shared randomness studied by Cuff. The latter work had inspired Gohari and Anantharam to study the general problem of channel simulation via interactive communication stated above. However only inner and outer bounds for the special case of no shared randomness were obtained in their work. In this paper we settle this problem by providing an exact computable characterization of the multi-round problem. To show this we employ the technique of \"output statistics of random binning\" that has been recently developed by the authors.",
+      "sourceUrl": "https://arxiv.org/abs/1203.3217",
+      "sourceVersion": "v2",
+      "retrievedAt": "2026-09-20T15:29:08.565217+00:00",
+      "sourceHtmlSha256": "b4be6797025ef22c52b75bee309461acd5153f9793ffd24fa0a72da343a0ed63",
+      "abstractSha256": "cca9a6c85450c29d8787afc5f377ac3c912276118616078b52a476a27b3c14a7"
+    },
+    {
+      "id": "arxiv:physics/0004057",
+      "domain": "information",
+      "title": "The information bottleneck method",
+      "abstract": "We define the relevant information in a signal $x\\in X$ as being the information that this signal provides about another signal $y\\in \\Y$. Examples include the information that face images provide about the names of the people portrayed, or the information that speech sounds provide about the words spoken. Understanding the signal $x$ requires more than just predicting $y$, it also requires specifying which features of $\\X$ play a role in the prediction. We formalize this problem as that of finding a short code for $\\X$ that preserves the maximum information about $\\Y$. That is, we squeeze the information that $\\X$ provides about $\\Y$ through a `bottleneck' formed by a limited set of codewords $\\tX$. This constrained optimization problem can be seen as a generalization of rate distortion theory in which the distortion measure $d(x,\\x)$ emerges from the joint statistics of $\\X$ and $\\Y$. This approach yields an exact set of self consistent equations for the coding rules $X \\to \\tX$ and $\\tX \\to \\Y$. Solutions to these equations can be found by a convergent re-estimation method that generalizes the Blahut-Arimoto algorithm. Our variational principle provides a surprisingly rich framework for discussing a variety of problems in signal processing and learning, as will be described in detail elsewhere.",
+      "sourceUrl": "https://arxiv.org/abs/physics/0004057",
+      "sourceVersion": "v1",
+      "retrievedAt": "2026-09-20T15:29:13.554489+00:00",
+      "sourceHtmlSha256": "1ab2afad5107934841d0efc6c0c4bb860c6eff16048e4dd0e4113458950a2a6f",
+      "abstractSha256": "6cc85b78f20e0c0c9e187c7a539ece5c69c8d6d28047938d15ade98c472f7f30"
+    },
+    {
+      "id": "arxiv:cs/0412108",
+      "domain": "information",
+      "title": "Mutual Information and Minimum Mean-square Error in Gaussian Channels",
+      "abstract": "This paper deals with arbitrarily distributed finite-power input signals observed through an additive Gaussian noise channel. It shows a new formula that connects the input-output mutual information and the minimum mean-square error (MMSE) achievable by optimal estimation of the input given the output. That is, the derivative of the mutual information (nats) with respect to the signal-to-noise ratio (SNR) is equal to half the MMSE, regardless of the input statistics. This relationship holds for both scalar and vector signals, as well as for discrete-time and continuous-time noncausal MMSE estimation. This fundamental information-theoretic result has an unexpected consequence in continuous-time nonlinear estimation: For any input signal with finite power, the causal filtering MMSE achieved at SNR is equal to the average value of the noncausal smoothing MMSE achieved with a channel whose signal-to-noise ratio is chosen uniformly distributed between 0 and SNR.",
+      "sourceUrl": "https://arxiv.org/abs/cs/0412108",
+      "sourceVersion": "v1",
+      "retrievedAt": "2026-09-20T15:29:18.522941+00:00",
+      "sourceHtmlSha256": "31f14b0f001bf004e11601d719d3afce150ac29ef3ef89cef2b5ddb0e2ab3e19",
+      "abstractSha256": "e71b450e7866f2b5c59f7c806b5673ceec9fbdc9804b89a831bb36aeee565454"
+    },
+    {
+      "id": "arxiv:1411.3575",
+      "domain": "information",
+      "title": "Strong data processing inequalities and $\\Phi$-Sobolev inequalities for discrete channels",
+      "abstract": "The noisiness of a channel can be measured by comparing suitable functionals of the input and output distributions. For instance, the worst-case ratio of output relative entropy to input relative entropy for all possible pairs of input distributions is bounded from above by unity, by the data processing theorem. However, for a fixed reference input distribution, this quantity may be strictly smaller than one, giving so-called strong data processing inequalities (SDPIs). The same considerations apply to an arbitrary $\\Phi$-divergence. This paper presents a systematic study of optimal constants in SDPIs for discrete channels, including their variational characterizations, upper and lower bounds, structural results for channels on product probability spaces, and the relationship between SDPIs and so-called $\\Phi$-Sobolev inequalities (another class of inequalities that can be used to quantify the noisiness of a channel by controlling entropy-like functionals of the input distribution by suitable measures of input-output correlation). Several applications to information theory, discrete probability, and statistical physics are discussed.",
+      "sourceUrl": "https://arxiv.org/abs/1411.3575",
+      "sourceVersion": "v4",
+      "retrievedAt": "2026-09-20T15:29:23.695319+00:00",
+      "sourceHtmlSha256": "eb7f7ae9287e48dea252154e2a9878a6f0bf81e99697436180d3eb9a9a92fb16",
+      "abstractSha256": "3eb7f80f9b4a6f7d1c37c45d3078ac5b04c7007251307f0fe6ee246e4b1d87c0"
+    }
+  ]
+}

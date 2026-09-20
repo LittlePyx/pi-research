@@ -1,0 +1,28 @@
+// Authored research personas, not observations of real users. No relevance labels.
+const signal=(id,reasonCode,labelEn,evidence,layer='explicit')=>({id,reasonCode,kind:reasonCode==='duplicate_known'?'mastery':'method',labelEn,evidence,layer,confidence:layer==='explicit'?100:60,active:true});
+export const PILOT_SCENARIOS=[
+ {id:'math-bounds',domain:'mathematics',goal:'Compare approaches to dimension-dependent bounds in the KLS and thin-shell problems, focusing on assumptions and what each method establishes.',
+  goalZh:'比较 KLS 与薄壳问题的维数依赖界，核对方法、条件与结论。',knownIds:['arxiv:1807.03465'],
+  signals:[signal('m1','duplicate_known','Already read the KLS survey (arxiv:1807.03465).','Authored persona explicitly reports mastering the overview, not every method in the field.'),
+   signal('m2','method_fit','Focus on stochastic localization arguments and subsequent quantitative improvements.','Authored explicit request to compare proof tools.'),
+   signal('m3','weak_evidence','A previous informal explanation omitted assumptions; require claims grounded in the abstract.','Quality feedback on an unspecified previous explanation, not a negative label for any candidate.'),
+   signal('m4','method_fit','Possible interest in covariance control and logarithmic losses.','Authored behavioral hypothesis: repeated reading of those method sections; not confirmed.', 'inferred')]},
+ {id:'math-sampling',domain:'mathematics',goal:'Find research on sampling with stochastic localization, including computational constructions and theoretical connections.',
+  goalZh:'寻找随机局部化采样方法，比较可计算方案与理论联系。',knownIds:['arxiv:2305.10690'],
+  signals:[signal('s1','duplicate_known','Already read Sampling, Diffusions, and Stochastic Localization (arxiv:2305.10690).','Authored persona reports having read this introductory connection.'),
+   signal('s2','method_fit','Prioritize implementable posterior-sampling constructions.','Authored explicit research preference.'),
+   signal('s3','weak_evidence','Check which claims are experimental and which are theoretical; do not dismiss the entire sampling field.','Authored reliability feedback on a previous explanation.'),
+   signal('s4','method_fit','Possible interest in multimodal targets and MCMC denoiser approximation.','Authored repeated-reading hypothesis; tentative.', 'inferred')]},
+ {id:'info-distortion',domain:'information',goal:'Study finite-blocklength lossy compression, distinguishing excess-distortion probability from average-distortion criteria and identifying useful extensions.',
+  goalZh:'研究有限码长有损压缩，区分超额失真概率与平均失真，并寻找扩展。',knownIds:['arxiv:1102.3944'],
+  signals:[signal('i1','duplicate_known','Already mastered Fixed-length lossy compression in the finite blocklength regime (arxiv:1102.3944).','Authored persona reports knowledge of this paper, not all rate-distortion theory.'),
+   signal('i2','method_fit','Compare finite-length extensions involving side information and joint source-channel coding.','Authored explicit comparison task.'),
+   signal('i3','weak_evidence','An earlier explanation confused side information at both terminals with decoder-only information; preserve the distinction.','Quality feedback on an explanation, not a scope exclusion.'),
+   signal('i4','method_fit','Possible interest in low-distortion asymptotics as a bridge to nonasymptotic bounds.','Authored reading-behavior hypothesis; uncertain.', 'inferred')]},
+ {id:'info-contraction',domain:'information',goal:'Investigate information contraction, strong data processing, and their relationship to estimation or probabilistic structure.',
+  goalZh:'研究信息收缩与强数据处理，寻找估计及概率结构方面的联系。',knownIds:['arxiv:1411.3575'],
+  signals:[signal('c1','duplicate_known','Already read Strong data processing inequalities and Phi-Sobolev inequalities for discrete channels (arxiv:1411.3575).','Authored persona reports knowing this starting paper.'),
+   signal('c2','method_fit','Focus on composing contraction across networks and contrasting this with Gaussian estimation identities.','Authored explicit research preference.'),
+   signal('c3','weak_evidence','Do not infer equivalent assumptions merely from shared information-theory vocabulary.','Authored request for evidential care; do not exclude the topic.'),
+   signal('c4','method_fit','Possible interest in interactive simulation as an adjacent perspective.','Authored repeated-reading hypothesis, lower priority than explicit feedback.', 'inferred')]},
+];
