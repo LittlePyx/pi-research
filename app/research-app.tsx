@@ -5604,13 +5604,6 @@ export default function ResearchApp({ user }: { user: User }) {
     }
   };
 
-  const navItems: Array<{ id: View; label: string; mark: InterfaceIconName }> = [
-    { id: "today", label: t.today, mark: "today" },
-    { id: "threads", label: t.threads, mark: "route" },
-    { id: "learn", label: t.learn, mark: "reading" },
-    { id: "library", label: t.library, mark: "library" },
-    { id: "memory", label: t.memory, mark: "notes" },
-  ];
   const hasPaperGuide = Boolean(selectedMonitorPaper && [
     locale === "zh" ? selectedMonitorPaper.problemZh : selectedMonitorPaper.problemEn,
     locale === "zh" ? selectedMonitorPaper.methodZh : selectedMonitorPaper.methodEn,
@@ -5619,6 +5612,13 @@ export default function ResearchApp({ user }: { user: User }) {
     locale === "zh" ? selectedMonitorPaper.readingFocusZh : selectedMonitorPaper.readingFocusEn,
     ...(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh || [] : selectedMonitorPaper.researchQuestionsEn || []),
   ].some(text => text?.trim()));
+  const navItems: Array<{ id: View; label: string; mark: InterfaceIconName }> = [
+    { id: "today", label: t.today, mark: "today" },
+    { id: "threads", label: t.threads, mark: "route" },
+    { id: "learn", label: t.learn, mark: "reading" },
+    { id: "library", label: t.library, mark: "library" },
+    { id: "memory", label: t.memory, mark: "notes" },
+  ];
   const activeNav = view === "workbook" || (view === "paper-detail" && ["workbook", "thread-detail"].includes(paperReturnView)) ? "threads" : view === "paper-detail" ? paperReturnView : view === "thread-detail" ? "threads" : view;
   const mapOutlineLabels = locale === "zh"
     ? ["读取研究空间与已确认记忆", "划分主攻、辅助与探索方向", "建立方向之间的主干关系", "保存方向骨架，即将展示"]
