@@ -104,7 +104,7 @@ test("research memory separates explicit and inferred evidence while collapsing 
 test("learning, demo, share, and modal copy keep product facts ahead of interface narration", async () => {
   const [app, demo, share] = await Promise.all([
     readFile(appUrl, "utf8"),
-    readFile(new URL("../app/demo/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/demo/demo-workspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/share/[token]/page.tsx", import.meta.url), "utf8"),
   ]);
   const learning = app.slice(app.indexOf('{(view === "learn"'), app.indexOf('{(view === "library"'));
@@ -112,8 +112,8 @@ test("learning, demo, share, and modal copy keep product facts ahead of interfac
   assert.match(app, /learnTitle: "学习路径"/);
   assert.match(learning, /<LearningPathHeader path=\{activeLearningState.path\}/);
   assert.doesNotMatch(learning, /证据驱动|Pi 正在规划|v2-learning-footer/);
-  assert.match(demo, /index === 0 && <p>\{step\.detail\}<\/p>/);
-  assert.match(demo, /公开演示 · 只读/);
+  assert.match(demo, /DEMO_LEARNING_STEPS\[stage\]\.detail/);
+  assert.match(demo, /示例数据 · 本页操作仅供体验/);
   assert.doesNotMatch(share, /Pi · DeepSeek Pro/);
   assert.match(app, /"模型设置" : "Model settings"/);
   assert.doesNotMatch(app, /浏览器自带密钥|完善研究记忆/);
