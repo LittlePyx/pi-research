@@ -15,7 +15,8 @@
     "test:discovery:live": "node scripts/run-discovery-benchmark.mjs --live",
     "test:release": "npm run lint && npm run test:live && npm run test:discovery:live && npm test",
     "lint": "node scripts/lint-workspace.mjs",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "test:agent": "node scripts/run-agent-evaluation.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

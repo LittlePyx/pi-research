@@ -1,3 +1,4 @@
+import { feedbackSignalKind } from "./feedback-policy.mjs";
 export type PreferenceLayer = "explicit" | "inferred";
 
 export type PreferenceSignalInput = {
@@ -25,6 +26,7 @@ export type PreferenceSignal = {
   effectiveConfidence: number;
   sourceType: string;
   sourcePaperId?: string | null;
+  reasonCode?: string | null;
   observedAt: string;
   expiresAt: string | null;
 };
@@ -36,11 +38,11 @@ export const FEEDBACK_REASONS = {
   foundational: { kind: "foundation", zh: "是重要基础工作", en: "Important foundation", polarity: "positive" },
   surprising: { kind: "novelty", zh: "带来新方向或反直觉结果", en: "Surprising new direction", polarity: "positive" },
   topic_drift: { kind: "exclusion", zh: "偏离我的研究范围", en: "Outside my scope", polarity: "negative" },
-  too_shallow: { kind: "exclusion", zh: "内容太浅或增量太小", en: "Too shallow or incremental", polarity: "negative" },
-  weak_evidence: { kind: "exclusion", zh: "证据或方法不够可靠", en: "Weak evidence or method", polarity: "negative" },
+  too_shallow: { kind: "depth", zh: "内容太浅或增量太小", en: "Too shallow or incremental", polarity: "negative" },
+  weak_evidence: { kind: "quality", zh: "证据或方法不够可靠", en: "Weak evidence or method", polarity: "negative" },
   duplicate_known: { kind: "mastery", zh: "内容有价值，但我已经掌握", en: "Valuable, but already mastered", polarity: "negative" },
-  wrong_type: { kind: "exclusion", zh: "不是我需要的论文类型", en: "Wrong kind of paper", polarity: "negative" },
-  network_dismissed: { kind: "exclusion", zh: "已在论文网络中忽略", en: "Dismissed from the research network", polarity: "negative" },
+  wrong_type: { kind: "format", zh: "不是我需要的论文类型", en: "Wrong kind of paper", polarity: "negative" },
+  network_dismissed: { kind: "paper", zh: "已在论文网络中忽略", en: "Dismissed from the research network", polarity: "negative" },
 } as const;
 
 export type FeedbackReasonCode = keyof typeof FEEDBACK_REASONS;
@@ -83,12 +85,16 @@ export async function readPreferenceSignals(database: D1Database, spaceId: strin
   return result.results.map((row) => {
     const ageDays = Math.max(0, (now - Date.parse(row.observed_at)) / 86_400_000);
     const decay = row.layer === "explicit" ? Math.max(0.82, 1 - ageDays / 1825) : Math.max(0.45, 1 - ageDays / 540);
+    const reasonCode = row.source_type === "paper_feedback" ? row.source_id?.split(":").at(-1) : null;
+    const kind = reasonCode ? feedbackSignalKind(reasonCode, row.kind) : row.kind;
+    const labels: Record<string, [string, string]> = {quality:["证据要求","Evidence quality"], depth:["阅读深度","Reading depth"], format:["文献类型","Document type"], paper:["单篇判断","Paper decision"]};
     return {
       id: row.id,
       layer: row.layer,
-      kind: row.kind,
-      labelZh: row.label_zh,
-      labelEn: row.label_en,
+      kind,
+      reasonCode: reasonCode || null,
+      labelZh: reasonCode && labels[kind] ? row.label_zh.replace(/^排除：/, labels[kind][0] + "：") : row.label_zh,
+      labelEn: reasonCode && labels[kind] ? row.label_en.replace(/^Exclude:/, labels[kind][1] + ":") : row.label_en,
       evidence: row.evidence,
       confidence: row.confidence,
       effectiveConfidence: bounded(row.confidence * decay * Math.max(0.3, row.weight / 100)),
@@ -111,12 +117,14 @@ export async function recordPaperFeedbackSignal(
   const reason = FEEDBACK_REASONS[reasonCode];
   const positive = reason.polarity === "positive";
   const mastered = reasonCode === "duplicate_known";
+  const prefixZh = positive ? "偏好" : mastered ? "已掌握" : reason.kind === "quality" ? "证据要求" : reason.kind === "depth" ? "阅读深度" : reason.kind === "format" ? "文献类型" : reason.kind === "paper" ? "单篇判断" : "排除";
+  const prefixEn = positive ? "Prefer" : mastered ? "Mastered" : reason.kind === "quality" ? "Evidence quality" : reason.kind === "depth" ? "Reading depth" : reason.kind === "format" ? "Document type" : reason.kind === "paper" ? "Paper decision" : "Exclude";
   await upsertPreferenceSignal(database, {
     spaceId,
     layer: "explicit",
     kind: reason.kind,
-    labelZh: `${positive ? "偏好" : mastered ? "已掌握" : "排除"}：${paperTitle}`,
-    labelEn: `${positive ? "Prefer" : mastered ? "Mastered" : "Exclude"}: ${paperTitle}`,
+    labelZh: `${prefixZh}：${paperTitle}`,
+    labelEn: `${prefixEn}: ${paperTitle}`,
     evidence: `${reason.zh} / ${reason.en}${note.trim() ? ` · ${note.trim()}` : ""}`,
     confidence: 96,
     weight: positive ? 92 : mastered ? 76 : 100,

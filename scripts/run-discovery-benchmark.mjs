@@ -189,6 +189,7 @@ const offline = Object.keys(DISCOVERY_GOLD_SETS).map((profileKey) =>
   evaluateDiscoveryRanking(profileKey, buildBenchmarkReplayRecords(profileKey), { k: 10 }));
 
 const report = {
+  interpretation: "Calibration regression only: known gold titles participate in ranking; these metrics do not establish held-out recommendation quality or personalization gains.",
   benchmarkVersion: DISCOVERY_BENCHMARK_VERSION,
   mode: live ? "live" : "offline-replay",
   gates: DISCOVERY_BENCHMARK_GATES,

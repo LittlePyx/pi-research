@@ -1,0 +1,70 @@
+{
+  "version": "intent-channels-v1",
+  "scope": "Production memory-input policy, authored scenarios; no LLM recommendation evaluation",
+  "memoryAblation": [
+    {
+      "caseId": "mathematics",
+      "mode": "none",
+      "expectedSignals": 0,
+      "retainedSignals": 0,
+      "correctlyRouted": 0,
+      "unwantedSignals": 0,
+      "contextBytes": 117
+    },
+    {
+      "caseId": "mathematics",
+      "mode": "explicit",
+      "expectedSignals": 7,
+      "retainedSignals": 7,
+      "correctlyRouted": 7,
+      "unwantedSignals": 0,
+      "contextBytes": 946
+    },
+    {
+      "caseId": "mathematics",
+      "mode": "all",
+      "expectedSignals": 8,
+      "retainedSignals": 8,
+      "correctlyRouted": 8,
+      "unwantedSignals": 0,
+      "contextBytes": 1088
+    },
+    {
+      "caseId": "information",
+      "mode": "none",
+      "expectedSignals": 0,
+      "retainedSignals": 0,
+      "correctlyRouted": 0,
+      "unwantedSignals": 0,
+      "contextBytes": 117
+    },
+    {
+      "caseId": "information",
+      "mode": "explicit",
+      "expectedSignals": 7,
+      "retainedSignals": 7,
+      "correctlyRouted": 7,
+      "unwantedSignals": 0,
+      "contextBytes": 941
+    },
+    {
+      "caseId": "information",
+      "mode": "all",
+      "expectedSignals": 8,
+      "retainedSignals": 8,
+      "correctlyRouted": 8,
+      "unwantedSignals": 0,
+      "contextBytes": 1083
+    }
+  ],
+  "identityReplay": {
+    "scope": "Deterministic reproduction of the historical identity-cleaning mechanism, not a new production run",
+    "corruptedMatched": 0,
+    "preservedMatched": 1
+  },
+  "recommendationQuality": {
+    "status": "not_run",
+    "reason": "No independently judged, paired model rankings supplied; do not infer recommendation uplift from policy tests."
+  },
+  "passed": true
+}

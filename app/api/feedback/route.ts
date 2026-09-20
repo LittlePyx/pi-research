@@ -51,6 +51,10 @@ function feedbackEffect(
     zh: `已从“${routeEvidence.trackTitleZh}”的路线候选中移除；论文与历史记录仍然保留。`,
     en: `Removed from the route candidates for “${routeEvidence.trackTitleEn}”; the paper and its history remain available.`,
   };
+  if (reasonCode && ["quality", "depth", "format", "paper"].includes(FEEDBACK_REASONS[reasonCode].kind)) return {
+    zh: "已记录“" + FEEDBACK_REASONS[reasonCode].zh + "”；用于后续材料选择，不视为排除整个研究主题。",
+    en: "Recorded: " + FEEDBACK_REASONS[reasonCode].en + ". This informs material selection, not exclusion of the whole topic.",
+  };
   if (kind === "not_relevant") return {
     zh: (reasonCode ? "已记录“" + FEEDBACK_REASONS[reasonCode].zh + "”，" : "已记录排除原因，") + "供后续检索减少此类候选；当前推荐未重新计算。",
     en: "The exclusion will guide future discovery; current recommendations have not been recalculated.",

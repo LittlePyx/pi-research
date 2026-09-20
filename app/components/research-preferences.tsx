@@ -22,6 +22,10 @@ export function ResearchPreferences({ signals, locale, demo, loading, failed, on
     if (signal.kind === "method") return zh ? "关注相关方法与适用条件。" : "Future search planning can use these method interests to explore tools and their assumptions.";
     if (signal.kind === "question") return zh ? "围绕这些问题寻找补充证据。" : "Provides open questions for future searches for supporting evidence.";
     if (signal.kind === "behavior_interest") return zh ? "为近期持续关注的方向补充检索线索。" : "Uses sustained attention as a revisable search signal, without overriding explicit feedback.";
+    if (signal.kind === "quality") return zh ? "要求更可靠的证据，不排除整个主题。" : "Seek stronger evidence without excluding the topic.";
+    if (signal.kind === "depth") return zh ? "寻找更深入的材料，不降低对该方向的兴趣。" : "Seek deeper treatment, without reducing interest in this field.";
+    if (signal.kind === "format") return zh ? "调整文献类型，不改变研究范围。" : "Adjust document types without changing research scope.";
+    if (signal.kind === "paper") return zh ? "仅记录对这篇材料的判断，不推断主题偏好。" : "A decision about this paper, not a topic preference.";
     if (signal.kind === "exclusion") return zh ? "减少偏离研究范围的检索候选。" : "Provides exclusion context for future discovery.";
     if (signal.kind === "mastery") return zh ? "在已有知识之上寻找进阶材料。" : "Provides known background to help discovery move deeper.";
     return zh ? "为后续检索提供研究范围。" : "Informs future search planning around topics, methods or open questions.";

@@ -1,3 +1,4 @@
+import { buildPreferenceGuidance, feedbackExampleContext, FEEDBACK_POLICY_VERSION, PREFERENCE_GUIDANCE_RULES } from "../../../lib/feedback-policy.mjs";
 import { researchSourcePlan, sourcePlanIssn, normalizeSourceTitle } from "../../../lib/research-source-plan";
 import { readDailyReviewProgress, needsDailyReviewTopup, dailyReviewTopupDue, DAILY_TOPUP_INTERVAL_MS } from "../../../lib/daily-review-target";
 import { CITATION_SCAN_SEEDS_SQL, citationDiscoveryDescription } from "../../../lib/citation-scan-seeds";
@@ -2275,7 +2276,7 @@ async function ensureDailyQueryPlan(
     actionRunRevision: guidance?.action_run_revision || "",
     confirmedEvidence: confirmedEvidence.results,
   });
-  const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(guidanceIdentity));
+  const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(FEEDBACK_POLICY_VERSION + ":" + guidanceIdentity));
   const guidanceRevision = Array.from(new Uint8Array(guidanceDigest)).slice(0, 12).map((value) => value.toString(16).padStart(2, "0")).join("");
   let existingQueries: (Partial<Record<Horizon, string[]>> & { guidanceRevision?: string }) = {};
   try { existingQueries = existing ? JSON.parse(existing.queries_json) as typeof existingQueries : {}; } catch { existingQueries = {}; }
@@ -2397,11 +2398,12 @@ async function ensureDailyQueryPlan(
               `Build today's query plan for ${space.name}: ${space.description}.`,
               `Exploration mode: ${preference.explorationMode}. Return exactly ${queryLimit} concise English bibliographic query strings per horizon.`,
               benchmarkCalibrationPrompt(preference.profileKey),
+              PREFERENCE_GUIDANCE_RULES,
               "The three horizons are simultaneous: days = newest 14 days; months = new and high-quality 6 months; years = durable, foundational, methodologically useful 5 years.",
               "For the days horizon, prioritize a direct update to a core route and an under-covered route or active research problem. Pi evaluates this newest horizon first; do not spend both slots on synonyms for one fashionable subtopic. Journal issue, tracked-author, citation-frontier, arXiv, OpenAlex, and Semantic Scholar branches run alongside these planned queries.",
               "Move beyond yesterday's obvious wording. Cover core depth, one adjacent bridge when mode allows, unresolved questions, under-covered subdirections, methods, and representative venues. When a grounded cross-paper synthesis or direction assessment contains an evidence gap or nextSearchQuery, use at least one horizon slot to test that gap instead of merely repeating broad topic keywords. Do not include dates, API syntax, Boolean operators, journal names alone, or generic words such as research/study/paper.",
               "Return {\"days\":[...],\"months\":[...],\"years\":[...],\"rationaleZh\":\"...\",\"rationaleEn\":\"...\"}.",
-              `Explicit and inferred preference evidence: ${JSON.stringify(signals.map((item) => ({ layer: item.layer, kind: item.kind, label: item.labelEn, evidence: item.evidence, confidence: item.effectiveConfidence })))}`,
+              `Explicit and inferred preference evidence: ${JSON.stringify(buildPreferenceGuidance(signals))}`,
               `Existing directions and user depth: ${JSON.stringify(tracks.results.map((track) => ({ title: track.title_en, role: track.user_role, depth: track.depth_score, interaction: track.interaction_score, summary: track.summary_en, queries: parseVenues(track.search_queries).slice(0, 4) })))}`,
               `Grounded direction opportunities, watch signals, and evidence gaps; Grounded cross-paper synthesis that today's search should test: ${JSON.stringify(directionSignals)}`,
               `User-confirmed active research problems. Give these greater weight than broad route wording; use at least one horizon slot to reduce their stated uncertainty when a safe query is available: ${JSON.stringify(activeProblems.results)}`,
@@ -2522,12 +2524,10 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
   for (const evidence of groundedEvidenceRows.results) {
     context.push(cleanText(`${evidence.title} — grounded ${evidence.kind}: ${evidence.claim_en}${evidence.section_label ? ` [${evidence.section_label}]` : ""}`).slice(0, 520));
   }
-  const positive = feedbackRows.results
-    .filter((row) => row.saved || row.feedback === "relevant")
-    .map((row) => cleanText(`${row.title}${row.venue ? ` — ${row.venue}` : ""}`));
-  const negative = feedbackRows.results
-    .filter((row) => row.feedback === "not_relevant" && row.reason_code !== "duplicate_known")
-    .map((row) => cleanText(`${row.title}${row.venue ? ` — ${row.venue}` : ""}`));
+  const feedbackContext = feedbackExampleContext(feedbackRows.results);
+  const positive = feedbackContext.interest.map(cleanText);
+  const negative = feedbackContext.scope.map(cleanText);
+  context.unshift("Feedback constraints describe evidence quality, depth, format or mastery; they do not exclude a research topic. Saved papers are tentative interest, not proof of relevance or mastery.", ...feedbackContext.constraints.slice(0, 4).map((constraint) => constraint.slice(0, 180)));
   return {
     ...space,
     memoryContext: Array.from(new Set(context.map((item) => cleanText(item)).filter(Boolean))).join("; ").slice(0, 2600),

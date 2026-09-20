@@ -1,0 +1,61 @@
+{
+  "kind": "redacted-historical-excerpts",
+  "observedDate": "2026-09-10",
+  "screening": {
+    "version": 209,
+    "completed": 59,
+    "total": 59,
+    "batchMatched": 14,
+    "batchSize": 14,
+    "durationMs": 15184,
+    "queuedForDeepReview": 8,
+    "formalRecommendationsAtSnapshot": 0
+  },
+  "verification": {
+    "version": 217,
+    "subsetSize": 4,
+    "published": 2,
+    "withheld": 2,
+    "pending": 0,
+    "outcomes": [
+      {
+        "record": "paper-1",
+        "status": "degraded",
+        "published": false,
+        "retryable": false,
+        "corrected": false
+      },
+      {
+        "record": "paper-2",
+        "status": "degraded",
+        "published": false,
+        "retryable": false,
+        "corrected": false
+      },
+      {
+        "record": "paper-3",
+        "status": "verified",
+        "published": true,
+        "retryable": false,
+        "corrected": false
+      },
+      {
+        "record": "paper-4",
+        "status": "revised",
+        "published": true,
+        "retryable": false,
+        "corrected": true
+      }
+    ],
+    "incompleteResponseObserved": true
+  },
+  "sourceDigests": {
+    "screening": "66c4d14990b906f0c527608f6ac0da9771bd266681943aca65f5322e2495f6c7",
+    "verification": "691514f23db97dc1afc8d9438a54089ef4d415277c78ceaca54db3551ac0d95f"
+  },
+  "limitations": [
+    "Historical excerpts across recovery tasks, not a complete initial retrieval trace.",
+    "Four verification drafts are a subset; do not treat them as all eight queued papers.",
+    "These records do not measure personalized recommendation accuracy."
+  ]
+}
