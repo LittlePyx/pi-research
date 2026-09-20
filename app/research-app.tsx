@@ -3111,6 +3111,14 @@ export default function ResearchApp({ user }: { user: User }) {
   const [navigationRevision, setNavigationRevision] = useState(0);
   const [navigationIssue, setNavigationIssue] = useState<"space" | "missing" | "paper" | null>(null);
   const [requestedLocation, setRequestedLocation] = useState<WorkspaceLocation | null>(null);
+  useEffect(() => {
+    if (!navigationIssue) return;
+    const frame = requestAnimationFrame(() => {
+      const notice = document.querySelector<HTMLElement>(".pi-navigation-notice");
+      notice?.focus({ preventScroll: true }); notice?.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [navigationIssue]);
   const [paperNetworkMode, setPaperNetworkMode] = useState<PaperNetworkMode>("similarity");
   const [libraryGraphPaperId, setLibraryGraphPaperId] = useState("");
   const [graphSurface, setGraphSurface] = useState<"library" | "routes">("library");
@@ -5885,7 +5893,7 @@ export default function ResearchApp({ user }: { user: User }) {
       </aside>
 
       <div className="v2-main" id="workspace-content" tabIndex={-1}>
-        {navigationIssue && <section className="pi-navigation-notice" role="alert"><strong>{navigationIssue === "space" ? (locale === "zh" ? "这个链接属于另一个研究空间" : "This link belongs to another workspace") : navigationIssue === "missing" ? (locale === "zh" ? "暂时找不到这条研究路线" : "This research route is unavailable") : (locale === "zh" ? "论文暂时无法读取" : "This paper could not be loaded")}</strong><p>{navigationIssue === "space" ? (locale === "zh" ? "当前空间没有改变。仅能切换到你有权访问的空间。" : "Your current workspace is unchanged. You can switch only to an accessible workspace.") : (locale === "zh" ? "已有内容保留，你可以重试或返回当前空间。" : "Saved content is preserved. Retry or return to your workspace.")}</p>{navigationIssue === "space" ? spaces.some(space => space.id === requestedLocation?.space) && <button type="button" onClick={() => { const target = spaces.find(space => space.id === requestedLocation?.space); if (!target || !requestedLocation) return; const destination = workspaceHash(requestedLocation); switchSpace(target); window.history.replaceState(null, "", destination); restoredLocation.current = ""; setNavigationRevision(n => n + 1); }}>{locale === "zh" ? "切换并打开链接" : "Switch and open link"}</button> : <button type="button" onClick={() => { if (navigationIssue === "missing") navigate("threads"); else { if (requestedLocation) window.history.pushState(null, "", workspaceHash(requestedLocation)); restoredLocation.current = ""; setNavigationRevision(n => n + 1); } }}>{navigationIssue === "missing" ? (locale === "zh" ? "查看路线总览" : "View routes") : (locale === "zh" ? "重试" : "Retry")}</button>}<button type="button" onClick={() => navigate("today")}>{locale === "zh" ? "返回当前空间" : "Return to current workspace"}</button></section>}
+        {navigationIssue && <section className="pi-navigation-notice" role="alert" tabIndex={-1}><strong>{navigationIssue === "space" ? (locale === "zh" ? "这个链接属于另一个研究空间" : "This link belongs to another workspace") : navigationIssue === "missing" ? (locale === "zh" ? "暂时找不到这条研究路线" : "This research route is unavailable") : (locale === "zh" ? "论文暂时无法读取" : "This paper could not be loaded")}</strong><p>{navigationIssue === "space" ? (locale === "zh" ? "当前空间没有改变。仅能切换到你有权访问的空间。" : "Your current workspace is unchanged. You can switch only to an accessible workspace.") : (locale === "zh" ? "已有内容保留，你可以重试或返回当前空间。" : "Saved content is preserved. Retry or return to your workspace.")}</p>{navigationIssue === "space" ? spaces.some(space => space.id === requestedLocation?.space) && <button type="button" onClick={() => { const target = spaces.find(space => space.id === requestedLocation?.space); if (!target || !requestedLocation) return; const destination = workspaceHash(requestedLocation); switchSpace(target); window.history.replaceState(null, "", destination); restoredLocation.current = ""; setNavigationRevision(n => n + 1); }}>{locale === "zh" ? "切换并打开链接" : "Switch and open link"}</button> : <button type="button" onClick={() => { if (navigationIssue === "missing") navigate("threads"); else { if (requestedLocation) window.history.pushState(null, "", workspaceHash(requestedLocation)); restoredLocation.current = ""; setNavigationRevision(n => n + 1); } }}>{navigationIssue === "missing" ? (locale === "zh" ? "查看路线总览" : "View routes") : (locale === "zh" ? "重试" : "Retry")}</button>}<button type="button" onClick={() => navigate("today")}>{locale === "zh" ? "返回当前空间" : "Return to current workspace"}</button></section>}
 
         <header className="v2-topbar">
           <button className="v2-mobile-menu" type="button" aria-label="Menu" onClick={() => setMobileNav(true)}>≡</button>
