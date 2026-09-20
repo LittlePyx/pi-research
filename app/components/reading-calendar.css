@@ -1,0 +1,33 @@
+.v2-app.pi-workspace .pi-reading-calendar { margin:16px 0 24px;border-block:1px solid #dce2e8;background:white; }
+.v2-app.pi-workspace .pi-calendar-toggle { display:flex;width:100%;justify-content:space-between;gap:16px;padding:16px 20px;border:0;background:transparent;color:#202832;font-size:16px;font-weight:600;text-align:left; }
+.v2-app.pi-workspace .pi-calendar-toggle > span { font-size:13px;font-weight:400;color:#245ac6; }
+.v2-app.pi-workspace .pi-calendar-body { padding:0 20px 18px; }
+.v2-app.pi-workspace .pi-calendar-body > header { display:flex;align-items:center;gap:18px;padding:8px 0 20px;font-size:13px; }
+.v2-app.pi-workspace .pi-calendar-body label { display:flex;gap:10px;align-items:center; }
+.v2-app.pi-workspace .pi-calendar-body input { padding:7px;border:1px solid #dce2e8;border-radius:4px;background:white;color:#202832; }
+.v2-app.pi-workspace .pi-calendar-body button { cursor:pointer; }
+.v2-app.pi-workspace .pi-calendar-body > header button,.v2-app.pi-workspace .pi-calendar-results > p button { border:0;background:transparent;color:#245ac6; }
+.v2-app.pi-workspace .pi-calendar-body > header small { margin-left:auto;color:#75808d; }
+.v2-app.pi-workspace .pi-calendar-layout { display:grid;grid-template-columns:minmax(260px,340px) minmax(0,1fr);gap:32px; }
+.v2-app.pi-workspace .pi-calendar-week,.v2-app.pi-workspace .pi-calendar-grid { display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px; }
+.v2-app.pi-workspace .pi-calendar-week span { text-align:center;font-size:12px;color:#75808d;padding-bottom:8px; }
+.v2-app.pi-workspace .pi-calendar-grid button { display:flex;flex-direction:column;align-items:center;min-height:48px;padding:6px 0;border:1px solid transparent;border-radius:4px;background:transparent;color:#202832;font-size:14px; }
+.v2-app.pi-workspace .pi-calendar-grid button small { font-size:10px;min-height:14px;color:#657180; }
+.v2-app.pi-workspace .pi-calendar-grid button.is-today { border-color:#bcc9dc; }
+.v2-app.pi-workspace .pi-calendar-grid button[aria-pressed="true"] { background:#245ac6;color:#fff; }
+.v2-app.pi-workspace .pi-calendar-grid button[aria-pressed="true"] small { color:white; }
+.v2-app.pi-workspace .pi-calendar-results h3 { margin:0 0 12px;font:600 18px/1.5 sans-serif; }
+.v2-app.pi-workspace .pi-calendar-tabs { display:flex;gap:18px;border-bottom:1px solid #dce2e8; }
+.v2-app.pi-workspace .pi-calendar-tabs button { padding:0 0 10px;border:0;border-bottom:2px solid transparent;background:transparent;font-size:14px;color:#657180; }
+.v2-app.pi-workspace .pi-calendar-tabs button[aria-pressed="true"] { color:#245ac6;border-bottom-color:#245ac6; }
+.v2-app.pi-workspace .pi-calendar-tabs small { margin-left:6px; }
+.v2-app.pi-workspace .pi-calendar-results ul { padding:0;margin:0;list-style:none; }
+.v2-app.pi-workspace .pi-calendar-results li { padding:16px 0;border-bottom:1px solid #e5e9ee; }
+.v2-app.pi-workspace .pi-calendar-results li button { border:0;background:transparent;color:#202832;text-align:left;font-size:15px;line-height:1.6;font-weight:600;padding:0;overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-calendar-results p { margin:6px 0;font-size:13px;line-height:1.7;color:#75808d; }
+.v2-app.pi-workspace .pi-calendar-results nav { display:flex;gap:16px;align-items:center;margin-top:16px; }
+.v2-app.pi-workspace .pi-calendar-results nav button { border:0;background:transparent;color:#245ac6; }
+.v2-app.pi-workspace .pi-calendar-results button:disabled { opacity:.4;cursor:default; }
+.v2-app.pi-workspace .pi-calendar-legend,.v2-app.pi-workspace .pi-calendar-body > footer { margin:14px 0 0;font-size:12px;line-height:1.7;color:#75808d; }
+.v2-app.pi-workspace .pi-calendar-body > footer { border-top:1px solid #e5e9ee;padding-top:14px; }
+@media(max-width:800px) { .v2-app.pi-workspace .pi-calendar-layout { grid-template-columns:1fr;gap:24px; } .v2-app.pi-workspace .pi-calendar-body > header { flex-wrap:wrap;gap:12px; } }

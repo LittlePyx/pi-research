@@ -285,7 +285,7 @@ export async function PATCH(request: Request) {
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(space_id, paper_id) DO UPDATE SET status = excluded.status, note = excluded.note,
      started_at = CASE WHEN excluded.status = 'reading' THEN COALESCE(paper_reading_progress.started_at, excluded.started_at) ELSE paper_reading_progress.started_at END,
-     completed_at = CASE WHEN excluded.status IN ('read','mastered','cited') THEN excluded.completed_at ELSE NULL END,
+     completed_at = CASE WHEN excluded.status IN ('read','mastered','cited') THEN CASE WHEN excluded.status = paper_reading_progress.status THEN COALESCE(paper_reading_progress.completed_at, excluded.completed_at) ELSE excluded.completed_at END ELSE NULL END,
      updated_at = CURRENT_TIMESTAMP`,
   ).bind(crypto.randomUUID(), spaceId, paperId, status, note, status === "reading" ? now : null,
     ["read", "mastered", "cited"].includes(status) ? now : null);

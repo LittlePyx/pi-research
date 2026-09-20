@@ -1,5 +1,6 @@
 "use client";
 
+import { ReadingCalendar } from "./components/reading-calendar";
 import { AnswerMarkdown } from "./components/answer-markdown";
 import { SectionNavigation } from "./components/section-navigation";
 import { LibraryExplorer } from "./components/library-explorer";
@@ -5791,6 +5792,7 @@ export default function ResearchApp({ user }: { user: User }) {
               <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{!monitor ? (locale === "zh" ? "正在读取已有内容" : "Loading saved content") : scanIsActive ? scanPhase : monitor?.status === "ready" ? monitorReadyLabel : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
             </section>
 
+            <ReadingCalendar key={`calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "today")} />
             <SectionNavigation label={locale === "zh" ? "本页" : "On this page"} items={[...((monitor?.dailyBrief || additionalTodayPapers.length) ? [{ label: locale === "zh" ? "推荐阅读" : "Reading", target: !dailyBriefEntryCount && additionalTodayPapers.length ? ".v2-today-more" : ".v2-ai-daily-brief" }] : []), ...(monitorQualityReviewStatus(monitor) ? [{ label: locale === "zh" ? "评审进度" : "Review status", target: ".v2-background-review-status" }] : []), { label: locale === "zh" ? "扫描与来源" : "Discovery & sources", target: ".v2-monitor-panel" }]} />
             {monitor?.dailyBrief && (dailyBriefEntryCount > 0 || !additionalTodayPapers.length) && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
               <div className="v2-daily-brief-lead">

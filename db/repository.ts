@@ -1,3 +1,4 @@
+import { readingCalendarBootstrapSql } from "../lib/reading-calendar";
 import { env } from "cloudflare:workers";
 import { schemaInitializer } from "../lib/schema-initialization";
 import { researchWorkbookBootstrapSql, researchGapDiscoveryBootstrapSql, researchMapEvidenceProposalBootstrapSql, researchProblemBootstrapSql, researchRouteRevisionBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
@@ -389,6 +390,7 @@ async function bootstrapSchema(database: D1Database) {
   const recoveryColumns = await database.prepare("PRAGMA table_info(paper_abstract_recovery)").all<{ name: string }>();
   if (!recoveryColumns.results.some(column => column.name === "result_json")) await database.prepare("ALTER TABLE paper_abstract_recovery ADD COLUMN result_json TEXT NOT NULL DEFAULT ''").run();
   await ensurePaperInsightReviewColumns(database);
+  await database.batch(readingCalendarBootstrapSql.map(statement => database.prepare(statement)));
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_recommendation_history ON paper_insights(space_id, ever_recommended, last_recommended_at)").run();
   await ensureGrowthMapColumns(database);
   await ensureResearchNetworkColumns(database);

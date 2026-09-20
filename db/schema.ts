@@ -1628,3 +1628,12 @@ export const researchRouteLibraryReviews = sqliteTable('research_route_library_r
   relevance:text('relevance').notNull().default('insufficient'),assessmentJson:text('assessment_json').notNull().default('{}'),
   retryAt:integer('retry_at').notNull().default(0),checkedAt:integer('checked_at').notNull(),
 },t=>[uniqueIndex('idx_route_library_review_pair').on(t.trackId,t.paperId),index('idx_route_library_review_space').on(t.spaceId,t.trackId)]);
+
+export const readingCalendarEvents = sqliteTable("reading_calendar_events", {
+  id: text("id").primaryKey(),
+  spaceId: text("space_id").notNull().references(() => researchSpaces.id, { onDelete: "cascade" }),
+  paperId: text("paper_id").notNull().references(() => monitoredPapers.id, { onDelete: "cascade" }),
+  day: text("day").notNull(),
+  kind: text("kind").notNull(),
+  occurredAt: text("occurred_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+}, table => [uniqueIndex("idx_reading_calendar_daily").on(table.spaceId, table.day, table.paperId, table.kind)]);
