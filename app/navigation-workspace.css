@@ -40,3 +40,14 @@
  .v2-app.pi-workspace .v2-ask-panel { padding:22px 18px; }
 }
 
+
+/* Optional demo guide uses ordinary workspace navigation, never marks progress. */
+.v2-app.pi-workspace .pi-demo-journey { margin:24px 40px 0; padding:0 0 20px; border-bottom:1px solid var(--pi-line); }
+.v2-app.pi-workspace .pi-demo-journey strong { font-size:15px; color:var(--pi-ink); }
+.v2-app.pi-workspace .pi-demo-journey p { margin:6px 0 14px; font-size:13px; line-height:1.7; color:var(--pi-muted); }
+.v2-app.pi-workspace .pi-demo-journey nav { display:flex; flex-wrap:wrap; gap:10px 22px; }
+.v2-app.pi-workspace .pi-demo-journey a { display:flex; align-items:center; gap:8px; padding:5px 0; color:var(--pi-muted); font-size:13px; text-decoration:none; border-bottom:2px solid transparent; }
+.v2-app.pi-workspace .pi-demo-journey a span { font-size:11px; color:#7f8b97; }
+.v2-app.pi-workspace .pi-demo-journey a[aria-current],.v2-app.pi-workspace .pi-demo-journey a:hover { color:var(--pi-accent); border-bottom-color:var(--pi-accent); }
+.v2-app.pi-workspace .pi-demo-journey small { display:block; margin-top:12px; font-size:12px; line-height:1.7; color:var(--pi-muted); }
+@media(max-width:620px) { .v2-app.pi-workspace .pi-demo-journey { margin:20px 16px 0; } .v2-app.pi-workspace .pi-demo-journey nav { gap:4px 16px; } }

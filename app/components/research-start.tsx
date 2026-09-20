@@ -20,7 +20,7 @@ export function ResearchStart({spaceId,paperId,locale,onRead,onStart}:{spaceId:s
   }catch(e){if(!signal?.aborted)setError(zh?(e instanceof Error&&e.message==='409'?'材料或路线状态已变化，请刷新建议后再确认。':'未能保存目标，请重试。'):'Could not save this goal. Refresh the suggestions and retry.');}finally{if(!signal?.aborted)setBusy(false);}
  };
 
- return <section className="pi-research-start"><header><div><h2>{zh?'从阅读走向研究':'From reading to research'}</h2><p>{zh?'从一篇已评审论文的问题开始，选择并调整你的目标。':'Choose and refine a goal from a reviewed paper.'}</p></div><button type="button" className="pi-start-entry" disabled={busy} aria-expanded={expanded} aria-controls={panelId} onClick={()=>{if(!expanded){setLoading(true);setItems([]);setSelected(null);setError('');}setExpanded(v=>!v);}}>{expanded?(zh?'收起':'Close'):(zh?'选择研究目标':'Choose a goal')} {expanded?'−':'→'}</button></header>
+ return <section className="pi-research-start"><header><div><h2>{zh?'从阅读走向研究':'From reading to research'}</h2><p>{zh?'从论文中的问题开始，选择并调整你的目标。':'Choose and refine a goal from a paper.'}</p></div><button type="button" className="pi-start-entry" disabled={busy} aria-expanded={expanded} aria-controls={panelId} onClick={()=>{if(!expanded){setLoading(true);setItems([]);setSelected(null);setError('');}setExpanded(v=>!v);}}>{expanded?(zh?'收起':'Close'):(zh?'选择研究目标':'Choose a goal')} {expanded?'−':'→'}</button></header>
  {expanded&&<div id={panelId} className="pi-start-panel">
  {loading&&<p role="status">{zh?'正在整理可选材料…':'Loading reviewed papers…'}</p>}
  {!loading&&!items.length&&!error&&<p>{zh?'有合适的评审材料后，研究起点会显示在这里。你也可以前往学习路径，自行设定目标。':'Research starting points will appear here when suitable reviewed papers are available. You can also set a goal in Learning paths.'}</p>}

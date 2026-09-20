@@ -109,7 +109,7 @@ test("scan completion uses monitor evidence and never asserts an unloaded or bou
     assert.equal(monitorScanCompletionLabel(monitor, "en"), "This scan has ended");
   }
   const app = await readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8");
-  assert.match(app, /const monitorReadyLabel = monitorScanCompletionLabel\(monitor, locale\)/);
+  assert.match(app, /const monitorReadyLabel = demo \?[\s\S]*? : monitorScanCompletionLabel\(monitor, locale\)/);
   assert.doesNotMatch(app, /今日扫描与当前质量队列已完成|current quality queue are complete/);
 });
 
