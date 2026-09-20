@@ -1,3 +1,0 @@
-/* The demo inherits all layout and component styles from the real workspace. */
-:global(.pi-demo-notice) { padding:10px 24px; border-bottom:1px solid var(--pi-line); background:var(--pi-accent-soft); color:var(--pi-muted); font-size:12px; line-height:1.7; }
-@media (max-width: 620px) { :global(.pi-demo-notice) { padding:9px 16px; } }

@@ -113,7 +113,6 @@ test("learning, demo, share, and modal copy keep product facts ahead of interfac
   assert.match(learning, /<LearningPathHeader path=\{activeLearningState.path\}/);
   assert.doesNotMatch(learning, /证据驱动|Pi 正在规划|v2-learning-footer/);
   assert.match(demo, /<ResearchApp demo/);
-  assert.match(app, /文献与状态为样例/);
   assert.doesNotMatch(share, /Pi · DeepSeek Pro/);
   assert.match(app, /"模型设置" : "Model settings"/);
   assert.doesNotMatch(app, /浏览器自带密钥|完善研究记忆/);
