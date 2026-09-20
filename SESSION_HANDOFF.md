@@ -6,7 +6,7 @@
 - 新增显式workspaceFetch适配器，所有12个浏览器API调用模块通过它请求。仅/demo（含尾斜杠）返回本地闭合的样例响应，未知接口与未支持写入一律403，不回落生产网络；正式路径保持globalThis.fetch。未全局替换fetch、未新增服务端演示接口。两个演示领域/14篇公开文献、本地笔记/比较记录/来源偏好可试用；刷新重置，现有session草稿用demo用户与空间独立键。
 - 跳过演示匿名workspace cookie初始化，locale/activeSpace使用pi-demo键；不读取或覆盖真实空间/语言/身份。Key输入框停用，模型发送、直接扫描与创建空间停用；其他未提供模拟的操作返回演示限制，不伪造模型结果。比较样例明确无摘要证据，所有格标missing；不生成科学结论。后台、邮件、数据库、质量标准未修改。
 - 桌面1440与手机390隔离真实React验收：五页、路线四分区、阅读笔记→记忆、比较记录保存、模型设置、关注来源、询问上下文、手机菜单；无真实API请求/JS运行异常，原有localStorage哨兵与Cookie保持隔离。全672测试、构建、离线基准和修改模块lint通过；大ResearchApp需6144MB单独lint，原4GB混批失败后按既有分批方案通过。outputs/v270-*.png已目视检查。
-- 用户docs/未动，邮件继续暂停，旧自动任务未恢复。发布结果待补。
+- 用户docs/未动，邮件继续暂停，旧自动任务未恢复。业务ce91fdd909aad589c755360c0b2daa8f565e23d3已同步GitHub/Sites；v270版本appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_cdb671a327a48191926a18afa96ab8b0，部署appgdep_6aafaf218d0081919db98efa74caf399于10:02:19 UTC succeeded，public/环境修订6不变。CI35503893390发布时仍在运行；线上/demo交接queued，预览停止。
 
 
 ## 2026-09-20：演示空间重做
