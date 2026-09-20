@@ -123,10 +123,12 @@ function readingHarness(fetch) {
   const source = app.slice(app.indexOf("  const updateReadingProgress = async"), app.indexOf("  const openMonitorPaper ="));
   assert.ok(source.includes("readingWriteRef"));
   const paper = { id: "paper", readingStatus: "unread", readingNote: "original" };
-  const state = { selected: paper, monitor: { papers: [paper], historyPapers: [paper] }, toast: "", reload: 0, saving: false };
+  const state = { selected: paper, monitor: { papers: [paper], historyPapers: [paper] }, toast: "", noteError: "", clearedDrafts: [], reload: 0, saving: false };
   const readingWriteRef = { current: null };
   const paperNetworkSpaceRef = { current: "space-a" };
   const dependencies = {
+    user: { userId: "qa-user" }, sessionDraftKey: (...parts) => parts.join(":"), clearSessionDraft: (...args) => state.clearedDrafts.push(args),
+    setNoteSaveError: value => { state.noteError = value; },
     fetch, readingWriteRef, paperNetworkSpaceRef, activeSpace: { id: "space-a" }, locale: "en",
     setReadingSaving: (value) => { state.saving = value; }, setReadingMemoryAnalyzing: () => {},
     setSelectedMonitorPaper: (update) => { state.selected = update(state.selected); },
@@ -145,7 +147,8 @@ test("failed reading saves leave the displayed persisted state and learning path
   assert.equal(harness.state.selected.readingNote, "original");
   assert.equal(harness.state.reload, 0);
   assert.equal(harness.state.saving, false);
-  assert.match(harness.state.toast, /Could not save/);
+  assert.match(harness.state.noteError, /Save failed/);
+  assert.equal(harness.state.clearedDrafts.length, 0);
 });
 
 test("reading saves are single-flight and update the learning path only after persistence", async () => {
@@ -162,6 +165,7 @@ test("reading saves are single-flight and update the learning path only after pe
   assert.equal(harness.state.selected.readingStatus, "mastered");
   assert.equal(harness.state.monitor.historyPapers[0].readingNote, "new note");
   assert.equal(harness.state.reload, 1);
+  assert.equal(harness.state.clearedDrafts.length, 1);
   assert.equal(harness.state.saving, false);
 });
 
