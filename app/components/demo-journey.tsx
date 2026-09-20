@@ -15,7 +15,7 @@ export function DemoJourney({ view, locale }: { view: WorkspaceView; locale: "zh
     <div><strong>{zh ? "从 KLS 到随机局部化" : "From KLS to stochastic localization"}</strong><p>{zh ? "对照两篇文献的假设与工具，记录一个待核对的问题。可随时切换，不会标记学习完成。" : "Compare assumptions and tools, then note a question to verify. Browse freely without completing a stage."}</p></div>
     <nav aria-label={zh ? "体验流程" : "Demo journey"}>{steps.map((step, index) => <a key={step.view} aria-current={view === step.view ? "step" : undefined} href={workspaceHash({ ...step, space })}><span>{String(index + 1).padStart(2, "0")}</span>{step.label}</a>)}</nav>
     {view === "paper-detail" && <small>{zh ? "在“我的笔记”写下一个问题并保存，稍后可在研究记忆中找回。" : "Save a question in My notes, then find it in Research memory."}</small>}
-    {view === "workbook" && <small>{zh ? "先记录待核对条件；示例未提供摘要证据，不据此判断结论强弱。" : "Record conditions to check. No abstract evidence is supplied in this sample."}</small>}
-    {view === "memory" && <small>{zh ? "这里保存本次体验的论文笔记；比较记录仍保留在比较页。刷新后示例保存重置。" : "Paper notes appear here; comparison notes stay in Compare. Demo saves reset on refresh."}</small>}
+    {view === "workbook" && <small>{zh ? "已有一份示例比较记录。可打开依据，补充核查笔记和待解决问题。" : "Continue the example comparison by inspecting evidence and adding open questions."}</small>}
+    {view === "memory" && <small>{zh ? "这里有示例阅读笔记，也会显示本次保存的笔记；比较记录在比较页。刷新恢复初始示例。" : "Paper notes appear here; comparison notes stay in Compare. Demo saves reset on refresh."}</small>}
   </section>;
 }

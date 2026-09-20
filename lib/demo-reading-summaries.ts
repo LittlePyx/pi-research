@@ -1,5 +1,102 @@
 // Source-based paraphrases, checked 2026-09-20; not verbatim abstracts or review evidence.
 export const DEMO_READING_SUMMARIES: Record<string, { zh: string; en: string; sourceUrl: string; kind: "overview" | "abstract-summary" }> = {
+  "kls-survey": {
+    "zh": "综述 KLS 猜想的来源、几何与算法后果以及当时的主要界，适合先建立术语和方法地图。",
+    "en": "A survey of the origins, consequences and techniques surrounding KLS, providing context for the bounds known at the time.",
+    "sourceUrl": "https://arxiv.org/abs/1807.03465",
+    "kind": "abstract-summary"
+  },
+  "convex-clt": {
+    "zh": "研究高维凸体上均匀分布的一维投影何时接近高斯分布，提供从凸几何理解中心极限定理的入口。",
+    "en": "Studies approximately Gaussian one-dimensional marginals of uniform distributions on high-dimensional convex sets.",
+    "sourceUrl": "https://arxiv.org/abs/math/0605014",
+    "kind": "abstract-summary"
+  },
+  "convex-clt-rates": {
+    "zh": "进一步研究凸体中心极限定理的定量逼近，以幂次尺度刻画误差，为比较定性结论和定量速率提供材料。",
+    "en": "Develops quantitative power-law estimates for Gaussian approximation in the central limit theorem for convex sets.",
+    "sourceUrl": "https://arxiv.org/abs/math/0611577",
+    "kind": "abstract-summary"
+  },
+  "moment-maps": {
+    "zh": "通过矩映射研究 Poincaré 不等式，并将凸体中心极限定理扩展到一类非凸区域，适合核对几何条件的作用。",
+    "en": "Uses moment maps to study Poincare inequalities and extend convex-body central limit phenomena to certain nonconvex domains.",
+    "sourceUrl": "https://arxiv.org/abs/1104.2791",
+    "kind": "abstract-summary"
+  },
+  "kls-logarithmic": {
+    "zh": "借助改进的对数凹 Lichnerowicz 不等式，将切片和 KLS 等周问题的因子控制在维数对数的平方根尺度。",
+    "en": "An improved log-concave Lichnerowicz inequality yields square-root logarithmic losses for slicing and KLS isoperimetry.",
+    "sourceUrl": "https://arxiv.org/abs/2303.14938",
+    "kind": "abstract-summary"
+  },
+  "localization-diffusions": {
+    "zh": "从采样角度解释扩散过程与随机局部化的联系，讨论算法化局部化及不同过程带来的启发。",
+    "en": "Explains connections between diffusion-based sampling and stochastic localization, including algorithmic constructions and alternative processes.",
+    "sourceUrl": "https://arxiv.org/abs/2305.10690",
+    "kind": "abstract-summary"
+  },
+  "slips": {
+    "zh": "提出通过迭代后验采样近似随机局部化动力学的方法，使用 MCMC 估计去噪器，并在多峰分布等任务中实验。",
+    "en": "Approximates stochastic localization through iterative posterior sampling, using MCMC denoiser estimates and experiments on multimodal targets.",
+    "sourceUrl": "https://arxiv.org/abs/2402.10758",
+    "kind": "abstract-summary"
+  },
+  "parallel-thin-shell": {
+    "zh": "该预印本以平行耦合方法给出各向同性对数凹随机向量的常数级薄壳界；2026 年修订版可用于追踪证明细节。",
+    "en": "The preprint proves a constant thin-shell bound using a coupling related to stochastic localization; its revised version supports further proof checking.",
+    "sourceUrl": "https://arxiv.org/abs/2507.15495",
+    "kind": "abstract-summary"
+  },
+  "lossy-finite": {
+    "zh": "在有限码长与超额失真概率约束下刻画有损源编码的最低速率，适合与信道编码的错误概率和色散并列核对。",
+    "en": "Characterizes finite-length lossy source coding under an excess-distortion constraint, allowing comparison with channel-coding dispersion.",
+    "sourceUrl": "https://arxiv.org/abs/1102.3944",
+    "kind": "abstract-summary"
+  },
+  "joint-finite": {
+    "zh": "研究有限码长下联合信源信道编码的界，展示非渐近情形中联合设计相对于分离设计的性能优势。",
+    "en": "Gives finite-blocklength bounds for joint source-channel coding and quantifies advantages over separate designs in nonasymptotic settings.",
+    "sourceUrl": "https://arxiv.org/abs/1209.1317",
+    "kind": "abstract-summary"
+  },
+  "low-distortion": {
+    "zh": "针对无记忆源的低失真压缩，给出控制超额失真概率所需速率的显式近似，连接高分辨率与有限码长分析。",
+    "en": "Develops explicit low-distortion approximations for finite-blocklength compression rates under an excess-distortion probability constraint.",
+    "sourceUrl": "https://arxiv.org/abs/1510.02190",
+    "kind": "abstract-summary"
+  },
+  "gaussian-memory": {
+    "zh": "研究带记忆高斯源及更一般源的有限码长有损压缩，刻画率失真项和二阶色散项；作为近期预印本待进一步阅读。",
+    "en": "Studies finite-length lossy compression for Gaussian sources with memory and broader sources, characterizing rate-distortion and dispersion terms.",
+    "sourceUrl": "https://arxiv.org/abs/2602.09176",
+    "kind": "abstract-summary"
+  },
+  "sdpi-networks": {
+    "zh": "从单信道的收缩系数出发，研究如何组合成贝叶斯网络的端到端信息收缩界，并讨论不同散度和反馈信道。",
+    "en": "Relates single-channel contraction coefficients to end-to-end bounds in Bayesian networks, covering several divergences and feedback settings.",
+    "sourceUrl": "https://arxiv.org/abs/1508.06025",
+    "kind": "abstract-summary"
+  },
+  "conditional-dispersion": {
+    "zh": "刻画编码和解码两端都有边信息时的二阶有损编码速率，讨论离散无记忆、高斯与马尔可夫源，须区别于 Wyner–Ziv 设置。",
+    "en": "Characterizes second-order lossy coding when both terminals have side information, treating discrete, Gaussian and Markov sources.",
+    "sourceUrl": "https://arxiv.org/abs/1410.2687",
+    "kind": "abstract-summary"
+  },
+  "interactive-simulation": {
+    "zh": "研究双终端在有限双向通信和共享随机性下模拟联合分布，给出多轮交互问题的可计算刻画。",
+    "en": "Characterizes multiround channel simulation with limited two-way communication and shared randomness between two terminals.",
+    "sourceUrl": "https://arxiv.org/abs/1203.3217",
+    "kind": "abstract-summary"
+  },
+  "gaussian-bottleneck": {
+    "zh": "研究联合高斯变量的信息瓶颈问题，把保留相关信息与压缩表示之间的权衡联系到线性投影和协方差结构。",
+    "en": "Studies the information bottleneck for jointly Gaussian variables, connecting relevance-preserving compression with projections and covariance structure.",
+    "sourceUrl": "https://jmlr.csail.mit.edu/papers/volume6/chechik05a/chechik05a.pdf",
+    "kind": "abstract-summary"
+  }
+,
   "kls-localization": {
     "zh": "研究如何以较小的分割边界把凸体分成两部分，并用凸体中点到重心的平均距离控制等周系数。论文给出上下界，并猜想其中的上界在常数因子内刻画真实值。主要工具是局部化引理：把高维积分不等式化为单变量问题，并发展便于应用的变体。",
     "en": "The paper bounds the isoperimetric coefficient of a convex body using its average distance from the centroid. It proposes a constant-factor characterization and develops localization tools that reduce high-dimensional integral inequalities to one-dimensional ones.",

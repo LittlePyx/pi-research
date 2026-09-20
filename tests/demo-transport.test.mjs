@@ -41,10 +41,12 @@ test('mathematics demo connects the same papers across reading, route, compariso
   const learning=await get('/api/learning-path');
   assert.equal(learning.path.targetTrackId,map.tracks[0].id);
   assert.deepEqual(learning.path.steps[1].resources.map(p=>p.canonicalId),['eldan-thin-shell']);
-  assert.equal(learning.path.completedSteps,0);
+  assert.equal(learning.path.completedSteps,1);
   const workbook=(await get('/api/research-workbook')).workbook;
   assert.deepEqual(workbook.sources.map(p=>p.id),monitor.papers.map(p=>p.id));
-  assert.ok(workbook.content.dimensions.every(d=>d.cells.every(c=>c.status==='missing'&&!c.quote)));
+  assert.ok(workbook.content.dimensions[0].cells.every(c=>c.status==='supported'&&c.quote));
+  assert.ok(workbook.content.dimensions[1].cells.every(c=>c.status==='missing'&&!c.quote));
+  assert.equal(workbook.artifact.revision,1);
   const client=await readFile(new URL('../app/research-app.tsx',import.meta.url),'utf8');
   assert.doesNotMatch(client,/Pi 策展代表作|让 Pi 解释位置/);
   assert.match(client,/示例研究简报/);
@@ -65,4 +67,27 @@ test('every demo paper has a sourced reading summary without pretending it is ab
   assert.equal((await demoResponse('/api/paper-reading?spaceId=demo-information&paperId=kls-localization')).status,404);
   assert.equal((await demoResponse('/api/paper-reading?spaceId=demo-mathematics&paperId=unknown')).status,404);
   assert.equal((await demoResponse('/api/paper-reading',{method:'POST',body:JSON.stringify({spaceId:'demo-mathematics',paperId:'kls-localization'})})).status,403);
+});
+
+test('demo history is coherent, editable and resettable without background work', async()=>{
+  const {learningFixture}=await import('../lib/demo-workspace.mjs');
+  for(const spaceId of ['demo-mathematics','demo-information']) {
+    const initial=learningFixture(spaceId);
+    assert.equal(initial.monitor.historyPapers.length,15);
+    assert.equal(initial.monitor.historyPapers.filter(p=>p.readingNote).length,4);
+    assert.ok(initial.monitor.historyPapers.some(p=>p.readingStatus==='read'));
+    assert.ok(initial.monitor.historyPapers.some(p=>p.readingStatus==='reading'));
+    assert.ok(initial.monitor.historyPapers.some(p=>p.readingStatus==='queued'));
+    assert.equal(initial.monitor.historyPapers.filter(p=>p.qualityStage==='recommended').length,2);
+    const path=initial.learning.path;
+    const update=(stepId,completed)=>demoResponse('/api/learning-path',{method:'PATCH',body:JSON.stringify({spaceId,pathId:path.id,stepId,completed})});
+    assert.equal((await update(path.steps[4].id,true)).status,403);
+    const result=await (await update(path.steps[1].id,true)).json();assert.equal(result.path.completedSteps,2);assert.equal(result.path.steps[2].status,'active');
+    await update(path.steps[1].id,false);
+    assert.equal(learningFixture(spaceId).learning.path.completedSteps,1);
+    const {workbook}=await (await demoResponse(`/api/research-workbook?spaceId=${spaceId}`)).json();
+    assert.ok(workbook.artifact.value.decision.includes('示例'));
+    assert.equal(workbook.content.task.steps.length,3);
+    assert.ok(workbook.content.dimensions[0].cells.every(c=>workbook.sources.find(s=>s.id===c.paperId).abstractText.includes(c.quote)));
+  }
 });
