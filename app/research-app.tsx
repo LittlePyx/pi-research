@@ -2,6 +2,7 @@
 import { workspaceFetch as fetch } from "../lib/workspace-request";
 
 
+import { ModelSettingsPanel } from "./components/model-settings-panel";
 import { DraftRecovery } from "./components/draft-recovery";
 import { sessionDraftKey, writeSessionDraft, clearSessionDraft } from "../lib/session-draft";
 import { ImportProfileReview } from "./components/import-profile-review";
@@ -3173,7 +3174,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [checkingModel, setCheckingModel] = useState(false);
   const [modelApiKey, setModelApiKey] = useState("");
-  const [showModelApiKey, setShowModelApiKey] = useState(false);
   const [modelSettingsError, setModelSettingsError] = useState("");
   const [askOpen, setAskOpen] = useState(false);
   const [compactAsk, setCompactAsk] = useState(true);
@@ -5772,8 +5772,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       setConnectedModel(data.model || "deepseek-flash");
       setModelCredentialSource("browser");
       setModelApiKey("");
-      setShowModelApiKey(false);
-      setToast(locale === "zh" ? "API Key 已验证并保存到当前浏览器" : "The API key was verified and saved in this browser");
+        setToast(locale === "zh" ? "API Key 已验证并保存到当前浏览器" : "The API key was verified and saved in this browser");
     } catch (error) {
       setModelConnectionState(modelConnectionFailureState(error));
       setModelSettingsError(modelConnectionProblemCopy(modelConnectionFailureState(error), locale)?.title || (locale === "zh" ? "模型认证失败，请检查输入的 Key。" : "Model authentication failed. Check the entered key."));
@@ -5792,8 +5791,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error || "Could not remove the key");
       setModelApiKey("");
-      setShowModelApiKey(false);
-      const statusResponse = await fetch("/api/model-settings?verify=1", { cache: "no-store" });
+        const statusResponse = await fetch("/api/model-settings?verify=1", { cache: "no-store" });
       const status = await statusResponse.json() as { configured?: boolean; source?: "browser" | "server" | null; model?: string | null; error?: string };
       if (!statusResponse.ok) throw new Error(status.error || "model status unavailable");
       setModelConnectionState(status.configured ? "connected" : "unconfigured");
@@ -5820,7 +5818,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setModelSettingsOpen(false);
     setModelApiKey("");
     setModelSettingsError("");
-    setShowModelApiKey(false);
   };
   const resumeAfterModelConnection = () => {
     closeModelSettings();
@@ -5850,7 +5847,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if (activeDialogKind === "ask") setAskOpen(false);
     else if (activeDialogKind === "import") { if (!analyzingImport && !savingImport) setImportOpen(false); }
     else if (activeDialogKind === "feedback") setFeedbackPrompt(null);
-    else if (activeDialogKind === "model") { setModelSettingsOpen(false); setModelApiKey(""); setModelSettingsError(""); setShowModelApiKey(false); }
+    else if (activeDialogKind === "model") { setModelSettingsOpen(false); setModelApiKey(""); setModelSettingsError(""); }
     else if (activeDialogKind === "sources") setSourceSettingsOpen(false);
     else if (activeDialogKind === "space") setSpaceDialog(false);
     else setMobileNav(false);
@@ -6413,18 +6410,12 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       {modelSettingsOpen && (
         <div className="v2-modal pi-dialog-workspace" data-pi-dialog="model" tabIndex={-1} role="dialog" aria-modal="true" aria-label={locale === "zh" ? "AI 模型设置" : "AI model settings"}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={closeModelSettings} />
-          <div className="v2-model-settings">
-            <div className="v2-modal-head"><div><h2>{locale === "zh" ? "模型设置" : "Model settings"}</h2></div><button type="button" aria-label={t.close} onClick={closeModelSettings}>×</button></div>
-            <section className={`v2-model-status-card ${modelConnectionState}`} aria-live="polite"><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConnectionCopy.modal}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-flash")}{modelCredentialSource ? ` · ${modelCredentialSource === "browser" ? (locale === "zh" ? "当前浏览器 Key" : "browser key") : (locale === "zh" ? "平台 Key" : "host key")}` : ""}</p></div><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{checkingModel ? (locale === "zh" ? "检测中…" : "Checking…") : (locale === "zh" ? "重新检测" : "Check again")}</button></section>
-            {credentialFailureRecovered && <section className="v2-model-resume-card"><b>✓</b><div><strong>{locale === "zh" ? "连接已经恢复，扫描断点仍在" : "Connection restored; the scan checkpoint is intact"}</strong><p>{locale === "zh" ? `${monitor?.scanJob?.discoveredCount || 0} 篇候选和 ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} 篇筛选进度均已保留。` : `${monitor?.scanJob?.discoveredCount || 0} candidates and ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} screening progress are preserved.`}</p></div><button type="button" onClick={resumeAfterModelConnection}>{locale === "zh" ? "关闭并从断点继续" : "Close and resume"} →</button></section>}
-            {demo && <p role="note">演示不连接模型，请勿输入真实 Key。请返回正式工作区配置。</p>}
-            <form className="v2-model-key-form" onSubmit={(event) => { event.preventDefault(); void saveModelCredential(); }}>
-              <label><span>{locale === "zh" ? (modelCredentialSource === "browser" ? "粘贴新 Key 以替换" : "DeepSeek API Key") : (modelCredentialSource === "browser" ? "Paste a new key to replace it" : "DeepSeek API key")}</span><div><input disabled={demo} type={showModelApiKey ? "text" : "password"} value={modelApiKey} onChange={(event) => { setModelApiKey(event.target.value); setModelSettingsError(""); }} placeholder="sk-…" autoComplete="off" spellCheck={false} /><button type="button" onClick={() => setShowModelApiKey((current) => !current)}>{showModelApiKey ? (locale === "zh" ? "隐藏" : "Hide") : (locale === "zh" ? "显示" : "Show")}</button></div></label>
-              {modelSettingsError && <p className="v2-model-key-error" role="alert">{modelSettingsError}</p>}
-              <div className="v2-model-key-actions">{modelCredentialSource === "browser" ? <button className="remove" type="button" onClick={() => void removeBrowserModelCredential()} disabled={checkingModel}>{locale === "zh" ? "删除当前浏览器 Key" : "Remove browser key"}</button> : <span /> }<button className="save" type="submit" disabled={checkingModel || !modelApiKey.trim()}>{checkingModel ? (locale === "zh" ? "正在验证…" : "Verifying…") : (locale === "zh" ? "测试并保存" : "Test & save")} →</button></div>
-            </form>
-            <section className="v2-model-key-privacy"><b>✓</b><div><strong>{locale === "zh" ? "只保存在这个浏览器" : "Stored only in this browser"}</strong><p>{locale === "zh" ? "Key 受保护地保存在当前浏览器，不写入论文数据库，30 天后自动失效。" : "Your key is protected in this browser, never stored in the paper database, and expires after 30 days."}</p><small>{locale === "zh" ? "网页发起的扫描和 AI 功能都会使用它；无人打开网页时的后台定时扫描仍需要平台 Key。" : "Browser-started scans and AI features use it. Unattended background scans still require a host key."}</small></div></section>
-          </div>
+          <ModelSettingsPanel title={locale === "zh" ? "模型设置" : "Model settings"} locale={locale} demo={demo}
+            model={modelDisplayName(connectedModel || "deepseek-flash")} status={modelConnectionCopy.modal} connected={modelConnectionState === "connected"}
+            credentialSource={modelCredentialSource} busy={checkingModel} apiKey={modelApiKey} error={modelSettingsError}
+            recovered={credentialFailureRecovered} recoveryDetail={locale === "zh" ? `${monitor?.scanJob?.discoveredCount || 0} 篇候选和 ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} 篇筛选进度均已保留。` : `${monitor?.scanJob?.discoveredCount || 0} candidates and ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} screening progress retained.`}
+            onClose={closeModelSettings} onCheck={() => void refreshModelStatus()} onKey={value => { setModelApiKey(value); setModelSettingsError(""); }}
+            onSave={() => void saveModelCredential()} onRemove={() => void removeBrowserModelCredential()} onResume={resumeAfterModelConnection} />
         </div>
       )}
 
@@ -6506,3 +6497,4 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     </div>
   );
 }
+

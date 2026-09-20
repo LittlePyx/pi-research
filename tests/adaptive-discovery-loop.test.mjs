@@ -263,11 +263,12 @@ test("accepted-paper token efficiency uses private audit allocations", async () 
 });
 
 test("the model connection verifies browser keys without exposing credentials", async () => {
-  const [client, styles, credentials, settingsRoute] = await Promise.all([
+  const [client, styles, credentials, settingsRoute, panel] = await Promise.all([
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/model-credentials.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/model-settings/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/model-settings-panel.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(client, /setModelSettingsOpen\(true\)/);
@@ -276,8 +277,8 @@ test("the model connection verifies browser keys without exposing credentials", 
   assert.match(client, /AI 模型待检测/);
   assert.match(client, /AI 模型认证失败/);
   assert.match(client, /saveModelCredential/);
-  assert.match(client, /type=\{showModelApiKey \? "text" : "password"\}/);
-  assert.match(client, /测试并保存/);
+  assert.match(panel, /type=\{visible \? "text" : "password"\}/);
+  assert.match(panel, /验证并保存/);
   assert.match(client, /refreshModelStatus/);
   assert.match(client, /credentialFailureRecovered/);
   assert.match(client, /resumeAfterModelConnection/);
