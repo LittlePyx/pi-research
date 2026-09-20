@@ -188,14 +188,15 @@ test("learning detail navigation returns to the path and retains original-resour
   assert.match(open, /openMonitorPaper\(paper, "learn"\)/);
   assert.match(app, /navigate\(paperReturnView\)/);
   assert.match(app, /paperReturnView === "learn" \? t\.learn/);
-  assert.match(app, /<LearningResourceList resources=\{activeLearningStep\.resources\}/);
+  assert.match(app, /<LearningStageWorkspace step=\{activeLearningStep\}/);
 });
 
-test("supplementary history remains readable without being presented as the required stage reading", () => {
+test("supplementary history remains readable without being presented as the required stage reading", async () => {
   const tree = LearningResourceList({ resources: [{ id: "monitor:history", title: "Preserved paper", url: "https://example.org/paper" }], locale: "zh", openingId: null, onOpen: () => {}, signals: () => [], supplementary: true });
   const html = renderToStaticMarkup(tree);
   assert.match(html, /Preserved paper/);
   assert.match(html, /阅读与笔记/);
   assert.doesNotMatch(html, /现在读/);
-  assert.match(app, /补充阅读（不计入本阶段）/);
+  const stage = await readFile(new URL("../app/components/learning-stage-workspace.tsx",import.meta.url),"utf8");
+  assert.match(stage, /帮助理解主题，不计入本阶段完成/);
 });

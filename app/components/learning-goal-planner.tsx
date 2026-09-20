@@ -41,10 +41,10 @@ export function LearningGoalPlanner({ spaceId, tracks, target, trackId, path, lo
     } finally { clearTimeout(timer); if (request.current === controller) setLoading(false); }
   };
   const suggestions = selected === 'custom' ? tracks.filter(t => !topic.trim() || `${t.titleZh} ${t.titleEn}`.toLowerCase().includes(topic.toLowerCase()) || topic.toLowerCase().includes(t.titleZh.toLowerCase())).slice(0, 3) : [];
-  return <section className="pi-goal-planner" id="learning-goal-planner">
+  return <section className="pi-goal-planner" id="learning-goal-planner" hidden={Boolean(path && !open && !taskContext?.readingTask)}>
     {taskContext?.readingTask && <aside className="pi-start-confirm"><h3>{zh?'第一项阅读任务':'Your first reading task'}</h3><p>{(zh?taskContext.readingTask.focusZh:taskContext.readingTask.focusEn)||(zh?'核对原论文的研究对象、假设与结论。':'Check the objects, assumptions and conclusions in the original paper.')}</p><p>{zh?'在论文笔记中记录：采用的假设、关键结论、与你目标的联系，以及仍需核查的问题。保存后可返回学习页，继续规划。':'Record assumptions, key conclusions, links to your goal and open checks in the paper notes. Return here after saving to continue planning.'}</p>{onRead&&<button type="button" onClick={()=>onRead(taskContext.readingTask!.paperId)}>{zh?'打开起点论文，开始阅读':'Open the starting paper'} →</button>}</aside>}
-    <button type="button" className="pi-goal-toggle" aria-expanded={open} aria-controls="learning-goal-fields" onClick={() => onOpen(!open)}>{zh ? '学习目标与路径规划' : 'Learning goal & planning'}<span>{open ? '−' : '+'}</span></button>
-    {open && <div id="learning-goal-fields" className="pi-goal-fields">
+    <button type="button" className="pi-goal-toggle" aria-expanded={open} aria-controls="learning-goal-fields" onClick={() => onOpen(!open)}>{path ? (zh ? '调整学习计划' : 'Edit learning plan') : (zh ? '建立学习计划' : 'Create a learning plan')}<span>{open ? '−' : '+'}</span></button>
+    {open && <div id="learning-goal-fields" className={`pi-goal-fields${preview ? " has-preview" : ""}`}>
       <div className="pi-goal-inputs">
         {taskContext?.papers.length ? <aside className="pi-graph-handoff"><strong>{zh ? '本次目标的起点材料' : 'Starting papers for this goal'}</strong><ul>{taskContext.papers.map(p=><li key={p.canonicalId}>{p.title}</li>)}</ul><p>{zh ? '优先考虑这些论文，同时补充必要基础；未经评审或不适合的材料不会强行加入阶段。' : 'Prioritize these papers and add prerequisites where needed. Unreviewed or unsuitable papers cannot fill stages.'}</p></aside> : null}
         <label>{zh ? '学习方向' : 'Study topic'}<select value={selected} disabled={busy} onChange={e => choose(e.target.value)}><option value="custom">{zh ? '自己输入目标' : 'Enter my own topic'}</option>{tracks.map(t => <option key={t.id} value={t.id}>{zh ? t.titleZh : t.titleEn}</option>)}</select></label>

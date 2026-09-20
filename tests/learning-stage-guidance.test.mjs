@@ -42,6 +42,8 @@ test('empty grounded fields create no empty explanation panels', () => {
 test('both learning entry points share the same guidance visibility rule', async () => {
   const app = await readFile(new URL('../app/research-app.tsx', import.meta.url), 'utf8');
   assert.match(app, /<LearningStageGuidance step=\{activeStep\} locale=\{locale\} \/>/);
-  assert.match(app, /<LearningStageGuidance step=\{activeLearningStep\} locale=\{locale\} \/>/);
+  const stage = await readFile(new URL('../app/components/learning-stage-workspace.tsx', import.meta.url), 'utf8');
+  assert.match(stage, /step.guidanceStatus === 'grounded' && step.resources.length > 0/);
+  assert.match(stage, /const why = grounded/);
   assert.doesNotMatch(app, /className="v2-learning-now-guidance"/);
 });

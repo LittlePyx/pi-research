@@ -1,0 +1,86 @@
+/* Learning is a reading workspace: one overview, one stage, one paper list. */
+.v2-app.pi-workspace .v2-learn-page { max-width:1280px; }
+.v2-app.pi-workspace .v2-learn-page .v2-page-head { margin-bottom:18px; }
+.v2-app.pi-workspace .v2-learn-page .pi-study-path-links { display:flex; flex-wrap:wrap; gap:10px 24px; margin:0 0 20px; padding:0; }
+.v2-app.pi-workspace .v2-learn-page .pi-study-path-links button { border:0; padding:4px 0; background:none; font:inherit; font-size:13px; color:var(--pi-accent); }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-planner { margin:0; padding:0; border:0; border-block:1px solid var(--pi-line); background:transparent; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-toggle { padding:14px 0; font-size:14px; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-fields { display:block; padding:8px 0 24px; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-inputs { display:grid; grid-template-columns:1fr 1fr; gap:18px 24px; max-width:none; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-inputs>label:has(textarea),
+.v2-app.pi-workspace .v2-learn-page .pi-goal-inputs>:is(aside,.pi-goal-actions,.pi-goal-suggestions,[role="alert"]) { grid-column:1/-1; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-inputs :is(input,select,textarea) { font-size:14px; padding:10px 12px; border-radius:5px; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-fields.has-preview { display:grid; grid-template-columns:minmax(280px,.85fr) minmax(0,1.15fr); gap:32px; }
+.v2-app.pi-workspace .v2-learn-page .has-preview .pi-goal-inputs { grid-template-columns:1fr; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-preview { background:white; padding:20px 24px; border:1px solid var(--pi-line); border-radius:6px; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-preview h2 { font:600 20px/1.5 var(--font-geist-sans,system-ui),sans-serif; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-preview :is(p,li) { font-size:14px; line-height:1.7; }
+.v2-app.pi-workspace .v2-learn-page .pi-goal-preview h3 { font-size:15px; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path { padding:24px 0; margin:0 0 26px; border:0; border-bottom:1px solid var(--pi-line); border-radius:0; background:transparent; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path h2 { font:600 25px/1.4 var(--font-geist-sans,system-ui),sans-serif; margin:6px 0 8px; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path-title { gap:20px; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path-title span { font-size:12px; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path p { font-size:14px; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path-actions { gap:16px; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path-actions button { padding:6px 0; border:0; background:none; font-size:13px; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path-progress { border:0; padding:0; margin-top:14px; gap:10px 20px; font-size:12px; }
+.v2-app.pi-workspace .v2-learn-page .pi-current-path-progress strong { font-size:13px; }
+.v2-app.pi-workspace .v2-learn-page .pi-study-layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:36px; align-items:start; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav { display:grid; gap:0; border:0; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav button { display:grid; grid-template-columns:24px minmax(0,1fr); gap:4px 10px; padding:15px 12px; margin:0; border:0; border-left:2px solid transparent; border-radius:0; text-align:left; background:transparent; min-height:0; color:#64717b; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav button[aria-pressed="true"] { background:#edf2f6; border-left-color:var(--pi-accent); color:#1d3d53; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav button>span:first-child { font-size:12px; padding-top:2px; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav strong { display:block; font-size:14px; line-height:1.5; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav small { display:block; font-size:12px; margin-top:5px; font-weight:400; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav em { grid-column:2; font-size:11px; font-style:normal; margin:0; }
+.v2-app.pi-workspace .v2-learn-page .pi-study-session { min-width:0; padding:0; border:0; border-radius:0; background:transparent; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson { margin:0; padding:26px 30px; background:white; border:1px solid var(--pi-line); border-radius:6px; scroll-margin-top:90px; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-heading>span { font-size:12px; color:#63717d; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-heading h2 { margin:8px 0; font:600 23px/1.4 var(--font-geist-sans,system-ui),sans-serif; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson p { margin:8px 0; font:400 14px/1.8 var(--font-geist-sans,system-ui),sans-serif; color:#51606c; text-align:left; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-purpose { padding:12px 0 0; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-purpose strong { display:block; color:#273d4b; font-size:12px; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson h3 { font:600 14px/1.5 var(--font-geist-sans,system-ui),sans-serif; margin:0; color:#243644; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-papers { margin-top:24px; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-papers>header { display:flex; align-items:center; justify-content:space-between; padding-bottom:12px; border-bottom:1px solid var(--pi-line); }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-papers>header>span { font-size:12px; color:#63717d; }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list { display:block; margin:0; padding:0; }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list article { display:flex; align-items:center; gap:18px; padding:18px 0; border:0; border-bottom:1px solid var(--pi-line); border-radius:0; background:transparent; }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list article>button { display:block; flex:1; min-width:0; padding:0; border:0; border-radius:0; background:none; color:#253c4c; text-align:left; }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list article>div { flex:1; min-width:0; }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list strong { display:block; font:600 17px/1.55 var(--font-geist-sans,system-ui),sans-serif; overflow-wrap:anywhere; }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list small { display:block; margin-top:6px; font-size:12px; line-height:1.6; color:#697681; }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list .v2-learning-resource-signals { display:block; margin-top:5px; font-size:11px; font-style:normal; line-height:1.6; color:#64717b; }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list b { display:block; margin-top:10px; font-size:12px; color:var(--pi-accent); }
+.v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list a { flex-shrink:0; font-size:12px; color:#5b7284; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-supplement { margin-top:24px; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-supplement>p { font-size:12px; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-exercise { margin-top:24px; padding:18px 20px; border-left:2px solid #9caebb; background:#f7f9fa; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-exercise h3:not(:first-child) { margin-top:18px; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson-exercise p { margin-bottom:0; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson>footer { display:flex; justify-content:space-between; align-items:center; gap:18px; margin-top:24px; padding-top:18px; border-top:1px solid var(--pi-line); }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson>footer p { font-size:12px; max-width:350px; }
+.v2-app.pi-workspace .v2-learn-page .pi-lesson>footer button { flex-shrink:0; padding:10px 16px; background:var(--pi-accent); border:0; border-radius:4px; color:white; font-size:13px; cursor:pointer; }
+.v2-app.pi-workspace .v2-learn-page button:disabled { opacity:.5; cursor:default; }
+.v2-app.pi-workspace .v2-learn-page :focus-visible { outline:2px solid var(--pi-accent); outline-offset:3px; }
+@media(max-width:1000px) {
+ .v2-app.pi-workspace .v2-learn-page .pi-study-layout { grid-template-columns:170px minmax(0,1fr); gap:20px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-goal-fields.has-preview { display:block; }
+ .v2-app.pi-workspace .v2-learn-page .pi-goal-preview { margin-top:24px; }
+}
+@media(max-width:800px) {
+ .v2-app.pi-workspace .v2-learn-page .pi-study-layout { display:block; }
+ .v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav { display:flex; flex-direction:row; overflow-x:auto; padding-bottom:8px; margin-bottom:18px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav button { flex:0 0 154px; border-left:0; border-bottom:2px solid transparent; }
+ .v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav button[aria-pressed="true"] { border-bottom-color:var(--pi-accent); }
+ .v2-app.pi-workspace .v2-learn-page .pi-current-path h2 { font-size:22px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-lesson { padding:20px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-goal-inputs { grid-template-columns:1fr; }
+}
+@media(max-width:480px) {
+ .v2-app.pi-workspace .v2-learn-page .pi-lesson { padding:18px 16px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-lesson>footer { display:block; }
+ .v2-app.pi-workspace .v2-learn-page .pi-lesson>footer button { margin-top:8px; width:100%; }
+ .v2-app.pi-workspace .v2-learn-page .v2-learning-reading-list article { align-items:start; gap:12px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-lesson-exercise { padding:16px; }
+}
