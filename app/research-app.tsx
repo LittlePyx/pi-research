@@ -1,4 +1,5 @@
 "use client";
+import { RecommendationMemoryLink } from "./components/recommendation-memory-link";
 import { ResearchPreferences } from "./components/research-preferences";
 import { MemoryResume } from "./components/memory-resume";
 import { workspaceFetch as fetch } from "../lib/workspace-request";
@@ -113,6 +114,7 @@ type MonitorPaper = {
   recommendationOrigin?: "current_discovery" | "backlog_review";
   summaryZh: string;
   summaryEn: string;
+  demoReadingContext?: {paperId:string;evidenceZh:string;evidenceEn:string} | null;
   whyReadZh: string;
   whyReadEn: string;
   qualityScore: number;
@@ -3212,6 +3214,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [authorDraft, setAuthorDraft] = useState("");
   const [explorationDraft, setExplorationDraft] = useState<"focused" | "balanced" | "open">("balanced");
   const [savingPreferences, setSavingPreferences] = useState(false);
+  const feedbackSaving = useRef(false);
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackReceipt, setFeedbackReceipt] = useState<{spaceId:string;title:string;effect:string} | null>(null);
   const [feedbackPrompt, setFeedbackPrompt] = useState<{ paper: MonitorPaper; kind: "relevant" | "not_relevant" } | null>(null);
   const [feedbackNote, setFeedbackNote] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
@@ -4743,27 +4748,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     const nextState: MonitorPaper["userState"] = kind === "not_relevant" ? "dismissed"
       : kind === "later" ? "snoozed"
         : kind === "save" && !value ? paper.feedback === "relevant" ? "accepted" : "seen" : "accepted";
-    if (kind === "save") setSaved((current) => ({ ...current, [key]: value }));
-    if (kind === "not_relevant") setSaved((current) => ({ ...current, [key]: false }));
-    setMonitor((current) => {
-      if (!current) return current;
-      const updatePaper = (item: MonitorPaper): MonitorPaper => item.id !== paper.id ? item : {
-        ...item,
-        userState: nextState,
-        readingStatus: reasonCode === "duplicate_known" ? "mastered" : item.readingStatus,
-        saved: kind === "not_relevant" ? false : kind === "save" ? value : item.saved,
-        feedback: kind === "relevant" ? "relevant" : kind === "not_relevant" ? "not_relevant" : item.feedback,
-        snoozedUntil: kind === "later" ? new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() : null,
-      };
-      const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
-      return {
-        ...current,
-        papers: ["accepted", "dismissed", "snoozed"].includes(nextState) ? current.papers.filter((item) => item.id !== paper.id) : current.papers.map(updatePaper),
-        historyPapers,
-        historyCounts: historyCountsFor(historyPapers),
-      };
-    });
-    setToast(feedbackEffectCopy(kind, value, reasonCode, locale));
+    if (feedbackSaving.current) return;
+    feedbackSaving.current = true;
+    setFeedbackBusy(true);
+    setFeedbackReceipt(null);
+    setToast(locale === "zh" ? "正在保存反馈…" : "Saving feedback…");
     void (async () => {
       try {
         const response = await fetch("/api/feedback", {
@@ -4776,8 +4765,32 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           routeEvidence?: FeedbackRouteEvidence | null;
         };
         if (!response.ok) throw new Error("feedback save failed");
+        if (paperNetworkSpaceRef.current !== spaceId) return;
+        if (kind === "save") setSaved((current) => ({ ...current, [key]: value }));
+        if (kind === "not_relevant") setSaved((current) => ({ ...current, [key]: false }));
+        setMonitor((current) => {
+          if (!current) return current;
+          const updatePaper = (item: MonitorPaper): MonitorPaper => item.id !== paper.id ? item : {
+            ...item,
+            userState: nextState,
+            readingStatus: reasonCode === "duplicate_known" ? "mastered" : item.readingStatus,
+            saved: kind === "not_relevant" ? false : kind === "save" ? value : item.saved,
+            feedback: kind === "relevant" ? "relevant" : kind === "not_relevant" ? "not_relevant" : item.feedback,
+            snoozedUntil: kind === "later" ? new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() : null,
+          };
+          const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
+          return {
+            ...current,
+            papers: ["accepted", "dismissed", "snoozed"].includes(nextState) ? current.papers.filter((item) => item.id !== paper.id) : current.papers.map(updatePaper),
+            historyPapers,
+            historyCounts: historyCountsFor(historyPapers),
+          };
+        });
+        setFeedbackPrompt(null); setFeedbackNote("");
+        setToast(feedbackEffectCopy(kind, value, reasonCode, locale));
         const authoritativeEffect = locale === "zh" ? result.effect?.zh : result.effect?.en;
         if (authoritativeEffect) setToast(authoritativeEffect);
+        if (reasonCode) setFeedbackReceipt({spaceId,title:paper.title,effect:authoritativeEffect || feedbackEffectCopy(kind,value,reasonCode,locale)});
         if (result.routeEvidence?.changed) {
           const refreshedMap = await readResearchMapState(spaceId).catch(() => null);
           if (refreshedMap && paperNetworkSpaceRef.current === spaceId) {
@@ -4789,19 +4802,35 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         }
         if (reasonCode) {
           const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}`).catch(() => null);
-          const data = refreshed?.ok ? await refreshed.json() as { monitor?: MonitorState } : null;
+          const data = refreshed?.ok ? await refreshed.json().catch(() => null) as { monitor?: MonitorState } | null : null;
           if (data?.monitor && paperNetworkSpaceRef.current === spaceId) setMonitor(data.monitor);
         }
       } catch {
-        setToast(locale === "zh" ? "反馈保存失败，已恢复服务器中的真实状态" : "Feedback could not be saved; restoring server state");
-        const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}`).catch(() => null);
-        const data = refreshed?.ok ? await refreshed.json() as { monitor?: MonitorState } : null;
-        if (data?.monitor && paperNetworkSpaceRef.current === spaceId) setMonitor(data.monitor);
+        if (paperNetworkSpaceRef.current === spaceId) setToast(locale === "zh" ? "未能确认反馈保存，请重试。" : "Could not confirm the save. Please retry.");
+      } finally {
+        feedbackSaving.current = false;
+        setFeedbackBusy(false);
       }
     })();
   };
 
+  const openRecommendationMemory = async () => {
+    const spaceId = activeSpace.id;
+    try {
+      const response = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}`);
+      if (!response.ok) throw new Error();
+      const data = await response.json() as {monitor?:MonitorState};
+      if (!data.monitor) throw new Error();
+      if (paperNetworkSpaceRef.current !== spaceId) return;
+      setMonitor(data.monitor); setMemorySection("preferences"); navigate("memory"); setFeedbackReceipt(null);
+    } catch { if (paperNetworkSpaceRef.current === spaceId) {
+      const message = locale === "zh" ? "偏向暂未读取，请重试。已保存的反馈仍然保留。" : "Could not load interests. Your saved feedback is retained; please retry.";
+      setToast(message); setFeedbackReceipt(current => current ? {...current,effect:message} : current);
+    } }
+  };
+
   const requestPaperDecision = (paper: MonitorPaper, kind: "relevant" | "not_relevant") => {
+    if (feedbackSaving.current) return;
     setFeedbackNote("");
     setFeedbackPrompt({ paper, kind });
   };
@@ -4809,8 +4838,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const chooseFeedbackReason = (reasonCode: string) => {
     if (!feedbackPrompt) return;
     saveFeedback(feedbackPrompt.paper, feedbackPrompt.kind, reasonCode, feedbackNote);
-    setFeedbackPrompt(null);
-    setFeedbackNote("");
   };
 
   const memorySpaceRef = useRef(activeSpace.id);
@@ -5951,7 +5978,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                     const readingAction = dailyReadingPlan[briefIndex];
                     return <details key={paper?.id || `${index}:${signal || readingAction}`}>
                       <summary><span>{String(index + 1).padStart(2, "0")}</span><div>{paper && <div className="v2-daily-paper-flags"><i className={`v2-tier-badge ${paper.recommendationTier || "browse"}`}>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</i><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /></div>}<h3>{paper ? <button className="pi-paper-title-link" type="button" onClick={event => { event.preventDefault(); openMonitorPaper(paper); }}><MathText inline>{paper.title}</MathText></button> : (locale === "zh" ? `第 ${index + 1} 篇入选论文` : `Selected paper ${index + 1}`)}</h3>{(signal || (paper && (locale === "zh" ? paper.whyReadZh : paper.whyReadEn))) && <p className="pi-news-standfirst"><MathText inline>{signal || (locale === "zh" ? paper!.whyReadZh : paper!.whyReadEn)}</MathText></p>}{paper && <><p className="v2-daily-paper-authors"><span>{paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span></p><div className="v2-daily-paper-publication"><span>{formatPaperDate(paper.publishedAt, locale)}</span><span>{paper.venue || (locale === "zh" ? "来源待核对" : "Source pending")}</span><span>{paper.citationCount || 0} {locale === "zh" ? "被引" : "citations"}</span><span>{paper.readMinutes || 15} {locale === "zh" ? "分钟" : "min"}</span></div></>}</div><b aria-hidden="true">＋</b></summary>
-                      <div className="v2-daily-paper-analysis">{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{paper && <RouteImpactNote paper={paper} locale={locale} />}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看解读" : "Open analysis"} →</button><button className="positive" type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {locale === "zh" ? "适合" : "Useful"}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {locale === "zh" ? "不相关" : "Not relevant"}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant", "duplicate_known")}><InterfaceIcon name="check" /> {locale === "zh" ? "已掌握" : "Mastered"}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {locale === "zh" ? "稍后" : "Later"}</button></footer>}</div>
+                      <div className="v2-daily-paper-analysis">{paper && <RecommendationMemoryLink locale={locale} example={demo ? paper.demoReadingContext : null} onPaper={id => void openRoutePaper(id, "today")} onMemory={() => void openRecommendationMemory()} />}{paper?.researchProblemId && <section className="research-problem-impact"><strong>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active problem"}</strong><p>{locale === "zh" ? paper.researchProblemImpactZh : paper.researchProblemImpactEn}</p><small>{locale === "zh" ? "读后需要判断" : "Decision after reading"}</small><b>{locale === "zh" ? paper.researchDecisionZh : paper.researchDecisionEn}</b></section>}{paper && <RouteImpactNote paper={paper} locale={locale} />}{signal && <section><strong>{locale === "zh" ? "它带来了什么" : "What changed"}</strong><p>{signal}</p></section>}{readingAction && <section><strong>{locale === "zh" ? "建议怎么读" : "How to read it"}</strong><p>{readingAction}</p></section>}{paper && <footer><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "查看解读" : "Open analysis"} →</button><button className="positive" type="button" onClick={() => requestPaperDecision(paper, "relevant")}>✓ {locale === "zh" ? "适合" : "Useful"}</button><button type="button" onClick={() => requestPaperDecision(paper, "not_relevant")}>× {locale === "zh" ? "不相关" : "Not relevant"}</button><button type="button" onClick={() => saveFeedback(paper, "not_relevant", "duplicate_known")}><InterfaceIcon name="check" /> {locale === "zh" ? "已掌握" : "Mastered"}</button><button type="button" onClick={() => saveFeedback(paper, "later")}>◷ {locale === "zh" ? "稍后" : "Later"}</button></footer>}</div>
                     </details>;
                   })}
                 </div>
@@ -5969,7 +5996,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                   <div className="pi-reading-meta"><span>{recommendationTierLabel(paper.recommendationTier || "browse", locale)}</span><span>{paper.readMinutes || 15} min</span>{paper.recommendedAt && <span>{locale === "zh" ? "推荐于 " : "Recommended "}{formatPaperDate(paper.recommendedAt, locale)}</span>}</div>
                   <h3><button type="button" onClick={() => openMonitorPaper(paper)}><MathText inline>{paper.title}</MathText></button></h3>
                   <p className="pi-reading-bibliography">{paper.authors}{paper.publishedAt && <> · {formatPaperDate(paper.publishedAt, locale)}</>}</p>
-                  {reason && <p className="pi-reading-reason"><MathText>{reason}</MathText></p>}
+                  {reason && <p className="pi-reading-reason"><MathText>{reason}</MathText></p>}<RecommendationMemoryLink locale={locale} example={demo ? paper.demoReadingContext : null} onPaper={id => void openRoutePaper(id, "today")} onMemory={() => void openRecommendationMemory()} />
                   <footer><details><summary>{locale === "zh" ? "来源与评审" : "Sources & review"}</summary><div><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div></details><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "阅读与笔记" : "Read & take notes"} →</button></footer>
                 </article>;
               })}</div>
@@ -6370,9 +6397,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                 ].filter(([,text]) => text?.trim()).map(([label,text]) => <article key={label}><h3>{label}</h3><p><MathText>{text}</MathText></p></article>)}</div>{Boolean((locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn)?.length) && <footer><h3>{locale === "zh" ? "继续思考" : "Questions to pursue"}</h3><ol>{(locale === "zh" ? selectedMonitorPaper.researchQuestionsZh : selectedMonitorPaper.researchQuestionsEn).map(question => <li key={question}><MathText inline>{question}</MathText></li>)}</ol></footer>}</section>}
 
               </div>
-              <details className="pi-paper-reading-tools" open><summary>{locale === "zh" ? "阅读状态与我的笔记" : "Reading status and my notes"}</summary><aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select disabled={readingSaving} value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><DraftRecovery key={noteDraftKey} storageKey={noteDraftKey} current={paperNoteDraft} base={selectedMonitorPaper.readingNote || ""} locale={locale} onRestore={editPaperNote} /><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea disabled={readingSaving} value={paperNoteDraft} maxLength={3000} onChange={(event) => editPaperNote(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{locale === "zh" ? "保存笔记后即可在研究记忆中找到；选择让 Pi 整理，会进一步提取方法与疑问。" : "Saved notes appear in research memory. Ask Pi to organize them when you want methods and questions extracted."}</small><p className="pi-save-state" role="status">{noteSaveError || (readingSaving ? (locale === "zh" ? "正在保存…" : "Saving…") : paperNoteDraft !== (selectedMonitorPaper.readingNote || "") ? (locale === "zh" ? "有未保存修改" : "Unsaved changes") : (locale === "zh" ? "与已保存内容一致" : "Matches saved content"))}{noteDraftUnavailable && (locale === "zh" ? " · 本标签页无法暂存，请保存后再离开。" : " · Draft storage unavailable. Save before leaving.")}</p>{!paperNoteDraft && selectedMonitorPaper.readingNote && <button type="button" disabled={readingSaving} onClick={() => editPaperNote(selectedMonitorPaper.readingNote)}>{locale === "zh" ? "撤销清空" : "Undo clearing"}</button>}<div className="pi-note-actions"><button type="button" disabled={readingSaving || paperNoteDraft === (selectedMonitorPaper.readingNote || "")} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft)}>{readingSaving && !readingMemoryAnalyzing ? (locale === "zh" ? "正在保存…" : "Saving…") : (locale === "zh" ? "保存笔记" : "Save note")}</button><button className="v2-save-note" type="button" disabled={readingSaving || readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "正在整理…" : "Synthesizing…") : (locale === "zh" ? "保存并让 Pi 整理" : "Save and organize with Pi")}</button></div><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside></details>
+              <details className="pi-paper-reading-tools" open><summary>{locale === "zh" ? "阅读状态与我的笔记" : "Reading status and my notes"}</summary><aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select disabled={readingSaving} value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><DraftRecovery key={noteDraftKey} storageKey={noteDraftKey} current={paperNoteDraft} base={selectedMonitorPaper.readingNote || ""} locale={locale} onRestore={editPaperNote} /><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea disabled={readingSaving} value={paperNoteDraft} maxLength={3000} onChange={(event) => editPaperNote(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{demo ? (locale === "zh" ? "修改后，原示例整理会失效；演示不生成新的整理。" : "Editing invalidates preset insights; the demo does not generate new ones.") : (locale === "zh" ? "保存笔记后即可在研究记忆中找到；选择让 Pi 整理，会进一步提取方法与疑问。" : "Saved notes appear in research memory. Ask Pi to organize them when you want methods and questions extracted.")}</small><p className="pi-save-state" role="status">{noteSaveError || (readingSaving ? (locale === "zh" ? "正在保存…" : "Saving…") : paperNoteDraft !== (selectedMonitorPaper.readingNote || "") ? (locale === "zh" ? "有未保存修改" : "Unsaved changes") : (locale === "zh" ? "与已保存内容一致" : "Matches saved content"))}{noteDraftUnavailable && (locale === "zh" ? " · 本标签页无法暂存，请保存后再离开。" : " · Draft storage unavailable. Save before leaving.")}</p>{!paperNoteDraft && selectedMonitorPaper.readingNote && <button type="button" disabled={readingSaving} onClick={() => editPaperNote(selectedMonitorPaper.readingNote)}>{locale === "zh" ? "撤销清空" : "Undo clearing"}</button>}<div className="pi-note-actions"><button type="button" disabled={readingSaving || paperNoteDraft === (selectedMonitorPaper.readingNote || "")} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft)}>{readingSaving && !readingMemoryAnalyzing ? (locale === "zh" ? "正在保存…" : "Saving…") : (locale === "zh" ? "保存笔记" : "Save note")}</button><button className="v2-save-note" type="button" title={demo ? (locale === "zh" ? "演示仅提供预设整理" : "Only preset insights are available in the demo") : undefined} disabled={demo || readingSaving || readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "正在整理…" : "Synthesizing…") : (locale === "zh" ? "保存并让 Pi 整理" : "Save and organize with Pi")}</button></div><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside></details>
                 {selectedMonitorPaper.qualityStage === "recommended" && paperReturnView !== "learn" && <ResearchStart key={activeSpace.id+selectedMonitorPaper.id} spaceId={activeSpace.id} paperId={selectedMonitorPaper.id} locale={locale} onRead={() => document.querySelector(".v2-paper-analysis")?.scrollIntoView({behavior:"smooth"})} onStart={startRecommendedResearch} />}
-                {isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <section className="v2-content-section v2-paper-fit-summary"><p className="v2-kicker warm">{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? (demo ? (locale === "zh" ? "阅读线索" : "Reading context") : t.whySuitable) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).kicker}</p><h2>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? ((locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn) || (locale === "zh" ? "仍在共享质量队列中核对，尚未形成正式推荐。" : "Still under review in the shared quality queue; this is not yet a formal recommendation.")) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).note}</h2>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && selectedMonitorPaper.researchProblemId && <details className="v2-paper-problem-impact"><summary><span>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active research problem"}</span><b>＋</b></summary><div><h3>{locale === "zh" ? selectedMonitorPaper.researchProblemImpactZh : selectedMonitorPaper.researchProblemImpactEn}</h3><p><small>{locale === "zh" ? "读完后应该决定" : "DECISION AFTER READING"}</small><strong>{locale === "zh" ? selectedMonitorPaper.researchDecisionZh : selectedMonitorPaper.researchDecisionEn}</strong></p></div></details>}<footer><span>{defaultSpaceName(activeSpace.name, locale)}</span>{!demo && selectedMonitorPaper.qualityStage === "recommended" && <strong>{t.qualityScore} {displayQualityScore(selectedMonitorPaper.qualityScore)}</strong>}</footer></section>}
+                {isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <section className="v2-content-section v2-paper-fit-summary"><p className="v2-kicker warm">{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? (demo ? (locale === "zh" ? "阅读线索" : "Reading context") : t.whySuitable) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).kicker}</p><h2>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? ((locale === "zh" ? selectedMonitorPaper.whyReadZh : selectedMonitorPaper.whyReadEn) || (locale === "zh" ? "仍在共享质量队列中核对，尚未形成正式推荐。" : "Still under review in the shared quality queue; this is not yet a formal recommendation.")) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).note}</h2>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && selectedMonitorPaper.researchProblemId && <details className="v2-paper-problem-impact"><summary><span>{locale === "zh" ? "对当前研究问题的影响" : "Impact on the active research problem"}</span><b>＋</b></summary><div><h3>{locale === "zh" ? selectedMonitorPaper.researchProblemImpactZh : selectedMonitorPaper.researchProblemImpactEn}</h3><p><small>{locale === "zh" ? "读完后应该决定" : "DECISION AFTER READING"}</small><strong>{locale === "zh" ? selectedMonitorPaper.researchDecisionZh : selectedMonitorPaper.researchDecisionEn}</strong></p></div></details>}<RecommendationMemoryLink locale={locale} example={demo ? selectedMonitorPaper.demoReadingContext : null} onPaper={id => void openRoutePaper(id, "memory")} onMemory={() => void openRecommendationMemory()} /><footer><span>{defaultSpaceName(activeSpace.name, locale)}</span>{!demo && selectedMonitorPaper.qualityStage === "recommended" && <strong>{t.qualityScore} {displayQualityScore(selectedMonitorPaper.qualityScore)}</strong>}</footer></section>}
                 {monitorPaperRouteDiscovery(selectedMonitorPaper, locale)?.impact && <details className="v2-content-section v2-paper-record"><summary>{locale === "zh" ? "与路线的关联" : "Route connection"}</summary><RouteImpactNote paper={selectedMonitorPaper} locale={locale} /></details>}
                 {!demo && <details className="v2-content-section v2-paper-record"><summary><span>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? t.recommendationSignals : locale === "zh" ? "发现与评审记录" : "Discovery & review record"}</span><b>＋</b></summary><dl className="v2-real-signals"><div><dt>{t.relevanceScoreLabel}</dt><dd>{selectedMonitorPaper.relevanceScore}</dd></div>{selectedMonitorPaper.qualityStage === "recommended" && <div><dt>{t.qualityScore}</dt><dd>{displayQualityScore(selectedMonitorPaper.qualityScore)}</dd></div>}{selectedMonitorPaper.qualityStage === "reviewed" && selectedMonitorPaper.screeningReason && <div><dt>{locale === "zh" ? "未入选原因" : "Why it was not selected"}</dt><dd>{selectedMonitorPaper.screeningReason}</dd></div>}<div><dt>{t.citations}</dt><dd>{selectedMonitorPaper.citationCount}</dd></div><div><dt>{t.prioritySources}</dt><dd>{selectedMonitorPaper.priorityVenue ? t.priorityVenueLabel : "—"}</dd></div><div><dt>{t.sourceRecord}</dt><dd>{selectedMonitorPaper.discoverySources?.length ? selectedMonitorPaper.discoverySources.map((source) => locale === "zh" ? source.labelZh : source.labelEn).join(" · ") : selectedMonitorPaper.analysisSource === "deepseek" ? t.aiBrief : t.metadataBrief}</dd></div></dl></details>}
               <details className="v2-content-section v2-paper-record pi-bibliography"><summary>{locale === "zh" ? "书目信息" : "Bibliographic details"}</summary><dl><div><dt>{t.currentSpaceFit}</dt><dd>{monitorPaperHorizonLabel(selectedMonitorPaper, locale)}</dd></div>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) ? <div><dt>{locale === "zh" ? "建议投入" : "Suggested time"}</dt><dd>{selectedMonitorPaper.readMinutes || 15} min · {readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)}</dd></div> : !demo && <div><dt>{locale === "zh" ? "评审状态" : "Review state"}</dt><dd>{archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</dd></div>}<div><dt>{t.status}</dt><dd>{selectedMonitorPaper.venue}</dd></div><div><dt>{t.added}</dt><dd>{formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</dd></div>{selectedMonitorPaper.doi && <div><dt>DOI</dt><dd>{selectedMonitorPaper.doi}</dd></div>}</dl></details>
@@ -6446,7 +6473,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               ["topic_fit", "主题正好相关", "Strong topic fit"], ["method_fit", "方法值得借鉴", "Useful method"], ["solves_question", "回应了我的问题", "Addresses my question"], ["foundational", "是重要基础工作", "Important foundation"], ["surprising", "带来新方向或反直觉结果", "Surprising new direction"],
             ] : [
               ["topic_drift", "偏离我的研究范围", "Outside my scope"], ["too_shallow", "内容太浅或增量太小", "Too shallow or incremental"], ["weak_evidence", "证据或方法不够可靠", "Weak evidence or method"], ["duplicate_known", "内容很好，但我已掌握", "Valuable, but already mastered"], ["wrong_type", "不是我需要的论文类型", "Wrong kind of paper"],
-            ]).map(([code, zh, en]) => <button type="button" key={code} onClick={() => chooseFeedbackReason(code)}><span>{feedbackPrompt.kind === "relevant" ? "＋" : "—"}</span><strong>{locale === "zh" ? zh : en}</strong><b>→</b></button>)}</div>
+            ]).map(([code, zh, en]) => <button type="button" key={code} disabled={feedbackBusy} onClick={() => chooseFeedbackReason(code)}><span>{feedbackPrompt.kind === "relevant" ? "＋" : "—"}</span><strong>{locale === "zh" ? zh : en}</strong><b>→</b></button>)}</div>
             <label><span>{locale === "zh" ? "可选：补充一句具体原因" : "Optional: add a specific note"}</span><textarea value={feedbackNote} maxLength={500} onChange={(event) => setFeedbackNote(event.target.value)} placeholder={locale === "zh" ? "例如：这个证明策略正好可用于我正在处理的边界情形。" : "For example: this proof strategy fits the boundary case I am working on."} /></label>
             <small>{feedbackPrompt.kind === "relevant" && (feedbackPrompt.paper.discoveryOrigin || feedbackPrompt.paper.discoveryTrack)
               ? (locale === "zh"
@@ -6511,7 +6538,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       )}
 
       {mobileNav && <button className="v2-mobile-backdrop" type="button" aria-label={t.close} onClick={() => setMobileNav(false)} />}
-      {toast && <div className="v2-toast"><span>✓</span>{toast}</div>}
+      {feedbackReceipt?.spaceId === activeSpace.id && <aside className="pi-feedback-receipt" role="status"><button className="pi-receipt-close" aria-label={locale === "zh" ? "关闭反馈回执" : "Close feedback receipt"} onClick={() => setFeedbackReceipt(null)}>×</button><strong>{locale === "zh" ? "反馈已记录" : "Feedback saved"}</strong><p>{feedbackReceipt.title}</p><small>{feedbackReceipt.effect}</small><button onClick={() => void openRecommendationMemory()}>{locale === "zh" ? "查看研究偏向" : "View research interests"} →</button></aside>}
+      {toast && !feedbackReceipt && <div className="v2-toast"><span>✓</span>{toast}</div>}
     </div>
   );
 }

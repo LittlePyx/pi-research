@@ -118,3 +118,15 @@ test('demo insights match original notes and disappear after edits',async()=>{
   const q=encodeURIComponent(items[0].methodsZh[0]);const searched=await (await demoResponse(`/api/research-memory?spaceId=${spaceId}&q=${q}`)).json();assert.ok(searched.items.some(p=>p.paperId===items[0].paperId));
  }
 });
+test('demo feedback updates explicit interests without inventing route evidence',async()=>{
+ const spaceId='demo-mathematics',paperId='eldan-thin-shell';
+ const send=(body)=>demoResponse('/api/feedback',{method:'POST',body:JSON.stringify({spaceId,paperId,kind:'relevant',value:true,...body})});
+ const read=async()=> (await (await demoResponse(`/api/monitor?spaceId=${spaceId}`)).json()).monitor;
+ assert.equal((await send({spaceId:'demo-information',reasonCode:'method_fit'})).status,404);
+ assert.equal((await send({reasonCode:'topic_drift'})).status,400);
+ const ok=await (await send({reasonCode:'method_fit',note:'测试方法兴趣'})).json();assert.equal(ok.ok,true);assert.equal(ok.routeEvidence,null);
+ let monitor=await read();let signal=monitor.preferenceSignals.find(s=>s.id===`${spaceId}:feedback:${paperId}`);assert.equal(signal.layer,'explicit');assert.equal(signal.kind,'method');assert.match(signal.evidence,/测试方法兴趣/);assert.equal(monitor.historyPapers.find(p=>p.id===paperId).feedback,'relevant');
+ await send({kind:'not_relevant',reasonCode:'duplicate_known'});monitor=await read();signal=monitor.preferenceSignals.find(s=>s.id===`${spaceId}:feedback:${paperId}`);assert.equal(signal.kind,'mastery');assert.equal(monitor.preferenceSignals.filter(s=>s.id===signal.id).length,1);
+ await send({kind:'not_relevant',value:false});monitor=await read();assert.ok(!monitor.preferenceSignals.some(s=>s.id===`${spaceId}:feedback:${paperId}`));
+ assert.equal((await send({reasonCode:'invented_reason'})).status,400);
+});

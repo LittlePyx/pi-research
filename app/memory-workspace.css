@@ -168,3 +168,16 @@
  .v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry>header { flex-wrap:wrap; }
  .v2-app.pi-workspace .pi-memory-resume { padding:20px; }
 }
+.v2-app.pi-workspace .pi-recommendation-memory { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:start; margin:14px 0; font-size:12px; }
+.v2-app.pi-workspace .pi-recommendation-memory button { background:none; border:0; padding:3px 0; font-size:12px; color:#557780; cursor:pointer; }
+.v2-app.pi-workspace .pi-recommendation-memory summary { cursor:pointer; color:#657d85; padding:3px 0; }
+.v2-app.pi-workspace .pi-recommendation-memory details p { font-size:13px; line-height:1.75; margin:10px 0; max-width:65ch; }
+.v2-app.pi-workspace .pi-recommendation-memory details small { display:block; color:#829096; font-size:11px; }
+.v2-app.pi-workspace .pi-feedback-receipt { position:fixed; right:24px; bottom:24px; z-index:110; width:min(390px,calc(100vw - 32px)); box-sizing:border-box; padding:22px; background:#fff; border:1px solid #dce5e6; border-radius:12px; box-shadow:0 8px 30px #223b471c; }
+.v2-app.pi-workspace .pi-feedback-receipt strong { color:#315e58; font-size:15px; }
+.v2-app.pi-workspace .pi-feedback-receipt p { font-size:13px; line-height:1.6; margin:10px 0; padding-right:12px; overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-feedback-receipt small { display:block; color:#77858c; line-height:1.7; }
+.v2-app.pi-workspace .pi-feedback-receipt button { display:block; border:0; background:none; color:#426c76; font-size:13px; padding:12px 0 0; cursor:pointer; }
+.v2-app.pi-workspace .pi-feedback-receipt .pi-receipt-close { position:absolute; right:14px; top:9px; padding:4px; font-size:20px; color:#879297; }
+.v2-app.pi-workspace .v2-feedback-options button:disabled { opacity:.5; cursor:wait; }
+@media(max-width:700px) { .v2-app.pi-workspace .pi-feedback-receipt { right:16px; bottom:16px; } }
