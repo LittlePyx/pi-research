@@ -54,7 +54,7 @@ test('Selections cannot leak to another space or replacement path, and stale ste
 test('Main learning page binds browse state separately from completion and paper opening',async()=>{
   const app=await readFile(new URL('../app/research-app.tsx',import.meta.url),'utf8');
   assert.match(app,/LearningStageNavigation steps=\{activeLearningState.path.steps\}/);
-  assert.match(app,/onSelect=\{\(stepId\) => setLearningBrowseSelection/);
+  assert.match(app,/onSelect=\{\(stepId\) => \{ setLearningBrowseSelection/);
   assert.match(app,/canComplete=\{canChangeLearningStep\(activeLearningStep, currentLearningStep\)\}/);
   assert.match(app, /<LearningStageWorkspace step=\{activeLearningStep\}/);
   const stage = await readFile(new URL("../app/components/learning-stage-workspace.tsx",import.meta.url),"utf8");

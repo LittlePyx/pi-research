@@ -5,15 +5,17 @@ import { RouteStageMap } from "./route-stage-map";
 import { RouteRelationships } from "./route-relationships";
 import "./route-reference-views.css";
 
-export function RouteReferenceViews({ tracks, edges, locale, onPaper, onMaterials }: {
+export function RouteReferenceViews({ tracks, edges, locale, onPaper, onMaterials, selectedTrack, mode }: {
   tracks: ResearchTrack[]; edges: ResearchTrackEdge[]; locale: "zh" | "en";
   onPaper: (id: string) => void; onMaterials: (track: ResearchTrack) => void;
+  selectedTrack?: ResearchTrack; mode?: "papers" | "connections";
 }) {
   const [selected, setSelected] = useState("");
   const [view, setView] = useState<"papers" | "connections">("papers");
-  const track = tracks.find(item => item.id === selected) || tracks.find(item => item.userRole === "core") || tracks[0];
+  const track = selectedTrack || tracks.find(item => item.id === selected) || tracks.find(item => item.userRole === "core") || tracks[0];
   const zh = locale === "zh";
   if (!track) return null;
+  if (mode) return <section className="pi-route-reference" aria-label={zh ? "路线资料" : "Route references"}>{mode === "papers" ? <RouteStageMap track={track} locale={locale} onPaper={onPaper} /> : <RouteRelationships track={track} tracks={tracks} edges={edges} locale={locale} onOpen={onMaterials} />}</section>;
   return <section className="pi-route-reference" aria-label={zh ? "路线资料" : "Route references"}>
     <header><div className="pi-route-reference-switch" role="group" aria-label={zh ? "浏览内容" : "View"}>
       <button type="button" aria-pressed={view === "papers"} onClick={() => setView("papers")}>{zh ? "文献脉络" : "Literature overview"}</button>

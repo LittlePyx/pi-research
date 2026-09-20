@@ -28,7 +28,7 @@ test("primary pages use progressive disclosure instead of repeating internal pro
 test("route workspace keeps one decision surface and moves supporting context behind calm navigation", async () => {
   const [app, css] = await Promise.all([readFile(appUrl, "utf8"), readFile(cssUrl, "utf8")]);
   const decisionPanel = app.slice(app.indexOf("function ResearchLeadDecisionPanel"), app.indexOf("function routeManagementNeedsAttention"));
-  const workspace = app.slice(app.indexOf('{view === "thread-detail"'), app.indexOf('{view === "learn"'));
+  const workspace = app.slice(app.indexOf('{(view === "thread-detail"'), app.indexOf('{(view === "learn"'));
 
   assert.match(decisionPanel, /v2-research-decision-focus/);
   assert.match(decisionPanel, /v2-research-uncertainty/);
@@ -43,7 +43,7 @@ test("route workspace keeps one decision surface and moves supporting context be
 
 test("route overview cards show one summary and one state-aware action", async () => {
   const app = await readFile(appUrl, "utf8");
-  const routeOverview = app.slice(app.indexOf('{view === "threads"'), app.indexOf('{view === "thread-detail"'));
+  const routeOverview = app.slice(app.indexOf('{(view === "threads"'), app.indexOf('{(view === "thread-detail"'));
   const routeCards = await readFile(new URL("../app/components/research-leads.tsx", import.meta.url), "utf8");
   assert.match(routeOverview, /ResearchLeads tracks=/);
   assert.match(routeCards, /routeMaterialState/);
@@ -57,7 +57,7 @@ test("route overview cards show one summary and one state-aware action", async (
 
 test("Today leads with selected reading while scan detail and secondary lists stay expandable", async () => {
   const app = await readFile(appUrl, "utf8");
-  const today = app.slice(app.indexOf('{view === "today"'), app.indexOf('{view === "threads"'));
+  const today = app.slice(app.indexOf('{view === "today"'), app.indexOf('{(view === "threads"'));
   const scanDetails = today.slice(today.indexOf('<details className="v2-scan-details">'), today.indexOf('</details>', today.indexOf('<details className="v2-scan-details">')));
 
   assert.doesNotMatch(today, /v2-today-briefing|v2-daily-brief-metrics/);
@@ -70,7 +70,7 @@ test("Today leads with selected reading while scan detail and secondary lists st
 
 test("library and paper detail keep reading primary while management and audit stay on demand", async () => {
   const [app, css] = await Promise.all([readFile(appUrl, "utf8"), readFile(cssUrl, "utf8")]);
-  const library = app.slice(app.indexOf('{view === "library"'), app.indexOf('{view === "memory"'));
+  const library = app.slice(app.indexOf('{(view === "library"'), app.indexOf('{view === "memory"'));
   const paperDetail = app.slice(app.indexOf('{view === "paper-detail" &&'), app.indexOf('</main>', app.indexOf('{view === "paper-detail" &&')));
   const paperHead = paperDetail.slice(paperDetail.indexOf('<section className="v2-paper-head">'), paperDetail.indexOf('<div className="v2-paper-detail-grid">'));
 
@@ -107,7 +107,7 @@ test("learning, demo, share, and modal copy keep product facts ahead of interfac
     readFile(new URL("../app/demo/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/share/[token]/page.tsx", import.meta.url), "utf8"),
   ]);
-  const learning = app.slice(app.indexOf('{view === "learn"'), app.indexOf('{view === "library"'));
+  const learning = app.slice(app.indexOf('{(view === "learn"'), app.indexOf('{(view === "library"'));
 
   assert.match(app, /learnTitle: "学习路径"/);
   assert.match(learning, /<LearningPathHeader path=\{activeLearningState.path\}/);

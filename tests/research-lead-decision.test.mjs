@@ -156,16 +156,17 @@ test("an identified evidence gap becomes a direct, freshness-safe discovery acti
 
 test("route workspace puts active research before disclosed secondary decisions and management", async () => {
   const [ui, css] = await Promise.all([readFile(uiUrl, "utf8"), readFile(cssUrl, "utf8")]);
-  const detail = ui.slice(ui.indexOf('{view === "thread-detail"'), ui.indexOf('{view === "learn"'));
+  const detail = ui.slice(ui.indexOf('{(view === "thread-detail"'), ui.indexOf('{(view === "learn"'));
   const decisionIndex = detail.indexOf("<ResearchLeadDecisionPanel");
-  const tabsIndex = detail.indexOf('className="v2-route-workspace-tabs"');
+  const tabsIndex = detail.indexOf('className="v2-route-workspace-tabs pi-route-navigation"');
   const activeWorkIndex = detail.indexOf('<ResearchProblemWorkbench');
   const managementIndex = detail.indexOf("<RouteManagementDrawer");
 
   assert.ok(decisionIndex >= 0);
   assert.ok(activeWorkIndex < decisionIndex);
-  assert.match(detail.slice(0, decisionIndex), /<details className="pi-route-secondary">\s*<summary>/);
-  assert.ok(tabsIndex < activeWorkIndex);
+  assert.ok(managementIndex >= 0 && managementIndex < decisionIndex);
+  assert.doesNotMatch(detail, /<details className="pi-route-secondary">/);
+  assert.ok(tabsIndex >= 0 && tabsIndex < activeWorkIndex);
   assert.ok(activeWorkIndex < managementIndex);
   assert.match(detail, /<RouteManagementDrawer key=\{`\$\{selectedThread\.id\}:\$\{routeManagementNeedsAttention\(selectedThread\)[\s\S]*v2-route-management-actions[\s\S]*<RouteDiscoveryLoop[\s\S]*<RouteEvolutionWorkbench[\s\S]*<\/RouteManagementDrawer>/);
   assert.match(ui, /function routeManagementNeedsAttention[\s\S]*\["retryable", "degraded"\]\.includes\(operational\)/);
