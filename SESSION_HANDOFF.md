@@ -1,5 +1,16 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-20：v259 阅读日历
+
+- 用户批准实现阅读日历。今日页新增ReadingCalendar，默认收起且不请求API；月份/日期/推荐、浏览、标记读完分类；按北京时间显示，每日每篇每类去重。50篇分页、空记录/加载/失败重试、手机单列，sessionStorage按space保存日期/类型/展开状态，返回论文前的日历可恢复。请求AbortController避免迟到响应污染，requestKey隔离加载结果。Calendar组件key必须带calendar:前缀，避免与ResearchStart同级space key冲突造成重复DOM。
+- 新GET /api/reading-calendar，先校验月份/日期/页码/类型，然后cookie用户与space owner校验；所有统计及论文查询按space过滤；private,no-store。固定Asia/Shanghai，与每日简报日期一致，不根据浏览器时区漂移。
+- 新reading_calendar_events与0065_fantastic_hercules迁移/快照/日志。触发器在推荐状态与last_recommended_at更新、opened_at、真实浏览事件（detail_open/revisit/original_click）、read状态转入时记录日事件。只read算明确完成，mastered/cited/duplicate_known不算；后续改笔记/退回unread不重写已有事件。API library保持同一完成状态下completed_at，避免笔记更新时间变成读完时间。事件表独立于120天清理的被动事件表，删除空间/论文本体仍级联删除。
+- 迁移仅从留存monitor_daily_briefs.paper_ids恢复推荐日期，从保留的真实浏览事件恢复浏览；不按first/last推荐猜测所有日期，不恢复旧read完成日期。简报JSON无效/跨空间paper过滤。前端底部清楚说明历史范围，旧日空白只是无留存记录，不代表当天未读。来源启用后新推荐按llm_recommended=1和last_recommended_at保存（包括可用的补充推荐，不仅简报主序）。无新的自动任务。
+- 新SQLite测试覆盖跨空间、北京时间跨日、重复浏览、笔记更新、mastered排除、撤销后保留、来源清理、历史回填、闰年/非法日期；真实GET捆绑测试覆盖401/404、查询隔离、分类、50+3分页不漏不重复。全量666测试通过；全量lint首次只有新组件同步effect状态问题，已重构并通过变更模块lint，CI最终见下。构建通过。
+- 隔离实际组件1440/390截图outputs/v259-calendar-*.png已查看，无横向溢出；未展开零请求、分类空态、闰年日期、刷新恢复选择通过。显示QA数据，不是读取用户生产记录；发布前查出同级key重复已修复并重新验收。
+- 业务8306020f08e00f68586c6eacfe10544255057071已推送GitHub/Sites；v259 appgprj_6a83f86ecca081919f3094b285bc2b1d~appgver_08b5b6b68d608191a9da9200df4c3faf，部署appgdep_6aaf5d2a5a588191b39faf970d1ccee5于2026-09-20 04:12:36 UTC succeeded，public/环境修订6保持，归档包含0065迁移。CI35488508290全部success（完整lint、构建、666测试、离线发现基准）。
+- 本地预览已停止；邮件仍暂停，旧Codex自动任务不恢复；docs/未动。下次可检查真实用户首次日历访问反馈，不宣称已替用户阅读/操作过论文。
+
 ## 2026-09-20：v258 文献脉络与方向联系扁平化
 
 - 用户批准取消层层展开，并询问是否应做每日推荐/阅读日历。本轮完成前者，日历仅分析与建议，未上线日历功能。
