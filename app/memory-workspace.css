@@ -70,26 +70,54 @@
 .v2-app.pi-workspace .pi-memory-workspace summary { cursor:pointer; }
 @media(max-width:700px) { .v2-app.pi-workspace .pi-memory-resume {padding:20px;} .v2-app.pi-workspace .pi-memory-resume label {min-width:0;max-width:100%;} }
 
-.v2-app.pi-workspace .pi-preference-memory { margin:32px 0; }
-.v2-app.pi-workspace .pi-preference-memory>header p { color:#667085; }
-.v2-app.pi-workspace .pi-preference-item { padding:26px 0; border-top:1px solid #dce1e8; }
-.v2-app.pi-workspace .pi-preference-title { display:flex; justify-content:space-between; align-items:start; gap:24px; }
-.v2-app.pi-workspace .pi-preference-title h3 { margin:6px 0 18px; font-size:19px; }
-.v2-app.pi-workspace .pi-preference-memory button { border:0; background:none; color:#2459c5; padding:6px 0; cursor:pointer; font-size:14px; }
-.v2-app.pi-workspace .pi-preference-title button { flex-shrink:0; color:#647084; }
-.v2-app.pi-workspace .pi-preference-context { display:grid; grid-template-columns:1.3fr 1fr; gap:36px; }
-.v2-app.pi-workspace .pi-preference-context h4 { font-size:12px; font-weight:500; color:#667085; margin:0; }
-.v2-app.pi-workspace .pi-preference-context p { margin:6px 0 0; font-size:14px; }
-.v2-app.pi-workspace .pi-preference-memory footer { padding:18px 0; border-top:1px solid #dce1e8; }
-.v2-app.pi-workspace .pi-preference-memory footer p { color:#667085; font-size:13px; }
-.v2-app.pi-workspace .pi-preference-disabled { display:flex; justify-content:space-between; gap:20px; padding:15px 0; color:#667085; }
+/* Research memory uses one reading column and quiet, grouped rows. */
+.v2-app.pi-workspace .v2-page.pi-memory-workspace { max-width:1000px; padding:40px 40px 28px; color:#25313b; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-page-head { display:flex; justify-content:space-between; align-items:center; gap:24px; padding:0; margin:0 0 28px; border:0; min-height:0; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-page-head h1 { font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif; font-size:30px; font-weight:600; letter-spacing:-.03em; margin:0 0 10px; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-page-purpose { margin:0; font-size:14px; color:#73808b; }
+.v2-app.pi-workspace .pi-memory-tools { display:flex; gap:8px; flex-shrink:0; }
+.v2-app.pi-workspace .pi-memory-tools button { background:transparent; border:1px solid #dce2e5; border-radius:7px; padding:8px 12px; color:#53616b; font-size:13px; cursor:pointer; }
+.v2-app.pi-workspace .pi-memory-tools button:hover { background:#fff; border-color:#aab8bf; }
+.v2-app.pi-workspace .pi-memory-nav { margin:0 0 32px; gap:26px; }
+.v2-app.pi-workspace .pi-memory-nav button { font-size:14px; padding:12px 0; }
+.v2-app.pi-workspace .pi-memory-nav button[aria-current] { color:#315d68; border-color:#315d68; font-weight:600; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-preferences { margin:0; }
+.v2-app.pi-workspace .pi-preference-memory { margin:0; }
+.v2-app.pi-workspace .pi-preference-memory>header { display:flex; justify-content:space-between; gap:16px; align-items:start; margin-bottom:28px; }
+.v2-app.pi-workspace .pi-preference-memory>header h2 { font-size:20px; font-weight:600; margin:0 0 5px; }
+.v2-app.pi-workspace .pi-preference-memory>header p { margin:0; color:#73808b; font-size:13px; }
+.v2-app.pi-workspace .pi-preference-memory>header>small { font-size:12px; color:#7a858c; padding-top:4px; }
+.v2-app.pi-workspace .pi-preference-group { margin:0 0 26px; }
+.v2-app.pi-workspace .pi-preference-group>h3 { color:#73808b; font-size:12px; font-weight:500; margin:0 0 10px 2px; }
+.v2-app.pi-workspace .pi-preference-list { background:#fff; border:1px solid #e1e6e9; border-radius:12px; overflow:hidden; }
+.v2-app.pi-workspace .pi-preference-item { padding:22px 24px 16px; }
+.v2-app.pi-workspace .pi-preference-item+.pi-preference-item { border-top:1px solid #edf0f2; }
+.v2-app.pi-workspace .pi-preference-item>h4 { font-size:16px; font-weight:600; line-height:1.6; margin:0; color:#26343e; }
+.v2-app.pi-workspace .pi-preference-item .pi-preference-effect { font-size:13px; color:#78838b; margin:5px 0 12px; line-height:1.65; }
+.v2-app.pi-workspace .pi-preference-evidence summary { display:flex; align-items:center; gap:7px; width:fit-content; list-style:none; font:12px/1.8 Arial,"Microsoft YaHei",sans-serif; color:#536e77; padding:3px 0; cursor:pointer; }
+.v2-app.pi-workspace .pi-preference-evidence summary::-webkit-details-marker { display:none; }
+.v2-app.pi-workspace .pi-preference-evidence summary span { font-size:14px; transition:transform .15s; }
+.v2-app.pi-workspace .pi-preference-evidence[open] summary span { transform:rotate(45deg); }
+.v2-app.pi-workspace .pi-preference-evidence>div { padding:12px 0 0; }
+.v2-app.pi-workspace .pi-preference-evidence>div p { font-size:13px; line-height:1.8; color:#5b6872; margin:0 0 10px; max-width:70ch; }
+.v2-app.pi-workspace .pi-preference-memory button { border:0; background:none; color:#536e77; padding:6px 0; cursor:pointer; font-size:12px; }
+.v2-app.pi-workspace .pi-preference-evidence button { color:#856653; }
+.v2-app.pi-workspace .pi-preference-memory footer { display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; align-items:center; color:#7a858c; font-size:12px; }
+.v2-app.pi-workspace .pi-preference-disabled { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:14px 18px; margin:12px 0; background:#eaf0ed; border-radius:8px; color:#596e62; font-size:13px; }
+.v2-app.pi-workspace .pi-preference-disabled button { flex-shrink:0; }
 .v2-app.pi-workspace .pi-preference-memory button:disabled { opacity:.5; cursor:wait; }
+.v2-app.pi-workspace .pi-memory-scope { border:0; margin:24px 0 0; padding:0; font-size:12px; color:#8a949a; }
+.v2-app.pi-workspace .pi-memory-scope button { font-size:12px; color:#6d7f89; }
 .v2-app.pi-workspace .pi-memory-record-nav { display:flex; flex-wrap:wrap; gap:24px; }
 .v2-app.pi-workspace .pi-memory-record-nav button { border:0; background:none; padding:6px 0; color:#647084; cursor:pointer; }
-.v2-app.pi-workspace .pi-memory-record-nav button[aria-current] { color:#2459c5; }
+.v2-app.pi-workspace .pi-memory-record-nav button[aria-current] { color:#315d68; }
+.v2-app.pi-workspace .pi-memory-workspace .v2-lab-attribution { margin-top:32px; }
 @media(max-width:700px) {
- .v2-app.pi-workspace .pi-preference-context { grid-template-columns:minmax(0,1fr); gap:16px; }
- .v2-app.pi-workspace .pi-preference-title { display:block; }
- .v2-app.pi-workspace .pi-preference-title button { margin:0 0 16px; }
+ .v2-app.pi-workspace .v2-page.pi-memory-workspace { padding:26px 20px; }
+ .v2-app.pi-workspace .pi-memory-workspace .v2-page-head { display:block; margin-bottom:20px; }
+ .v2-app.pi-workspace .pi-memory-workspace .v2-page-head h1 { font-size:26px; }
+ .v2-app.pi-workspace .pi-memory-tools { margin-top:18px; }
+ .v2-app.pi-workspace .pi-preference-item { padding:18px 18px 14px; }
+ .v2-app.pi-workspace .pi-preference-item>h4 { font-size:15px; }
  .v2-app.pi-workspace .pi-preference-disabled { flex-wrap:wrap; }
 }

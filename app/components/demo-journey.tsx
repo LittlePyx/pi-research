@@ -3,6 +3,7 @@ import { workspaceHash, type WorkspaceView } from "../../lib/workspace-navigatio
 
 export function DemoJourney({ view, locale }: { view: WorkspaceView; locale: "zh" | "en" }) {
   const zh = locale === "zh";
+  if (view === "memory") return null;
   const space = "demo-mathematics";
   const steps = [
     { label: zh ? "读一篇论文" : "Read a paper", view: "paper-detail", id: "kls-localization", from: "today" },
@@ -16,6 +17,6 @@ export function DemoJourney({ view, locale }: { view: WorkspaceView; locale: "zh
     <nav aria-label={zh ? "体验流程" : "Demo journey"}>{steps.map((step, index) => <a key={step.view} aria-current={view === step.view ? "step" : undefined} href={workspaceHash({ ...step, space })}><span>{String(index + 1).padStart(2, "0")}</span>{step.label}</a>)}</nav>
     {view === "paper-detail" && <small>{zh ? "在“我的笔记”写下一个问题并保存，稍后可在研究记忆中找回。" : "Save a question in My notes, then find it in Research memory."}</small>}
     {view === "workbook" && <small>{zh ? "已有一份示例比较记录。可打开依据，补充核查笔记和待解决问题。" : "Continue the example comparison by inspecting evidence and adding open questions."}</small>}
-    {view === "memory" && <small>{zh ? "查看示例笔记如何形成研究偏向，试着停用一条不符合你的推断。刷新恢复初始示例。" : "See how example notes inform interests. Try disabling an inference; refresh resets the demo."}</small>}
+
   </section>;
 }

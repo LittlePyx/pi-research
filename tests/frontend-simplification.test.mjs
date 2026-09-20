@@ -96,7 +96,7 @@ test("research memory separates explicit and inferred evidence while collapsing 
   assert.match(memory, /研究偏向/);
   assert.match(memory, /<ResearchMemoryNotebook key=\{`\$\{activeSpace.id\}:\$\{memorySection\}`\}/);
   assert.match(memory, /className="pi-memory-profile"/);
-  assert.match(memory, /"当前研究范围" : "CURRENT RESEARCH SCOPE"/);
+  assert.match(memory, /pi-memory-tools/);
   assert.doesNotMatch(memory, /v2-import-safety-inline/);
   assert.match(importModal, /v2-import-warning[\s\S]*importSafetyTitle[\s\S]*v2-import-attestation/);
 });
