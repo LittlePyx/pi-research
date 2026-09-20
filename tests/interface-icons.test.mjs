@@ -72,14 +72,14 @@ test("learning error keeps its retry action and alert semantics after the icon c
 });
 
 test("workspace choices display supplied metadata only and preserve selection callbacks", () => {
-  const start = app.indexOf('<div className="v2-space-list">');
+  const start = app.indexOf('<div className="v2-space-list"');
   const jsx = app.slice(start, app.indexOf("</div>", start) + 6);
   const spaces = [
     { id: "a", name: "Information theory", memberName: "Yilin", description: "Gaussian channels", accent: "blue" },
     { id: "b", name: "Applied mathematics", memberName: "Researcher", description: "Convex geometry", accent: "sage" },
   ];
   const selected = [];
-  const tree = evaluate(jsx, { spaces, activeSpace: spaces[0], locale: "zh", initials: (name) => name[0], defaultSpaceName: (name) => name, switchSpace: (space) => selected.push(space.id) });
+  const tree = evaluate(jsx, { spaceSection: "existing", spaces, activeSpace: spaces[0], locale: "zh", initials: (name) => name[0], defaultSpaceName: (name) => name, switchSpace: (space) => selected.push(space.id) });
   const html = renderToStaticMarkup(tree);
   assert.match(html, /Information theory/);
   assert.match(html, /Applied mathematics/);

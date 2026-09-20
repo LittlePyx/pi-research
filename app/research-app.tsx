@@ -1,5 +1,7 @@
 "use client";
 
+import { ImportProfileReview } from "./components/import-profile-review";
+import "./dialog-workspace.css";
 import { ReadingCalendar } from "./components/reading-calendar";
 import { AnswerMarkdown } from "./components/answer-markdown";
 import { SectionNavigation } from "./components/section-navigation";
@@ -3156,6 +3158,8 @@ export default function ResearchApp({ user }: { user: User }) {
   const monitorSpaceRef = useRef<string | null>(null);
   const [scanElapsedSeconds, setScanElapsedSeconds] = useState(0);
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
+  const [sourceSection, setSourceSection] = useState("suggested");
+  const [spaceSection, setSpaceSection] = useState("existing");
   const [venueDraft, setVenueDraft] = useState("");
   const [authorDraft, setAuthorDraft] = useState("");
   const [explorationDraft, setExplorationDraft] = useState<"focused" | "balanced" | "open">("balanced");
@@ -4523,6 +4527,7 @@ export default function ResearchApp({ user }: { user: User }) {
   };
 
   const openSourceSettings = () => {
+    setSourceSection("suggested");
     setVenueDraft((monitor?.preferences?.priorityVenues || []).join("\n"));
     setAuthorDraft((monitor?.preferences?.trackedAuthors || []).join("\n"));
     setExplorationDraft(monitor?.preferences?.explorationMode || "balanced");
@@ -4981,14 +4986,6 @@ export default function ResearchApp({ user }: { user: User }) {
 
   const editImportAnalysis = (update: (analysis: ResearchProfileAnalysis) => ResearchProfileAnalysis) => {
     setImportDraft((current) => current ? { ...current, analysis: update(current.analysis) } : current);
-  };
-
-  const removeProfileItem = (key: "subdirections" | "interests" | "knowledge" | "openQuestions" | "exclusions", index: number) => {
-    editImportAnalysis((analysis) => ({ ...analysis, [key]: analysis[key].filter((_, itemIndex) => itemIndex !== index) }));
-  };
-
-  const removeOpportunity = (index: number) => {
-    editImportAnalysis((analysis) => ({ ...analysis, researchOpportunities: analysis.researchOpportunities.filter((_, itemIndex) => itemIndex !== index) }));
   };
 
   const saveImportDecision = async (action: "confirm" | "discard") => {
@@ -6244,11 +6241,12 @@ export default function ResearchApp({ user }: { user: User }) {
       </div>
 
       {spaceDialog && (
-        <div className="v2-modal" data-pi-dialog="space" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.spaceDialogTitle}>
+        <div className="v2-modal pi-dialog-workspace" data-pi-dialog="space" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.spaceDialogTitle}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)} />
           <div className="v2-space-modal">
             <div className="v2-modal-head"><div><p className="v2-kicker">{t.workspaceLabel}</p><h2>{t.spaceDialogTitle}</h2><p>{t.spaceDialogIntro}</p></div><button type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)}>×</button></div>
-            <div className="v2-space-list">
+            <nav className="pi-dialog-nav" aria-label={locale === "zh" ? "空间管理" : "Manage spaces"}>{[["existing", "切换空间", "Switch space"], ["new", "新建空间", "New space"]].map(([id, zh, en]) => <button type="button" key={id} aria-pressed={spaceSection === id} onClick={() => setSpaceSection(id)}>{locale === "zh" ? zh : en}</button>)}</nav>
+            <div className="v2-space-list" hidden={spaceSection !== "existing"}>
               {spaces.map((space) => (
                 <button type="button" key={space.id} className={space.id === activeSpace.id ? "active" : ""} onClick={() => switchSpace(space)}>
                   <span className={"v2-space-avatar " + space.accent}>{initials(space.name)}</span>
@@ -6257,7 +6255,7 @@ export default function ResearchApp({ user }: { user: User }) {
                 </button>
               ))}
             </div>
-            <form className="v2-new-space-form" onSubmit={submitSpace}>
+            <form className="v2-new-space-form" hidden={spaceSection !== "new"} onSubmit={submitSpace}>
               <p className="v2-kicker">{t.createSpaceTitle}</p>
               <div><label><span>{t.spaceName}</span><input required value={newSpace.name} onChange={(event) => setNewSpace((current) => ({ ...current, name: event.target.value }))} placeholder={locale === "zh" ? "例如：量子信息" : "e.g. Quantum Information"} /></label><label><span>{t.memberName}</span><input value={newSpace.memberName} onChange={(event) => setNewSpace((current) => ({ ...current, memberName: event.target.value }))} placeholder={user.displayName} /></label></div>
               <label><span>{t.spaceScope}</span><textarea value={newSpace.description} onChange={(event) => setNewSpace((current) => ({ ...current, description: event.target.value }))} placeholder={locale === "zh" ? "这个空间只关注哪些具体问题？" : "Which specific questions belong in this space?"} /></label>
@@ -6268,28 +6266,29 @@ export default function ResearchApp({ user }: { user: User }) {
       )}
 
       {sourceSettingsOpen && monitor?.preferences && (
-        <div className="v2-modal" data-pi-dialog="sources" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.sourceSettingsTitle}>
+        <div className="v2-modal pi-dialog-workspace" data-pi-dialog="sources" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.sourceSettingsTitle}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setSourceSettingsOpen(false)} />
           <div className="v2-source-settings">
-            <div className="v2-modal-head"><div><p className="v2-kicker">{t.prioritySources}</p><h2>{t.sourceSettingsTitle}</h2><p>{t.sourceSettingsIntro}</p></div><button type="button" aria-label={t.close} onClick={() => setSourceSettingsOpen(false)}>×</button></div>
+            <div className="v2-modal-head"><div><p className="v2-kicker">{t.prioritySources}</p><h2>{locale === "zh" ? "关注来源" : "Followed sources"}</h2><p>{defaultSpaceName(activeSpace.name, locale)} · {locale === "zh" ? "保存后用于后续检索" : "Saved choices apply to future discovery"}</p></div><button type="button" aria-label={t.close} onClick={() => setSourceSettingsOpen(false)}>×</button></div>
             <form onSubmit={(event) => { event.preventDefault(); void saveSourceSettings(false); }}>
-              <div className="v2-detected-profile"><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor.preferences.profileNameZh : monitor.preferences.profileNameEn}</strong><em>{monitor.preferences.userModified ? t.userCustomized : t.systemProvided}</em></div>
-              <ResearchSourceSuggestions key={activeSpace.id} spaceId={activeSpace.id} locale={locale} selected={venueDraft.split(/\r?\n/).map(s => s.trim()).filter(Boolean)} onChange={titles => setVenueDraft(titles.join("\n"))} onOpenPaper={id => { setSourceSettingsOpen(false); void openRoutePaper(id, view === "paper-detail" ? paperReturnView : view); }} />
-              <fieldset className="v2-exploration-mode"><legend>{locale === "zh" ? "每日探索强度" : "Daily exploration range"}</legend><div>{(["focused", "balanced", "open"] as const).map((mode) => <button type="button" key={mode} className={explorationDraft === mode ? "active" : ""} onClick={() => setExplorationDraft(mode)}><strong>{mode === "focused" ? (locale === "zh" ? "聚焦" : "Focused") : mode === "balanced" ? (locale === "zh" ? "平衡" : "Balanced") : (locale === "zh" ? "开放" : "Open")}</strong><small>{mode === "focused" ? (locale === "zh" ? "紧贴核心方向" : "Core directions only") : mode === "balanced" ? (locale === "zh" ? "核心＋相邻线索" : "Core + adjacent leads") : (locale === "zh" ? "主动跨方向探索" : "Broader cross-field search")}</small></button>)}</div></fieldset>
-              <details className="pi-source-manual"><summary>{locale === "zh" ? "手动补充来源与追踪作者" : "Edit sources and tracked authors"}</summary><label><span>{locale === "zh" ? "已选择的来源（可补充或直接编辑）" : "Selected sources (add or edit directly)"}</span><textarea value={venueDraft} onChange={(event) => setVenueDraft(event.target.value)} rows={10} /></label>
+              <nav className="pi-dialog-nav" aria-label={locale === "zh" ? "来源设置" : "Source settings"}>{[["suggested", "建议来源", "Suggestions"], ["manual", "来源与作者", "Sources & authors"], ["range", "探索范围", "Exploration"]].map(([id, zh, en]) => <button type="button" key={id} aria-pressed={sourceSection === id} onClick={() => setSourceSection(id)}>{locale === "zh" ? zh : en}</button>)}</nav>
+              <div hidden={sourceSection !== "suggested"}><div className="v2-detected-profile"><span>{t.detectedDomain}</span><strong>{locale === "zh" ? monitor.preferences.profileNameZh : monitor.preferences.profileNameEn}</strong><em>{monitor.preferences.userModified ? t.userCustomized : t.systemProvided}</em></div>
+              <ResearchSourceSuggestions key={activeSpace.id} spaceId={activeSpace.id} locale={locale} selected={venueDraft.split(/\r?\n/).map(s => s.trim()).filter(Boolean)} onChange={titles => setVenueDraft(titles.join("\n"))} onOpenPaper={id => { setSourceSettingsOpen(false); void openRoutePaper(id, view === "paper-detail" ? paperReturnView : view); }} /></div>
+              <fieldset hidden={sourceSection !== "range"} className="v2-exploration-mode"><legend>{locale === "zh" ? "每日探索强度" : "Daily exploration range"}</legend><div>{(["focused", "balanced", "open"] as const).map((mode) => <button type="button" key={mode} aria-pressed={explorationDraft === mode} className={explorationDraft === mode ? "active" : ""} onClick={() => setExplorationDraft(mode)}><strong>{mode === "focused" ? (locale === "zh" ? "聚焦" : "Focused") : mode === "balanced" ? (locale === "zh" ? "平衡" : "Balanced") : (locale === "zh" ? "开放" : "Open")}</strong><small>{mode === "focused" ? (locale === "zh" ? "紧贴核心方向" : "Core directions only") : mode === "balanced" ? (locale === "zh" ? "核心＋相邻线索" : "Core + adjacent leads") : (locale === "zh" ? "主动跨方向探索" : "Broader cross-field search")}</small></button>)}</div></fieldset>
+              <section hidden={sourceSection !== "manual"} className="pi-source-manual"><label><span>{locale === "zh" ? "已选择的来源（可补充或直接编辑）" : "Selected sources (add or edit directly)"}</span><textarea value={venueDraft} onChange={(event) => setVenueDraft(event.target.value)} rows={10} /></label>
               <label><span>{locale === "zh" ? "持续追踪的作者（每行一位）" : "Tracked authors (one per line)"}</span><textarea value={authorDraft} onChange={(event) => setAuthorDraft(event.target.value)} rows={5} placeholder={locale === "zh" ? "例如：Terence Tao" : "e.g. Terence Tao"} /></label>
               {Boolean(monitor.suggestedAuthors?.length) && <div className="v2-author-suggestions"><span>{locale === "zh" ? "根据已接受论文建议" : "Suggested from accepted papers"}</span><div>{monitor.suggestedAuthors?.slice(0, 10).map((author) => <button type="button" key={author} onClick={() => setAuthorDraft((current) => Array.from(new Set([...current.split(/\r?\n/).filter(Boolean), author])).join("\n"))}>＋ {author}</button>)}</div></div>}
-              </details><div className="v2-source-settings-actions"><button type="button" onClick={() => void saveSourceSettings(true)} disabled={savingPreferences}>{t.resetSources}</button><button type="button" disabled={savingPreferences || !venueDraft.trim() || scanIsActive} onClick={() => void saveSourceSettings(false, true)}>{locale === "zh" ? "保存并扫描" : "Save and scan"}</button><button type="submit" disabled={savingPreferences || !venueDraft.trim()}>{savingPreferences ? t.savingSources : (locale === "zh" ? "保存关注来源" : "Save sources")} →</button></div>
+              </section><div className="v2-source-settings-actions"><button type="button" onClick={() => void saveSourceSettings(true)} disabled={savingPreferences}>{t.resetSources}</button><button type="button" disabled={savingPreferences || !venueDraft.trim() || scanIsActive} onClick={() => void saveSourceSettings(false, true)}>{locale === "zh" ? "保存并扫描" : "Save and scan"}</button><button type="submit" disabled={savingPreferences || !venueDraft.trim()}>{savingPreferences ? t.savingSources : (locale === "zh" ? "保存关注来源" : "Save sources")} →</button></div>
             </form>
           </div>
         </div>
       )}
 
       {modelSettingsOpen && (
-        <div className="v2-modal" data-pi-dialog="model" tabIndex={-1} role="dialog" aria-modal="true" aria-label={locale === "zh" ? "AI 模型设置" : "AI model settings"}>
+        <div className="v2-modal pi-dialog-workspace" data-pi-dialog="model" tabIndex={-1} role="dialog" aria-modal="true" aria-label={locale === "zh" ? "AI 模型设置" : "AI model settings"}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={closeModelSettings} />
           <div className="v2-model-settings">
-            <div className="v2-modal-head"><div><p className="v2-kicker">{locale === "zh" ? "模型连接" : "MODEL CONNECTION"}</p><h2>{locale === "zh" ? "连接 DeepSeek" : "Connect DeepSeek"}</h2></div><button type="button" aria-label={t.close} onClick={closeModelSettings}>×</button></div>
+            <div className="v2-modal-head"><div><h2>{locale === "zh" ? "模型设置" : "Model settings"}</h2></div><button type="button" aria-label={t.close} onClick={closeModelSettings}>×</button></div>
             <section className={`v2-model-status-card ${modelConnectionState}`} aria-live="polite"><span><i /></span><div><small>{locale === "zh" ? "当前状态" : "Current status"}</small><strong>{modelConnectionCopy.modal}</strong><p>DeepSeek · {modelDisplayName(connectedModel || "deepseek-flash")}{modelCredentialSource ? ` · ${modelCredentialSource === "browser" ? (locale === "zh" ? "当前浏览器 Key" : "browser key") : (locale === "zh" ? "平台 Key" : "host key")}` : ""}</p></div><button type="button" onClick={() => void refreshModelStatus()} disabled={checkingModel}>{checkingModel ? (locale === "zh" ? "检测中…" : "Checking…") : (locale === "zh" ? "重新检测" : "Check again")}</button></section>
             {credentialFailureRecovered && <section className="v2-model-resume-card"><b>✓</b><div><strong>{locale === "zh" ? "连接已经恢复，扫描断点仍在" : "Connection restored; the scan checkpoint is intact"}</strong><p>{locale === "zh" ? `${monitor?.scanJob?.discoveredCount || 0} 篇候选和 ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} 篇筛选进度均已保留。` : `${monitor?.scanJob?.discoveredCount || 0} candidates and ${monitor?.scanJob?.reviewedCount || 0}/${monitor?.scanJob?.candidateCount || 0} screening progress are preserved.`}</p></div><button type="button" onClick={resumeAfterModelConnection}>{locale === "zh" ? "关闭并从断点继续" : "Close and resume"} →</button></section>}
             <form className="v2-model-key-form" onSubmit={(event) => { event.preventDefault(); void saveModelCredential(); }}>
@@ -6297,7 +6296,7 @@ export default function ResearchApp({ user }: { user: User }) {
               {modelSettingsError && <p className="v2-model-key-error" role="alert">{modelSettingsError}</p>}
               <div className="v2-model-key-actions">{modelCredentialSource === "browser" ? <button className="remove" type="button" onClick={() => void removeBrowserModelCredential()} disabled={checkingModel}>{locale === "zh" ? "删除当前浏览器 Key" : "Remove browser key"}</button> : <span /> }<button className="save" type="submit" disabled={checkingModel || !modelApiKey.trim()}>{checkingModel ? (locale === "zh" ? "正在验证…" : "Verifying…") : (locale === "zh" ? "测试并保存" : "Test & save")} →</button></div>
             </form>
-            <section className="v2-model-key-privacy"><b>✓</b><div><strong>{locale === "zh" ? "只保存在这个浏览器" : "Stored only in this browser"}</strong><p>{locale === "zh" ? "Key 使用 HttpOnly 安全 Cookie 保存，页面脚本无法读取，也不会写入论文数据库。关闭浏览器后仍可使用，30 天后自动失效。" : "The key is kept in an HttpOnly security cookie that page scripts cannot read. It never enters the paper database and expires automatically after 30 days."}</p><small>{locale === "zh" ? "网页发起的扫描和 AI 功能都会使用它；无人打开网页时的后台定时扫描仍需要平台 Key。" : "Browser-started scans and AI features use it. Unattended background scans still require a host key."}</small></div></section>
+            <section className="v2-model-key-privacy"><b>✓</b><div><strong>{locale === "zh" ? "只保存在这个浏览器" : "Stored only in this browser"}</strong><p>{locale === "zh" ? "Key 受保护地保存在当前浏览器，不写入论文数据库，30 天后自动失效。" : "Your key is protected in this browser, never stored in the paper database, and expires after 30 days."}</p><small>{locale === "zh" ? "网页发起的扫描和 AI 功能都会使用它；无人打开网页时的后台定时扫描仍需要平台 Key。" : "Browser-started scans and AI features use it. Unattended background scans still require a host key."}</small></div></section>
           </div>
         </div>
       )}
@@ -6323,16 +6322,16 @@ export default function ResearchApp({ user }: { user: User }) {
       )}
 
       {importOpen && (
-        <div className="v2-modal" data-pi-dialog="import" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.importResearch}>
+        <div className="v2-modal pi-dialog-workspace" data-pi-dialog="import" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.importResearch}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => { if (!analyzingImport && !savingImport) setImportOpen(false); }} />
           <div className="v2-import-modal">
-            <div className="v2-modal-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {t.privateSpace}</p><h2>{importDraft ? t.importDraftTitle : t.importResearch}</h2>{importDraft && <p>{t.importDraftNote}</p>}</div><button type="button" aria-label={t.close} disabled={analyzingImport || savingImport} onClick={() => setImportOpen(false)}>×</button></div>
+            <div className="v2-modal-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {t.privateSpace}</p><h2>{importDraft ? t.importDraftTitle : t.importResearch}</h2><p>{importDraft ? t.importDraftNote : (locale === "zh" ? "选择资料，生成草稿，再审阅确认。" : "Choose materials, generate a draft, then review and confirm.")}</p></div><button type="button" aria-label={t.close} disabled={analyzingImport || savingImport} onClick={() => setImportOpen(false)}>×</button></div>
 
             {!importDraft ? <div className="v2-import-body">
               <section className="v2-import-warning"><b>!</b><div><h3>{t.importSafetyTitle}</h3><p>{t.importSafetyBody}</p><small>{t.importSafetyProcess}</small></div></section>
 
               <div className="v2-import-kind" role="group" aria-label={locale === "zh" ? "资料类型" : "Material type"}>
-                {(["chat", "published_paper", "public_project", "mixed"] as ImportSourceKind[]).map((kind) => <button type="button" key={kind} className={importSourceKind === kind ? "active" : ""} onClick={() => setImportSourceKind(kind)}>{kind === "chat" ? (locale === "zh" ? "AI 项目 / 聊天" : "AI project / chats") : kind === "published_paper" ? (locale === "zh" ? "已发表论文" : "Published papers") : kind === "public_project" ? (locale === "zh" ? "公开项目材料" : "Public project material") : (locale === "zh" ? "混合资料" : "Mixed materials")}</button>)}
+                {(["chat", "published_paper", "public_project", "mixed"] as ImportSourceKind[]).map((kind) => <button type="button" key={kind} aria-pressed={importSourceKind === kind} className={importSourceKind === kind ? "active" : ""} onClick={() => setImportSourceKind(kind)}>{kind === "chat" ? (locale === "zh" ? "AI 项目 / 聊天" : "AI project / chats") : kind === "published_paper" ? (locale === "zh" ? "已发表论文" : "Published papers") : kind === "public_project" ? (locale === "zh" ? "公开项目材料" : "Public project material") : (locale === "zh" ? "混合资料" : "Mixed materials")}</button>)}
               </div>
 
               <div className="v2-import-pickers">
@@ -6348,18 +6347,11 @@ export default function ResearchApp({ user }: { user: User }) {
               <label className="v2-import-paste"><span>{t.pasteConversation}</span><textarea value={pastedMaterial} maxLength={MATERIAL_CHAR_LIMIT} onChange={(event) => setPastedMaterial(event.target.value)} placeholder={locale === "zh" ? "粘贴与当前研究空间有关的部分；先删除个人信息和不应外发的内容。" : "Paste only the part relevant to this space; remove personal or non-shareable content first."} /></label>
 
               <div className="v2-import-attestation"><input id="pi-import-safety" type="checkbox" aria-label={t.confirmPublic} checked={safetyConfirmed} onChange={(event) => setSafetyConfirmed(event.target.checked)} /><label htmlFor="pi-import-safety"><strong>{t.confirmPublic}</strong><small>{t.rawNotStored}</small></label></div>
-              <div className="v2-import-actions"><button type="button" onClick={() => setImportOpen(false)}>{t.cancel}</button><button type="button" onClick={() => void analyzeResearchImport()} disabled={analyzingImport || parsingMaterials || !safetyConfirmed || (!importFiles.length && !pastedMaterial.trim())}>{analyzingImport ? t.analyzingMaterials : t.analyzeMaterials} →</button></div>
+              <div className="v2-import-actions"><button type="button" disabled={analyzingImport || parsingMaterials} onClick={() => setImportOpen(false)}>{t.cancel}</button><button type="button" onClick={() => void analyzeResearchImport()} disabled={analyzingImport || parsingMaterials || !safetyConfirmed || (!importFiles.length && !pastedMaterial.trim())}>{analyzingImport ? t.analyzingMaterials : t.analyzeMaterials} →</button></div>
               {analyzingImport && <div className="v2-import-progress" role="status" aria-live="polite"><InterfaceIcon name="loading" className="pi-state-mark" /><div><strong>{t.analyzingMaterials}</strong><small>{locale === "zh" ? "正在整理研究方向、已有知识与开放问题。" : "Organizing research directions, existing knowledge, and open questions."}</small><i><b /></i></div></div>}
             </div> : <div className="v2-profile-draft">
-              <section className="v2-draft-status"><InterfaceIcon name="document" className="pi-state-mark" /><div><strong>{t.importDraftNote}</strong><small>{t.rawNotStored} · {importDraft.fileNames.length} {locale === "zh" ? "个来源" : "sources"} · {modelDisplayName(importDraft.analysisModel)}</small></div></section>
-              <div className="v2-draft-edit-grid">
-                <label><span>{t.mainDirection}</span><input value={locale === "zh" ? importDraft.analysis.primaryDirectionZh : importDraft.analysis.primaryDirectionEn} onChange={(event) => editImportAnalysis((analysis) => locale === "zh" ? { ...analysis, primaryDirectionZh: event.target.value } : { ...analysis, primaryDirectionEn: event.target.value })} /></label>
-                <label><span>{t.profileSummary}</span><textarea value={locale === "zh" ? importDraft.analysis.summaryZh : importDraft.analysis.summaryEn} onChange={(event) => editImportAnalysis((analysis) => locale === "zh" ? { ...analysis, summaryZh: event.target.value } : { ...analysis, summaryEn: event.target.value })} /></label>
-              </div>
-              <section className="v2-draft-signals"><h3>{t.subdirectionsLabel}</h3><div>{importDraft.analysis.subdirections.map((item, index) => <span key={`sub-${index}`}>{locale === "zh" ? item.labelZh : item.labelEn}<small>{item.confidence}%</small><button type="button" onClick={() => removeProfileItem("subdirections", index)}>×</button></span>)}{importDraft.analysis.interests.map((item, index) => <span key={`interest-${index}`}>{locale === "zh" ? item.labelZh : item.labelEn}<small>{item.confidence}%</small><button type="button" onClick={() => removeProfileItem("interests", index)}>×</button></span>)}</div></section>
-              <section className="v2-draft-signals questions"><h3>{t.openQuestionsLabel}</h3><div>{importDraft.analysis.openQuestions.map((item, index) => <span key={index}>{locale === "zh" ? item.labelZh : item.labelEn}<small>{item.confidence}%</small><button type="button" onClick={() => removeProfileItem("openQuestions", index)}>×</button></span>)}</div></section>
-              <section className="v2-draft-opportunities"><h3>{t.futureDirections}</h3>{importDraft.analysis.researchOpportunities.map((item, index) => <article key={index}><span>{String(index + 1).padStart(2, "0")}</span><div><h4>{locale === "zh" ? item.titleZh : item.titleEn}</h4><p>{locale === "zh" ? item.rationaleZh : item.rationaleEn}</p><ul>{(locale === "zh" ? item.startingPointsZh : item.startingPointsEn).map((point) => <li key={point}>{point}</li>)}</ul><small>{t.evidenceConfidence} {item.confidence}% · {item.evidenceFiles.join(" · ")}</small></div><button type="button" aria-label={locale === "zh" ? "删除方向" : "Remove direction"} onClick={() => removeOpportunity(index)}>×</button></article>)}</section>
-              <section className="v2-draft-sources"><h3>{t.profileSources}</h3>{importDraft.analysis.sourceAssessments.map((source) => <div key={source.fileName} className={source.used ? "used" : ""}><span>{source.used ? "✓" : "—"}</span><p><strong>{source.fileName}</strong><small>{locale === "zh" ? source.reasonZh : source.reasonEn}</small></p><b>{source.relevance}</b></div>)}</section>
+              <p className="pi-review-meta">{t.rawNotStored} · {importDraft.fileNames.length} {locale === "zh" ? "个来源" : "sources"} · {modelDisplayName(importDraft.analysisModel)}</p>
+              <ImportProfileReview key={importDraft.id} draft={importDraft} locale={locale} disabled={savingImport} onEdit={editImportAnalysis} />
               <div className="v2-import-actions"><button type="button" onClick={() => void saveImportDecision("discard")} disabled={savingImport}>{t.discardDraft}</button><button type="button" onClick={() => void saveImportDecision("confirm")} disabled={savingImport || !importDraft.analysis.researchOpportunities.length}>{savingImport ? t.savingSources : t.confirmProfile} →</button></div>
             </div>}
           </div>

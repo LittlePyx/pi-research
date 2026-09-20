@@ -115,7 +115,7 @@ test("learning, demo, share, and modal copy keep product facts ahead of interfac
   assert.match(demo, /index === 0 && <p>\{step\.detail\}<\/p>/);
   assert.match(demo, /公开演示 · 只读/);
   assert.doesNotMatch(share, /Pi · DeepSeek Pro/);
-  assert.match(app, /"模型连接" : "MODEL CONNECTION"/);
+  assert.match(app, /"模型设置" : "Model settings"/);
   assert.doesNotMatch(app, /浏览器自带密钥|完善研究记忆/);
 });
 

@@ -1,0 +1,115 @@
+/* Task-focused dialogs: one reading surface, parallel sections, restrained actions. */
+.v2-app.pi-workspace .pi-dialog-workspace { padding:24px; }
+.v2-app.pi-workspace .pi-dialog-workspace [hidden] { display:none !important; }
+.v2-app.pi-workspace .pi-dialog-workspace > div { width:min(820px,100%); border:1px solid #dce1e7; border-radius:12px; background:#fff; overflow:auto; color:#202b38; }
+.v2-app.pi-workspace .pi-dialog-workspace > .v2-model-settings { width:min(600px,100%); }
+.v2-app.pi-workspace .pi-dialog-workspace :is(h2,h3,h4,p,strong,input,textarea,button) { font-family:var(--font-geist-sans,system-ui),sans-serif !important; letter-spacing:normal; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-modal-head { padding:24px 28px 20px; gap:20px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-modal-head h2 { margin:0; font-size:24px; font-weight:600; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-modal-head > div > p { margin:8px 0 0; max-width:66ch; font-size:14px; line-height:1.7; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-modal-head .v2-kicker { margin:0 0 6px; font-size:12px; letter-spacing:0; color:#647183; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-modal-head > button { background:none; border:0; font-size:25px !important; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(.v2-import-body,.v2-profile-draft,.v2-source-settings > form,.v2-new-space-form,.v2-space-list) { padding:0 28px 24px; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(label > span,label > strong) { display:block; margin-bottom:6px; font-size:14px; font-weight:500; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(input:not([type=checkbox],[type=radio],[type=file]),textarea,select) { width:100%; min-width:0; font-size:16px !important; line-height:1.6; border:1px solid #cdd4dd; border-radius:6px; color:#202b38; }
+.v2-app.pi-workspace .pi-dialog-workspace textarea { resize:vertical; }
+.v2-app.pi-workspace .pi-dialog-workspace button:not(.v2-modal-backdrop) { font-size:14px !important; font-weight:500; cursor:pointer; }
+.v2-app.pi-workspace .pi-dialog-workspace button:disabled { cursor:default; opacity:.45; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(button,input,textarea,select):focus-visible { outline:2px solid #2563a6; outline-offset:3px; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-dialog-nav { display:flex; gap:24px; border-bottom:1px solid #e0e5eb; margin:0 0 24px; padding:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-dialog-nav button { padding:14px 0; color:#637083; background:none; border:0; border-bottom:2px solid transparent; border-radius:0; line-height:1.5; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-dialog-nav button[aria-pressed=true] { color:#245fa5; border-bottom-color:#245fa5; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-space-modal > .pi-dialog-nav { margin:0 28px 24px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-space-list { display:grid; gap:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-space-list > button { border:0; border-bottom:1px solid #e0e5eb; border-radius:0; background:#fff; padding:18px 4px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-space-list > button.active { background:#f6f8fb; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-space-list strong { font-size:16px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-space-list em { font-family:var(--font-geist-sans,system-ui),sans-serif; line-height:1.7; font-size:14px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-new-space-form { margin:0; border:0; background:#fff; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-new-space-form > .v2-kicker { display:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-detected-profile { background:none; border:0; padding:0 0 16px; gap:8px; flex-wrap:wrap; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-detected-profile em { background:none; padding:0; font-size:13px; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions { margin:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions header { gap:16px; align-items:center; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions header span { display:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions h3 { margin:0; font-size:18px; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions p { font-size:14px; line-height:1.75; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions > div { display:block; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions article { margin:0; padding:20px 0; border:0; border-top:1px solid #e0e5eb; border-radius:0; background:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions article label { align-items:flex-start; gap:12px; text-transform:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions article label > span { text-transform:none; letter-spacing:normal; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-meta { font-size:13px; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions article input { width:18px; height:18px; margin-top:4px; accent-color:#245fa5; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions article strong { font-size:16px; line-height:1.6; font-weight:600; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions article :is(p,.pi-source-meta,details) { margin-left:30px; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions article details { border:0; padding:0; background:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-suggestions article summary { font-size:14px; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-manual { padding:0; border:0; margin:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-source-manual > label { display:block; margin:0 0 24px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-exploration-mode { margin:0; padding:0; border:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-exploration-mode legend { margin-bottom:12px; font-size:16px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-exploration-mode > div { display:grid; grid-template-columns:1fr; gap:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-exploration-mode button { display:flex; justify-content:space-between; align-items:center; text-align:left; gap:16px; padding:20px 12px; border:0; border-bottom:1px solid #e0e5eb; border-radius:0; background:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-exploration-mode button.active { background:#f1f6fc; box-shadow:inset 3px 0 #245fa5; color:#245fa5; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(.v2-source-settings-actions,.v2-import-actions,.v2-form-actions) { gap:10px; margin-top:24px; padding:16px 0 0; border-top:1px solid #e0e5eb; background:#fff; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(.v2-source-settings-actions,.v2-import-actions) { padding-bottom:16px; bottom:0; justify-content:flex-end; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(.v2-source-settings-actions,.v2-import-actions) button { border:1px solid #ccd5df; border-radius:6px; min-height:42px; padding:10px 16px; background:#fff; color:#465365; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(.v2-source-settings-actions,.v2-import-actions) button:last-child { background:#245fa5; border-color:#245fa5; color:#fff; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-source-settings-actions button:first-child { margin-right:auto; border-color:transparent; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(.v2-model-status-card,.v2-model-resume-card,.v2-model-key-privacy) { margin:0 28px; padding:22px 0; border:0; border-bottom:1px solid #e0e5eb; border-radius:0; background:none; box-shadow:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-model-status-card { display:grid; grid-template-columns:minmax(0,1fr) auto; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-model-status-card > span,.v2-app.pi-workspace .pi-dialog-workspace .v2-model-key-privacy > b { display:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-model-status-card strong { font-size:18px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-model-key-form { margin:0; padding:24px 28px; border:0; border-radius:0; background:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-model-key-actions .save { background:#245fa5; border-color:#245fa5; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-model-key-privacy { padding:0 0 24px; border:0; display:block; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-model-key-privacy p { font-size:14px; line-height:1.8; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-warning { margin:20px 0; padding:0 0 16px; background:none; border:0; border-bottom:1px solid #e0e5eb; border-radius:0; display:block; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-warning > b { display:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-warning h3 { font-size:16px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-warning p { font-size:14px !important; line-height:1.7; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-kind { display:flex; flex-wrap:wrap; gap:6px 20px; margin:20px 0; padding:0; background:none; border:0; border-radius:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-kind button { border:0; border-bottom:2px solid transparent; border-radius:0; padding:8px 0; background:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-kind button.active { color:#245fa5; border-bottom-color:#245fa5; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-pickers { gap:12px; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-pickers button { min-height:90px; padding:16px; display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:6px; border:1px dashed #c6d0dc; border-radius:6px; background:#f9fafc; box-shadow:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-pickers button strong { font-size:15px; line-height:1.6; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-pickers button :is(strong,small) { width:100%; margin:0; text-align:left; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-pickers button > span { display:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-file-list { border:0; border-bottom:1px solid #e0e5eb; padding:0 0 16px; background:none; border-radius:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-file-list > div { min-width:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-file-list strong { overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-attestation { padding:16px 0; border:0; border-radius:0; background:none; }
+.v2-app.pi-workspace .pi-dialog-workspace .v2-import-attestation input { flex:none; accent-color:#245fa5; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-meta { margin:16px 0 4px; color:#647183; font-size:13px; line-height:1.7; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-fields { margin:0; padding:0; border:0; min-width:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-fields label { display:block; margin:0 0 20px; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-section { margin:24px 0 0; padding:20px 0 0; border-top:1px solid #e0e5eb; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-section:first-child { margin:0; padding:0; border:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-section h3 { margin:0 0 12px; font-size:17px; font-weight:600; }
+.v2-app.pi-workspace .pi-dialog-workspace :is(.pi-review-section p,.pi-review-section li) { font-size:16px; line-height:1.8; overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:14px; padding:16px 0; border-bottom:1px solid #edf0f4; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-row label { margin:0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-row p { margin:10px 0 0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-row button { padding:10px 0 10px 8px; background:none; border:0; color:#647183; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-row ul { padding-left:22px; margin:10px 0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-evidence { font-size:14px; color:#647183; border-left:2px solid #dce3ec; padding-left:12px; line-height:1.8; overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-source { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; border-bottom:1px solid #e0e5eb; padding:18px 0; margin-bottom:16px; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-source strong { font-size:16px; overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-source p { margin:8px 0 0; }
+.v2-app.pi-workspace .pi-dialog-workspace .pi-review-source > span { font-size:13px; color:#647183; }
+@media(max-width:600px) {
+  .v2-app.pi-workspace .pi-dialog-workspace { padding:10px; }
+  .v2-app.pi-workspace .pi-dialog-workspace .v2-modal-head { padding:18px; }
+  .v2-app.pi-workspace .pi-dialog-workspace .v2-modal-head h2 { font-size:21px; }
+  .v2-app.pi-workspace .pi-dialog-workspace :is(.v2-import-body,.v2-profile-draft,.v2-source-settings > form,.v2-new-space-form,.v2-space-list) { padding:0 18px 18px; }
+  .v2-app.pi-workspace .pi-dialog-workspace .pi-dialog-nav { gap:18px; }
+  .v2-app.pi-workspace .pi-dialog-workspace .pi-dialog-nav button { flex:1; }
+  .v2-app.pi-workspace .pi-dialog-workspace .v2-space-modal > .pi-dialog-nav { margin:0 18px 20px; }
+  .v2-app.pi-workspace .pi-dialog-workspace :is(.v2-model-status-card,.v2-model-resume-card,.v2-model-key-privacy) { margin-left:18px; margin-right:18px; }
+  .v2-app.pi-workspace .pi-dialog-workspace .v2-model-key-form { padding:24px 18px; }
+  .v2-app.pi-workspace .pi-dialog-workspace .v2-model-status-card { grid-template-columns:1fr; gap:12px; }
+  .v2-app.pi-workspace .pi-dialog-workspace .v2-model-status-card button { justify-self:start; }
+  .v2-app.pi-workspace .pi-dialog-workspace .v2-source-settings-actions button:first-child { flex-basis:100%; }
+  .v2-app.pi-workspace .pi-dialog-workspace .v2-exploration-mode button { flex-wrap:wrap; gap:4px 16px; }
+}
