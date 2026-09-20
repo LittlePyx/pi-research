@@ -50,3 +50,19 @@ test('mathematics demo connects the same papers across reading, route, compariso
   assert.match(client,/示例研究简报/);
   assert.match(client,/演示样例 · 未执行扫描/);
 });
+
+test('every demo paper has a sourced reading summary without pretending it is abstract evidence', async()=>{
+  for(const spaceId of ['demo-mathematics','demo-information']) {
+    const {monitor}=await (await demoResponse(`/api/monitor?spaceId=${spaceId}`)).json();
+    for(const paper of monitor.historyPapers) {
+      const result=await demoResponse(`/api/paper-reading?spaceId=${spaceId}&paperId=${paper.id}`);
+      assert.equal(result.status,200);const data=await result.json();
+      assert.equal(data.paper.abstractText,'');assert.ok(data.paper.readingSummary.zh.length>30);assert.ok(data.paper.readingSummary.en.length>30);
+      assert.equal(new URL(data.paper.readingSummary.sourceUrl).protocol,'https:');
+      assert.ok(['overview','abstract-summary'].includes(data.paper.readingSummary.kind));assert.equal(data.recovery,undefined);
+    }
+  }
+  assert.equal((await demoResponse('/api/paper-reading?spaceId=demo-information&paperId=kls-localization')).status,404);
+  assert.equal((await demoResponse('/api/paper-reading?spaceId=demo-mathematics&paperId=unknown')).status,404);
+  assert.equal((await demoResponse('/api/paper-reading',{method:'POST',body:JSON.stringify({spaceId:'demo-mathematics',paperId:'kls-localization'})})).status,403);
+});
