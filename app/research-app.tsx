@@ -1919,15 +1919,15 @@ function compactNavCount(count: number) {
 
 function feedbackEffectCopy(kind: "save" | "relevant" | "not_relevant" | "later", value: boolean, reasonCode: string | undefined, locale: Locale) {
   const copy = !value
-    ? { zh: "已撤销这次判断，论文回到待处理状态。", en: "Decision removed; the paper is pending again." }
+    ? { zh: "已撤回这项反馈；收藏、阅读记录与笔记分别保留。", en: "This feedback was withdrawn; other saved and reading records remain." }
     : kind === "later"
       ? { zh: "已推迟 3 天，不会降低研究偏好。", en: "Snoozed for three days without lowering your preferences." }
       : reasonCode === "duplicate_known"
         ? { zh: "已掌握：减少同类入门内容，继续寻找更深或更新的论文。", en: "Mastered: Pi will seek deeper or newer work instead of similar introductions." }
         : kind === "not_relevant"
-          ? { zh: "已降低相似检索分支，不会删除历史论文。", en: "Similar discovery branches were deprioritized; history stays intact." }
+          ? { zh: "已记录排除反馈，供后续检索参考；当前推荐未重新计算。", en: "Exclusion recorded for future discovery; current recommendations have not been recalculated." }
           : kind === "relevant"
-            ? { zh: "已加强相关主题、方法或问题的下一轮检索。", en: "The related topic, method, or question will guide the next scan." }
+            ? { zh: "已记录相关主题、方法或问题，供后续检索参考。", en: "The related topic, method, or question will guide the next scan." }
             : { zh: "已保存，并用于改进后续检索。", en: "Saved and added to future discovery guidance." };
   return locale === "zh" ? copy.zh : copy.en;
 }
@@ -3216,7 +3216,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [savingPreferences, setSavingPreferences] = useState(false);
   const feedbackSaving = useRef(false);
   const [feedbackBusy, setFeedbackBusy] = useState(false);
-  const [feedbackReceipt, setFeedbackReceipt] = useState<{spaceId:string;title:string;effect:string} | null>(null);
+  const [feedbackReceipt, setFeedbackReceipt] = useState<{spaceId:string;title:string;effect:string;paper:MonitorPaper;kind:"save"|"relevant"|"not_relevant";error?:string} | null>(null);
   const [feedbackPrompt, setFeedbackPrompt] = useState<{ paper: MonitorPaper; kind: "relevant" | "not_relevant" } | null>(null);
   const [feedbackNote, setFeedbackNote] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
@@ -4740,19 +4740,19 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     navigate(target);
   };
 
-  const saveFeedback = (paper: MonitorPaper, kind: "save" | "relevant" | "not_relevant" | "later", reasonCode?: string, note = "") => {
+  const saveFeedback = (paper: MonitorPaper, kind: "save" | "relevant" | "not_relevant" | "later", reasonCode?: string, note = "", forcedValue?: boolean) => {
     const spaceId = activeSpace.id;
     const key = spaceId + ":" + paper.id;
     const currentSaved = saved[key] ?? paper.saved;
-    const value = kind === "save" ? !currentSaved : true;
-    const nextState: MonitorPaper["userState"] = kind === "not_relevant" ? "dismissed"
+    const value = forcedValue ?? (kind === "save" ? !currentSaved : true);
+    const nextState: MonitorPaper["userState"] = !value ? (kind !== "save" && currentSaved ? "accepted" : kind === "save" && paper.feedback === "relevant" ? "accepted" : "seen") : kind === "not_relevant" ? "dismissed"
       : kind === "later" ? "snoozed"
         : kind === "save" && !value ? paper.feedback === "relevant" ? "accepted" : "seen" : "accepted";
     if (feedbackSaving.current) return;
     document.querySelectorAll(".v2-paper-more-actions[open]").forEach(element => element.removeAttribute("open"));
     feedbackSaving.current = true;
     setFeedbackBusy(true);
-    setFeedbackReceipt(null);
+    setFeedbackReceipt(current => forcedValue === false && current ? {...current,error:undefined} : null);
     setToast(locale === "zh" ? "正在保存反馈…" : "Saving feedback…");
     void (async () => {
       try {
@@ -4768,17 +4768,18 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         if (!response.ok) throw new Error("feedback save failed");
         if (paperNetworkSpaceRef.current !== spaceId) return;
         if (kind === "save") setSaved((current) => ({ ...current, [key]: value }));
-        if (kind === "not_relevant") setSaved((current) => ({ ...current, [key]: false }));
-        setMonitor((current) => {
-          if (!current) return current;
-          const updatePaper = (item: MonitorPaper): MonitorPaper => item.id !== paper.id ? item : {
+        if (kind === "not_relevant" && value) setSaved((current) => ({ ...current, [key]: false }));
+        const updatePaper = (item: MonitorPaper): MonitorPaper => item.id !== paper.id ? item : {
             ...item,
             userState: nextState,
             readingStatus: reasonCode === "duplicate_known" ? "mastered" : item.readingStatus,
-            saved: kind === "not_relevant" ? false : kind === "save" ? value : item.saved,
-            feedback: kind === "relevant" ? "relevant" : kind === "not_relevant" ? "not_relevant" : item.feedback,
-            snoozedUntil: kind === "later" ? new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() : null,
+            saved: kind === "not_relevant" && value ? false : kind === "save" ? value : item.saved,
+            feedback: kind === "relevant" || kind === "not_relevant" ? (value ? kind : null) : item.feedback,
+            snoozedUntil: kind === "later" && value ? new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() : null,
           };
+        setSelectedMonitorPaper(current => current ? updatePaper(current) : current);
+        setMonitor((current) => {
+          if (!current) return current;
           const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
           return {
             ...current,
@@ -4791,7 +4792,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         setToast(feedbackEffectCopy(kind, value, reasonCode, locale));
         const authoritativeEffect = locale === "zh" ? result.effect?.zh : result.effect?.en;
         if (authoritativeEffect) setToast(authoritativeEffect);
-        if (reasonCode) setFeedbackReceipt({spaceId,title:paper.title,effect:authoritativeEffect || feedbackEffectCopy(kind,value,reasonCode,locale)});
+        setFeedbackReceipt(value && kind !== "later" ? {spaceId,title:paper.title,paper:{...paper,saved:kind === "not_relevant" ? false : kind === "save" ? value : paper.saved,feedback:kind === "relevant" || kind === "not_relevant" ? kind : paper.feedback},kind,effect:authoritativeEffect || feedbackEffectCopy(kind,value,reasonCode,locale)} : null);
         if (result.routeEvidence?.changed) {
           const refreshedMap = await readResearchMapState(spaceId).catch(() => null);
           if (refreshedMap && paperNetworkSpaceRef.current === spaceId) {
@@ -4801,13 +4802,16 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               || refreshedMap.tracks[0] || null);
           }
         }
-        if (reasonCode) {
+        if (reasonCode || !value) {
           const refreshed = await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}`).catch(() => null);
           const data = refreshed?.ok ? await refreshed.json().catch(() => null) as { monitor?: MonitorState } | null : null;
           if (data?.monitor && paperNetworkSpaceRef.current === spaceId) setMonitor(data.monitor);
         }
       } catch {
-        if (paperNetworkSpaceRef.current === spaceId) setToast(locale === "zh" ? "未能确认反馈保存，请重试。" : "Could not confirm the save. Please retry.");
+        if (paperNetworkSpaceRef.current === spaceId) {
+          const message = locale === "zh" ? "未能确认反馈保存，请重试。" : "Could not confirm the save. Please retry.";
+          setToast(message); setFeedbackReceipt(current => current ? {...current,error:message} : current);
+        }
       } finally {
         feedbackSaving.current = false;
         setFeedbackBusy(false);
@@ -4826,7 +4830,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       setMonitor(data.monitor); setMemorySection("preferences"); navigate("memory"); setFeedbackReceipt(null);
     } catch { if (paperNetworkSpaceRef.current === spaceId) {
       const message = locale === "zh" ? "偏向暂未读取，请重试。已保存的反馈仍然保留。" : "Could not load interests. Your saved feedback is retained; please retry.";
-      setToast(message); setFeedbackReceipt(current => current ? {...current,effect:message} : current);
+      setToast(message); setFeedbackReceipt(current => current ? {...current,error:message} : current);
     } }
   };
 
@@ -4856,24 +4860,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
   const returnPaperToInbox = (paper: MonitorPaper) => {
     const kind = paper.userState === "dismissed" ? "not_relevant" : paper.feedback === "relevant" ? "relevant" : "save";
-    setMonitor((current) => {
-      if (!current) return current;
-      const updatePaper = (item: MonitorPaper): MonitorPaper => item.id === paper.id ? {
-        ...item,
-        userState: "seen",
-        saved: kind === "save" ? false : item.saved,
-        feedback: null,
-        snoozedUntil: null,
-      } : item;
-      const historyPapers = (current.historyPapers || current.papers).map(updatePaper);
-      return { ...current, historyPapers, historyCounts: historyCountsFor(historyPapers) };
-    });
-    fetch("/api/feedback", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spaceId: activeSpace.id, paperId: paper.id, kind, value: false }),
-    }).catch(() => undefined);
-    setToast(t.returnPending);
+    saveFeedback(paper, kind, undefined, "", false);
   };
 
   const updateReadingProgress = async (paper: MonitorPaper, status: MonitorPaper["readingStatus"], note = paper.readingNote || "", analyze = false) => {
@@ -4916,6 +4903,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             : (locale === "zh" ? "笔记已保存，智能沉淀暂未完成" : "Note saved; memory synthesis is pending"));
       } else {
         setToast(locale === "zh" ? `阅读记录已保存 · ${readingStatusLabel(status, locale)}` : `Reading status updated to ${readingStatusLabel(status, locale)}`);
+        if (demo) {
+          const refreshed = await fetch('/api/monitor?spaceId=' + encodeURIComponent(spaceId)).catch(() => null);
+          const data = refreshed?.ok ? await refreshed.json().catch(() => null) as {monitor?:MonitorState} | null : null;
+          if (data?.monitor && isCurrent()) setMonitor(data.monitor);
+        }
       }
     } catch {
       if (!isCurrent()) return;
@@ -5951,7 +5943,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           </div>
         </header>
 
-        {demo && activeSpace.id === "demo-mathematics" && <DemoJourney view={view} locale={locale} />}
+        {demo && <DemoJourney view={view} locale={locale} space={activeSpace.id} />}
 
         {view === "today" && (
           <main className="v2-page v2-today pi-editorial-today">
@@ -6363,7 +6355,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               </> : <p className="pi-memory-empty">{locale === "zh" ? "可以导入已有论文、项目或研究记录，确认后用于整理研究背景。" : "Import papers, projects or research notes and confirm the extracted context."}</p>}
             </section>}
             {memorySection === "preferences" && <div className="pi-memory-preferences">
-<ResearchPreferences key={activeSpace.id} signals={monitor?.preferenceSignals || []} locale={locale} demo={demo} loading={!monitor} failed={monitor?.status === "error"} onToggle={updateMemorySignal} onRecords={() => setMemorySection("reading")} />
+<ResearchPreferences key={activeSpace.id} signals={monitor?.preferenceSignals || []} locale={locale} demo={demo} loading={!monitor} failed={monitor?.status === "error"} onToggle={updateMemorySignal} onRecords={() => setMemorySection("reading")} onPaper={id => void openRoutePaper(id, "memory")} />
               <p className="pi-memory-scope">{locale === "zh" ? "这些记录仅用于当前研究空间。" : "These records belong to this research space."}<button type="button" onClick={() => setSpaceDialog(true)}>{t.switchSpace} →</button></p>
             </div>}
             <footer className="v2-lab-attribution"><span>{locale === "zh" ? "研究团队" : "Research team"}</span><Image src="/pi-lab-logo.png" width={78} height={25} alt="P&amp;I Lab" /></footer>
@@ -6376,7 +6368,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           <main className="v2-page v2-paper-detail pi-paper-workspace">
             <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "thread-detail" ? (locale === "zh" ? "返回原路线研判" : "Return to route synthesis") : paperReturnView === "workbook" ? (locale === "zh" ? "返回原比较项与学习任务" : "Return to comparison and learning task") : paperReturnView === "memory" ? t.memory : paperReturnView === "threads" ? t.threads : paperReturnView === "learn" ? t.learn : paperReturnView === "library" ? t.library : t.paperBack}</button>
             {paperReturnView === "workbook" && <p className="pi-workbook-error"><strong>{locale === "zh" ? "当前核查：" : "Current check: "}</strong><MathText>{workbookPaperFocus}</MathText></p>}
-            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.qualityStage === "recommended" ? selectedMonitorPaper.recommendationTier || "browse" : selectedMonitorPaper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{selectedMonitorPaper.qualityStage === "recommended" ? recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale) : selectedMonitorPaper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(selectedMonitorPaper, locale) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</span>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>}<details className="pi-paper-provenance"><summary>{locale === "zh" ? "来源与核验" : "Source & verification"}</summary><PaperDiscoverySourceBadge paper={selectedMonitorPaper} locale={locale} /><RecommendationVerificationBadge paper={selectedMonitorPaper} locale={locale} /></details></div><h1><MathText inline>{selectedMonitorPaper.title}</MathText></h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div className="v2-paper-primary-actions"><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a><details className="v2-paper-more-actions"><summary>{locale === "zh" ? "更多" : "More"} ＋</summary><div><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>{locale === "zh" ? "标记与我相关" : "Mark relevant to me"}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button></div></details></div></section>
+            <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.qualityStage === "recommended" ? selectedMonitorPaper.recommendationTier || "browse" : selectedMonitorPaper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{selectedMonitorPaper.qualityStage === "recommended" ? recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale) : selectedMonitorPaper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(selectedMonitorPaper, locale) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</span>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>}<details className="pi-paper-provenance"><summary>{locale === "zh" ? "来源与核验" : "Source & verification"}</summary><PaperDiscoverySourceBadge paper={selectedMonitorPaper} locale={locale} /><RecommendationVerificationBadge paper={selectedMonitorPaper} locale={locale} /></details></div><h1><MathText inline>{selectedMonitorPaper.title}</MathText></h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small><div className="v2-paper-primary-actions"><a className="v2-original-link" href={selectedMonitorPaper.url || (selectedMonitorPaper.doi ? "https://doi.org/" + selectedMonitorPaper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordPaperEngagement(selectedMonitorPaper, "original_click", { context: "paper_detail" })}>{t.openOriginal} ↗</a><details className="v2-paper-more-actions"><summary>{locale === "zh" ? "更多" : "More"} ＋</summary><div>{selectedMonitorPaper.feedback && <button disabled={feedbackBusy} type="button" onClick={() => returnPaperToInbox(selectedMonitorPaper)}>{locale === "zh" ? "撤回相关性判断" : "Withdraw relevance feedback"}</button>}<button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "relevant")}>{locale === "zh" ? "标记与我相关" : "Mark relevant to me"}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "save")}>{(saved[activeSpace.id + ":" + selectedMonitorPaper.id] ?? selectedMonitorPaper.saved) ? "★ " + t.saved : "☆ " + t.save}</button><button type="button" onClick={() => saveFeedback(selectedMonitorPaper, "later")}>◷ {t.readLater}</button><button type="button" onClick={() => requestPaperDecision(selectedMonitorPaper, "not_relevant")}>× {t.notRelevant}</button><button type="button" onClick={() => shareSnapshot("paper", [selectedMonitorPaper])} disabled={Boolean(sharingSnapshot)}>↗ {sharingSnapshot === selectedMonitorPaper.id ? t.creatingShare : t.sharePaper}</button></div></details></div></section>
             {paperReturnView === "learn" && activeLearningState.path && (() => {
               const steps = activeLearningState.path.steps;
               const belongs = (step: LearningPathStep) => [...step.resources, ...(step.supplementaryResources || [])].some(resource => learningResourcePaperId(resource) === selectedMonitorPaper.id);
@@ -6542,7 +6534,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       )}
 
       {mobileNav && <button className="v2-mobile-backdrop" type="button" aria-label={t.close} onClick={() => setMobileNav(false)} />}
-      {feedbackReceipt?.spaceId === activeSpace.id && <aside className="pi-feedback-receipt" role="status"><button className="pi-receipt-close" aria-label={locale === "zh" ? "关闭反馈回执" : "Close feedback receipt"} onClick={() => setFeedbackReceipt(null)}>×</button><strong>{locale === "zh" ? "反馈已记录" : "Feedback saved"}</strong><p>{feedbackReceipt.title}</p><small>{feedbackReceipt.effect}</small><button onClick={() => void openRecommendationMemory()}>{locale === "zh" ? "查看研究偏向" : "View research interests"} →</button></aside>}
+      {feedbackReceipt?.spaceId === activeSpace.id && <aside className="pi-feedback-receipt" role="status"><button className="pi-receipt-close" aria-label={locale === "zh" ? "关闭反馈回执" : "Close feedback receipt"} onClick={() => setFeedbackReceipt(null)}>×</button><strong>{locale === "zh" ? "反馈已记录" : "Feedback saved"}</strong><p>{feedbackReceipt.title}</p><small>{feedbackReceipt.effect}</small>{feedbackReceipt.error && <p role="alert">{feedbackReceipt.error}</p>}<div className="pi-receipt-actions"><button disabled={feedbackBusy} onClick={() => saveFeedback(feedbackReceipt.paper, feedbackReceipt.kind, undefined, "", false)}>{feedbackBusy ? (locale === "zh" ? "保存中…" : "Saving…") : (locale === "zh" ? (feedbackReceipt.kind === "save" ? "撤销收藏" : "撤回判断") : "Withdraw feedback")}</button><button onClick={() => void openRecommendationMemory()}>{locale === "zh" ? "查看研究偏向" : "View research interests"} →</button></div></aside>}
       {toast && !feedbackReceipt && <div className="v2-toast"><span>✓</span>{toast}</div>}
     </div>
   );

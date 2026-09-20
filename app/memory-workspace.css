@@ -181,3 +181,5 @@
 .v2-app.pi-workspace .pi-feedback-receipt .pi-receipt-close { position:absolute; right:14px; top:9px; padding:4px; font-size:20px; color:#879297; }
 .v2-app.pi-workspace .v2-feedback-options button:disabled { opacity:.5; cursor:wait; }
 @media(max-width:700px) { .v2-app.pi-workspace .pi-feedback-receipt { right:16px; bottom:16px; } }
+
+.v2-app.pi-workspace .pi-receipt-actions { display:flex; gap:20px; flex-wrap:wrap; }

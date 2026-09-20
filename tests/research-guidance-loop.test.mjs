@@ -65,7 +65,7 @@ test("today feedback refreshes direction intelligence and research memory", asyn
   assert.match(feedback, /routeEvidence/);
   assert.match(feedback, /DB\.batch\(\[\s*feedbackStatement,[\s\S]*\.\.\.reconcileResearchMapEvidenceStatements/);
   assert.match(feedback, /reasonCode === "duplicate_known"[\s\S]*status = 'mastered'/);
-  assert.match(feedback, /完成书目与摘要证据核对后，才会记为路线证据变化/);
+  assert.match(feedback, /供后续检索参考；当前推荐未重新计算/);
   assert.match(library, /database\.batch\(\[\s*readingProgressStatement,\s*\.\.\.reconcileResearchMapEvidenceStatements/s);
   assert.match(map, /readPreferenceSignals\(database, spaceId, 24\)/);
   assert.match(map, /signal\.layer.*signal\.kind.*signal\.labelEn/s);

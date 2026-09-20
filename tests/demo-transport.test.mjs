@@ -92,6 +92,7 @@ test('demo history is coherent, editable and resettable without background work'
   }
 });
 test('demo preference controls persist locally and reject cross-space or explicit evidence changes',async()=>{
+ const {demoResponse}=await import('../lib/demo-workspace.mjs?preference-controls');
  const patch=(spaceId,signalId,active)=>demoResponse('/api/preference-signals',{method:'PATCH',body:JSON.stringify({spaceId,signalId,active})});
  const get=async()=> (await (await demoResponse('/api/monitor?spaceId=demo-mathematics')).json()).monitor.preferenceSignals;
  assert.equal((await get()).length,3);
@@ -129,4 +130,18 @@ test('demo feedback updates explicit interests without inventing route evidence'
  await send({kind:'not_relevant',reasonCode:'duplicate_known'});monitor=await read();signal=monitor.preferenceSignals.find(s=>s.id===`${spaceId}:feedback:${paperId}`);assert.equal(signal.kind,'mastery');assert.equal(monitor.preferenceSignals.filter(s=>s.id===signal.id).length,1);
  await send({kind:'not_relevant',value:false});monitor=await read();assert.ok(!monitor.preferenceSignals.some(s=>s.id===`${spaceId}:feedback:${paperId}`));
  assert.equal((await send({reasonCode:'invented_reason'})).status,400);
+});
+
+test('changed demo notes invalidate dependent context and interests without generating new claims', async () => {
+ const {demoResponse: request}=await import('../lib/demo-workspace.mjs?context-invalidation');
+ for(const [spaceId,paperId,nextId] of [['demo-mathematics','kls-localization','eldan-thin-shell'],['demo-information','shannon-fidelity','lossy-finite']]) {
+  const read=async()=> (await (await request('/api/monitor?spaceId='+spaceId)).json()).monitor;
+  const before=await read();
+  assert.equal(before.historyPapers.find(p=>p.id===nextId).demoReadingContext.paperId,paperId);
+  await request('/api/library',{method:'PATCH',body:JSON.stringify({spaceId,paperId,note:'Different research question'})});
+  const after=await read();
+  assert.equal(after.historyPapers.find(p=>p.id===nextId).demoReadingContext,null);
+  assert.ok(!after.preferenceSignals.some(s=>s.sourcePaperIds?.includes(paperId)));
+  assert.equal((await request('/api/preference-signals',{method:'PATCH',body:JSON.stringify({spaceId,signalId:spaceId+'-question-interest',active:true})})).status,409);
+ }
 });

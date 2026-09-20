@@ -29,8 +29,8 @@ function feedbackEffect(
   routeEvidence: (ResearchMapEvidenceOutcome & { changed: boolean }) | null = null,
 ) {
   if (!value) return {
-    zh: "已撤销这次判断；论文回到待处理状态。",
-    en: "This decision was removed and the paper returned to the inbox.",
+    zh: "已撤回这项反馈；阅读状态与笔记保留，已完成的推荐不会重算。",
+    en: "This feedback was withdrawn. Reading records remain; completed recommendations are not recalculated.",
   };
   if (kind === "later") return {
     zh: "已推迟 3 天；不会降低这个方向或方法的推荐权重。",
@@ -52,15 +52,15 @@ function feedbackEffect(
     en: `Removed from the route candidates for “${routeEvidence.trackTitleEn}”; the paper and its history remain available.`,
   };
   if (kind === "not_relevant") return {
-    zh: "已降低相似检索分支的优先级；历史论文和其他研究方向不会被删除。",
-    en: "Similar retrieval branches were deprioritized without deleting history or other directions.",
+    zh: (reasonCode ? "已记录“" + FEEDBACK_REASONS[reasonCode].zh + "”，" : "已记录排除原因，") + "供后续检索减少此类候选；当前推荐未重新计算。",
+    en: "The exclusion will guide future discovery; current recommendations have not been recalculated.",
   };
   if (kind === "relevant") return {
-    zh: "已加强对应主题、方法或问题的下一轮检索；完成书目与摘要证据核对后，才会记为路线证据变化。",
-    en: "The matching topic, method, or question will guide the next scan; route evidence changes still require bibliographic and abstract evidence checks.",
+    zh: (reasonCode ? "已记录“" + FEEDBACK_REASONS[reasonCode].zh + "”，" : "已记录对应主题、方法或问题，") + "供后续检索参考；当前推荐未重新计算。",
+    en: "The topic, method or question will inform future discovery; current recommendations have not been recalculated.",
   };
   if (kind === "save") return {
-    zh: "已保存，并作为后续检索的正向信号；不会直接把论文当成已验证路线证据。",
+    zh: "已收藏，将作为后续检索的正向信号；当前推荐未重新计算。",
     en: "Saved as a positive discovery signal, without treating the paper as verified route evidence.",
   };
   return { zh: "已记录。", en: "Recorded." };

@@ -2,9 +2,9 @@
 import { useState } from "react";
 import type { PreferenceSignal } from "../../lib/preference-memory";
 
-export function ResearchPreferences({ signals, locale, demo, loading, failed, onToggle, onRecords }: {
+export function ResearchPreferences({ signals, locale, demo, loading, failed, onToggle, onRecords, onPaper }: {
   signals: PreferenceSignal[]; locale: "zh" | "en"; demo: boolean; loading: boolean; failed: boolean;
-  onToggle: (signal: PreferenceSignal, active: boolean) => Promise<boolean>; onRecords: () => void;
+  onToggle: (signal: PreferenceSignal, active: boolean) => Promise<boolean>; onRecords: () => void; onPaper: (id: string) => void;
 }) {
   const zh = locale === "zh";
   const [disabled, setDisabled] = useState<PreferenceSignal[]>([]);
@@ -38,7 +38,7 @@ export function ResearchPreferences({ signals, locale, demo, loading, failed, on
             <h4>{zh ? signal.labelZh : signal.labelEn}</h4>
             <p className="pi-preference-effect">{impact(signal)}</p>
             <details className="pi-preference-evidence"><summary>{zh ? "查看依据" : "View evidence"}<span aria-hidden="true">＋</span></summary>
-              <div><p>{signal.evidence || (zh ? "暂无可展示的详细依据。" : "No detailed evidence available.")}</p>{layer === "inferred" && <button disabled={pending !== null} onClick={() => void toggle(signal, false)}>{pending === signal.id ? (zh ? "保存中…" : "Saving…") : (zh ? "不符合我的偏向" : "Not my interest")}</button>}</div>
+              <div><p>{signal.evidence || (zh ? "暂无可展示的详细依据。" : "No detailed evidence available.")}</p>{signal.sourcePaperId && <button onClick={() => onPaper(signal.sourcePaperId!)}>{zh ? "查看来源论文与记录" : "Open source paper & record"} →</button>}{layer === "inferred" && <button disabled={pending !== null} onClick={() => void toggle(signal, false)}>{pending === signal.id ? (zh ? "保存中…" : "Saving…") : (zh ? "不符合我的偏向" : "Not my interest")}</button>}</div>
             </details>
           </article>)}</div>
         </section>;

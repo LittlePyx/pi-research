@@ -24,6 +24,7 @@ export type PreferenceSignal = {
   confidence: number;
   effectiveConfidence: number;
   sourceType: string;
+  sourcePaperId?: string | null;
   observedAt: string;
   expiresAt: string | null;
 };
@@ -70,13 +71,13 @@ export async function upsertPreferenceSignal(database: D1Database, signal: Prefe
 export async function readPreferenceSignals(database: D1Database, spaceId: string, limit = 40) {
   const result = await database.prepare(
     `SELECT id, layer, kind, label_zh, label_en, evidence, confidence, weight, source_type,
-     observed_at, expires_at
+     source_id, observed_at, expires_at
      FROM research_preference_signals
      WHERE space_id = ? AND active = 1 AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
      ORDER BY CASE layer WHEN 'explicit' THEN 0 ELSE 1 END, confidence DESC, observed_at DESC LIMIT ?`,
   ).bind(spaceId, limit).all<{
     id: string; layer: PreferenceLayer; kind: string; label_zh: string; label_en: string; evidence: string;
-    confidence: number; weight: number; source_type: string; observed_at: string; expires_at: string | null;
+    confidence: number; weight: number; source_type: string; source_id: string; observed_at: string; expires_at: string | null;
   }>();
   const now = Date.now();
   return result.results.map((row) => {
@@ -92,6 +93,7 @@ export async function readPreferenceSignals(database: D1Database, spaceId: strin
       confidence: row.confidence,
       effectiveConfidence: bounded(row.confidence * decay * Math.max(0.3, row.weight / 100)),
       sourceType: row.source_type,
+      sourcePaperId: ["paper_feedback", "reading_note"].includes(row.source_type) ? row.source_id?.split(":")[0] || null : null,
       observedAt: row.observed_at,
       expiresAt: row.expires_at,
     } satisfies PreferenceSignal;
