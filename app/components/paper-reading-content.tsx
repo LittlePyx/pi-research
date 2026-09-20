@@ -49,7 +49,7 @@ export function PaperReadingContent({ spaceId, paperId, locale, stage, reason, o
       {recovery?.retry_at ? <p className="pi-paper-muted">{zh ? "下次可重试：" : "Retry after: "}{new Date(recovery.retry_at).toLocaleString(zh ? "zh-CN" : "en-US")}</p> : null}
       {!summary && (failed || (!searching && abstract !== null && abstract.trim().length < 400 && recovery?.status !== "found")) && <button type="button" onClick={() => { setAbstract(null); setFailed(false); setAttempt(value => value + 1); }}>{zh ? "重试读取" : "Retry"}</button>}
     </section>
-    {stage !== "recommended" && <section className="pi-paper-review"><h2>{zh ? "评审情况" : "Review status"}</h2>
+    {!summary && stage !== "recommended" && <section className="pi-paper-review"><h2>{zh ? "评审情况" : "Review status"}</h2>
       <p>{awaitingAbstract ? (abstract && abstract.trim().length >= 120 ? (zh ? "摘要已补到，等待重新评审" : "Abstract recovered; awaiting review") : (zh ? "材料不足，暂无法完成评审" : "Materials incomplete; review cannot finish yet")) : stage === "reviewed" ? (zh ? "未通过本空间的推荐评审" : "Not selected for this workspace") : stage === "reviewing" ? (zh ? "正在核对评审结果" : "Review results are being checked") : stage === "queued" ? (zh ? "等待质量评审" : "Awaiting quality review") : (zh ? "尚未形成推荐评审结果" : "No recommendation review result yet")}</p>
       {reason ? <div><small>{zh ? "已保存的评审记录" : "SAVED REVIEW RECORD"}</small><p><MathText>{reason}</MathText></p></div> : <p className="pi-paper-muted">{zh ? "当前记录未提供具体评审原因。" : "No specific review reason is available in this record."}</p>}
     </section>}
