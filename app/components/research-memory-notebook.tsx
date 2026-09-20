@@ -2,7 +2,7 @@ import { workspaceFetch as fetch } from "../../lib/workspace-request";
 import { useEffect, useState } from "react";
 import type { ResearchMemoryItem } from "../../lib/research-memory-view";
 import { MathText } from "./math-text";
-type MemoryResponse = { items: ResearchMemoryItem[]; total: number; nextOffset: number | null };
+type MemoryResponse = { items: (ResearchMemoryItem & { demoExample?: boolean })[]; total: number; nextOffset: number | null };
 
 export function ResearchMemoryNotebook({ spaceId, locale, onOpenPaper, onQuestion, onLibrary, mode = "notes", routes = [] }: {
   spaceId: string; locale: "zh" | "en"; onOpenPaper: (id: string) => void; onQuestion: (paper: string, question: string) => void; onLibrary: () => void; mode?: "notes" | "insights" | "continue"; routes?: Array<{ title: string; paperIds: string[] }>;
@@ -31,7 +31,7 @@ export function ResearchMemoryNotebook({ spaceId, locale, onOpenPaper, onQuestio
       <div className="pi-memory-note-list">{entries.map(item => <article className="pi-memory-entry" key={item.paperId}>
         <header><span>{routeFor(item)}</span><time dateTime={item.updatedAt}>{item.updatedAt.slice(0, 10)}</time></header><h3><button className="pi-memory-paper-link" type="button" onClick={() => onOpenPaper(item.paperId)}><MathText inline>{item.title}</MathText></button></h3>
         {mode === "insights" ? <details className="pi-memory-original"><summary>{zh ? "查看原始笔记" : "Original note"}</summary><p>{item.note}</p></details> : <div className="pi-memory-original"><p>{item.note}</p></div>}
-        {mode === "insights" && item.status === "ready" && <section className="pi-memory-synthesis"><h4>{zh ? "Pi 根据这条笔记整理" : "Pi’s interpretation of this note"}</h4><p>{zh ? item.takeawayZh : item.takeawayEn}</p>
+        {mode === "insights" && item.status === "ready" && <section className="pi-memory-synthesis"><h4>{item.demoExample ? (zh ? "示例整理" : "Example insights") : (zh ? "Pi 根据这条笔记整理" : "Pi’s interpretation of this note")}</h4><p>{zh ? item.takeawayZh : item.takeawayEn}</p>
           {(zh ? item.methodsZh : item.methodsEn).length > 0 && <section><h4>{zh ? "可复用方法" : "Reusable methods"}</h4><ul>{(zh ? item.methodsZh : item.methodsEn).map((method, index) => <li key={index}>{method}</li>)}</ul></section>}
           {(zh ? item.questionsZh : item.questionsEn).length > 0 && <section><h4>{zh ? "继续追问" : "Questions to explore"}</h4>{(zh ? item.questionsZh : item.questionsEn).map((question, index) => <button className="pi-memory-question" type="button" key={index} onClick={() => onQuestion(item.title, question)}>{question} →</button>)}</section>}
         </section>}

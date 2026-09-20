@@ -103,3 +103,18 @@ test('demo preference controls persist locally and reject cross-space or explici
  assert.equal((await get()).length,3);
  assert.equal((await patch('demo-mathematics','demo-mathematics-method-interest','false')).status,400);
 });
+test('demo insights match original notes and disappear after edits',async()=>{
+ const {DEMO_NOTES}=await import('../lib/demo-history.mjs');
+ for(const spaceId of ['demo-mathematics','demo-information']) {
+  const fixture=(await import('../lib/demo-workspace.mjs')).learningFixture(spaceId);
+  const ids=fixture.monitor.historyPapers.filter(p=>DEMO_NOTES[p.id]).map(p=>p.id);
+  const patch=(paperId,note)=>demoResponse('/api/library',{method:'PATCH',body:JSON.stringify({spaceId,paperId,note})});
+  for(const id of ids) await patch(id,DEMO_NOTES[id].note);
+  const read=async()=> (await (await demoResponse(`/api/research-memory?spaceId=${spaceId}`)).json()).items;
+  const items=await read();assert.equal(items.length,4);
+  for(const item of items) {assert.equal(item.status,'ready');assert.equal(item.demoExample,true);assert.ok(item.takeawayZh&&item.takeawayEn&&item.methodsZh.length&&item.questionsZh.length);assert.equal(item.note,DEMO_NOTES[item.paperId].note);}
+  const id=ids[0];await patch(id,'changed original');const stale=(await read()).find(p=>p.paperId===id);assert.equal(stale.status,'stale');assert.equal(stale.takeawayZh,'');assert.deepEqual(stale.questionsZh,[]);assert.equal(stale.demoExample,false);
+  await patch(id,DEMO_NOTES[id].note);assert.equal((await read()).find(p=>p.paperId===id).status,'ready');
+  const q=encodeURIComponent(items[0].methodsZh[0]);const searched=await (await demoResponse(`/api/research-memory?spaceId=${spaceId}&q=${q}`)).json();assert.ok(searched.items.some(p=>p.paperId===items[0].paperId));
+ }
+});
