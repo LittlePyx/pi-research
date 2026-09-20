@@ -58,3 +58,14 @@
   .v2-app.pi-workspace .pi-memory-entry>h3 { font-size: 18px; }
   .v2-app.pi-workspace .pi-memory-workspace :is(p,li,strong,h3,h4,small) { overflow-wrap: anywhere; }
 }
+.v2-app.pi-workspace .pi-memory-settings { display:block; margin: -8px 0 16px auto; border:0; background:none; color:#647084; cursor:pointer; }
+.v2-app.pi-workspace .pi-memory-resume { padding:28px 32px; background:white; border:1px solid #dce1e8; border-radius:8px; margin:24px 0 36px; }
+.v2-app.pi-workspace .pi-memory-resume header { display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+.v2-app.pi-workspace .pi-memory-resume select { max-width:100%; margin-left:12px; }
+.v2-app.pi-workspace .pi-memory-route { color:#647084; font-size:13px; }
+.v2-app.pi-workspace .pi-memory-resume button { margin-top:16px; padding:10px 16px; background:#2459c5; color:white; border:0; border-radius:5px; cursor:pointer; }
+.v2-app.pi-workspace .pi-memory-resume details { border-top:1px solid #e1e6ec; padding:14px 0; }
+.v2-app.pi-workspace .pi-memory-paper-link { text-align:left; font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; }
+.v2-app.pi-workspace .pi-memory-calendar { margin:20px 0; }
+.v2-app.pi-workspace .pi-memory-workspace summary { cursor:pointer; }
+@media(max-width:700px) { .v2-app.pi-workspace .pi-memory-resume {padding:20px;} .v2-app.pi-workspace .pi-memory-resume label {min-width:0;max-width:100%;} }

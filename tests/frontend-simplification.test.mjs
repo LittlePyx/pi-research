@@ -94,7 +94,7 @@ test("research memory separates explicit and inferred evidence while collapsing 
 
   assert.match(memory, /你明确表达的/);
   assert.match(memory, /Pi 推断的/);
-  assert.match(memory, /<ResearchMemoryNotebook key=\{activeSpace.id\}/);
+  assert.match(memory, /<ResearchMemoryNotebook key=\{`\$\{activeSpace.id\}:\$\{memorySection\}`\}/);
   assert.match(memory, /className="pi-memory-profile"/);
   assert.match(memory, /"当前研究范围" : "CURRENT RESEARCH SCOPE"/);
   assert.doesNotMatch(memory, /v2-import-safety-inline/);
