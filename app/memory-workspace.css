@@ -69,3 +69,27 @@
 .v2-app.pi-workspace .pi-memory-calendar { margin:20px 0; }
 .v2-app.pi-workspace .pi-memory-workspace summary { cursor:pointer; }
 @media(max-width:700px) { .v2-app.pi-workspace .pi-memory-resume {padding:20px;} .v2-app.pi-workspace .pi-memory-resume label {min-width:0;max-width:100%;} }
+
+.v2-app.pi-workspace .pi-preference-memory { margin:32px 0; }
+.v2-app.pi-workspace .pi-preference-memory>header p { color:#667085; }
+.v2-app.pi-workspace .pi-preference-item { padding:26px 0; border-top:1px solid #dce1e8; }
+.v2-app.pi-workspace .pi-preference-title { display:flex; justify-content:space-between; align-items:start; gap:24px; }
+.v2-app.pi-workspace .pi-preference-title h3 { margin:6px 0 18px; font-size:19px; }
+.v2-app.pi-workspace .pi-preference-memory button { border:0; background:none; color:#2459c5; padding:6px 0; cursor:pointer; font-size:14px; }
+.v2-app.pi-workspace .pi-preference-title button { flex-shrink:0; color:#647084; }
+.v2-app.pi-workspace .pi-preference-context { display:grid; grid-template-columns:1.3fr 1fr; gap:36px; }
+.v2-app.pi-workspace .pi-preference-context h4 { font-size:12px; font-weight:500; color:#667085; margin:0; }
+.v2-app.pi-workspace .pi-preference-context p { margin:6px 0 0; font-size:14px; }
+.v2-app.pi-workspace .pi-preference-memory footer { padding:18px 0; border-top:1px solid #dce1e8; }
+.v2-app.pi-workspace .pi-preference-memory footer p { color:#667085; font-size:13px; }
+.v2-app.pi-workspace .pi-preference-disabled { display:flex; justify-content:space-between; gap:20px; padding:15px 0; color:#667085; }
+.v2-app.pi-workspace .pi-preference-memory button:disabled { opacity:.5; cursor:wait; }
+.v2-app.pi-workspace .pi-memory-record-nav { display:flex; flex-wrap:wrap; gap:24px; }
+.v2-app.pi-workspace .pi-memory-record-nav button { border:0; background:none; padding:6px 0; color:#647084; cursor:pointer; }
+.v2-app.pi-workspace .pi-memory-record-nav button[aria-current] { color:#2459c5; }
+@media(max-width:700px) {
+ .v2-app.pi-workspace .pi-preference-context { grid-template-columns:minmax(0,1fr); gap:16px; }
+ .v2-app.pi-workspace .pi-preference-title { display:block; }
+ .v2-app.pi-workspace .pi-preference-title button { margin:0 0 16px; }
+ .v2-app.pi-workspace .pi-preference-disabled { flex-wrap:wrap; }
+}

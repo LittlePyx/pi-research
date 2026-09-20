@@ -44,7 +44,7 @@ test("new recommendations stay provisional until confirmed evidence updates rout
   assert.match(monitor, /acceptanceRate/);
   assert.match(client, /v2-route-changes/);
   assert.match(client, /routeChangeKindLabel/);
-  assert.match(client, /v2-layered-memory/);
+  assert.match(client, /ResearchPreferences/);
   assert.match(client, /v2-feedback-options/);
   assert.match(client, /feedbackEffectCopy/);
   assert.match(client, /saveFeedback\(paper, "not_relevant", "duplicate_known"\)/);

@@ -92,8 +92,8 @@ test("research memory separates explicit and inferred evidence while collapsing 
   const memory = app.slice(app.indexOf('{view === "memory"'), app.indexOf('{view === "paper-detail" &&'));
   const importModal = app.slice(app.indexOf('{importOpen &&'), app.indexOf('{feedbackDialog &&'));
 
-  assert.match(memory, /你明确表达的/);
-  assert.match(memory, /Pi 推断的/);
+  assert.match(memory, /<ResearchPreferences/);
+  assert.match(memory, /研究偏向/);
   assert.match(memory, /<ResearchMemoryNotebook key=\{`\$\{activeSpace.id\}:\$\{memorySection\}`\}/);
   assert.match(memory, /className="pi-memory-profile"/);
   assert.match(memory, /"当前研究范围" : "CURRENT RESEARCH SCOPE"/);

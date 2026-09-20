@@ -1,4 +1,5 @@
 "use client";
+import { ResearchPreferences } from "./components/research-preferences";
 import { MemoryResume } from "./components/memory-resume";
 import { workspaceFetch as fetch } from "../lib/workspace-request";
 
@@ -3077,7 +3078,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [view, setView] = useState<View>("today");
   const [memoryRouteError, setMemoryRouteError] = useState(false);
   const [memoryRouteRetry, setMemoryRouteRetry] = useState(0);
-  const [memorySection, setMemorySection] = useState<"continue" | "reading" | "insights" | "preferences">("continue");
+  const [memorySection, setMemorySection] = useState<"continue" | "reading" | "insights" | "preferences">("preferences");
   const [spaces, setSpaces] = useState<Space[]>(fallbackSpaces);
   const [activeSpaceId, setActiveSpaceId] = useState(fallbackSpaces[0].id);
   const [spaceDialog, setSpaceDialog] = useState(false);
@@ -3410,8 +3411,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const operationsMaxCandidates = Math.max(1, ...(monitor?.operationsDashboard?.daily || []).map((day) => day.candidates));
   const latestConfirmedImport = useMemo(() => researchImports.find((item) => item.status === "confirmed") || null, [researchImports]);
   const confirmedProfile = latestConfirmedImport?.analysis || null;
-  const explicitPreferenceSignals = useMemo(() => (monitor?.preferenceSignals || []).filter((signal) => signal.layer === "explicit"), [monitor?.preferenceSignals]);
-  const inferredPreferenceSignals = useMemo(() => (monitor?.preferenceSignals || []).filter((signal) => signal.layer === "inferred"), [monitor?.preferenceSignals]);
+
   const paperStateByCanonicalId = useMemo(() => {
     const states: Record<string, MonitorPaper["userState"]> = {};
     for (const paper of historyPapers) if (paper.doi) states["doi:" + paper.doi.trim().toLocaleLowerCase()] = paper.userState;
@@ -4813,14 +4813,16 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setFeedbackNote("");
   };
 
-  const dismissInferredSignal = (signalId: string) => {
-    setMonitor((current) => current ? { ...current, preferenceSignals: (current.preferenceSignals || []).filter((signal) => signal.id !== signalId) } : current);
-    fetch("/api/preference-signals", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spaceId: activeSpace.id, signalId, active: false }),
-    }).catch(() => undefined);
-    setToast(locale === "zh" ? "已停止使用这条推断" : "This inference will no longer be used");
+  const memorySpaceRef = useRef(activeSpace.id);
+  useEffect(() => { memorySpaceRef.current = activeSpace.id; }, [activeSpace.id]);
+  const updateMemorySignal = async (signal: PreferenceSignal, active: boolean) => {
+    const spaceId = activeSpace.id;
+    try {
+      const response = await fetch("/api/preference-signals", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spaceId, signalId: signal.id, active }) });
+      if (!response.ok) return false;
+      if (memorySpaceRef.current === spaceId) setMonitor(current => current ? { ...current, preferenceSignals: [...(current.preferenceSignals || []).filter(item => item.id !== signal.id), ...(active ? [signal] : [])] } : current);
+      return true;
+    } catch { return false; }
   };
 
   const returnPaperToInbox = (paper: MonitorPaper) => {
@@ -6311,16 +6313,17 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
         {view === "memory" && (
           <main className="v2-page pi-memory-workspace">
-            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</p><h1>{locale === "zh" ? "研究记忆" : "Research memory"}</h1><p className="pi-page-purpose">{locale === "zh" ? "找回上次的问题，接着读、接着核对。" : "Pick up the question you left open."}</p></div></section>
-            <button className="pi-memory-settings" type="button" onClick={() => setMemorySection(memorySection === "preferences" ? "continue" : "preferences")}>{memorySection === "preferences" ? (locale === "zh" ? "← 返回研究记忆" : "← Back to memory") : (locale === "zh" ? "研究设置与资料" : "Research settings & materials")}</button>
+            <section className="v2-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)} · {activeSpace.memberName}</p><h1>{locale === "zh" ? "研究记忆" : "Research memory"}</h1><p className="pi-page-purpose">{locale === "zh" ? "从你的阅读与反馈中理解研究偏向，让后续发现更贴近你。" : "Learn from your reading and feedback to guide future discovery."}</p></div></section>
             <nav className="pi-memory-nav" aria-label={locale === "zh" ? "研究记忆分类" : "Research memory sections"}>
-              {(["continue", "reading", "insights"] as const).map(section => <button type="button" key={section} aria-current={memorySection === section ? "page" : undefined} onClick={() => setMemorySection(section)}>{section === "continue" ? (locale === "zh" ? "接着研究" : "Continue research") : section === "reading" ? (locale === "zh" ? "找回笔记" : "Find notes") : section === "insights" ? (locale === "zh" ? "研究积累" : "Research insights") : (locale === "zh" ? "研究偏好" : "Preferences")}</button>)}
+              <button type="button" aria-current={memorySection === "preferences" ? "page" : undefined} onClick={() => setMemorySection("preferences")}>{locale === "zh" ? "研究偏向" : "Research interests"}</button>
+              <button type="button" aria-current={memorySection !== "preferences" ? "page" : undefined} onClick={() => setMemorySection("reading")}>{locale === "zh" ? "研究记录" : "Research records"}</button>
             </nav>
+            {memorySection !== "preferences" && <nav className="pi-memory-record-nav" aria-label={locale === "zh" ? "研究记录分类" : "Record categories"}>{(["reading", "continue", "insights"] as const).map(section => <button key={section} aria-current={memorySection === section ? "page" : undefined} onClick={() => setMemorySection(section)}>{section === "reading" ? (locale === "zh" ? "阅读笔记" : "Reading notes") : section === "continue" ? (locale === "zh" ? "比较记录" : "Comparisons") : (locale === "zh" ? "笔记整理" : "Note insights")}</button>)}</nav>}
             {memorySection === "reading" && <details className="pi-memory-calendar"><summary>{locale === "zh" ? "按日期回看阅读" : "Browse reading dates"}</summary><ReadingCalendar key={`memory-calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "memory")} /></details>}
-            {memoryRouteError && <p role="alert">{locale === "zh" ? "路线关联暂未载入，笔记仍可阅读。" : "Route links are unavailable; your notes remain accessible."}<button onClick={() => setMemoryRouteRetry(n => n + 1)}>{locale === "zh" ? "重试" : "Retry"}</button></p>}
+            {memorySection !== "preferences" && memoryRouteError && <p role="alert">{locale === "zh" ? "路线关联暂未载入，笔记仍可阅读。" : "Route links are unavailable; your notes remain accessible."}<button onClick={() => setMemoryRouteRetry(n => n + 1)}>{locale === "zh" ? "重试" : "Retry"}</button></p>}
             {memorySection === "continue" && <MemoryResume key={activeSpace.id} spaceId={activeSpace.id} locale={locale} routes={researchMap.tracks.map(track => ({ id:track.id,title:locale === "zh" ? track.titleZh : track.titleEn }))} onCompare={id => openWorkbook(id)} />}
             {memorySection !== "preferences" && <ResearchMemoryNotebook key={`${activeSpace.id}:${memorySection}`} routes={researchMap.tracks.map(track => ({title:locale === "zh" ? track.titleZh : track.titleEn,paperIds:track.papers.map(paper => paper.id)}))} mode={memorySection === "continue" ? "continue" : memorySection === "reading" ? "notes" : "insights"} spaceId={activeSpace.id} locale={locale} onOpenPaper={id => void openRoutePaper(id, "memory")} onLibrary={() => navigate("library")} onQuestion={(title, followup) => { setQuestion(locale === "zh" ? `基于论文“${title}”的阅读笔记，我想继续研究：${followup}。请区分已有依据和待验证假设。` : `From my reading note on “${title}”, explore: ${followup}. Separate evidence from hypotheses.`); setAskOpen(true); }} />}
-            {memorySection === "preferences" && <section className="pi-memory-profile">
+            {memorySection === "insights" && <section className="pi-memory-profile">
               <header><h2>{locale === "zh" ? "从研究资料中积累" : "Insights from your materials"}</h2><p>{locale === "zh" ? "来自你确认过的资料画像。下列内容是 Pi 的归纳，依据可逐条核对。" : "Pi’s interpretation of the material profile you confirmed. Check the source context for each item."}</p><button type="button" onClick={openResearchImport}>{locale === "zh" ? "补充研究资料" : "Add research materials"} →</button></header>
               {confirmedProfile ? <>
                 {([{title: locale === "zh" ? "知识与方法" : "Knowledge and methods", items: confirmedProfile.knowledge}, {title: locale === "zh" ? "继续研究的问题" : "Questions to pursue", items: confirmedProfile.openQuestions}]).map(group => <section className="pi-memory-profile-group" key={group.title}><h3>{group.title}</h3>{group.items.length ? group.items.map((item, index) => <article key={index}><h4>{locale === "zh" ? item.labelZh : item.labelEn}</h4><p>{locale === "zh" ? item.evidenceZh : item.evidenceEn}</p></article>) : <p>{locale === "zh" ? "后续确认的资料会在这里形成积累。" : "Insights from future confirmed materials will appear here."}</p>}</section>)}
@@ -6335,7 +6338,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             </section>
 
               {confirmedProfile && <section className="pi-memory-profile-group"><h3>{locale === "zh" ? "关注的研究主题" : "Research interests"}</h3>{[...confirmedProfile.subdirections, ...confirmedProfile.interests].map((item, index) => <article key={index}><h4>{locale === "zh" ? item.labelZh : item.labelEn}</h4><p>{locale === "zh" ? item.evidenceZh : item.evidenceEn}</p></article>)}</section>}
-<section className="v2-layered-memory"><header><div><p className="v2-kicker">{locale === "zh" ? "偏好证据" : "PREFERENCE EVIDENCE"}</p><h2>{locale === "zh" ? "明确偏好与 Pi 推断" : "Explicit preferences and Pi inferences"}</h2></div></header><div><section><h3>{locale === "zh" ? "你明确表达的" : "Explicit evidence"}<span>{explicitPreferenceSignals.length}</span></h3>{explicitPreferenceSignals.map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><details><summary>{locale === "zh" ? "查看依据" : "Evidence"}</summary><small>{signal.evidence}</small></details></div></article>)}{!explicitPreferenceSignals.length && <p>{locale === "zh" ? "对论文标记“适合”或“不相关”并选择原因后显示。" : "Appears after accepting or dismissing a paper with a reason."}</p>}</section><section><h3>{locale === "zh" ? "Pi 推断的" : "Pi inferences"}<span>{inferredPreferenceSignals.length}</span></h3>{inferredPreferenceSignals.map((signal) => <article key={signal.id}><div><strong>{locale === "zh" ? signal.labelZh : signal.labelEn}</strong><details><summary>{locale === "zh" ? "查看依据" : "Evidence"}</summary><small>{signal.evidence}</small></details></div><button type="button" onClick={() => dismissInferredSignal(signal.id)} aria-label={locale === "zh" ? "停用这条推断" : "Disable this inference"}>{locale === "zh" ? "停用推断" : "Disable inference"}</button></article>)}{!inferredPreferenceSignals.length && <p>{locale === "zh" ? "有阅读、提问或确认导入的证据后显示。" : "Appears after grounded reading, questions, or confirmed imports."}</p>}</section></div></section>
+<ResearchPreferences key={activeSpace.id} signals={monitor?.preferenceSignals || []} locale={locale} demo={demo} loading={!monitor} failed={monitor?.status === "error"} onToggle={updateMemorySignal} onRecords={() => setMemorySection("reading")} />
               <p className="pi-memory-scope">{locale === "zh" ? "这些记录仅用于当前研究空间。" : "These records belong to this research space."}<button type="button" onClick={() => setSpaceDialog(true)}>{t.switchSpace} →</button></p>
             </div>}
             <footer className="v2-lab-attribution"><span>{locale === "zh" ? "研究团队" : "Research team"}</span><Image src="/pi-lab-logo.png" width={78} height={25} alt="P&amp;I Lab" /></footer>

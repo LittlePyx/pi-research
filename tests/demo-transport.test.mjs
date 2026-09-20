@@ -91,3 +91,15 @@ test('demo history is coherent, editable and resettable without background work'
     assert.ok(workbook.content.dimensions[0].cells.every(c=>workbook.sources.find(s=>s.id===c.paperId).abstractText.includes(c.quote)));
   }
 });
+test('demo preference controls persist locally and reject cross-space or explicit evidence changes',async()=>{
+ const patch=(spaceId,signalId,active)=>demoResponse('/api/preference-signals',{method:'PATCH',body:JSON.stringify({spaceId,signalId,active})});
+ const get=async()=> (await (await demoResponse('/api/monitor?spaceId=demo-mathematics')).json()).monitor.preferenceSignals;
+ assert.equal((await get()).length,3);
+ assert.equal((await patch('demo-information','demo-mathematics-method-interest',false)).status,404);
+ assert.equal((await patch('demo-mathematics','demo-mathematics-scope',false)).status,409);
+ assert.equal((await patch('demo-mathematics','demo-mathematics-method-interest',false)).status,200);
+ assert.equal((await get()).length,2);
+ assert.equal((await patch('demo-mathematics','demo-mathematics-method-interest',true)).status,200);
+ assert.equal((await get()).length,3);
+ assert.equal((await patch('demo-mathematics','demo-mathematics-method-interest','false')).status,400);
+});
