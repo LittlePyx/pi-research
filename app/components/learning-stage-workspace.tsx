@@ -1,14 +1,16 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import type { LearningPathStep, LearningResource } from '../../lib/learning-path';
 import { learningNextTask } from '../../lib/learning-next-task';
 import { LearningResourceList } from './learning-resource-list';
 import { MathText } from './math-text';
 
-export function LearningStageWorkspace({ step, locale, openingId, onOpen, signals, canComplete, busy, onComplete, duration }: {
+export function LearningStageWorkspace({ step, locale, openingId, onOpen, signals, canComplete, busy, onComplete, duration, renderResources }: {
   step: LearningPathStep; locale: 'zh' | 'en'; openingId: string | null;
   onOpen: (resource: LearningResource) => void;
   signals: (resource: LearningResource, locale: 'zh' | 'en') => string[];
+  renderResources?: (resources: LearningResource[]) => ReactNode;
   canComplete: boolean; busy: boolean; onComplete: () => void; duration: string;
 }) {
   const zh = locale === 'zh';
@@ -19,7 +21,7 @@ export function LearningStageWorkspace({ step, locale, openingId, onOpen, signal
   const checkpoint = (grounded ? (zh ? step.checkpointZh : step.checkpointEn) : '') || (zh
     ? '在论文笔记中记录一条有出处的结论、适用条件，以及一个仍需查证的问题。'
     : 'Record a sourced claim, its conditions, and one question to verify in your paper notes.');
-  const list = (resources: LearningResource[]) => <LearningResourceList resources={resources} locale={locale} openingId={openingId} onOpen={onOpen} signals={signals} supplementary />;
+  const list = (resources: LearningResource[]) => renderResources ? renderResources(resources) : <LearningResourceList resources={resources} locale={locale} openingId={openingId} onOpen={onOpen} signals={signals} supplementary />;
   return <section id="learning-stage-content" className="pi-lesson" aria-label={zh ? '阶段材料' : 'Stage materials'}>
     <header className="pi-lesson-heading"><span>{zh ? '本阶段' : 'THIS STAGE'} · {duration}</span><h2>{zh ? step.titleZh : step.titleEn}</h2><p><MathText inline>{zh ? step.goalZh : step.goalEn}</MathText></p></header>
     {why && <p className="pi-lesson-purpose"><strong>{zh ? '为什么学' : 'Why this stage'}</strong><MathText inline>{why}</MathText></p>}

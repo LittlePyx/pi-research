@@ -388,9 +388,9 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.doesNotMatch(client, /model\.ledger\.slice\(0, 16\)/);
   assert.match(client, /function ReadingOrderWorkbench/);
   assert.match(client, /learningState: LearningPathState/);
-  assert.match(client, /<LearningStageGuidance /);
+  assert.match(client, /<LearningStageWorkspace /);
   assert.match(await readFile(new URL("../app/components/learning-stage-guidance.tsx", import.meta.url), "utf8"), /如何决定/);
-  assert.match(client, /v2-learning-roadmap/);
+  assert.match(client, /LearningStageNavigation steps=\{path.steps\}/);
   assert.match(client, /pathDirectionMismatch/);
   assert.match(client, /nodeByCanonicalId/);
   assert.match(client, /nodeByTitleKey/);
@@ -465,7 +465,7 @@ test("builds persistent personalized learning paths from real research papers", 
   assert.match(client, /onGenerate=\{\(track\) => \{[^\n]*openRouteLearningPath\(route, currentGraphTask\)/);
   assert.match(client, /learningResourceSignals/);
   assert.match(client, /质量已通过/);
-  assert.match(client, /<LearningStageGuidance /);
+  assert.match(client, /<LearningStageWorkspace /);
   assert.match(await readFile(new URL("../app/components/learning-stage-guidance.tsx", import.meta.url), "utf8"), /如何决定/);
   assert.match(route, /purpose: "learning"/);
   assert.match(route, /visibleStep\.resources\.length === 0/);

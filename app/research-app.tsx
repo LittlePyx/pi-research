@@ -26,11 +26,10 @@ import type { GraphTaskContext } from "../lib/graph-task";
 import "./components/graph-research-desk.css";
 import { GraphTaskNavigation } from "./components/graph-task-navigation";
 import { LearningStageNavigation } from "./components/learning-stage-navigation";
-import { LearningStageGuidance } from "./components/learning-stage-guidance";
 import { LearningStageWorkspace } from "./components/learning-stage-workspace";
 import "./learning-workspace.css";
 import "./paper-workspace.css";
-import { LearningNextTask } from "./components/learning-next-task";
+import "./comparison-workspace.css";
 import { ResearchWorkbook } from "./components/research-workbook";
 import { RouteReferenceViews } from "./components/route-reference-views";
 import { ResearchLeads } from "./components/research-leads";
@@ -47,7 +46,7 @@ import type { WorkbookSource } from "../lib/research-workbook";
 import { learningBrowseStep, canChangeLearningStep, nextReadableLearningStep } from "../lib/learning-browse";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
 import { emptyResearchMapState, researchLeadActionableGap, researchRouteLearningSignal, researchRouteOperationalStatus, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchLeadGapOrigin, type ResearchMapState, type ResearchPaperEdge, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
-import { learningDiscoveryDelay, learningPathResultMessage, learningResourceHref, learningResourcePaperId, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource, type LearningStepKind } from "../lib/learning-path";
+import { learningDiscoveryDelay, learningPathResultMessage, learningResourceHref, learningResourcePaperId, learningResourceTitleKey, type LearningPathState, type LearningPathStep, type LearningResource } from "../lib/learning-path";
 import { monitorScanCompletionLabel, monitorQualityReviewStatus, shouldWakeLearningQualityQueue } from "../lib/monitor-quality-queue.mjs";
 import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectBalancedMultiSeedEdges, selectMultiOriginCandidates, selectPaperNetworkActiveNodeIds, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
 import type { ResearchNetworkCandidate, ResearchNetworkExpandResponse, ResearchNetworkSeed, ResearchNetworkSimilarityEdge, ResearchNetworkSourceStatus } from "../lib/research-network";
@@ -1557,18 +1556,6 @@ function researchTrackBuildSummary(track: ResearchTrack, locale: Locale) {
   return track.buildStatus === "partial" ? `${locale === "zh" ? "部分可用" : "Partially available"} · ${evidenceCounts}` : evidenceCounts;
 }
 
-function learningKindLabel(kind: LearningStepKind, locale: Locale) {
-  const labels: Record<LearningStepKind, Localized> = {
-    prerequisite: { zh: "必要先修", en: "Prerequisite" },
-    foundation: { zh: "奠基工作", en: "Foundation" },
-    method: { zh: "方法进阶", en: "Methods" },
-    milestone: { zh: "关键里程碑", en: "Milestone" },
-    frontier: { zh: "研究前沿", en: "Frontier" },
-    project: { zh: "独立研究", en: "Research exercise" },
-  };
-  return labels[kind][locale];
-}
-
 function learningTime(minutes: number, locale: Locale) {
   if (minutes < 60) return locale === "zh" ? `${minutes} 分钟` : `${minutes} min`;
   const hours = Math.round(minutes / 6) / 10;
@@ -2830,6 +2817,7 @@ function ReadingOrderWorkbench({
   onGenerate: (track: ResearchTrack | null) => void;
   onRetry: () => void;
 }) {
+  const [browse, setBrowse] = useState<{ pathId: string; stepId: string } | null>(null);
   const allNodes = useMemo(() => buildNetworkPaperNodes(map), [map]);
   const nodes = useMemo(() => allNodes.filter((node) => trackFilter === "all" || node.trackIds.includes(trackFilter)), [allNodes, trackFilter]);
   const nodeByTrackPaperId = useMemo(() => new Map(allNodes.map((node) => [`track:${node.paper.id}`, node])), [allNodes]);
@@ -2861,22 +2849,24 @@ function ReadingOrderWorkbench({
     </section>;
   }
 
-  const completedPercent = Math.round(path.completedSteps / Math.max(1, path.steps.length) * 100);
-  const activeStep = path.steps.find((step) => step.status === "active") || path.steps.find((step) => step.status !== "completed") || null;
+  const currentStep = path.steps.find(step => step.status === "active") || path.steps.find(step => step.status !== "completed") || null;
+  const activeStep = (browse?.pathId === path.id ? path.steps.find(step => step.id === browse.stepId) : null) || currentStep || path.steps[0];
   const renderResource = (resource: LearningResource) => {
     const canonicalKey = resource.canonicalId?.trim().toLocaleLowerCase();
     const node = (canonicalKey ? nodeByCanonicalId.get(canonicalKey) : undefined) || nodeByTrackPaperId.get(resource.id) || nodeByTitleKey.get(learningResourceTitleKey(resource.title));
     const href = learningResourceHref(resource);
-    const content = <><small>{node ? researchPaperYear(node.paper) : resource.publishedAt?.slice(0, 4) || "—"} · {resource.venue}</small><strong><MathText inline>{resource.title}</MathText></strong><em className="v2-learning-resource-signals">{learningResourceSignals(resource, locale).map((signal) => <i key={signal}>{signal}</i>)}</em></>;
+    const content = <><small>{node ? researchPaperYear(node.paper) : resource.publishedAt?.slice(0, 4) || "—"} · {resource.venue}</small><strong><MathText inline>{resource.title}</MathText></strong><em className="v2-learning-resource-signals">{learningResourceSignals(resource, locale).join(" · ")}</em></>;
     return node ? <button type="button" className={selectedPaperId === node.paper.id ? "selected" : ""} key={resource.id} onClick={() => onSelect(node.paper.id)}>{content}</button> : href ? <a href={href} target="_blank" rel="noreferrer" key={resource.id}>{content}</a> : <div className="unavailable" key={resource.id}>{content}</div>;
   };
-  return <section className="v2-reading-order-workbench compact" aria-label={locale === "zh" ? "建议阅读顺序工作台" : "Suggested reading order workbench"}>
+  return <section className="v2-reading-order-workbench compact v2-learn-page pi-graph-reading" aria-label={locale === "zh" ? "建议阅读顺序工作台" : "Suggested reading order workbench"}>
     {learningError && <div className="v2-reading-order-warning" role="status"><span>!</span><p>{locale === "zh" ? "上次更新没有完成；已保存路径仍保留。" : "The last update did not finish; the saved path remains."} {learningError}</p><button type="button" onClick={onRetry}>{locale === "zh" ? "重试" : "Retry"}</button></div>}
     {pathDirectionMismatch && <div className="v2-reading-order-warning direction" role="status"><span>↔</span><p>{locale === "zh" ? `当前路径属于“${pathTrack?.titleZh || path.target}”。` : `This path belongs to “${pathTrack?.titleEn || path.target}”.`}</p><button type="button" disabled={Boolean(learningAction)} onClick={() => onGenerate(selectedTrack)}>{locale === "zh" ? "按当前方向规划" : "Plan this direction"}</button></div>}
     <header className="v2-specialized-network-head"><div><p>{locale === "zh" ? `学习路径 · 第 ${path.revision} 版` : `LEARNING PATH · REVISION ${path.revision}`}</p><h3>{locale === "zh" ? path.titleZh : path.titleEn}</h3><span>{locale === "zh" ? `当前目标：${path.target}` : `Target: ${path.target}`}</span></div><dl><div><dt>{locale === "zh" ? "进度" : "Progress"}</dt><dd>{path.completedSteps}/{path.steps.length}</dd></div><div><dt>{locale === "zh" ? "已通过材料" : "Approved papers"}</dt><dd>{path.steps.reduce((sum, step) => sum + step.resources.length, 0)}</dd></div><div><dt>{locale === "zh" ? "待评估" : "In review"}</dt><dd>{learningState.waitingQualityCount}</dd></div></dl></header>
-    <div className="v2-reading-progress"><div><strong>{activeStep ? (locale === "zh" ? `现在：${activeStep.titleZh}` : `Now: ${activeStep.titleEn}`) : (locale === "zh" ? "路径已完成" : "Path completed")}</strong><span>{activeStep ? learningEvidenceLabel(activeStep, locale) : (locale === "zh" ? "可以据此收敛研究问题" : "Ready to refine the research question")}</span></div><i><b style={{ width: `${completedPercent}%` }} /></i><button type="button" disabled={Boolean(learningAction)} onClick={() => onGenerate(selectedTrack)}>{locale === "zh" ? "根据新证据更新" : "Update from new evidence"}</button></div>
-    {activeStep && <section className={`v2-learning-now ${activeStep.evidenceStatus}`}><header><span>{learningKindLabel(activeStep.kind, locale)}</span><b>{learningEvidenceLabel(activeStep, locale)}</b></header><h4>{locale === "zh" ? activeStep.goalZh : activeStep.goalEn}</h4><LearningNextTask step={activeStep} locale={locale} renderResource={renderResource} />{activeStep.resources.length ? <details><summary>{locale === "zh" ? `本阶段全部材料（${activeStep.resources.length}）` : `All stage papers (${activeStep.resources.length})`}</summary><div className="v2-learning-stage-resources">{activeStep.resources.map(renderResource)}</div></details> : <div className="v2-learning-evidence-gap"><strong>{locale === "zh" ? "还没有可作为正式材料的论文" : "No paper is ready as formal material"}</strong><p>{locale === "zh" ? "Pi 已按这个缺口补证；候选先经过共享质量评估，不会为了填满路径而降低门槛。" : "Pi is searching this gap. Candidates pass through the shared quality review; the bar is not lowered to fill the path."}</p></div>}<LearningStageGuidance step={activeStep} locale={locale} /><footer><span>{learningTime(activeStep.estimatedMinutes, locale)}</span><button type="button" disabled={Boolean(learningAction) || (!activeStep.resources.length && activeStep.status !== "completed")} onClick={() => onToggleStep(activeStep)}>{learningAction === activeStep.id ? "…" : activeStep.status === "completed" ? (locale === "zh" ? "恢复" : "Restore") : (locale === "zh" ? "完成本阶段" : "Complete stage")}</button></footer></section>}
-    <div className="v2-learning-roadmap">{path.steps.map((step, index) => <article className={`${step.status} ${step.evidenceStatus}`} key={step.id}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{locale === "zh" ? step.titleZh : step.titleEn}</strong><small>{learningEvidenceLabel(step, locale)} · {step.resources.length} {locale === "zh" ? "篇" : "papers"}</small></div><b>{step.status === "completed" ? "✓" : step.status === "active" ? (locale === "zh" ? "现在" : "Now") : ""}</b></article>)}</div>
+    <div className="pi-graph-reading-actions"><button type="button" disabled={Boolean(learningAction)} onClick={() => onGenerate(selectedTrack)}>{locale === "zh" ? "调整学习计划" : "Adjust learning plan"} →</button><span>{locale === "zh" ? "查看阶段不会改变学习进度" : "Browsing stages does not change progress"}</span></div>
+    <div className="pi-study-layout"><LearningStageNavigation steps={path.steps} selectedId={activeStep?.id} currentId={currentStep?.id} locale={locale} label={learningEvidenceLabel} onSelect={stepId => setBrowse({pathId:path.id,stepId})} /><div className="pi-study-session">
+    {activeStep && <LearningStageWorkspace step={activeStep} locale={locale} openingId={null} onOpen={() => {}} signals={learningResourceSignals} canComplete={canChangeLearningStep(activeStep,currentStep)} busy={Boolean(learningAction)} onComplete={() => onToggleStep(activeStep)} duration={learningTime(activeStep.estimatedMinutes,locale)} renderResources={resources => <div className="v2-learning-stage-resources pi-graph-stage-papers">{resources.map(renderResource)}</div>} />}
+    </div></div>
+
   </section>;
 }
 

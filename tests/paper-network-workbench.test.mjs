@@ -49,8 +49,8 @@ test("suggested reading order uses the persisted learning path on desktop and na
   assert.match(client, /paperNetworkMode === "citations" \? <CitationFlowWorkbench[\s\S]*: <ReadingOrderWorkbench/);
   assert.doesNotMatch(client, /<PaperNetworkGraph[^>]*mode="path"/);
   assert.match(client, /不表示严格先后，也不会把 Pi 图谱边冒充可执行计划/);
-  assert.match(client, /<LearningStageGuidance /);
-  assert.match(client, /v2-learning-roadmap/);
+  assert.match(client, /<LearningStageWorkspace /);
+  assert.match(client, /LearningStageNavigation steps=\{path.steps\}/);
   assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.v2-learning-now-guidance[^}]*grid-template-columns:\s*1fr/);
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.v2-reading-fallback-groups[^}]*grid-template-columns:\s*1fr/);
 });
