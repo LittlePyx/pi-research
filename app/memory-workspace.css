@@ -121,3 +121,50 @@
  .v2-app.pi-workspace .pi-preference-item>h4 { font-size:15px; }
  .v2-app.pi-workspace .pi-preference-disabled { flex-wrap:wrap; }
 }
+/* Records share the same restrained surfaces as research interests. */
+.v2-app.pi-workspace .pi-memory-record-nav { width:fit-content; max-width:100%; padding:4px; gap:3px; background:#e9edf0; border-radius:8px; margin:0 0 28px; }
+.v2-app.pi-workspace .pi-memory-record-nav button { padding:8px 15px; border-radius:6px; font-size:13px; color:#78838a; white-space:nowrap; }
+.v2-app.pi-workspace .pi-memory-record-nav button[aria-current] { background:white; color:#304e59; box-shadow:0 1px 3px #25313b0d; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-notebook { margin:0; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-notebook>header { display:flex; flex-direction:row; align-items:center; justify-content:space-between; margin-bottom:20px; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-notebook>header h2 { font-size:20px; font-weight:600; margin:0; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-notebook>header p { margin:6px 0 0; font-size:13px; color:#7b858d; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-notebook>header button { flex-shrink:0; font-size:12px; color:#617680; }
+.v2-app.pi-workspace .pi-memory-search { max-width:none; margin:0 0 16px; }
+.v2-app.pi-workspace .pi-memory-search label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.v2-app.pi-workspace .pi-memory-search>div { padding:5px 6px 5px 14px; border:1px solid #dfe5e8; border-radius:8px; background:white; align-items:center; gap:8px; }
+.v2-app.pi-workspace .pi-memory-search input { border:0; background:none; padding:7px 0; outline-offset:3px; font-size:13px; }
+.v2-app.pi-workspace .pi-memory-search button { background:#edf2f3; color:#486571; border:0; border-radius:5px; padding:6px 10px; font-size:12px; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-count { font-size:12px; color:#839098; margin:0 0 12px; }
+.v2-app.pi-workspace .pi-memory-note-list:not(:empty) { background:white; border:1px solid #e1e6e9; border-radius:12px; overflow:hidden; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry { padding:24px; border:0; margin:0; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry+.pi-memory-entry { border-top:1px solid #edf0f2; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry>header { display:flex; justify-content:space-between; gap:12px; font-size:11px; color:#8a949b; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry>h3 { font:600 17px/1.6 Arial,"Microsoft YaHei",sans-serif; margin:10px 0 12px; max-width:76ch; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-paper-link { font:inherit; color:#2b3c46; padding:0; border:0; background:none; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-original { border:0; margin:0; padding:0; background:none; max-width:76ch; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-original p { font-size:14px; line-height:1.85; color:#627079; margin:0; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry footer { margin-top:12px; display:flex; align-items:center; }
+.v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry footer button { font-size:12px; color:#52727c; padding:4px 0; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-empty { text-align:center; padding:42px 24px; background:white; border:1px solid #e1e6e9; border-radius:12px; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-empty h3 { font-size:16px; margin:0 0 8px; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-memory-empty p { margin:0 auto; font-size:13px; color:#7a858d; }
+.v2-app.pi-workspace .pi-memory-calendar { margin:22px 0 0; color:#70838c; font-size:12px; }
+.v2-app.pi-workspace .pi-memory-calendar>summary { width:fit-content; padding:6px 0; }
+.v2-app.pi-workspace .pi-memory-resume { padding:26px; margin:0; border-color:#e1e6e9; border-radius:12px; }
+.v2-app.pi-workspace .pi-memory-resume header h2 { font-size:20px; font-weight:600; }
+.v2-app.pi-workspace .pi-memory-resume .pi-memory-route { margin:0 0 24px; font-size:12px; color:#7a8890; }
+.v2-app.pi-workspace .pi-memory-resume h3 { font-size:14px; font-weight:600; margin-bottom:8px; }
+.v2-app.pi-workspace .pi-memory-resume p { font-size:14px; line-height:1.85; color:#627079; }
+.v2-app.pi-workspace .pi-memory-resume details { border-color:#edf0f2; font-size:13px; color:#637983; }
+.v2-app.pi-workspace .pi-memory-resume button { background:#365f6c; font-size:13px; border-radius:6px; padding:10px 16px; }
+.v2-app.pi-workspace .pi-memory-synthesis { margin:16px 0; padding:18px; background:#f5f7f8; border-radius:8px; }
+.v2-app.pi-workspace .pi-memory-pagination { margin-top:20px; }
+@media(max-width:700px) {
+ .v2-app.pi-workspace .pi-memory-record-nav { gap:0; }
+ .v2-app.pi-workspace .pi-memory-record-nav button { padding:8px 12px; }
+ .v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry { padding:20px 18px; }
+ .v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry>h3 { font-size:16px; }
+ .v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry>header { flex-wrap:wrap; }
+ .v2-app.pi-workspace .pi-memory-resume { padding:20px; }
+}
