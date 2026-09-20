@@ -4404,7 +4404,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     return () => window.removeEventListener("keydown", onKey);
   }, [view, selectedMonitorPaper, selectedThread, workbookTrackId, question]);
 
-  const navigate = (next: View, workbookTarget = workbookTrackId, target: Partial<WorkspaceLocation> = {}) => {
+  const navigate = (next: View, workbookTarget = workbookTrackId, target: Partial<WorkspaceLocation> = {}, preserveScroll = false) => {
     setNavigationIssue(null);
     navigationScroll.current.set(window.location.hash, window.scrollY);
     const returning = view === "paper-detail" || view === "workbook";
@@ -4423,7 +4423,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if (window.location.hash !== hash) window.history.pushState({ piView: next }, "", hash);
     restoredLocation.current = activeSpace.id + hash;
     setView(next); setMobileNav(false);
-    const top = returning ? navigationScroll.current.get(hash) || (next === "workbook" ? workbookScrollRef.current : 0) : 0;
+    const top = preserveScroll ? window.scrollY : returning ? navigationScroll.current.get(hash) || (next === "workbook" ? workbookScrollRef.current : 0) : 0;
+    navigationScroll.current.set(hash, top);
     requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top, behavior: "auto" })));
   };
 
@@ -6243,10 +6244,10 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
                 <LearningPathHeader path={activeLearningState.path} locale={locale} busy={Boolean(learningAction)} onAdjust={() => { setLearningPlannerOpen(true); document.getElementById("learning-goal-planner")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} onRefresh={() => void generateLearningPath(activeLearningState.path!.target, activeLearningState.path!.targetTrackId)} />
                 <div className="pi-study-layout">
-                <LearningStageNavigation steps={activeLearningState.path.steps} selectedId={activeLearningStep?.id} currentId={currentLearningStep?.id} locale={locale} label={learningEvidenceLabel} onSelect={(stepId) => { setLearningBrowseSelection({ scope: learningBrowseScope, stepId }); navigate("learn", workbookTrackId, { step: stepId, path: activeLearningState.path?.id }); }} />
+                <LearningStageNavigation steps={activeLearningState.path.steps} selectedId={activeLearningStep?.id} currentId={currentLearningStep?.id} locale={locale} label={learningEvidenceLabel} onSelect={(stepId) => { setLearningBrowseSelection({ scope: learningBrowseScope, stepId }); navigate("learn", workbookTrackId, { step: stepId, path: activeLearningState.path?.id }, true); }} />
                 <div className="pi-study-session">
-                {readableLearningStep && <aside className="pi-study-available"><strong>{locale === "zh" ? "当前阶段的材料还在准备，可以先浏览已有阅读" : "This stage is waiting for materials; another reading is available"}</strong><button type="button" onClick={() => { setLearningBrowseSelection({ scope: learningBrowseScope, stepId: readableLearningStep.id }); navigate("learn", workbookTrackId, { step: readableLearningStep.id, path: activeLearningState.path?.id }); }}>{locale === "zh" ? readableLearningStep.titleZh : readableLearningStep.titleEn} →</button></aside>}
-                {activeLearningStep && currentLearningStep && activeLearningStep.id !== currentLearningStep.id && <p className="pi-learning-browse-note">{locale === "zh" ? "查看本阶段材料，不改变学习进度。" : "Browsing these materials does not change your progress."}<button type="button" onClick={() => { setLearningBrowseSelection(null); navigate("learn", workbookTrackId, { step: undefined, path: undefined }); }}>{locale === "zh" ? "返回当前进度" : "Back to current progress"}</button></p>}
+                {readableLearningStep && <aside className="pi-study-available"><strong>{locale === "zh" ? "当前阶段的材料还在准备，可以先浏览已有阅读" : "This stage is waiting for materials; another reading is available"}</strong><button type="button" onClick={() => { setLearningBrowseSelection({ scope: learningBrowseScope, stepId: readableLearningStep.id }); navigate("learn", workbookTrackId, { step: readableLearningStep.id, path: activeLearningState.path?.id }, true); }}>{locale === "zh" ? readableLearningStep.titleZh : readableLearningStep.titleEn} →</button></aside>}
+                {activeLearningStep && currentLearningStep && activeLearningStep.id !== currentLearningStep.id && <p className="pi-learning-browse-note">{locale === "zh" ? "查看本阶段材料，不改变学习进度。" : "Browsing these materials does not change your progress."}<button type="button" onClick={() => { setLearningBrowseSelection(null); navigate("learn", workbookTrackId, { step: undefined, path: undefined }, true); }}>{locale === "zh" ? "返回当前进度" : "Back to current progress"}</button></p>}
                 {activeLearningStep && <LearningStageWorkspace step={activeLearningStep} locale={locale} openingId={openingLearningResourceId} onOpen={resource => void openLearningResource(resource)} signals={learningResourceSignals} canComplete={canChangeLearningStep(activeLearningStep, currentLearningStep)} busy={Boolean(learningAction)} onComplete={() => void updateLearningStep(activeLearningStep)} duration={learningTime(activeLearningStep.estimatedMinutes, locale)} />}
                 </div></div>
               </section>
