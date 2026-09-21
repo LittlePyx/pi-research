@@ -69,7 +69,7 @@ import { shouldReclaimMonitorLease } from "../lib/monitor-follower-control.mjs";
 import { shouldBlockManualMonitorStart } from "../lib/monitor-runtime-control.mjs";
 import { modelConnectionFailureState, modelConnectionProblemCopy } from "../lib/model-connection-state";
 import { activateModalFocus } from "../lib/modal-focus";
-import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel } from "../lib/today-presentation.mjs";
+import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, isReadReference, readingReferences } from "../lib/today-presentation.mjs";
 
 type Locale = "zh" | "en";
 type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid" | "balance" | "rate_limited" | "unavailable";
@@ -3378,10 +3378,12 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     queued: null,
     screened: 0,
   });
-  const todayNavigationCount = rankedMonitorPapers.length;
+  const todayNavigationCount = rankedMonitorPapers.filter(paper => !isReadReference(paper)).length;
   const dailyBriefEntries = useMemo(() => briefPaperEntries(monitor?.dailyBrief?.paperIds, historyPapers), [historyPapers, monitor?.dailyBrief?.paperIds]);
-  const dailyBriefPapers: MonitorPaper[] = dailyBriefEntries.map((entry) => entry.paper);
-  const visibleBriefEntries = dailyBriefEntries.slice(0, 6);
+  const nextBriefEntries = dailyBriefEntries.filter(entry => !isReadReference(entry.paper));
+  const dailyBriefPapers: MonitorPaper[] = nextBriefEntries.map((entry) => entry.paper);
+  const visibleBriefEntries = nextBriefEntries.slice(0, 6);
+  const readReferencePapers: MonitorPaper[] = readingReferences([...dailyBriefEntries.map(entry => entry.paper), ...rankedMonitorPapers, ...historyPapers]);
   const dailyFreshnessCounts = useMemo(() => ({
     days: dailyBriefPapers.slice(0, 6).filter((paper) => paper.horizon === "days").length,
     months: dailyBriefPapers.slice(0, 6).filter((paper) => paper.horizon === "months").length,
@@ -5964,7 +5966,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                 {Boolean(dailyBriefPapers.length) && <footer><button type="button" onClick={() => openMonitorPaper(dailyBriefPapers[0])}>{locale === "zh" ? "开始阅读" : "Start reading"} →</button><button className="secondary" type="button" onClick={() => shareSnapshot("daily", dailyBriefPapers)} disabled={Boolean(sharingSnapshot)}>{sharingSnapshot === "daily" ? t.creatingShare : t.shareDaily}</button></footer>}
               </div>
               <div className="v2-daily-paper-queue">
-                <header><div><strong>{monitor.dailyBrief.isCurrent ? (locale === "zh" ? "今日入选" : "Selected today") : (locale === "zh" ? `${monitor.dailyBrief.date} 入选` : `Selected on ${monitor.dailyBrief.date}`)}</strong><small>{locale === "zh" ? `显示 ${dailyBriefEntryCount} / ${dailyBriefPaperIds.size} 篇 · 按阅读优先级排序` : `Showing ${dailyBriefEntryCount} / ${dailyBriefPaperIds.size} · Reading priority`}</small></div><span>{dailyBriefEntryCount} {locale === "zh" ? "篇" : "papers"}</span></header>
+                <header><div><strong>{monitor.dailyBrief.isCurrent ? (locale === "zh" ? "今日入选" : "Selected today") : (locale === "zh" ? `${monitor.dailyBrief.date} 入选` : `Selected on ${monitor.dailyBrief.date}`)}</strong><small>{locale === "zh" ? `显示 ${dailyBriefEntryCount} / ${nextBriefEntries.length} 篇 · 按阅读优先级排序` : `Showing ${dailyBriefEntryCount} / ${nextBriefEntries.length} · Reading priority`}</small></div><span>{dailyBriefEntryCount} {locale === "zh" ? "篇" : "papers"}</span></header>
                 {Boolean(dailyBriefPapers.length) && <div className="v2-daily-freshness-summary"><span className="days">{locale === "zh" ? "近 14 天新论文" : "New · 14 days"} <b>{dailyFreshnessCounts.days}</b></span><span className="months">{locale === "zh" ? "近期优质" : "Recent quality"} <b>{dailyFreshnessCounts.months}</b></span><span className="years">{locale === "zh" ? "核心补读" : "Core catch-up"} <b>{dailyFreshnessCounts.years}</b></span></div>}
                 <div className="v2-daily-brief-list">
                   {visibleBriefEntries.map(({ paper, briefIndex }, index) => {
@@ -5976,7 +5978,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                     </details>;
                   })}
                 </div>
-                {!dailyBriefEntryCount && <div className="v2-daily-zero-state"><strong>{dailyBriefPaperIds.size ? (locale === "zh" ? "论文详情暂未加载" : "Paper details unavailable") : (locale === "zh" ? "本简报暂无入选" : "No selections in this brief")}</strong><p>{dailyBriefPaperIds.size ? (locale === "zh" ? "已保留入选记录，请稍后刷新查看。" : "Selections are preserved. Refresh to load their details.") : locale === "zh" ? `${latestQuickScreenedCount} 篇完成初筛，${latestDeepReviewedCount} 篇完成深评${latestDeepDeferredCount ? `，${latestDeepDeferredCount} 篇延后` : ""}；暂无论文通过全部质量门槛。` : `${latestQuickScreenedCount} screened, ${latestDeepReviewedCount} deeply reviewed${latestDeepDeferredCount ? `, ${latestDeepDeferredCount} deferred` : ""}; none cleared every quality gate.`}</p></div>}
+                {!dailyBriefEntryCount && dailyBriefEntries.some(entry => isReadReference(entry.paper)) && <div className="v2-daily-zero-state"><strong>{locale === "zh" ? "本期材料已读完" : "This brief’s papers are already read"}</strong><p>{locale === "zh" ? "可在下方已读参考中回看原文与笔记。" : "Revisit them with your notes in Read references below."}</p></div>}
+                {!dailyBriefEntryCount && !dailyBriefEntries.some(entry => isReadReference(entry.paper)) && <div className="v2-daily-zero-state"><strong>{dailyBriefPaperIds.size ? (locale === "zh" ? "论文详情暂未加载" : "Paper details unavailable") : (locale === "zh" ? "本简报暂无入选" : "No selections in this brief")}</strong><p>{dailyBriefPaperIds.size ? (locale === "zh" ? "已保留入选记录，请稍后刷新查看。" : "Selections are preserved. Refresh to load their details.") : locale === "zh" ? `${latestQuickScreenedCount} 篇完成初筛，${latestDeepReviewedCount} 篇完成深评${latestDeepDeferredCount ? `，${latestDeepDeferredCount} 篇延后` : ""}；暂无论文通过全部质量门槛。` : `${latestQuickScreenedCount} screened, ${latestDeepReviewedCount} deeply reviewed${latestDeepDeferredCount ? `, ${latestDeepDeferredCount} deferred` : ""}; none cleared every quality gate.`}</p></div>}
                 {Boolean(briefRunStatus(monitor.dailyBrief, locale).length) && <details className="pi-processing-details"><summary>{locale === "zh" ? "简报处理记录" : "Brief processing record"}</summary><aside><strong>{locale === "zh" ? `${monitor.dailyBrief.date} 简报保存时状态（末批）` : `${monitor.dailyBrief.date} status when saved (last run)`}</strong><ul>{briefRunStatus(monitor.dailyBrief, locale).map((item) => <li key={item}>{item}</li>)}</ul></aside></details>}
               </div>
             </section>}
@@ -5994,6 +5997,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                   <footer><details><summary>{locale === "zh" ? "来源与评审" : "Sources & review"}</summary><div><PaperFreshnessBadge paper={paper} locale={locale} /><PaperDiscoverySourceBadge paper={paper} locale={locale} /><RecommendationVerificationBadge paper={paper} locale={locale} /><RouteDiscoveryBadge paper={paper} locale={locale} /></div></details><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "阅读与笔记" : "Read & take notes"} →</button></footer>
                 </article>;
               })}</div>
+            </section>}
+
+            {readReferencePapers.length > 0 && <section className="pi-read-references" aria-label={locale === "zh" ? "已读参考" : "Read references"}>
+              <header><h2>{locale === "zh" ? "已读参考" : "Read references"}</h2><p>{locale === "zh" ? "回看已有知识，继续核对与比较。" : "Revisit familiar work for checks and comparisons."}</p></header>
+              {readReferencePapers.map(paper => <article key={paper.id}><div><button type="button" onClick={() => openMonitorPaper(paper)}><MathText inline>{paper.title}</MathText></button><p>{readingStatusLabel(paper.readingStatus, locale)}{paper.authors ? ` · ${paper.authors}` : ""}</p></div><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "回看与笔记" : "Revisit & notes"} →</button></article>)}
             </section>}
 
             {!activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-") && <ResearchStart key={activeSpace.id} spaceId={activeSpace.id} locale={locale} onRead={id => void openRoutePaper(id, "today")} onStart={startRecommendedResearch} />}

@@ -136,3 +136,12 @@
 .v2-app.pi-workspace .pi-editorial-today .pi-news-standfirst { font-size:16px !important; line-height:1.8 !important; }
 .v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > header { flex-direction:row; text-align:left; align-items:center; }
 .v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead > header > div { text-align:left; }
+.v2-app.pi-workspace .pi-read-references { margin:32px 0; padding:24px 0; border-top:1px solid #dfe5e8; }
+.pi-read-references h2 { margin:0; font-size:22px; }
+.pi-read-references header p,.pi-read-references article p { margin:8px 0; color:#647681; font-size:14px; }
+.pi-read-references article { display:flex; justify-content:space-between; align-items:center; gap:24px; padding:20px 0; border-bottom:1px solid #e5eaec; }
+.pi-read-references article>div { min-width:0; }
+.pi-read-references button { border:0; background:none; color:#305b68; text-align:left; cursor:pointer; }
+.pi-read-references article>div>button { color:#233b49; font-size:16px; font-weight:500; overflow-wrap:anywhere; }
+.pi-read-references article>button { flex-shrink:0; font-size:14px; }
+@media(max-width:600px) { .pi-read-references article { align-items:flex-start; flex-direction:column; gap:8px; } }

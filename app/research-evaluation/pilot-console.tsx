@@ -6,7 +6,7 @@ import './pilot.css';
 type Case={id:string;goal:string;order:string[]};
 type RecordRow={caseId:string;variant:string;sourceCommit:string;executionSourceCommit?:string;experimentHash:string;status:string;inputTokens:number|null;outputTokens:number|null;durationMs:number|null;errorCode?:string;recommendations?:{id:string;reason:string;quote:string}[]};
 const labels:Record<string,string>={none:'无记忆',explicit:'仅明确反馈',all:'全部研究记忆'};
-export default function PilotConsole({cases,experimentHash,enabled,sourceCommit}:{cases:Case[];experimentHash:string;enabled:boolean;sourceCommit:string}) {
+export default function PilotConsole({cases,experimentHash,enabled,sourceCommit,endpoint='/api/personalization-pilot',secondVersion=false}:{cases:Case[];experimentHash:string;enabled:boolean;sourceCommit:string;endpoint?:string;secondVersion?:boolean}) {
  const token=useRef('');
  const inFlight=useRef(false);
  const [fingerprint,setFingerprint]=useState('');
@@ -30,10 +30,10 @@ export default function PilotConsole({cases,experimentHash,enabled,sourceCommit}
   inFlight.current=true;setBusy(true);
   const fresh:RecordRow[]=[];
   try {
-   const preflight=await fetch('/api/personalization-pilot',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(15_000)});
+   const preflight=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(15_000)});
    if(preflight.status!==401||!(preflight.headers.get('content-type')||'').includes('application/json'))throw new Error(preflight.status===410?'实验入口尚未启用或已经关闭。':'实验入口不可用（HTTP '+preflight.status+'），未发送执行凭据。');
    const check=await preflight.json();if(check.error!=='unauthorized')throw new Error('实验预检响应不符合预期。');
-   const collected=await continuePilot({cases,experimentHash,sourceCommit,executionSourceCommit:commit,token:token.current,
+   const collected=await continuePilot({cases,experimentHash,sourceCommit:sourceCommit||commit,executionSourceCommit:commit,token:token.current,endpoint,
     onProgress:(task:Case,variant:string,index:number)=>setMessage('核对已有记录，仅执行未运行项：'+task.goal+' · '+labels[variant]+'（'+index+'/12）'),
     onRecord:(row:RecordRow,cached:boolean,all:RecordRow[])=>{setRecords(all);if(!cached){fresh.push(row);setNewRecords([...fresh]);}}
    });
@@ -47,7 +47,7 @@ export default function PilotConsole({cases,experimentHash,enabled,sourceCommit}
  }
  return <main className="pi-pilot">
   <header><a href="/demo/process">← 研究过程</a><span>Pi Research</span></header>
-  <h1>推荐对比实验</h1><p>4 个编写的研究问题，同一候选集，三种记忆条件。这里只比较摘要排序，不运行正式扫描。</p>
+  <h1>{secondVersion?'第二版推荐验证':'推荐对比实验'}</h1><p>{secondVersion?'2 个新编写问题 × 3 种记忆条件 × 2 次重复。使用编号原句与已读参考分流；保留第一版全部记录。':'4 个编写的研究问题，同一候选集，三种记忆条件。这里只比较摘要排序，不运行正式扫描。'}</p>
   {!enabled?<section><h2>本轮执行已结束</h2><p>临时执行入口已关闭。已保存的成功与失败记录均保留。</p><a href="/demo/process?view=pilot">查看真实对比记录 →</a></section>:<section aria-label="执行设置"><h2>本次执行</h2>
    <button disabled={!!fingerprint||busy} onClick={prepare}>准备执行会话</button>
    {fingerprint&&<div className="pi-pilot-fingerprint"><span>公开会话指纹</span><code>{fingerprint}</code><small>执行凭据只保留在本标签页内存，刷新后失效。</small></div>}
