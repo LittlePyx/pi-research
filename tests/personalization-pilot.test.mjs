@@ -37,3 +37,29 @@ test('real-call adapter records actual usage, preserves failures and never seria
  assert.throws(()=>summarizePilot(experiment,[{...run,requestHash:'altered'}]));
  assert.throws(()=>summarizePilot(experiment,[run,run]));
 });
+
+test('validation diagnoses the exact rejected field without repairing output or retaining arbitrary text',async()=>{
+ const base=JSON.parse(valid().choices[0].message.content).recommendations[0];
+ const cases=[
+  [[{...base,id:'sensitive-unknown-text'}],'unknown_candidate',0],
+  [[base,base],'duplicate_candidate',1],
+  [[{...base,reason:''}],'invalid_reason',0],
+  [[{...base,quote:7}],'invalid_quote',0],
+  [[{...base,quote:'short'}],'quote_length_out_of_range',0],
+  [[{...base,quote:'A sufficiently long quote that is not in this abstract.'}],'quote_not_in_abstract',0],
+  [[null],'invalid_ranking_item',0],
+ ];
+ for(const [rows,code,index] of cases){
+  const d=valid();d.choices[0].message.content=JSON.stringify({recommendations:rows});
+  assert.throws(()=>parsePilotResponse(d,task),error=>error.message===code&&error.validationFailure.index===index);
+  const r=await executePilotRun(experiment,task,'none',{apiKey:'fixture',sourceCommit:'a'.repeat(40),executionSourceCommit:'b'.repeat(40),fetchImpl:async()=>Response.json(d)});
+  assert.equal(r.errorCode,code);assert.deepEqual(r.validationFailure,{code,index});
+  assert.equal(r.validationVersion,'pilot-output-v2');assert.equal(r.executionSourceCommit,'b'.repeat(40));
+  assert.equal(r.ranking,undefined);assert.doesNotMatch(JSON.stringify(r),/sensitive-unknown-text|sufficiently long quote/);
+ }
+ // Every formerly accepted real result still satisfies the identical gates.
+ const published=JSON.parse(await readFile(new URL('../public/agent-personalization.json',import.meta.url),'utf8'));
+ for(const c of published.cases)for(const row of c.rows.filter(r=>r.status==='completed')){
+  assert.equal(parsePilotResponse({choices:[{finish_reason:'stop',message:{content:JSON.stringify({recommendations:row.recommendations})}}]},experiment.cases.find(t=>t.id===c.id)).length,row.returned);
+ }
+});
