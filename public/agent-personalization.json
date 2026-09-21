@@ -1,0 +1,495 @@
+{
+  "version": "fixed-candidate-pilot-v1",
+  "experimentHash": "521158f97be01706c372a849f0c175a556dd6a80c1253b84ec07928f58e92ea7",
+  "model": "deepseek-flash",
+  "status": "incomplete",
+  "plannedRuns": 12,
+  "completedRuns": 7,
+  "attemptedRuns": 8,
+  "failedRuns": 1,
+  "qualityMetrics": null,
+  "independentReview": "not_performed",
+  "repetitions": 1,
+  "provenance": "Provider metadata from saved server records; accepted rankings and quotes exported from the operator results DOM, then revalidated against the frozen requests and original abstracts. Original provider response bodies were not retained.",
+  "scope": "Exploratory shared-memory-policy ranking probe. Authored personas; fixed public abstract pool; not the production discovery/review pipeline or a held-out population study.",
+  "cases": [
+    {
+      "id": "math-bounds",
+      "goal": "比较 KLS 与薄壳问题的维数依赖界，核对方法、条件与结论。",
+      "knownIds": [
+        "arxiv:1807.03465"
+      ],
+      "rows": [
+        {
+          "caseId": "math-bounds",
+          "variant": "none",
+          "status": "completed",
+          "knownCount": 1,
+          "returned": 5,
+          "inputTokens": 2504,
+          "outputTokens": 467,
+          "durationMs": 2476,
+          "observedAt": "2026-09-21T03:34:39.126Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "a6e7622ba1c2d577679e40cbfb614d304274469815fd3ef49ee0e2044821c73f",
+          "responseHash": "2b3d785ac7ecb333480778c1aae309388a8973b8b64514ac3708bcd65c62b347",
+          "errorCode": null,
+          "recommendations": [
+            {
+              "id": "arxiv:1807.03465",
+              "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/1807.03465",
+              "reason": "Survey directly addresses the KLS conjecture, its origins, consequences, and recent progress, making it a strong entry point for comparing assumptions and what methods establish in dimension-dependent bounds.",
+              "quote": "Here we survey the origin and consequences of the conjecture (in geometry, probability, information theory and algorithms) as well as recent progress resulting in the current best bounds."
+            },
+            {
+              "id": "arxiv:2303.14938",
+              "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+              "sourceUrl": "https://arxiv.org/abs/2303.14938",
+              "reason": "Establishes logarithmic-factor bounds for both the Bourgain slicing conjecture and the KLS isoperimetric conjecture, directly relevant to comparing dimension-dependent bounds and the assumptions behind them.",
+              "quote": "We prove that the Bourgain slicing conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture in $\\mathbb{R}^n$ hold true up to a factor of $\\sqrt{\\log n}$."
+            },
+            {
+              "id": "arxiv:2203.15551",
+              "title": "Bourgain's slicing problem and KLS isoperimetry up to polylog",
+              "sourceUrl": "https://arxiv.org/abs/2203.15551",
+              "reason": "Provides polylogarithmic bounds for Bourgain's slicing problem and KLS isoperimetry, useful for comparing the strength and dimension dependence of different approaches.",
+              "quote": "We prove that Bourgain's hyperplane conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture hold true up to a factor that is polylogarithmic in the dimension."
+            },
+            {
+              "id": "arxiv:2011.13661",
+              "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/2011.13661",
+              "reason": "Gives an almost constant lower bound for the KLS isoperimetric coefficient and explicitly connects improvements to Bourgain's slicing and thin-shell conjectures, matching the goal's comparative focus.",
+              "quote": "Improving the current best lower bound of the isoperimetric coefficient in the KLS conjecture has many implications, including improvements of the current best bounds in Bourgain's slicing conjecture and in the thin-shell conjecture"
+            },
+            {
+              "id": "arxiv:math/0611577",
+              "title": "Power-law estimates for the central limit theorem for convex sets",
+              "sourceUrl": "https://arxiv.org/abs/math/0611577",
+              "reason": "Addresses power-law dimension-dependent bounds in the central limit theorem for convex sets, a related high-dimensional convexity result that can inform comparison of assumptions and established bounds.",
+              "quote": "We obtain bounds with a power-law dependence on the dimension. These bounds are asymptotically better than the logarithmic estimates which follow from the original proof of the central limit theorem for convex sets."
+            }
+          ]
+        },
+        {
+          "caseId": "math-bounds",
+          "variant": "explicit",
+          "status": "completed",
+          "knownCount": 0,
+          "returned": 5,
+          "inputTokens": 2657,
+          "outputTokens": 505,
+          "durationMs": 2591,
+          "observedAt": "2026-09-21T03:34:44.191Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "f0eec1c092939af0c8de870bd5e022b2d9267974af152acf5ce94e9ce43c1655",
+          "responseHash": "6b2d11456c90b31aa2450dc4b35d079a3150904e77112653983cc27dd6f1303c",
+          "errorCode": null,
+          "recommendations": [
+            {
+              "id": "arxiv:2303.14938",
+              "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+              "sourceUrl": "https://arxiv.org/abs/2303.14938",
+              "reason": "Directly addresses the goal by proving both the Bourgain slicing and KLS conjectures up to sqrt(log n), and its abstract names the improved log-concave Lichnerowicz inequality as the key new ingredient, matching the interest in stochastic localization and quantitative improvements.",
+              "quote": "We prove that the Bourgain slicing conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture in $\\mathbb{R}^n$ hold true up to a factor of $\\sqrt{\\log n}$. A new ingredient used in the proof is an improved log-concave Lichnerowicz inequality."
+            },
+            {
+              "id": "arxiv:2203.15551",
+              "title": "Bourgain's slicing problem and KLS isoperimetry up to polylog",
+              "sourceUrl": "https://arxiv.org/abs/2203.15551",
+              "reason": "Provides the polylogarithmic dimension-dependent bound for both Bourgain's slicing and KLS isoperimetry, a central comparison point for assumptions and what each method establishes.",
+              "quote": "We prove that Bourgain's hyperplane conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture hold true up to a factor that is polylogarithmic in the dimension."
+            },
+            {
+              "id": "arxiv:2011.13661",
+              "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/2011.13661",
+              "reason": "Gives the almost constant d^{-o_d(1)} lower bound for the KLS isoperimetric coefficient and explicitly lists implications for Bourgain's slicing and the thin-shell conjecture, useful for comparing dimension-dependent bounds.",
+              "quote": "We prove an almost constant lower bound of the isoperimetric coefficient in the KLS conjecture. The lower bound has the dimension dependency $d^{-o_d(1)}$."
+            },
+            {
+              "id": "arxiv:2305.10690",
+              "title": "Sampling, Diffusions, and Stochastic Localization",
+              "sourceUrl": "https://arxiv.org/abs/2305.10690",
+              "reason": "An expository article on stochastic localization and diffusions that clarifies connections and derives sampling schemes in a unified fashion, matching the explicit interest in stochastic localization arguments and proof tools.",
+              "quote": "Stochastic localization is a successful technique to prove mixing of Markov Chains and other functional inequalities in high dimension."
+            },
+            {
+              "id": "arxiv:1104.2791",
+              "title": "Poincare Inequalities and Moment Maps",
+              "sourceUrl": "https://arxiv.org/abs/1104.2791",
+              "reason": "Presents a Poincare-inequality method via moment maps and a dual Bochner formula, offering a distinct technique and assumptions for comparison with localization-based approaches.",
+              "quote": "We propose a new method for obtaining Poincare-type inequalities on arbitrary convex bodies in R^n. Our technique involves a dual version of Bochner's formula and a certain moment map, and it also applies to some non-convex sets."
+            }
+          ]
+        },
+        {
+          "caseId": "math-bounds",
+          "variant": "all",
+          "status": "completed",
+          "knownCount": 0,
+          "returned": 5,
+          "inputTokens": 2705,
+          "outputTokens": 455,
+          "durationMs": 2422,
+          "observedAt": "2026-09-21T03:34:47.368Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "b46f29d8a8b624590b4260413b1eeb668d204c82e4f00c25226bbfd03c64376b",
+          "responseHash": "2988daaab08e5ef57bd5e58ef2532b75786b22f370d6c0608eb21aaf62168c16",
+          "errorCode": null,
+          "recommendations": [
+            {
+              "id": "arxiv:2303.14938",
+              "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+              "sourceUrl": "https://arxiv.org/abs/2303.14938",
+              "reason": "Directly addresses both KLS isoperimetry and Bourgain slicing with explicit sqrt(log n) dimension dependence, matching the goal of comparing assumptions and what each method establishes; nonredundant after the already-read KLS survey.",
+              "quote": "We prove that the Bourgain slicing conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture in $\\mathbb{R}^n$ hold true up to a factor of $\\sqrt{\\log n}$."
+            },
+            {
+              "id": "arxiv:2203.15551",
+              "title": "Bourgain's slicing problem and KLS isoperimetry up to polylog",
+              "sourceUrl": "https://arxiv.org/abs/2203.15551",
+              "reason": "Provides a polylogarithmic dimension-dependent bound for both Bourgain slicing and KLS isoperimetry, useful for comparing quantitative guarantees across approaches.",
+              "quote": "We prove that Bourgain's hyperplane conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture hold true up to a factor that is polylogarithmic in the dimension."
+            },
+            {
+              "id": "arxiv:2011.13661",
+              "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/2011.13661",
+              "reason": "Gives an almost constant lower bound with explicit dimension dependence and states implications for slicing and thin-shell, aligning with the comparison of dimension-dependent bounds.",
+              "quote": "We prove an almost constant lower bound of the isoperimetric coefficient in the KLS conjecture. The lower bound has the dimension dependency $d^{-o_d(1)}$."
+            },
+            {
+              "id": "arxiv:1104.2791",
+              "title": "Poincare Inequalities and Moment Maps",
+              "sourceUrl": "https://arxiv.org/abs/1104.2791",
+              "reason": "Presents a Poincare-inequality method via moment maps and Bochner's formula, offering a distinct technique relevant to comparing assumptions and established bounds.",
+              "quote": "We propose a new method for obtaining Poincare-type inequalities on arbitrary convex bodies in R^n. Our technique involves a dual version of Bochner's formula and a certain moment map"
+            },
+            {
+              "id": "arxiv:math/0611577",
+              "title": "Power-law estimates for the central limit theorem for convex sets",
+              "sourceUrl": "https://arxiv.org/abs/math/0611577",
+              "reason": "Focuses on power-law dimension dependence in the central limit theorem for convex sets, a related quantitative dimension-dependent result useful for method comparison.",
+              "quote": "We obtain bounds with a power-law dependence on the dimension. These bounds are asymptotically better than the logarithmic estimates which follow from the original proof of the central limit theorem for convex sets."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "math-sampling",
+      "goal": "寻找随机局部化采样方法，比较可计算方案与理论联系。",
+      "knownIds": [
+        "arxiv:2305.10690"
+      ],
+      "rows": [
+        {
+          "caseId": "math-sampling",
+          "variant": "none",
+          "status": "completed",
+          "knownCount": 1,
+          "returned": 5,
+          "inputTokens": 2495,
+          "outputTokens": 454,
+          "durationMs": 2644,
+          "observedAt": "2026-09-21T03:34:58.810Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "d1c91f39c42ba0aad2eb58f7adc5668a9dcd38e62677090c2eb35f335115ee17",
+          "responseHash": "3d178fa05df8cc308f8b82ab84a48d688a8ef93438b1c0899d9e33754990c10d",
+          "errorCode": null,
+          "recommendations": [
+            {
+              "id": "arxiv:2305.10690",
+              "title": "Sampling, Diffusions, and Stochastic Localization",
+              "sourceUrl": "https://arxiv.org/abs/2305.10690",
+              "reason": "Directly matches the goal: an expository article generalizing algorithmic stochastic localization constructions and clarifying the connection between diffusions and stochastic localization, covering both computational constructions and theoretical connections.",
+              "quote": "Generalize the algorithmic construction to other stochastic localization processes. This construction is both simple and broadly applicable"
+            },
+            {
+              "id": "arxiv:2402.10758",
+              "title": "Stochastic Localization via Iterative Posterior Sampling",
+              "sourceUrl": "https://arxiv.org/abs/2402.10758",
+              "reason": "Provides an explicit computational construction (SLIPS) for sampling from unnormalized target densities via stochastic localization, matching the goal's interest in computational constructions.",
+              "quote": "We consider a general stochastic localization framework and introduce an explicit class of observation processes, associated with flexible denoising schedules."
+            },
+            {
+              "id": "arxiv:1807.03465",
+              "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/1807.03465",
+              "reason": "Surveys the KLS conjecture and its consequences, which is the theoretical setting where stochastic localization is a key technique for proving mixing and functional inequalities.",
+              "quote": "Here we survey the origin and consequences of the conjecture (in geometry, probability, information theory and algorithms) as well as recent progress resulting in the current best bounds."
+            },
+            {
+              "id": "arxiv:2011.13661",
+              "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/2011.13661",
+              "reason": "Relevant theoretical connection: improved KLS bounds yield better mixing time bounds for MCMC sampling on log-concave measures, the theoretical payoff of stochastic localization methods.",
+              "quote": "better concentration inequalities for Lipschitz functions of log-concave measures and better mixing time bounds for MCMC sampling algorithms on log-concave measures"
+            },
+            {
+              "id": "arxiv:1104.2791",
+              "title": "Poincare Inequalities and Moment Maps",
+              "sourceUrl": "https://arxiv.org/abs/1104.2791",
+              "reason": "Offers a moment-map method for Poincare-type inequalities on convex bodies, a theoretical technique related to the functional-inequality side of stochastic localization.",
+              "quote": "Our technique involves a dual version of Bochner's formula and a certain moment map, and it also applies to some non-convex sets."
+            }
+          ]
+        },
+        {
+          "caseId": "math-sampling",
+          "variant": "explicit",
+          "status": "completed",
+          "knownCount": 0,
+          "returned": 5,
+          "inputTokens": 2641,
+          "outputTokens": 465,
+          "durationMs": 2836,
+          "observedAt": "2026-09-21T03:34:50.392Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "2b8194a93e87db40b4fef45d4e29ce4d82e48887ec51b85211d0aa1429424d39",
+          "responseHash": "3a3c9d38a074800426bf278b2d2a991a62ab9acf0b85e477a2e0f3f1d75a24a7",
+          "errorCode": null,
+          "recommendations": [
+            {
+              "id": "arxiv:2402.10758",
+              "title": "Stochastic Localization via Iterative Posterior Sampling",
+              "sourceUrl": "https://arxiv.org/abs/2402.10758",
+              "reason": "Directly extends the stochastic localization sampling line with an implementable posterior-sampling construction, matching the explicit preference for implementable posterior-sampling methods and providing a nonredundant next reading after the already-read expository article.",
+              "quote": "We provide a complete methodology, $\\textit{Stochastic Localization via Iterative Posterior Sampling}$ (SLIPS), to obtain approximate samples of this dynamics, and as a by-product, samples from the target distribution."
+            },
+            {
+              "id": "arxiv:1807.03465",
+              "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/1807.03465",
+              "reason": "Survey connecting the KLS conjecture to algorithms and sampling, useful for the theoretical-connections side of the goal and for contextualizing stochastic localization results without being the already-read introductory article.",
+              "quote": "Here we survey the origin and consequences of the conjecture (in geometry, probability, information theory and algorithms) as well as recent progress resulting in the current best bounds."
+            },
+            {
+              "id": "arxiv:2011.13661",
+              "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/2011.13661",
+              "reason": "Provides a recent theoretical bound with stated implications for MCMC sampling on log-concave measures, relevant to the theoretical connections around stochastic localization and mixing.",
+              "quote": "better concentration inequalities for Lipschitz functions of log-concave measures and better mixing time bounds for MCMC sampling algorithms on log-concave measures."
+            },
+            {
+              "id": "arxiv:2303.14938",
+              "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+              "sourceUrl": "https://arxiv.org/abs/2303.14938",
+              "reason": "Recent theoretical progress on KLS isoperimetry, a core area linked to stochastic localization arguments; useful for the theoretical-connections portion of the goal.",
+              "quote": "We prove that the Bourgain slicing conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture in $\\mathbb{R}^n$ hold true up to a factor of $\\sqrt{\\log n}$."
+            },
+            {
+              "id": "arxiv:2203.15551",
+              "title": "Bourgain's slicing problem and KLS isoperimetry up to polylog",
+              "sourceUrl": "https://arxiv.org/abs/2203.15551",
+              "reason": "Complements the KLS/isoperimetry theory relevant to stochastic localization by establishing polylogarithmic bounds, supporting the theoretical-connections aspect of the goal.",
+              "quote": "We prove that Bourgain's hyperplane conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture hold true up to a factor that is polylogarithmic in the dimension."
+            }
+          ]
+        },
+        {
+          "caseId": "math-sampling",
+          "variant": "all",
+          "status": "completed",
+          "knownCount": 0,
+          "returned": 5,
+          "inputTokens": 2686,
+          "outputTokens": 487,
+          "durationMs": 2916,
+          "observedAt": "2026-09-21T03:34:53.792Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "9a171e7373cbf43f22ecc18587914a025907a6351e9d2eef1c2c6befd1a16558",
+          "responseHash": "940668784b401f1f58b70a2756f48a42978f2507e25be155281d66f0ff5fc738",
+          "errorCode": null,
+          "recommendations": [
+            {
+              "id": "arxiv:2402.10758",
+              "title": "Stochastic Localization via Iterative Posterior Sampling",
+              "sourceUrl": "https://arxiv.org/abs/2402.10758",
+              "reason": "Directly matches the goal's request for computational constructions of stochastic localization sampling, and aligns with the explicit preference for implementable posterior-sampling methods plus the tentative interest in MCMC denoiser approximation and multimodal targets.",
+              "quote": "We provide a complete methodology, $\\textit{Stochastic Localization via Iterative Posterior Sampling}$ (SLIPS), to obtain approximate samples of this dynamics, and as a by-product, samples from the target distribution. Our scheme is based on a Markov chain Monte Carlo estimation of the denoiser"
+            },
+            {
+              "id": "arxiv:1807.03465",
+              "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/1807.03465",
+              "reason": "Provides the theoretical background connecting stochastic localization to isoperimetry and sampling, useful as a nonredundant theoretical companion since the introductory connection article has already been read.",
+              "quote": "The Kannan-Lovász-Simonovits conjecture says that the Cheeger constant of any logconcave density is achieved to within a universal, dimension-independent constant factor by a hyperplane-induced subset."
+            },
+            {
+              "id": "arxiv:2011.13661",
+              "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/2011.13661",
+              "reason": "Relevant theoretical connection: improved KLS isoperimetric bounds have direct implications for mixing time bounds of MCMC sampling algorithms, complementing the sampling-with-stochastic-localization topic.",
+              "quote": "better concentration inequalities for Lipschitz functions of log-concave measures and better mixing time bounds for MCMC sampling algorithms on log-concave measures."
+            },
+            {
+              "id": "arxiv:2303.14938",
+              "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+              "sourceUrl": "https://arxiv.org/abs/2303.14938",
+              "reason": "Recent theoretical progress on KLS isoperimetry, which underlies stochastic localization arguments and sampling guarantees; useful for the theoretical-connections aspect of the goal.",
+              "quote": "We prove that the Bourgain slicing conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture in $\\mathbb{R}^n$ hold true up to a factor of $\\sqrt{\\log n}$."
+            },
+            {
+              "id": "arxiv:2203.15551",
+              "title": "Bourgain's slicing problem and KLS isoperimetry up to polylog",
+              "sourceUrl": "https://arxiv.org/abs/2203.15551",
+              "reason": "Another recent theoretical result on KLS isoperimetry and Bourgain's slicing, relevant to the theoretical foundations connected to stochastic localization sampling.",
+              "quote": "We prove that Bourgain's hyperplane conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture hold true up to a factor that is polylogarithmic in the dimension."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "info-distortion",
+      "goal": "研究有限码长有损压缩，区分超额失真概率与平均失真，并寻找扩展。",
+      "knownIds": [
+        "arxiv:1102.3944"
+      ],
+      "rows": [
+        {
+          "caseId": "info-distortion",
+          "variant": "none",
+          "status": "failed",
+          "knownCount": null,
+          "returned": null,
+          "inputTokens": 3117,
+          "outputTokens": 454,
+          "durationMs": 2428,
+          "observedAt": "2026-09-21T03:35:05.088Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "1ee3fc1c455e979988a4d61558e610fac34488119c38203de34aff953e0ac422",
+          "responseHash": "adc708154b497e2784986b95a8f066fccef74467ce3756e87a81b021ddf82425",
+          "errorCode": "output_validation_failed",
+          "recommendations": []
+        },
+        {
+          "caseId": "info-distortion",
+          "variant": "explicit",
+          "status": "not_run",
+          "knownCount": null,
+          "returned": null,
+          "inputTokens": null,
+          "outputTokens": null,
+          "durationMs": null,
+          "observedAt": null,
+          "sourceCommit": null,
+          "requestHash": null,
+          "responseHash": null,
+          "errorCode": null,
+          "recommendations": []
+        },
+        {
+          "caseId": "info-distortion",
+          "variant": "all",
+          "status": "completed",
+          "knownCount": 1,
+          "returned": 4,
+          "inputTokens": 3327,
+          "outputTokens": 372,
+          "durationMs": 2421,
+          "observedAt": "2026-09-21T03:35:02.047Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "bf1dfd46faf48d4495153eeeeeefc0595ba3670fc11801c2a4abbdcbd5aea3a6",
+          "responseHash": "bfb4cbd3991fdabbb418bb56e65ec0a072f8ef1b2a3d60bd3546d9f4f0ce410d",
+          "errorCode": null,
+          "recommendations": [
+            {
+              "id": "arxiv:1410.2687",
+              "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+              "sourceUrl": "https://arxiv.org/abs/1410.2687",
+              "reason": "Directly extends finite-blocklength lossy compression to side information at both encoder and decoder, matching the explicit interest in side-information extensions and preserving the both-terminals distinction flagged in quality feedback.",
+              "quote": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder."
+            },
+            {
+              "id": "arxiv:1209.1317",
+              "title": "Lossy joint source-channel coding in the finite blocklength regime",
+              "sourceUrl": "https://arxiv.org/abs/1209.1317",
+              "reason": "Addresses the explicit interest in joint source-channel finite-length extensions and uses the same excess-distortion probability criterion central to the goal.",
+              "quote": "the fidelity of reproduction at the receiver end is measured by the probability $\\epsilon$ that the distortion exceeds a given threshold $d$"
+            },
+            {
+              "id": "arxiv:1510.02190",
+              "title": "Data compression with low distortion and finite blocklength",
+              "sourceUrl": "https://arxiv.org/abs/1510.02190",
+              "reason": "Connects low-distortion asymptotics to nonasymptotic converses, matching the inferred interest in low-distortion asymptotics as a bridge to finite-blocklength bounds.",
+              "quote": "we show that a nonasymptotic version of the abstract Shannon lower bound recovers all previously known nonasymptotic converses"
+            },
+            {
+              "id": "arxiv:1102.3944",
+              "title": "Fixed-length lossy compression in the finite blocklength regime",
+              "sourceUrl": "https://arxiv.org/abs/1102.3944",
+              "reason": "Foundational for the goal's excess-distortion formulation, but memory reports it already mastered, so it is included only as a reference anchor rather than a next reading.",
+              "quote": "the minimum rate achievable is shown to be closely approximated by $R(d) + \\sqrt{\\frac{V(d)}{n}} Q^{-1}(\\epsilon)$"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "info-contraction",
+      "goal": "研究信息收缩与强数据处理，寻找估计及概率结构方面的联系。",
+      "knownIds": [
+        "arxiv:1411.3575"
+      ],
+      "rows": [
+        {
+          "caseId": "info-contraction",
+          "variant": "none",
+          "status": "not_run",
+          "knownCount": null,
+          "returned": null,
+          "inputTokens": null,
+          "outputTokens": null,
+          "durationMs": null,
+          "observedAt": null,
+          "sourceCommit": null,
+          "requestHash": null,
+          "responseHash": null,
+          "errorCode": null,
+          "recommendations": []
+        },
+        {
+          "caseId": "info-contraction",
+          "variant": "explicit",
+          "status": "not_run",
+          "knownCount": null,
+          "returned": null,
+          "inputTokens": null,
+          "outputTokens": null,
+          "durationMs": null,
+          "observedAt": null,
+          "sourceCommit": null,
+          "requestHash": null,
+          "responseHash": null,
+          "errorCode": null,
+          "recommendations": []
+        },
+        {
+          "caseId": "info-contraction",
+          "variant": "all",
+          "status": "not_run",
+          "knownCount": null,
+          "returned": null,
+          "inputTokens": null,
+          "outputTokens": null,
+          "durationMs": null,
+          "observedAt": null,
+          "sourceCommit": null,
+          "requestHash": null,
+          "responseHash": null,
+          "errorCode": null,
+          "recommendations": []
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "No independent relevance judgments supplied. Known-paper overlap is based on authored persona declarations; lower overlap alone does not establish better recommendations. Model reasons are not causal explanations for rank changes. Provider alias may change; this single repetition cannot establish statistical reliability.",
+    "One response failed the combined identity, uniqueness, field and exact-quote validation. The run halted; four planned calls were not made. No retry replaced the failed sample.",
+    "Results use authored preferences and 18 shared public abstracts; they do not measure full production retrieval or scientific correctness."
+  ]
+}

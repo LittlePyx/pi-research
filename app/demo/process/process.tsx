@@ -4,6 +4,7 @@ import {feedbackChannel} from "../../../lib/feedback-policy.mjs";
 import evidence from "../../../public/agent-evidence.json";
 import evaluation from "../../../public/agent-evaluation.json";
 import "./process.css";
+import PilotResults from './pilot-results';
 
 const choices=[
  {code:"method_fit",label:"方法值得借鉴",record:"方法兴趣",effect:"在后续检索中关注相关工具与适用条件。",boundary:"这是一条明确兴趣；仍需独立检查新材料的相关性与证据。"},
@@ -11,9 +12,9 @@ const choices=[
  {code:"duplicate_known",label:"我已经掌握",record:"已有知识",effect:"减少重复的入门内容，寻找更深入或更新的材料。",boundary:"掌握一篇材料不等于完成整个方向，也不代表它不相关。"},
  {code:"later",label:"稍后再读",record:"阅读安排",effect:"调整阅读时机，不据此新增研究偏向。",boundary:"暂时没时间阅读，不能解释为不感兴趣。"},
 ];
-export default function AgentProcess({initialSpace="demo-mathematics"}:{initialSpace?:string}) {
+export default function AgentProcess({initialSpace="demo-mathematics",initialView="journey"}:{initialSpace?:string;initialView?:string}) {
  const [space,setSpace]=useState(initialSpace);
- const [tab,setTab]=useState("journey");
+ const [tab,setTab]=useState(initialView);
  const [choice,setChoice]=useState("method_fit");
  const math=space==="demo-mathematics";
  const selected=choices.find(c=>c.code===choice)!;
@@ -26,8 +27,9 @@ export default function AgentProcess({initialSpace="demo-mathematics"}:{initialS
   <header className="pi-process-top"><a href={demo}>← 返回演示空间</a><span>Pi Research</span></header>
   <div className="pi-process-heading"><p>研究过程</p><h1>一次阅读，如何影响下一次发现</h1><p>查看记录、决策依据与结果。</p></div>
   <nav className="pi-process-tabs" aria-label="研究过程视图">
-   {[["journey","体验一个例子"],["history","查看实际运行"],["evaluation","验证与边界"]].map(([id,label])=><button key={id} aria-pressed={tab===id} onClick={()=>setTab(id)}>{label}</button>)}
+   {[["journey","体验一个例子"],["pilot","推荐对比"],["history","恢复记录"],["evaluation","验证与边界"]].map(([id,label])=><button key={id} aria-pressed={tab===id} onClick={()=>setTab(id)}>{label}</button>)}
   </nav>
+  {tab==="pilot" && <PilotResults/>}
   {tab==="journey" && <section aria-label="预设研究过程">
    <div className="pi-process-section-head"><h2>从问题出发</h2><select aria-label="示例领域" value={space} onChange={e=>setSpace(e.target.value)}><option value="demo-mathematics">应用数学</option><option value="demo-information">信息论</option></select></div>
    <p className="pi-process-goal">{math?"比较 KLS 框架与随机局部化：它们使用的条件与工具有什么不同？":"从平均失真走向有限码长：两种失真约束应该如何区分？"}</p>
@@ -56,7 +58,7 @@ export default function AgentProcess({initialSpace="demo-mathematics"}:{initialS
    <div className="pi-process-section-head"><h3>记忆输入对照</h3><select aria-label="评估领域" value={space} onChange={e=>setSpace(e.target.value)}><option value="demo-mathematics">应用数学</option><option value="demo-information">信息论</option></select></div>
    <div className="pi-process-table"><table><thead><tr><th>对照方式</th><th>应保留</th><th>正确分流</th><th>错误纳入</th></tr></thead><tbody>{rows.map(r=><tr key={r.mode}><th>{r.mode==="none"?"不使用记忆":r.mode==="explicit"?"仅明确反馈":"明确反馈与推断"}</th><td>{r.expectedSignals}</td><td>{r.correctlyRouted}</td><td>{r.unwantedSignals}</td></tr>)}</tbody></table></div>
    <p>每个领域包含质量、深度、掌握、范围、文献类型、单篇判断，以及停用、过期和不可靠推断场景。案例由开发者编写，用于检查策略边界。</p>
-   <div className="pi-process-evaluation"><h3>推荐质量：尚未测量</h3><p>仍需要固定候选集、独立的领域相关性标注，以及同一模型的三组真实运行结果，再比较相关性、重复率、多样性与成本。</p><p>现有题名校准基准使用已知标签参与排序，只能作回归检查，不能用来证明个性化推荐提升。</p></div>
+   <div className="pi-process-evaluation"><h3>推荐质量：尚未测量</h3><p>固定候选实验已取得 7 次有效排序、1 次校验失败，另有 4 次未运行；独立相关性标注尚未进行。<button onClick={()=>setTab('pilot')}>查看真实对比记录 →</button></p><p>现有题名校准基准使用已知标签参与排序，只能作回归检查，不能用来证明个性化推荐提升。</p></div>
    <div className="pi-process-evaluation"><h3>核验能力：有成功案例，缺少总体误差评估</h3><p>引用存在、字段完整与身份匹配可以确定性检查；科学含义是否受到摘要支持仍依赖模型判断。相同模型的第二次判断不等于独立正确性证明。</p></div>
    <footer className="pi-process-note"><a href="/agent-evaluation.json" download>下载本次评估结果</a><a href="https://github.com/LittlePyx/pi-research/blob/main/AGENT_EVALUATION.md" target="_blank" rel="noreferrer">复现方法与结果格式 ↗</a></footer>
   </section>}

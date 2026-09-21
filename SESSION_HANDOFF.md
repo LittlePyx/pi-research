@@ -1,5 +1,15 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-21：首次真实固定候选对比（部分完成）
+
+- 正常应用内浏览器导航恢复；本机脚本无凭据预检仍Cloudflare403（03:17 UTC，a3e5ea8d99ab0504-HKG），未修改网络、安全规则或复制模型Key。通过独立 /research-evaluation 的可见按钮执行原固定接口；临时cap仅浏览器内存，源码只保存公开SHA256，Demo不执行模型。
+- v289提供执行页；v290源码482eacf5188ff1eefac5ea7643064f66280e5622，于03:32:42 UTC成功发布并临时启用。固定12次计划实际执行8次：7 completed、1 failed，之后按原停止规则停止，4未运行。失败为info-distortion/none，HTTP200/stop，errorCode=ungrounded_or_duplicate_ranking；旧联合错误码不能区分未知/重复身份、字段或引文错误，不猜具体根因、不重试替换失败。
+- 两数学case六组全部完成：none均含1篇设定已掌握文献，explicit/all均0；sampling的explicit/all完整排序相同。仅是单次、编写偏好、固定共享摘要池的行为观察，非生产推荐收益。信息论all有效但none失败，不能配对评价；contraction未运行。
+- 用户明确选择暂不独立评审、先看真实运行记录。qualityMetrics=null；不补评分、不请模型假冒独立审阅者。下一步如补完剩余4次，应保留失败样本与原固定输入，不能为“成功12次”改变门槛、清表或替换失败结果。当前批次未完成，不把7次有效称12次全通过。
+- 浏览器Blob下载在IAB没有取得文件。7份接受的排序/理由/引用从可见结果DOM提取，服务端元数据从有界Sites表读取（长字段截断不直接当完整JSON）；本地合并后通过原请求哈希/候选/逐字引用校验。输出runs.json/report.json位于outputs/personalization-pilot-v1；明确记录这一导出来源，未宣称保留模型原始HTTP正文。
+- Demo研究过程新增推荐对比视图，发布白名单真实记录public/agent-personalization.json，逐组状态/耗时/token/顺序/引用；恢复记录与对比区分，下载为静态公开记录。关闭临时执行能力并将执行页改为结果入口；最终发布状态以下次原生部署结果为准。
+- 用户docs/未动、邮件暂停、旧自动任务未恢复；无生产论文/阅读状态变更。最终构建、修改模块lint、691项全量回归通过；发布状态以原生部署结果为准。
+
 ## 2026-09-21：403访问诊断与实验预检
 
 - v288仍active/public；普通demo GET及实验POST均为Cloudflare HTML403。应用日志同期主页/模型设置/monitor仍200，不能称网站宕机或Key失效。Ray与时间记录于outputs/personalization-pilot-v1/ACCESS_DIAGNOSTIC.md。
