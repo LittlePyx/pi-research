@@ -1,7 +1,6 @@
-// Closed after eight real calls: seven accepted outputs and one validation failure.
-// Preserve the failed sample; no automatic retries or further calls.
-export const PILOT_ACCESS_HASH = '';
-export const PILOT_EXPIRES_AT = 0;
+// Short-lived continuation of the same frozen plan. Existing attempts stay terminal.
+export const PILOT_ACCESS_HASH = '75dcedc7bccfbffa07e31788e317e20513e013097925a96a4447c2bc6e6028f1';
+export const PILOT_EXPIRES_AT = 1789991468058;
 export const PILOT_CONSOLE_OPEN = true;
 // Source baseline for the unchanged frozen inputs; each new call separately
 // records the deployed execution revision and validation diagnostic version.
