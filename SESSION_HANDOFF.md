@@ -1,5 +1,14 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-21：固定候选实验补齐 12 次终态记录
+
+- 用户要求补细分诊断、仅执行剩余4项、更新Demo。原冻结候选/提示词/模型参数/接受门槛未改，experimentHash仍521158f97be01706c372a849f0c175a556dd6a80c1253b84ec07928f58e92ea7。没有独立评审，qualityMetrics=null。
+- v292提供会话准备，v293执行源码0615b0d4273d496d37da8cea7878b6f1964a7429，09:52:44 UTC发布；用正常IAB可见按钮核对旧8条、仅调用4个空缺项。原8条未覆盖、旧失败未重试。新增2通过2失败，共12终态、9通过3失败、0未运行，状态completed_with_failures。
+- 新info-contraction/none失败invalid_quote,index0（首项引用不是字符串/缺失）；explicit失败quote_not_in_abstract,index3（第4项不在原摘要）。两者HTTP200/stop。旧info-distortion/none联合错误无原正文，不能追溯具体原因。解析器只记录首个失败字段，未保存/发布原模型响应正文，没有放宽门槛或自动修复。
+- 新4条从执行页可见JSON完整导出，outputs/personalization-pilot-v1/continuation-runs.json；旧8条原样备份pre-continuation-runs.json，追加attempts.jsonl并合并runs/report，重新验证请求哈希、候选身份与逐字引文。sourceCommit保持原基线482eacf，新增executionSourceCommit标实际版本，validationVersion=pilot-output-v2；两批provider fingerprint一致但单轮仍不代表稳定性。
+- Demo真实报告新增两条件间的新增/移出/排序变化摘要及失败原因，保留数学sampling explicit/all完整排序相同；信息论无法完整三组对照，all仍列已掌握论文，不能称记忆越多越好。公开JSON仅白名单记录、无responseId或凭据。
+- 本轮执行后源码关闭临时API和控制台；完整构建、修改模块lint和694项全量回归通过；最终上线以原生部署返回为准。邮件继续暂停、旧自动任务未恢复，用户docs/未动。
+
 ## 2026-09-21：首次真实固定候选对比（部分完成）
 
 - 正常应用内浏览器导航恢复；本机脚本无凭据预检仍Cloudflare403（03:17 UTC，a3e5ea8d99ab0504-HKG），未修改网络、安全规则或复制模型Key。通过独立 /research-evaluation 的可见按钮执行原固定接口；临时cap仅浏览器内存，源码只保存公开SHA256，Demo不执行模型。

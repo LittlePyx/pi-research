@@ -5,6 +5,7 @@ import evidence from "../../../public/agent-evidence.json";
 import evaluation from "../../../public/agent-evaluation.json";
 import "./process.css";
 import PilotResults from './pilot-results';
+import pilotReport from '../../../public/agent-personalization.json';
 
 const choices=[
  {code:"method_fit",label:"方法值得借鉴",record:"方法兴趣",effect:"在后续检索中关注相关工具与适用条件。",boundary:"这是一条明确兴趣；仍需独立检查新材料的相关性与证据。"},
@@ -58,7 +59,7 @@ export default function AgentProcess({initialSpace="demo-mathematics",initialVie
    <div className="pi-process-section-head"><h3>记忆输入对照</h3><select aria-label="评估领域" value={space} onChange={e=>setSpace(e.target.value)}><option value="demo-mathematics">应用数学</option><option value="demo-information">信息论</option></select></div>
    <div className="pi-process-table"><table><thead><tr><th>对照方式</th><th>应保留</th><th>正确分流</th><th>错误纳入</th></tr></thead><tbody>{rows.map(r=><tr key={r.mode}><th>{r.mode==="none"?"不使用记忆":r.mode==="explicit"?"仅明确反馈":"明确反馈与推断"}</th><td>{r.expectedSignals}</td><td>{r.correctlyRouted}</td><td>{r.unwantedSignals}</td></tr>)}</tbody></table></div>
    <p>每个领域包含质量、深度、掌握、范围、文献类型、单篇判断，以及停用、过期和不可靠推断场景。案例由开发者编写，用于检查策略边界。</p>
-   <div className="pi-process-evaluation"><h3>推荐质量：尚未测量</h3><p>固定候选实验已取得 7 次有效排序、1 次校验失败，另有 4 次未运行；独立相关性标注尚未进行。<button onClick={()=>setTab('pilot')}>查看真实对比记录 →</button></p><p>现有题名校准基准使用已知标签参与排序，只能作回归检查，不能用来证明个性化推荐提升。</p></div>
+   <div className="pi-process-evaluation"><h3>推荐质量：尚未测量</h3><p>固定候选实验已执行 {pilotReport.attemptedRuns} / {pilotReport.plannedRuns} 次，取得 {pilotReport.completedRuns} 次有效排序、{pilotReport.failedRuns} 次校验失败；独立相关性标注尚未进行。<button onClick={()=>setTab('pilot')}>查看真实对比记录 →</button></p><p>现有题名校准基准使用已知标签参与排序，只能作回归检查，不能用来证明个性化推荐提升。</p></div>
    <div className="pi-process-evaluation"><h3>核验能力：有成功案例，缺少总体误差评估</h3><p>引用存在、字段完整与身份匹配可以确定性检查；科学含义是否受到摘要支持仍依赖模型判断。相同模型的第二次判断不等于独立正确性证明。</p></div>
    <footer className="pi-process-note"><a href="/agent-evaluation.json" download>下载本次评估结果</a><a href="https://github.com/LittlePyx/pi-research/blob/main/AGENT_EVALUATION.md" target="_blank" rel="noreferrer">复现方法与结果格式 ↗</a></footer>
   </section>}

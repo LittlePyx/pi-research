@@ -2,15 +2,15 @@
   "version": "fixed-candidate-pilot-v1",
   "experimentHash": "521158f97be01706c372a849f0c175a556dd6a80c1253b84ec07928f58e92ea7",
   "model": "deepseek-flash",
-  "status": "incomplete",
+  "status": "completed_with_failures",
   "plannedRuns": 12,
-  "completedRuns": 7,
-  "attemptedRuns": 8,
-  "failedRuns": 1,
+  "completedRuns": 9,
+  "attemptedRuns": 12,
+  "failedRuns": 3,
   "qualityMetrics": null,
   "independentReview": "not_performed",
   "repetitions": 1,
-  "provenance": "Provider metadata from saved server records; accepted rankings and quotes exported from the operator results DOM, then revalidated against the frozen requests and original abstracts. Original provider response bodies were not retained.",
+  "provenance": "First eight records: saved server metadata and accepted rankings exported from the operator DOM. Final four records: complete saved record JSON exported from the operator DOM. All accepted outputs revalidated against unchanged frozen requests and original abstracts. Original provider response bodies were not retained; failed samples were not retried or replaced.",
   "scope": "Exploratory shared-memory-policy ranking probe. Authored personas; fixed public abstract pool; not the production discovery/review pipeline or a held-out population study.",
   "cases": [
     {
@@ -18,6 +18,90 @@
       "goal": "比较 KLS 与薄壳问题的维数依赖界，核对方法、条件与结论。",
       "knownIds": [
         "arxiv:1807.03465"
+      ],
+      "comparisons": [
+        {
+          "from": "none",
+          "to": "explicit",
+          "available": true,
+          "sameOrder": false,
+          "added": [
+            {
+              "id": "arxiv:2305.10690",
+              "title": "Sampling, Diffusions, and Stochastic Localization",
+              "sourceUrl": "https://arxiv.org/abs/2305.10690"
+            },
+            {
+              "id": "arxiv:1104.2791",
+              "title": "Poincare Inequalities and Moment Maps",
+              "sourceUrl": "https://arxiv.org/abs/1104.2791"
+            }
+          ],
+          "removed": [
+            {
+              "id": "arxiv:1807.03465",
+              "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/1807.03465"
+            },
+            {
+              "id": "arxiv:math/0611577",
+              "title": "Power-law estimates for the central limit theorem for convex sets",
+              "sourceUrl": "https://arxiv.org/abs/math/0611577"
+            }
+          ],
+          "rankChanges": [
+            {
+              "id": "arxiv:2303.14938",
+              "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+              "sourceUrl": "https://arxiv.org/abs/2303.14938",
+              "from": 2,
+              "to": 1
+            },
+            {
+              "id": "arxiv:2203.15551",
+              "title": "Bourgain's slicing problem and KLS isoperimetry up to polylog",
+              "sourceUrl": "https://arxiv.org/abs/2203.15551",
+              "from": 3,
+              "to": 2
+            },
+            {
+              "id": "arxiv:2011.13661",
+              "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/2011.13661",
+              "from": 4,
+              "to": 3
+            }
+          ]
+        },
+        {
+          "from": "explicit",
+          "to": "all",
+          "available": true,
+          "sameOrder": false,
+          "added": [
+            {
+              "id": "arxiv:math/0611577",
+              "title": "Power-law estimates for the central limit theorem for convex sets",
+              "sourceUrl": "https://arxiv.org/abs/math/0611577"
+            }
+          ],
+          "removed": [
+            {
+              "id": "arxiv:2305.10690",
+              "title": "Sampling, Diffusions, and Stochastic Localization",
+              "sourceUrl": "https://arxiv.org/abs/2305.10690"
+            }
+          ],
+          "rankChanges": [
+            {
+              "id": "arxiv:1104.2791",
+              "title": "Poincare Inequalities and Moment Maps",
+              "sourceUrl": "https://arxiv.org/abs/1104.2791",
+              "from": 5,
+              "to": 4
+            }
+          ]
+        }
       ],
       "rows": [
         {
@@ -33,7 +117,11 @@
           "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
           "requestHash": "a6e7622ba1c2d577679e40cbfb614d304274469815fd3ef49ee0e2044821c73f",
           "responseHash": "2b3d785ac7ecb333480778c1aae309388a8973b8b64514ac3708bcd65c62b347",
+          "executionSourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "validationVersion": "pilot-output-v1",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
+          "validationFailure": null,
           "recommendations": [
             {
               "id": "arxiv:1807.03465",
@@ -85,7 +173,11 @@
           "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
           "requestHash": "f0eec1c092939af0c8de870bd5e022b2d9267974af152acf5ce94e9ce43c1655",
           "responseHash": "6b2d11456c90b31aa2450dc4b35d079a3150904e77112653983cc27dd6f1303c",
+          "executionSourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "validationVersion": "pilot-output-v1",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
+          "validationFailure": null,
           "recommendations": [
             {
               "id": "arxiv:2303.14938",
@@ -137,7 +229,11 @@
           "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
           "requestHash": "b46f29d8a8b624590b4260413b1eeb668d204c82e4f00c25226bbfd03c64376b",
           "responseHash": "2988daaab08e5ef57bd5e58ef2532b75786b22f370d6c0608eb21aaf62168c16",
+          "executionSourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "validationVersion": "pilot-output-v1",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
+          "validationFailure": null,
           "recommendations": [
             {
               "id": "arxiv:2303.14938",
@@ -184,6 +280,70 @@
       "knownIds": [
         "arxiv:2305.10690"
       ],
+      "comparisons": [
+        {
+          "from": "none",
+          "to": "explicit",
+          "available": true,
+          "sameOrder": false,
+          "added": [
+            {
+              "id": "arxiv:2303.14938",
+              "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+              "sourceUrl": "https://arxiv.org/abs/2303.14938"
+            },
+            {
+              "id": "arxiv:2203.15551",
+              "title": "Bourgain's slicing problem and KLS isoperimetry up to polylog",
+              "sourceUrl": "https://arxiv.org/abs/2203.15551"
+            }
+          ],
+          "removed": [
+            {
+              "id": "arxiv:2305.10690",
+              "title": "Sampling, Diffusions, and Stochastic Localization",
+              "sourceUrl": "https://arxiv.org/abs/2305.10690"
+            },
+            {
+              "id": "arxiv:1104.2791",
+              "title": "Poincare Inequalities and Moment Maps",
+              "sourceUrl": "https://arxiv.org/abs/1104.2791"
+            }
+          ],
+          "rankChanges": [
+            {
+              "id": "arxiv:2402.10758",
+              "title": "Stochastic Localization via Iterative Posterior Sampling",
+              "sourceUrl": "https://arxiv.org/abs/2402.10758",
+              "from": 2,
+              "to": 1
+            },
+            {
+              "id": "arxiv:1807.03465",
+              "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/1807.03465",
+              "from": 3,
+              "to": 2
+            },
+            {
+              "id": "arxiv:2011.13661",
+              "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+              "sourceUrl": "https://arxiv.org/abs/2011.13661",
+              "from": 4,
+              "to": 3
+            }
+          ]
+        },
+        {
+          "from": "explicit",
+          "to": "all",
+          "available": true,
+          "sameOrder": true,
+          "added": [],
+          "removed": [],
+          "rankChanges": []
+        }
+      ],
       "rows": [
         {
           "caseId": "math-sampling",
@@ -198,7 +358,11 @@
           "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
           "requestHash": "d1c91f39c42ba0aad2eb58f7adc5668a9dcd38e62677090c2eb35f335115ee17",
           "responseHash": "3d178fa05df8cc308f8b82ab84a48d688a8ef93438b1c0899d9e33754990c10d",
+          "executionSourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "validationVersion": "pilot-output-v1",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
+          "validationFailure": null,
           "recommendations": [
             {
               "id": "arxiv:2305.10690",
@@ -250,7 +414,11 @@
           "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
           "requestHash": "2b8194a93e87db40b4fef45d4e29ce4d82e48887ec51b85211d0aa1429424d39",
           "responseHash": "3a3c9d38a074800426bf278b2d2a991a62ab9acf0b85e477a2e0f3f1d75a24a7",
+          "executionSourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "validationVersion": "pilot-output-v1",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
+          "validationFailure": null,
           "recommendations": [
             {
               "id": "arxiv:2402.10758",
@@ -302,7 +470,11 @@
           "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
           "requestHash": "9a171e7373cbf43f22ecc18587914a025907a6351e9d2eef1c2c6befd1a16558",
           "responseHash": "940668784b401f1f58b70a2756f48a42978f2507e25be155281d66f0ff5fc738",
+          "executionSourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "validationVersion": "pilot-output-v1",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
+          "validationFailure": null,
           "recommendations": [
             {
               "id": "arxiv:2402.10758",
@@ -349,6 +521,60 @@
       "knownIds": [
         "arxiv:1102.3944"
       ],
+      "comparisons": [
+        {
+          "from": "none",
+          "to": "explicit",
+          "available": false,
+          "sameOrder": false,
+          "added": [],
+          "removed": [],
+          "rankChanges": []
+        },
+        {
+          "from": "explicit",
+          "to": "all",
+          "available": true,
+          "sameOrder": false,
+          "added": [
+            {
+              "id": "arxiv:1102.3944",
+              "title": "Fixed-length lossy compression in the finite blocklength regime",
+              "sourceUrl": "https://arxiv.org/abs/1102.3944"
+            }
+          ],
+          "removed": [
+            {
+              "id": "arxiv:1203.3217",
+              "title": "Channel simulation via interactive communications",
+              "sourceUrl": "https://arxiv.org/abs/1203.3217"
+            }
+          ],
+          "rankChanges": [
+            {
+              "id": "arxiv:1410.2687",
+              "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+              "sourceUrl": "https://arxiv.org/abs/1410.2687",
+              "from": 2,
+              "to": 1
+            },
+            {
+              "id": "arxiv:1209.1317",
+              "title": "Lossy joint source-channel coding in the finite blocklength regime",
+              "sourceUrl": "https://arxiv.org/abs/1209.1317",
+              "from": 3,
+              "to": 2
+            },
+            {
+              "id": "arxiv:1510.02190",
+              "title": "Data compression with low distortion and finite blocklength",
+              "sourceUrl": "https://arxiv.org/abs/1510.02190",
+              "from": 1,
+              "to": 3
+            }
+          ]
+        }
+      ],
       "rows": [
         {
           "caseId": "info-distortion",
@@ -363,24 +589,61 @@
           "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
           "requestHash": "1ee3fc1c455e979988a4d61558e610fac34488119c38203de34aff953e0ac422",
           "responseHash": "adc708154b497e2784986b95a8f066fccef74467ce3756e87a81b021ddf82425",
-          "errorCode": "output_validation_failed",
+          "executionSourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "validationVersion": "pilot-output-v1",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+          "errorCode": "ungrounded_or_duplicate_ranking",
+          "validationFailure": null,
           "recommendations": []
         },
         {
           "caseId": "info-distortion",
           "variant": "explicit",
-          "status": "not_run",
-          "knownCount": null,
-          "returned": null,
-          "inputTokens": null,
-          "outputTokens": null,
-          "durationMs": null,
-          "observedAt": null,
-          "sourceCommit": null,
-          "requestHash": null,
-          "responseHash": null,
+          "status": "completed",
+          "knownCount": 0,
+          "returned": 4,
+          "inputTokens": 3276,
+          "outputTokens": 376,
+          "durationMs": 2254,
+          "observedAt": "2026-09-21T09:54:35.064Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "61e95ac2d72d1bcc9718387a2f01c231736aae3a69f65136db76055634b2e12e",
+          "responseHash": "287a6717a20d69df651e7a78d645627a0f06bd212a5cf5a431f8a42a132d1fda",
+          "executionSourceCommit": "0615b0d4273d496d37da8cea7878b6f1964a7429",
+          "validationVersion": "pilot-output-v2",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
-          "recommendations": []
+          "validationFailure": null,
+          "recommendations": [
+            {
+              "id": "arxiv:1510.02190",
+              "title": "Data compression with low distortion and finite blocklength",
+              "sourceUrl": "https://arxiv.org/abs/1510.02190",
+              "reason": "Directly extends the finite-blocklength lossy compression topic with an alternative excess-distortion approximation and low-distortion regime, useful after mastering the foundational dispersion result.",
+              "quote": "This paper considers lossy source coding of $n$-dimensional memoryless sources and shows an explicit approximation to the minimum source coding rate required to sustain the probability of exceeding distortion $d$ no greater than $\\epsilon$, which is simpler than known dispersion-based approximations."
+            },
+            {
+              "id": "arxiv:1410.2687",
+              "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+              "sourceUrl": "https://arxiv.org/abs/1410.2687",
+              "reason": "Matches the explicit interest in finite-length extensions involving side information, and preserves the distinction between encoder-decoder side information scenarios.",
+              "quote": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder."
+            },
+            {
+              "id": "arxiv:1209.1317",
+              "title": "Lossy joint source-channel coding in the finite blocklength regime",
+              "sourceUrl": "https://arxiv.org/abs/1209.1317",
+              "reason": "Matches the explicit interest in joint source-channel coding extensions and uses the same excess-distortion probability criterion central to the goal.",
+              "quote": "This paper finds new tight finite-blocklength bounds for the best achievable lossy joint source-channel code rate, and demonstrates that joint source-channel code design brings considerable performance advantage over a separate one in the non-asymptotic regime."
+            },
+            {
+              "id": "arxiv:1203.3217",
+              "title": "Channel simulation via interactive communications",
+              "sourceUrl": "https://arxiv.org/abs/1203.3217",
+              "reason": "Related to side-information and interactive communication formulations, offering a different extension direction from the core finite-blocklength lossy compression setup.",
+              "quote": "In this paper, we study the problem of channel simulation via interactive communication, known as the coordination capacity, in a two-terminal network."
+            }
+          ]
         },
         {
           "caseId": "info-distortion",
@@ -395,7 +658,11 @@
           "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
           "requestHash": "bf1dfd46faf48d4495153eeeeeefc0595ba3670fc11801c2a4abbdcbd5aea3a6",
           "responseHash": "bfb4cbd3991fdabbb418bb56e65ec0a072f8ef1b2a3d60bd3546d9f4f0ce410d",
+          "executionSourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "validationVersion": "pilot-output-v1",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
+          "validationFailure": null,
           "recommendations": [
             {
               "id": "arxiv:1410.2687",
@@ -435,61 +702,135 @@
       "knownIds": [
         "arxiv:1411.3575"
       ],
+      "comparisons": [
+        {
+          "from": "none",
+          "to": "explicit",
+          "available": false,
+          "sameOrder": false,
+          "added": [],
+          "removed": [],
+          "rankChanges": []
+        },
+        {
+          "from": "explicit",
+          "to": "all",
+          "available": false,
+          "sameOrder": false,
+          "added": [],
+          "removed": [],
+          "rankChanges": []
+        }
+      ],
       "rows": [
         {
           "caseId": "info-contraction",
           "variant": "none",
-          "status": "not_run",
+          "status": "failed",
           "knownCount": null,
           "returned": null,
-          "inputTokens": null,
-          "outputTokens": null,
-          "durationMs": null,
-          "observedAt": null,
-          "sourceCommit": null,
-          "requestHash": null,
-          "responseHash": null,
-          "errorCode": null,
+          "inputTokens": 3112,
+          "outputTokens": 525,
+          "durationMs": 2660,
+          "observedAt": "2026-09-21T09:54:37.765Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "11ef5d7ea7acf2f9e61c411658bce253aaa6673aecf63178f19f4f1e0c8aa564",
+          "responseHash": "007d30b0a563a0bbced4b7d83376e1e5ab53bcd23171b7537ac1a7c4f92611dd",
+          "executionSourceCommit": "0615b0d4273d496d37da8cea7878b6f1964a7429",
+          "validationVersion": "pilot-output-v2",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+          "errorCode": "invalid_quote",
+          "validationFailure": {
+            "code": "invalid_quote",
+            "index": 0
+          },
           "recommendations": []
         },
         {
           "caseId": "info-contraction",
           "variant": "explicit",
-          "status": "not_run",
+          "status": "failed",
           "knownCount": null,
           "returned": null,
-          "inputTokens": null,
-          "outputTokens": null,
-          "durationMs": null,
-          "observedAt": null,
-          "sourceCommit": null,
-          "requestHash": null,
-          "responseHash": null,
-          "errorCode": null,
+          "inputTokens": 3266,
+          "outputTokens": 385,
+          "durationMs": 2636,
+          "observedAt": "2026-09-21T09:54:40.874Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "b46044faa5b872146aff4d80c6ae30b7b8382011f6fafed0564230fa440c322b",
+          "responseHash": "888bf13a5dec2c3437e7106e87cc8a48b734ad8a5bf02916caec1a16490f6996",
+          "executionSourceCommit": "0615b0d4273d496d37da8cea7878b6f1964a7429",
+          "validationVersion": "pilot-output-v2",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+          "errorCode": "quote_not_in_abstract",
+          "validationFailure": {
+            "code": "quote_not_in_abstract",
+            "index": 3
+          },
           "recommendations": []
         },
         {
           "caseId": "info-contraction",
           "variant": "all",
-          "status": "not_run",
-          "knownCount": null,
-          "returned": null,
-          "inputTokens": null,
-          "outputTokens": null,
-          "durationMs": null,
-          "observedAt": null,
-          "sourceCommit": null,
-          "requestHash": null,
-          "responseHash": null,
+          "status": "completed",
+          "knownCount": 1,
+          "returned": 5,
+          "inputTokens": 3312,
+          "outputTokens": 367,
+          "durationMs": 2783,
+          "observedAt": "2026-09-21T09:54:43.952Z",
+          "sourceCommit": "482eacf5188ff1eefac5ea7643064f66280e5622",
+          "requestHash": "7658486c84c517af45b83b7d2927d043d0f3a90fd4461d3f1af05865bd3aab9f",
+          "responseHash": "4f9f01814f534384de6bb0c65fb1aa95ffe568e6a15669751032fcac13c4fb44",
+          "executionSourceCommit": "0615b0d4273d496d37da8cea7878b6f1964a7429",
+          "validationVersion": "pilot-output-v2",
+          "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
           "errorCode": null,
-          "recommendations": []
+          "validationFailure": null,
+          "recommendations": [
+            {
+              "id": "arxiv:1508.06025",
+              "title": "Strong data-processing inequalities for channels and Bayesian networks",
+              "sourceUrl": "https://arxiv.org/abs/1508.06025",
+              "reason": "Directly matches the explicit interest in composing contraction across networks, extending SDPI to Bayesian networks and contrasting mutual-information, total-variation, and F_I-curve contraction coefficients.",
+              "quote": "given SDPI for each constituent channel in a Bayesian network, how to produce an end-to-end SDPI?"
+            },
+            {
+              "id": "arxiv:cs/0412108",
+              "title": "Mutual Information and Minimum Mean-square Error in Gaussian Channels",
+              "sourceUrl": "https://arxiv.org/abs/cs/0412108",
+              "reason": "Provides the Gaussian estimation identity (I-MMSE) that the explicit interest asks to contrast with contraction composition, linking mutual information to MMSE estimation.",
+              "quote": "the derivative of the mutual information (nats) with respect to the signal-to-noise ratio (SNR) is equal to half the MMSE, regardless of the input statistics"
+            },
+            {
+              "id": "arxiv:1411.3575",
+              "title": "Strong data processing inequalities and $\\Phi$-Sobolev inequalities for discrete channels",
+              "sourceUrl": "https://arxiv.org/abs/1411.3575",
+              "reason": "Already-read starting paper per mastery memory; listed only as a reference point, not as a new reading recommendation, since the goal is nonredundant next reading.",
+              "quote": "This paper presents a systematic study of optimal constants in SDPIs for discrete channels"
+            },
+            {
+              "id": "arxiv:1203.3217",
+              "title": "Channel simulation via interactive communications",
+              "sourceUrl": "https://arxiv.org/abs/1203.3217",
+              "reason": "Adjacent perspective on interactive channel simulation, matching the lower-priority inferred interest in interactive simulation as a related probabilistic-structure problem.",
+              "quote": "we study the problem of channel simulation via interactive communication, known as the coordination capacity, in a two-terminal network"
+            },
+            {
+              "id": "arxiv:physics/0004057",
+              "title": "The information bottleneck method",
+              "sourceUrl": "https://arxiv.org/abs/physics/0004057",
+              "reason": "Relevant to information contraction and probabilistic structure via a variational bottleneck that generalizes rate-distortion and connects compression to relevant information about another signal.",
+              "quote": "We formalize this problem as that of finding a short code for $\\X$ that preserves the maximum information about $\\Y$"
+            }
+          ]
         }
       ]
     }
   ],
   "limitations": [
     "No independent relevance judgments supplied. Known-paper overlap is based on authored persona declarations; lower overlap alone does not establish better recommendations. Model reasons are not causal explanations for rank changes. Provider alias may change; this single repetition cannot establish statistical reliability.",
-    "One response failed the combined identity, uniqueness, field and exact-quote validation. The run halted; four planned calls were not made. No retry replaced the failed sample.",
-    "Results use authored preferences and 18 shared public abstracts; they do not measure full production retrieval or scientific correctness."
+    "Twelve planned calls were attempted in two batches with unchanged inputs and acceptance gates. Three outputs failed validation; the first has a legacy combined error of unknown specific cause, and the two continuation failures have field-level diagnostics. No failed sample was retried or replaced.",
+    "Execution revisions are recorded separately from the frozen source baseline. Results use authored preferences and 18 shared public abstracts; they do not measure full production retrieval or scientific correctness."
   ]
 }
