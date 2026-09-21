@@ -1,5 +1,15 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-21：编号引用、已读参考与第二版重复验证
+
+- 用户授权：修复引用生成、已读参考不占新推荐位置、两个新问题重复验证，暂不独立评审。正式推荐核验本来已有abstractEvidenceUnits/evidenceId，未宣称新建或修改该流水线。实验v2新协议用paper ID+evidenceId，原文由冻结摘要精确回填，拒绝未知/跨论文ID；不接纳模型改写引文。
+- 正式/Demo共用今日页按read/mastered/cited分出已读参考，打开/收藏/reading不算已读；保留原简报与阅读笔记，只改显示，不重写推荐历史或质量状态。简报信号索引仍用原briefIndex；推荐计数、首篇开始阅读、分享队列随分区更新。已读参考可回到原文/笔记，两个demo各有原预设已读记录。
+- v2冻结protocol-v2.json/hash 0c8ad1665d10838bfae7ecf8fe083e65ef661e15caf0c87cacbaa977207a9019：两个新编写问题（近高斯凸几何、联合编码的边信息扩展）×三条件×两次重复，共12次；同题同条件两次请求hash完全相同。语料仍是v1的18篇公开摘要，不是独立留出语料。known身份仅explicit/all的明确掌握信号可见，none既不输入也不按评估knownIds分流。最多5篇新阅读+3篇已读参考，保留rawRanking和分区后rankings。
+- v295提供新界面，v296执行源码545ee74b2856562cc768221915fe7b1f8d49e29c，13:44:23 UTC发布；正常IAB按钮运行12次（13:45:45—13:46:23 UTC），9通过3失败，3失败均reading_slot_limit（convex-gaussian-r1/none、r1/all、r2/none）。不是引文失败；解析器末端数量限制，不猜确切超出篇数，未保存失败原正文，未重试/删改任何失败。
+- 重复对比4对有效：math explicit交集4/合集6、顺序不同；info none名单相同、前两名互换；info explicit/all各自两次顺序相同。另2对缺少有效输出。有效记忆组都没有选已知论文，references全空；真实参考分流尚无该批样本，不把单元测试当真实成功。none info两次各含1篇已知论文。qualityMetrics=null，不宣称推荐质量或成功率提升。
+- 从可见结果JSON导出元数据/理由/证据ID，按冻结ID恢复程序生成原文。原DOM与完整本地记录规范化后长度34903、FNV64校验4eea49207c40b668一致，保留runs/attempts/compact-dom-export于outputs/personalization-pilot-v2。v1 public与本地12条未改。Demo同入口可选两版，v2按问题/条件查看两次结果及参考、引用、token和稳定性。
+- 临时v2 API/控制台执行后关闭，v1继续关闭；完整构建、变更模块lint与大ResearchApp独立lint通过。全量回归698通过（两条旧侧栏计数断言更新为新阅读数，保留归档不丢失断言）。正常IAB数学/信息论两个演示分区及数学参考→原笔记验证；最终发布以原生工具为准。邮件暂停，旧自动任务未恢复，用户docs/未动。
+
 ## 2026-09-21：固定候选实验补齐 12 次终态记录
 
 - 用户要求补细分诊断、仅执行剩余4项、更新Demo。原冻结候选/提示词/模型参数/接受门槛未改，experimentHash仍521158f97be01706c372a849f0c175a556dd6a80c1253b84ec07928f58e92ea7。没有独立评审，qualityMetrics=null。

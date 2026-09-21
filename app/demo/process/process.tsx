@@ -4,8 +4,8 @@ import {feedbackChannel} from "../../../lib/feedback-policy.mjs";
 import evidence from "../../../public/agent-evidence.json";
 import evaluation from "../../../public/agent-evaluation.json";
 import "./process.css";
-import PilotResults from './pilot-results';
-import pilotReport from '../../../public/agent-personalization.json';
+import PilotReportBrowser from './pilot-v2-results';
+import pilotReport from '../../../public/agent-personalization-v2.json';
 
 const choices=[
  {code:"method_fit",label:"方法值得借鉴",record:"方法兴趣",effect:"在后续检索中关注相关工具与适用条件。",boundary:"这是一条明确兴趣；仍需独立检查新材料的相关性与证据。"},
@@ -30,7 +30,7 @@ export default function AgentProcess({initialSpace="demo-mathematics",initialVie
   <nav className="pi-process-tabs" aria-label="研究过程视图">
    {[["journey","体验一个例子"],["pilot","推荐对比"],["history","恢复记录"],["evaluation","验证与边界"]].map(([id,label])=><button key={id} aria-pressed={tab===id} onClick={()=>setTab(id)}>{label}</button>)}
   </nav>
-  {tab==="pilot" && <PilotResults/>}
+  {tab==="pilot" && <PilotReportBrowser/>}
   {tab==="journey" && <section aria-label="预设研究过程">
    <div className="pi-process-section-head"><h2>从问题出发</h2><select aria-label="示例领域" value={space} onChange={e=>setSpace(e.target.value)}><option value="demo-mathematics">应用数学</option><option value="demo-information">信息论</option></select></div>
    <p className="pi-process-goal">{math?"比较 KLS 框架与随机局部化：它们使用的条件与工具有什么不同？":"从平均失真走向有限码长：两种失真约束应该如何区分？"}</p>

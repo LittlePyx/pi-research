@@ -3384,11 +3384,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const dailyBriefPapers: MonitorPaper[] = nextBriefEntries.map((entry) => entry.paper);
   const visibleBriefEntries = nextBriefEntries.slice(0, 6);
   const readReferencePapers: MonitorPaper[] = readingReferences([...dailyBriefEntries.map(entry => entry.paper), ...rankedMonitorPapers, ...historyPapers]);
-  const dailyFreshnessCounts = useMemo(() => ({
+  const dailyFreshnessCounts = {
     days: dailyBriefPapers.slice(0, 6).filter((paper) => paper.horizon === "days").length,
     months: dailyBriefPapers.slice(0, 6).filter((paper) => paper.horizon === "months").length,
     years: dailyBriefPapers.slice(0, 6).filter((paper) => !["days", "months"].includes(paper.horizon || "")).length,
-  }), [dailyBriefPapers]);
+  };
   const dailySignals = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.signalsZh : monitor.dailyBrief.signalsEn) : [];
   const dailyReadingPlan = monitor?.dailyBrief ? (locale === "zh" ? monitor.dailyBrief.readingPlanZh : monitor.dailyBrief.readingPlanEn) : [];
   const dailyBriefEntryCount = visibleBriefEntries.length;

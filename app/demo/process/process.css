@@ -38,6 +38,21 @@
 .pi-process-table th,.pi-process-table td { padding:14px 16px; border-bottom:1px solid #e2e7e8; font-weight:400; }
 .pi-process-table thead { color:#6d8087; background:#f4f7f7; }
 .pi-process-evaluation { margin-top:28px; padding-top:24px; border-top:1px solid #e2e7e8; }
+.pi-pilot-controls { display:flex; align-items:flex-end; flex-wrap:wrap; gap:16px; margin:20px 0 28px; }
+.pi-pilot-controls label { display:grid; gap:8px; min-width:0; max-width:100%; font-size:14px; color:#657780; }
+.pi-pilot-controls select { width:100%; max-width:560px; }
+.pi-pilot-repeat-grid { display:grid; grid-template-columns:1fr 1fr; gap:32px; }
+.pi-pilot-repeat-grid>article { min-width:0; border-top:1px solid #dce3e5; padding-top:20px; }
+.pi-pilot-repeat-grid h4 { margin:24px 0 12px; font-size:16px; font-weight:500; }
+.pi-pilot-repeat-grid ol,.pi-pilot-repeat-grid ul { padding-left:22px; }
+.pi-pilot-repeat-grid li { margin:0 0 24px; padding-left:4px; }
+.pi-pilot-repeat-grid li>a { font-size:16px; line-height:1.6; }
+.pi-pilot-repeat-grid li p { font-size:14px; line-height:1.7; color:#657780; overflow-wrap:anywhere; }
+.pi-pilot-repeat-grid summary { font-size:14px; cursor:pointer; color:#356b7a; }
+.pi-pilot-repeat-grid blockquote { margin:12px 0; padding:0 12px; border-left:2px solid #bacace; color:#536770; font-size:14px; overflow-wrap:anywhere; }
+.pi-pilot-read-reference { padding-top:4px; border-top:1px solid #e2e7e8; }
+.pi-pilot-repeat-grid article>footer { color:#75858a; font-size:13px; margin-top:20px; }
+@media(max-width:760px) { .pi-pilot-repeat-grid { grid-template-columns:1fr; } .pi-pilot-controls { align-items:stretch; } }
 .pi-pilot-comparisons { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin:22px 0; font-size:14px; }
 .pi-pilot-comparisons strong { font-weight:500; color:#294e59; }
 .pi-pilot-comparisons p { color:#657780; margin:8px 0; overflow-wrap:anywhere; }

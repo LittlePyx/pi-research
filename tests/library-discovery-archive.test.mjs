@@ -66,7 +66,7 @@ test("library tabs use durable archive counts without a duplicate overview", () 
 
 test("the sidebar and archive ranking cannot make retained papers look missing or over-scored", () => {
   assert.match(app, /compactNavCount\(historyPapers\.length\)/);
-  assert.match(app, /const todayNavigationCount = rankedMonitorPapers\.length/);
+  assert.match(app, /const todayNavigationCount = rankedMonitorPapers\.filter\(paper => !isReadReference\(paper\)\)\.length/);
   assert.match(app, /item\.id === "today" && Boolean\(todayNavigationCount\)/);
   assert.doesNotMatch(app, /item\.id === "today"[^\n]*monitor\?\.newCount/);
   assert.match(app, /qualityStageRank/);

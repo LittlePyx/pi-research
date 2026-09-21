@@ -61,7 +61,7 @@ test("desktop and narrow layouts share one current-day count contract while stal
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
-  assert.match(client, /const todayNavigationCount = rankedMonitorPapers\.length/);
+  assert.match(client, /const todayNavigationCount = rankedMonitorPapers\.filter\(paper => !isReadReference\(paper\)\)\.length/);
   assert.doesNotMatch(client, /todayNavigationCount\s*=.*dailyBrief/);
   assert.match(client, /dailyBriefEntryCount/);
   assert.match(client, /今日入选/);

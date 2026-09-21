@@ -1,3 +1,3 @@
-export const V2_ACCESS_HASH = '19f7640100c7ccae24eda260212f8accff3251793393570e5a5075e6913f2145';
-export const V2_EXPIRES_AT = 1790005134029;
-export const V2_CONSOLE_OPEN = true;
+export const V2_ACCESS_HASH = '';
+export const V2_EXPIRES_AT = 0;
+export const V2_CONSOLE_OPEN = false;

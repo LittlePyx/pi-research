@@ -1,0 +1,908 @@
+{
+  "version": "fixed-candidate-pilot-v2",
+  "experimentHash": "0c8ad1665d10838bfae7ecf8fe083e65ef661e15caf0c87cacbaa977207a9019",
+  "model": "deepseek-flash",
+  "scope": "Two new authored questions, two repetitions, shared v1 public corpus. Numbered exact source excerpts and deterministic read-reference routing; not a held-out quality comparison or production retrieval evaluation.",
+  "plannedRuns": 12,
+  "attemptedRuns": 12,
+  "completedRuns": 9,
+  "failedRuns": 3,
+  "status": "completed_with_failures",
+  "qualityMetrics": null,
+  "rows": [
+    {
+      "caseId": "convex-gaussian-r1",
+      "scenarioId": "convex-gaussian",
+      "repetition": 1,
+      "variant": "none",
+      "status": "failed",
+      "knownNextCount": null,
+      "referenceCount": null
+    },
+    {
+      "caseId": "convex-gaussian-r1",
+      "scenarioId": "convex-gaussian",
+      "repetition": 1,
+      "variant": "explicit",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0
+    },
+    {
+      "caseId": "convex-gaussian-r1",
+      "scenarioId": "convex-gaussian",
+      "repetition": 1,
+      "variant": "all",
+      "status": "failed",
+      "knownNextCount": null,
+      "referenceCount": null
+    },
+    {
+      "caseId": "convex-gaussian-r2",
+      "scenarioId": "convex-gaussian",
+      "repetition": 2,
+      "variant": "none",
+      "status": "failed",
+      "knownNextCount": null,
+      "referenceCount": null
+    },
+    {
+      "caseId": "convex-gaussian-r2",
+      "scenarioId": "convex-gaussian",
+      "repetition": 2,
+      "variant": "explicit",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0
+    },
+    {
+      "caseId": "convex-gaussian-r2",
+      "scenarioId": "convex-gaussian",
+      "repetition": 2,
+      "variant": "all",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0
+    },
+    {
+      "caseId": "coding-side-information-r1",
+      "scenarioId": "coding-side-information",
+      "repetition": 1,
+      "variant": "none",
+      "status": "completed",
+      "knownNextCount": 1,
+      "referenceCount": 0
+    },
+    {
+      "caseId": "coding-side-information-r1",
+      "scenarioId": "coding-side-information",
+      "repetition": 1,
+      "variant": "explicit",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0
+    },
+    {
+      "caseId": "coding-side-information-r1",
+      "scenarioId": "coding-side-information",
+      "repetition": 1,
+      "variant": "all",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0
+    },
+    {
+      "caseId": "coding-side-information-r2",
+      "scenarioId": "coding-side-information",
+      "repetition": 2,
+      "variant": "none",
+      "status": "completed",
+      "knownNextCount": 1,
+      "referenceCount": 0
+    },
+    {
+      "caseId": "coding-side-information-r2",
+      "scenarioId": "coding-side-information",
+      "repetition": 2,
+      "variant": "explicit",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0
+    },
+    {
+      "caseId": "coding-side-information-r2",
+      "scenarioId": "coding-side-information",
+      "repetition": 2,
+      "variant": "all",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0
+    }
+  ],
+  "stability": [
+    {
+      "scenarioId": "convex-gaussian",
+      "variant": "none",
+      "available": false,
+      "sameOrder": null,
+      "overlap": null,
+      "union": null
+    },
+    {
+      "scenarioId": "convex-gaussian",
+      "variant": "explicit",
+      "available": true,
+      "sameOrder": false,
+      "overlap": 4,
+      "union": 6
+    },
+    {
+      "scenarioId": "convex-gaussian",
+      "variant": "all",
+      "available": false,
+      "sameOrder": null,
+      "overlap": null,
+      "union": null
+    },
+    {
+      "scenarioId": "coding-side-information",
+      "variant": "none",
+      "available": true,
+      "sameOrder": false,
+      "overlap": 5,
+      "union": 5
+    },
+    {
+      "scenarioId": "coding-side-information",
+      "variant": "explicit",
+      "available": true,
+      "sameOrder": true,
+      "overlap": 5,
+      "union": 5
+    },
+    {
+      "scenarioId": "coding-side-information",
+      "variant": "all",
+      "available": true,
+      "sameOrder": true,
+      "overlap": 5,
+      "union": 5
+    }
+  ],
+  "provenance": "Real server run records exported through the operator results page. Source quotes are deterministically recovered by evidenceId from the frozen protocol; model does not author quotes. No failed attempt is replaced. No original provider response bodies retained.",
+  "independentReview": "not_performed",
+  "limitations": [
+    "New authored questions with the same public corpus; not a held-out quality evaluation.",
+    "Two repetitions cannot establish general stability. Different goals and protocol from v1 prevent causal claims about an improvement.",
+    "Read-reference routing is a deterministic product rule based only on visible explicit memory, not evidence that the model learned the preference."
+  ],
+  "cases": [
+    {
+      "id": "convex-gaussian",
+      "goal": "从凸体中心极限定理继续研究：薄壳与局部化如何连接近高斯行为？"
+    },
+    {
+      "id": "coding-side-information",
+      "goal": "从有限码长联合编码继续研究：边信息位置与通信约束如何改变问题？"
+    }
+  ],
+  "runs": [
+    {
+      "caseId": "convex-gaussian-r1",
+      "scenarioId": "convex-gaussian",
+      "repetition": 1,
+      "variant": "none",
+      "status": "failed",
+      "knownNextCount": null,
+      "referenceCount": null,
+      "observedAt": "2026-09-21T13:45:45.861Z",
+      "inputTokens": 5251,
+      "outputTokens": 531,
+      "durationMs": 2983,
+      "errorCode": "reading_slot_limit",
+      "validationFailure": {
+        "code": "reading_slot_limit"
+      },
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "a3b639d5f1098683383165007624f0b91775254220964b3ebc9bec8e87fd119d",
+      "responseHash": "cf4811f7d987d9c8c67de08bc6bbe97869888ab2606eae11d1eda26e05fce042",
+      "rawRanking": [],
+      "recommendations": [],
+      "references": []
+    },
+    {
+      "caseId": "convex-gaussian-r1",
+      "scenarioId": "convex-gaussian",
+      "repetition": 1,
+      "variant": "explicit",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:45:49.478Z",
+      "inputTokens": 5412,
+      "outputTokens": 419,
+      "durationMs": 2352,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "8b853213d2610e237ae96ad3edeeb32730823c8f43490c5acb852b2e16b91d80",
+      "responseHash": "6147d3f77a832de9b8c291fab2de779dfad12968fcb66ef3f7ffdf9e1e0ed6e9",
+      "rawRanking": [
+        "arxiv:math/0605014",
+        "arxiv:1104.2791",
+        "arxiv:2011.13661",
+        "arxiv:2303.14938",
+        "arxiv:1807.03465"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:math/0605014",
+          "reason": "Foundational CLT for convex sets; directly connects convexity to Gaussian marginals and separates the geometric assumption from the quantitative conclusion.",
+          "evidenceId": "8801dc9ad0:s7",
+          "quote": "We argue that convexity - and perhaps geometry in general - may replace the role of independence in certain aspects of the phenomenon represented by the central limit theorem.",
+          "title": "A Central Limit Theorem for Convex Sets",
+          "sourceUrl": "https://arxiv.org/abs/math/0605014"
+        },
+        {
+          "id": "arxiv:1104.2791",
+          "reason": "Provides Poincare-type inequalities on convex bodies and generalizes the CLT for convex bodies to some non-convex domains, clarifying which geometric assumptions drive Gaussian behavior.",
+          "evidenceId": "f13f3701e2:s3",
+          "quote": "In particular, we generalize the central limit theorem for convex bodies to a class of non-convex domains, including the unit balls of L_p-spaces in R^n for 0 < p < 1.",
+          "title": "Poincare Inequalities and Moment Maps",
+          "sourceUrl": "https://arxiv.org/abs/1104.2791"
+        },
+        {
+          "id": "arxiv:2011.13661",
+          "reason": "Links improved KLS isoperimetric bounds to thin-shell and concentration consequences, useful for separating isoperimetric assumptions from Gaussian-type conclusions.",
+          "evidenceId": "97a856290e:s4",
+          "quote": "Improving the current best lower bound of the isoperimetric coefficient in the KLS conjecture has many implications, including improvements of the current best bounds in Bourgain's slicing conjecture and in the thin-shell conjecture, better concentration inequalities for Lipschitz functions of log-concave measures and better mixing time bounds for MCMC sampling algorithms on log-concave measures.",
+          "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+          "sourceUrl": "https://arxiv.org/abs/2011.13661"
+        },
+        {
+          "id": "arxiv:2303.14938",
+          "reason": "Gives quantitative polylogarithmic bounds for Bourgain slicing and KLS, directly relevant to thin-shell estimates and their quantitative relation to Gaussian approximation.",
+          "evidenceId": "145eb7d508:s1",
+          "quote": "We prove that the Bourgain slicing conjecture and the Kannan-Lovász-Simonovits (KLS) isoperimetric conjecture in $\\mathbb{R}^n$ hold true up to a factor of $\\sqrt{\\log n}$.",
+          "title": "Logarithmic bounds for isoperimetry and slices of convex sets",
+          "sourceUrl": "https://arxiv.org/abs/2303.14938"
+        },
+        {
+          "id": "arxiv:1807.03465",
+          "reason": "Survey of KLS origins, consequences and techniques, helpful for organizing assumptions and quantitative conclusions across geometry, probability and algorithms.",
+          "evidenceId": "2d3850a0f8:s2",
+          "quote": "Here we survey the origin and consequences of the conjecture (in geometry, probability, information theory and algorithms) as well as recent progress resulting in the current best bounds.",
+          "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+          "sourceUrl": "https://arxiv.org/abs/1807.03465"
+        }
+      ],
+      "references": []
+    },
+    {
+      "caseId": "convex-gaussian-r1",
+      "scenarioId": "convex-gaussian",
+      "repetition": 1,
+      "variant": "all",
+      "status": "failed",
+      "knownNextCount": null,
+      "referenceCount": null,
+      "observedAt": "2026-09-21T13:45:52.301Z",
+      "inputTokens": 5458,
+      "outputTokens": 425,
+      "durationMs": 2796,
+      "errorCode": "reading_slot_limit",
+      "validationFailure": {
+        "code": "reading_slot_limit"
+      },
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "07133c35a1e3772dc1a2f5ec2a23fb0b793a58b20e23df247d6564bc0454c685",
+      "responseHash": "617e3a310df3c0a87c8e35847b95f9b4c0f1c5709979d4c4e7204a9e2f79bf08",
+      "rawRanking": [],
+      "recommendations": [],
+      "references": []
+    },
+    {
+      "caseId": "convex-gaussian-r2",
+      "scenarioId": "convex-gaussian",
+      "repetition": 2,
+      "variant": "none",
+      "status": "failed",
+      "knownNextCount": null,
+      "referenceCount": null,
+      "observedAt": "2026-09-21T13:46:04.281Z",
+      "inputTokens": 5251,
+      "outputTokens": 439,
+      "durationMs": 2842,
+      "errorCode": "reading_slot_limit",
+      "validationFailure": {
+        "code": "reading_slot_limit"
+      },
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "a3b639d5f1098683383165007624f0b91775254220964b3ebc9bec8e87fd119d",
+      "responseHash": "275bf5205cd218e1d3b584ee572be2358d1feaaac1a8f70b8c5e607383cfc7f1",
+      "rawRanking": [],
+      "recommendations": [],
+      "references": []
+    },
+    {
+      "caseId": "convex-gaussian-r2",
+      "scenarioId": "convex-gaussian",
+      "repetition": 2,
+      "variant": "explicit",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:45:55.574Z",
+      "inputTokens": 5412,
+      "outputTokens": 347,
+      "durationMs": 2390,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "8b853213d2610e237ae96ad3edeeb32730823c8f43490c5acb852b2e16b91d80",
+      "responseHash": "01882e920e4e237e5d843736271885674d63ac88a33b5f384fd6107fe2e15773",
+      "rawRanking": [
+        "arxiv:math/0605014",
+        "arxiv:1104.2791",
+        "arxiv:1807.03465",
+        "arxiv:2011.13661",
+        "arxiv:2305.10690"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:math/0605014",
+          "reason": "Foundational CLT for convex sets, explicitly separating convexity from independence and stating the Gaussian marginal conclusion for most directions.",
+          "evidenceId": "8801dc9ad0:s7",
+          "quote": "We argue that convexity - and perhaps geometry in general - may replace the role of independence in certain aspects of the phenomenon represented by the central limit theorem.",
+          "title": "A Central Limit Theorem for Convex Sets",
+          "sourceUrl": "https://arxiv.org/abs/math/0605014"
+        },
+        {
+          "id": "arxiv:1104.2791",
+          "reason": "Connects Poincare-type inequalities on convex bodies to CLT for convex bodies and extends to some non-convex domains, useful for separating assumptions from conclusions.",
+          "evidenceId": "f13f3701e2:s3",
+          "quote": "In particular, we generalize the central limit theorem for convex bodies to a class of non-convex domains, including the unit balls of L_p-spaces in R^n for 0 < p < 1.",
+          "title": "Poincare Inequalities and Moment Maps",
+          "sourceUrl": "https://arxiv.org/abs/1104.2791"
+        },
+        {
+          "id": "arxiv:1807.03465",
+          "reason": "Survey linking isoperimetry, probability and algorithms, useful for distinguishing isoperimetric assumptions from Gaussian-type conclusions.",
+          "evidenceId": "2d3850a0f8:s2",
+          "quote": "Here we survey the origin and consequences of the conjecture (in geometry, probability, information theory and algorithms) as well as recent progress resulting in the current best bounds.",
+          "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+          "sourceUrl": "https://arxiv.org/abs/1807.03465"
+        },
+        {
+          "id": "arxiv:2011.13661",
+          "reason": "Quantifies KLS progress and explicitly lists implications for thin-shell and concentration, helping separate quantitative conclusions from assumptions.",
+          "evidenceId": "97a856290e:s4",
+          "quote": "Improving the current best lower bound of the isoperimetric coefficient in the KLS conjecture has many implications, including improvements of the current best bounds in Bourgain's slicing conjecture and in the thin-shell conjecture, better concentration inequalities for Lipschitz functions of log-concave measures and better mixing time bounds for MCMC sampling algorithms on log-concave measures.",
+          "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+          "sourceUrl": "https://arxiv.org/abs/2011.13661"
+        },
+        {
+          "id": "arxiv:2305.10690",
+          "reason": "Expository treatment of stochastic localization and its connection to functional inequalities, relevant to localization methods but distinct from Gaussian marginal conclusions.",
+          "evidenceId": "40abcc2d03:s5",
+          "quote": "Stochastic localization is a successful technique to prove mixing of Markov Chains and other functional inequalities in high dimension.",
+          "title": "Sampling, Diffusions, and Stochastic Localization",
+          "sourceUrl": "https://arxiv.org/abs/2305.10690"
+        }
+      ],
+      "references": []
+    },
+    {
+      "caseId": "convex-gaussian-r2",
+      "scenarioId": "convex-gaussian",
+      "repetition": 2,
+      "variant": "all",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:46:01.617Z",
+      "inputTokens": 5458,
+      "outputTokens": 342,
+      "durationMs": 2187,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "07133c35a1e3772dc1a2f5ec2a23fb0b793a58b20e23df247d6564bc0454c685",
+      "responseHash": "1815f7053a457bdea858c41a1d2861b6d1ecd80329041feca9c53268019ad7d8",
+      "rawRanking": [
+        "arxiv:math/0605014",
+        "arxiv:1104.2791",
+        "arxiv:1807.03465",
+        "arxiv:2011.13661",
+        "arxiv:2305.10690"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:math/0605014",
+          "reason": "Foundational CLT for convex sets, explicitly separating convexity from independence and stating the Gaussian marginal conclusion for most directions.",
+          "evidenceId": "8801dc9ad0:s7",
+          "quote": "We argue that convexity - and perhaps geometry in general - may replace the role of independence in certain aspects of the phenomenon represented by the central limit theorem.",
+          "title": "A Central Limit Theorem for Convex Sets",
+          "sourceUrl": "https://arxiv.org/abs/math/0605014"
+        },
+        {
+          "id": "arxiv:1104.2791",
+          "reason": "Connects Poincare-type inequalities on convex bodies to CLT for convex bodies and extends to some non-convex domains, clarifying assumptions.",
+          "evidenceId": "f13f3701e2:s3",
+          "quote": "In particular, we generalize the central limit theorem for convex bodies to a class of non-convex domains, including the unit balls of L_p-spaces in R^n for 0 < p < 1.",
+          "title": "Poincare Inequalities and Moment Maps",
+          "sourceUrl": "https://arxiv.org/abs/1104.2791"
+        },
+        {
+          "id": "arxiv:1807.03465",
+          "reason": "Survey linking isoperimetry, concentration and algorithmic consequences, useful for separating assumptions from quantitative conclusions.",
+          "evidenceId": "2d3850a0f8:s2",
+          "quote": "Here we survey the origin and consequences of the conjecture (in geometry, probability, information theory and algorithms) as well as recent progress resulting in the current best bounds.",
+          "title": "The Kannan-Lov\\'asz-Simonovits Conjecture",
+          "sourceUrl": "https://arxiv.org/abs/1807.03465"
+        },
+        {
+          "id": "arxiv:2011.13661",
+          "reason": "Quantifies KLS progress and explicitly lists implications for thin-shell and concentration, helping distinguish isoperimetry from Gaussian approximation.",
+          "evidenceId": "97a856290e:s4",
+          "quote": "Improving the current best lower bound of the isoperimetric coefficient in the KLS conjecture has many implications, including improvements of the current best bounds in Bourgain's slicing conjecture and in the thin-shell conjecture, better concentration inequalities for Lipschitz functions of log-concave measures and better mixing time bounds for MCMC sampling algorithms on log-concave measures.",
+          "title": "An Almost Constant Lower Bound of the Isoperimetric Coefficient in the KLS Conjecture",
+          "sourceUrl": "https://arxiv.org/abs/2011.13661"
+        },
+        {
+          "id": "arxiv:2305.10690",
+          "reason": "Expository account of stochastic localization and its connection to diffusions, relevant to the inferred interest in localization as a bridge.",
+          "evidenceId": "40abcc2d03:s5",
+          "quote": "Stochastic localization is a successful technique to prove mixing of Markov Chains and other functional inequalities in high dimension.",
+          "title": "Sampling, Diffusions, and Stochastic Localization",
+          "sourceUrl": "https://arxiv.org/abs/2305.10690"
+        }
+      ],
+      "references": []
+    },
+    {
+      "caseId": "coding-side-information-r1",
+      "scenarioId": "coding-side-information",
+      "repetition": 1,
+      "variant": "none",
+      "status": "completed",
+      "knownNextCount": 1,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:46:13.717Z",
+      "inputTokens": 6738,
+      "outputTokens": 279,
+      "durationMs": 1997,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "44353862cd59f6684ed151115a33ac7df801a178cfe34e2b54e3992e6fa07c7a",
+      "responseHash": "34273ad48bbf87d756057117d76c99c55127b8527f8ee7293c81b5d64b947e17",
+      "rawRanking": [
+        "arxiv:1209.1317",
+        "arxiv:1410.2687",
+        "arxiv:1102.3944",
+        "arxiv:1510.02190",
+        "arxiv:1203.3217"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:1209.1317",
+          "reason": "Directly extends finite-blocklength joint source-channel coding, giving the non-asymptotic bound with distortion-exceedance probability epsilon, which is the probability criterion the goal asks about.",
+          "evidenceId": "653a10adf9:s2",
+          "quote": "A joint source-channel code maps a block of $k$ source symbols onto a length$-n$ channel codeword, and the fidelity of reproduction at the receiver end is measured by the probability $\\epsilon$ that the distortion exceeds a given threshold $d$.",
+          "title": "Lossy joint source-channel coding in the finite blocklength regime",
+          "sourceUrl": "https://arxiv.org/abs/1209.1317"
+        },
+        {
+          "id": "arxiv:1410.2687",
+          "reason": "Treats lossy source coding with side information at both encoder and decoder, clarifying who knows what and giving second-order/non-asymptotic bounds.",
+          "evidenceId": "0bcc6b5ad1:s1",
+          "quote": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder.",
+          "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+          "sourceUrl": "https://arxiv.org/abs/1410.2687"
+        },
+        {
+          "id": "arxiv:1102.3944",
+          "reason": "Provides tight fixed-blocklength achievability and converse bounds in terms of probability epsilon that distortion exceeds d, useful for the probability criterion.",
+          "evidenceId": "8c9ffe509f:s1",
+          "quote": "This paper studies the minimum achievable source coding rate as a function of blocklength $n$ and probability $\\epsilon$ that the distortion exceeds a given level $d$.",
+          "title": "Fixed-length lossy compression in the finite blocklength regime",
+          "sourceUrl": "https://arxiv.org/abs/1102.3944"
+        },
+        {
+          "id": "arxiv:1510.02190",
+          "reason": "Gives non-asymptotic lossy source coding bounds with probability of exceeding distortion d no greater than epsilon, relevant to the probability criterion.",
+          "evidenceId": "7fea790ebd:s1",
+          "quote": "This paper considers lossy source coding of $n$-dimensional memoryless sources and shows an explicit approximation to the minimum source coding rate required to sustain the probability of exceeding distortion $d$ no greater than $\\epsilon$, which is simpler than known dispersion-based approximations.",
+          "title": "Data compression with low distortion and finite blocklength",
+          "sourceUrl": "https://arxiv.org/abs/1510.02190"
+        },
+        {
+          "id": "arxiv:1203.3217",
+          "reason": "Studies two-terminal channel simulation with interactive communication and shared randomness, clarifying terminal knowledge and communication constraints.",
+          "evidenceId": "2b00637b95:s3",
+          "quote": "The terminals are provided with two-way communication links, and shared common randomness, all at limited rates.",
+          "title": "Channel simulation via interactive communications",
+          "sourceUrl": "https://arxiv.org/abs/1203.3217"
+        }
+      ],
+      "references": []
+    },
+    {
+      "caseId": "coding-side-information-r1",
+      "scenarioId": "coding-side-information",
+      "repetition": 1,
+      "variant": "explicit",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:46:07.583Z",
+      "inputTokens": 6904,
+      "outputTokens": 297,
+      "durationMs": 2041,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "18d6f4f194304c99d16f1c8666736e437e5aa19abcfbde799e18c1c89e626ff2",
+      "responseHash": "44d315cd704edec1887f72e4b68985c25913804eff55218e868cf40117fb7938",
+      "rawRanking": [
+        "arxiv:1410.2687",
+        "arxiv:1102.3944",
+        "arxiv:1510.02190",
+        "arxiv:1203.3217",
+        "arxiv:1508.06025"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:1410.2687",
+          "reason": "Directly addresses side information at both encoder and decoder with non-asymptotic bounds and second-order rates, clarifying terminal knowledge assumptions and excess-distortion probability criterion.",
+          "evidenceId": "0bcc6b5ad1:s1",
+          "quote": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder.",
+          "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+          "sourceUrl": "https://arxiv.org/abs/1410.2687"
+        },
+        {
+          "id": "arxiv:1102.3944",
+          "reason": "Provides tight fixed-blocklength achievability and converse bounds for lossy compression with the excess-distortion probability criterion, useful for extending the probability criterion in joint source-channel settings.",
+          "evidenceId": "8c9ffe509f:s1",
+          "quote": "This paper studies the minimum achievable source coding rate as a function of blocklength $n$ and probability $\\epsilon$ that the distortion exceeds a given level $d$.",
+          "title": "Fixed-length lossy compression in the finite blocklength regime",
+          "sourceUrl": "https://arxiv.org/abs/1102.3944"
+        },
+        {
+          "id": "arxiv:1510.02190",
+          "reason": "Gives non-asymptotic converses and an abstract Shannon lower bound for lossy source coding under excess-distortion probability, complementing finite-blocklength joint source-channel analysis.",
+          "evidenceId": "7fea790ebd:s1",
+          "quote": "This paper considers lossy source coding of $n$-dimensional memoryless sources and shows an explicit approximation to the minimum source coding rate required to sustain the probability of exceeding distortion $d$ no greater than $\\epsilon$, which is simpler than known dispersion-based approximations.",
+          "title": "Data compression with low distortion and finite blocklength",
+          "sourceUrl": "https://arxiv.org/abs/1510.02190"
+        },
+        {
+          "id": "arxiv:1203.3217",
+          "reason": "Studies channel simulation via interactive communication with two-way links and shared randomness, directly relevant to interactive communication models and terminal knowledge assumptions.",
+          "evidenceId": "2b00637b95:s1",
+          "quote": "In this paper, we study the problem of channel simulation via interactive communication, known as the coordination capacity, in a two-terminal network.",
+          "title": "Channel simulation via interactive communications",
+          "sourceUrl": "https://arxiv.org/abs/1203.3217"
+        },
+        {
+          "id": "arxiv:1508.06025",
+          "reason": "Surveys strong data-processing inequalities and extends them to Bayesian networks, useful for understanding information flow and terminal knowledge in multi-terminal settings.",
+          "evidenceId": "0803e4077d:s4",
+          "quote": "Then we consider the basic extension: given SDPI for each constituent channel in a Bayesian network, how to produce an end-to-end SDPI?",
+          "title": "Strong data-processing inequalities for channels and Bayesian networks",
+          "sourceUrl": "https://arxiv.org/abs/1508.06025"
+        }
+      ],
+      "references": []
+    },
+    {
+      "caseId": "coding-side-information-r1",
+      "scenarioId": "coding-side-information",
+      "repetition": 1,
+      "variant": "all",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:46:10.820Z",
+      "inputTokens": 6950,
+      "outputTokens": 343,
+      "durationMs": 2422,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "3b60859d60fac19c80ee22740337d5479992a3d9bd43306fd91c04f8f53375ed",
+      "responseHash": "ebfd5a70ecb637c04eabe004cc8c761df9c04f71bde83aac0a64502a749bf1ba",
+      "rawRanking": [
+        "arxiv:1410.2687",
+        "arxiv:1203.3217",
+        "arxiv:1102.3944",
+        "arxiv:1510.02190",
+        "arxiv:1508.06025"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:1410.2687",
+          "reason": "Directly addresses side information at both encoder and decoder with non-asymptotic bounds and second-order rates, clarifying terminal knowledge assumptions and excess-distortion probability criterion.",
+          "evidenceId": "0bcc6b5ad1:s1",
+          "quote": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder.",
+          "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+          "sourceUrl": "https://arxiv.org/abs/1410.2687"
+        },
+        {
+          "id": "arxiv:1203.3217",
+          "reason": "Studies two-terminal interactive communication with limited-rate links and shared randomness, giving an exact characterization that clarifies which terminal knows what under communication constraints.",
+          "evidenceId": "2b00637b95:s3",
+          "quote": "The terminals are provided with two-way communication links, and shared common randomness, all at limited rates.",
+          "title": "Channel simulation via interactive communications",
+          "sourceUrl": "https://arxiv.org/abs/1203.3217"
+        },
+        {
+          "id": "arxiv:1102.3944",
+          "reason": "Provides tight fixed-blocklength achievability and converse bounds for lossy compression with the excess-distortion probability criterion, useful for separating probability criteria in the finite-blocklength regime.",
+          "evidenceId": "8c9ffe509f:s1",
+          "quote": "This paper studies the minimum achievable source coding rate as a function of blocklength $n$ and probability $\\epsilon$ that the distortion exceeds a given level $d$.",
+          "title": "Fixed-length lossy compression in the finite blocklength regime",
+          "sourceUrl": "https://arxiv.org/abs/1102.3944"
+        },
+        {
+          "id": "arxiv:1510.02190",
+          "reason": "Gives an explicit non-asymptotic approximation for lossy source coding under the probability-of-excess-distortion criterion, complementing the joint source-channel finite-blocklength framework.",
+          "evidenceId": "7fea790ebd:s1",
+          "quote": "This paper considers lossy source coding of $n$-dimensional memoryless sources and shows an explicit approximation to the minimum source coding rate required to sustain the probability of exceeding distortion $d$ no greater than $\\epsilon$, which is simpler than known dispersion-based approximations.",
+          "title": "Data compression with low distortion and finite blocklength",
+          "sourceUrl": "https://arxiv.org/abs/1510.02190"
+        },
+        {
+          "id": "arxiv:1508.06025",
+          "reason": "Surveys strong data-processing inequalities and extends them to Bayesian networks, which can clarify information flow and terminal knowledge in multi-terminal settings.",
+          "evidenceId": "0803e4077d:s4",
+          "quote": "Then we consider the basic extension: given SDPI for each constituent channel in a Bayesian network, how to produce an end-to-end SDPI?",
+          "title": "Strong data-processing inequalities for channels and Bayesian networks",
+          "sourceUrl": "https://arxiv.org/abs/1508.06025"
+        }
+      ],
+      "references": []
+    },
+    {
+      "caseId": "coding-side-information-r2",
+      "scenarioId": "coding-side-information",
+      "repetition": 2,
+      "variant": "none",
+      "status": "completed",
+      "knownNextCount": 1,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:46:19.086Z",
+      "inputTokens": 6738,
+      "outputTokens": 302,
+      "durationMs": 1824,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "44353862cd59f6684ed151115a33ac7df801a178cfe34e2b54e3992e6fa07c7a",
+      "responseHash": "ddde7ec0c4544b048d6c12ba37246ad7682c8346b0f413f218f63e243d33b3eb",
+      "rawRanking": [
+        "arxiv:1410.2687",
+        "arxiv:1209.1317",
+        "arxiv:1102.3944",
+        "arxiv:1510.02190",
+        "arxiv:1203.3217"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:1410.2687",
+          "reason": "Directly addresses lossy source coding with side information at both encoder and decoder, giving non-asymptotic bounds and second-order rates, which clarifies terminal knowledge and probability criterion in a finite-blocklength setting.",
+          "evidenceId": "0bcc6b5ad1:s1",
+          "quote": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder.",
+          "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+          "sourceUrl": "https://arxiv.org/abs/1410.2687"
+        },
+        {
+          "id": "arxiv:1209.1317",
+          "reason": "Provides finite-blocklength joint source-channel coding bounds with an explicit distortion-exceedance probability criterion, matching the goal's core finite-blocklength JSCC framework.",
+          "evidenceId": "653a10adf9:s2",
+          "quote": "A joint source-channel code maps a block of $k$ source symbols onto a length$-n$ channel codeword, and the fidelity of reproduction at the receiver end is measured by the probability $\\epsilon$ that the distortion exceeds a given threshold $d$.",
+          "title": "Lossy joint source-channel coding in the finite blocklength regime",
+          "sourceUrl": "https://arxiv.org/abs/1209.1317"
+        },
+        {
+          "id": "arxiv:1102.3944",
+          "reason": "Establishes tight fixed-blocklength lossy compression bounds in terms of distortion-exceedance probability, useful for understanding how the probability criterion is formulated non-asymptotically.",
+          "evidenceId": "8c9ffe509f:s1",
+          "quote": "This paper studies the minimum achievable source coding rate as a function of blocklength $n$ and probability $\\epsilon$ that the distortion exceeds a given level $d$.",
+          "title": "Fixed-length lossy compression in the finite blocklength regime",
+          "sourceUrl": "https://arxiv.org/abs/1102.3944"
+        },
+        {
+          "id": "arxiv:1510.02190",
+          "reason": "Gives non-asymptotic lossy source coding approximations tied to the probability of exceeding distortion, complementing finite-blocklength probability-criterion formulations.",
+          "evidenceId": "7fea790ebd:s1",
+          "quote": "This paper considers lossy source coding of $n$-dimensional memoryless sources and shows an explicit approximation to the minimum source coding rate required to sustain the probability of exceeding distortion $d$ no greater than $\\epsilon$, which is simpler than known dispersion-based approximations.",
+          "title": "Data compression with low distortion and finite blocklength",
+          "sourceUrl": "https://arxiv.org/abs/1510.02190"
+        },
+        {
+          "id": "arxiv:1203.3217",
+          "reason": "Studies two-terminal channel simulation with interactive communication and limited rates, relevant to clarifying which terminal knows what under communication constraints.",
+          "evidenceId": "2b00637b95:s3",
+          "quote": "The terminals are provided with two-way communication links, and shared common randomness, all at limited rates.",
+          "title": "Channel simulation via interactive communications",
+          "sourceUrl": "https://arxiv.org/abs/1203.3217"
+        }
+      ],
+      "references": []
+    },
+    {
+      "caseId": "coding-side-information-r2",
+      "scenarioId": "coding-side-information",
+      "repetition": 2,
+      "variant": "explicit",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:46:21.383Z",
+      "inputTokens": 6904,
+      "outputTokens": 295,
+      "durationMs": 2156,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "18d6f4f194304c99d16f1c8666736e437e5aa19abcfbde799e18c1c89e626ff2",
+      "responseHash": "05857594968b9390848184cf70c2d0991078aa8c7073148b4b7b11882c049e90",
+      "rawRanking": [
+        "arxiv:1410.2687",
+        "arxiv:1102.3944",
+        "arxiv:1510.02190",
+        "arxiv:1203.3217",
+        "arxiv:1508.06025"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:1410.2687",
+          "reason": "Directly addresses side information at both encoder and decoder with non-asymptotic bounds and second-order rates, clarifying terminal knowledge assumptions and excess-distortion probability criterion.",
+          "evidenceId": "0bcc6b5ad1:s1",
+          "quote": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder.",
+          "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+          "sourceUrl": "https://arxiv.org/abs/1410.2687"
+        },
+        {
+          "id": "arxiv:1102.3944",
+          "reason": "Provides tight fixed-blocklength bounds for lossy compression with the excess-distortion probability criterion, useful for separating probability criteria in the finite-blocklength setting.",
+          "evidenceId": "8c9ffe509f:s1",
+          "quote": "This paper studies the minimum achievable source coding rate as a function of blocklength $n$ and probability $\\epsilon$ that the distortion exceeds a given level $d$.",
+          "title": "Fixed-length lossy compression in the finite blocklength regime",
+          "sourceUrl": "https://arxiv.org/abs/1102.3944"
+        },
+        {
+          "id": "arxiv:1510.02190",
+          "reason": "Gives non-asymptotic converses and an abstract Shannon lower bound for lossy source coding under the excess-distortion probability criterion, complementing the joint source-channel bounds.",
+          "evidenceId": "7fea790ebd:s1",
+          "quote": "This paper considers lossy source coding of $n$-dimensional memoryless sources and shows an explicit approximation to the minimum source coding rate required to sustain the probability of exceeding distortion $d$ no greater than $\\epsilon$, which is simpler than known dispersion-based approximations.",
+          "title": "Data compression with low distortion and finite blocklength",
+          "sourceUrl": "https://arxiv.org/abs/1510.02190"
+        },
+        {
+          "id": "arxiv:1203.3217",
+          "reason": "Studies channel simulation via interactive communication with two terminals and limited-rate links, clarifying terminal roles and communication constraints relevant to side-information extensions.",
+          "evidenceId": "2b00637b95:s1",
+          "quote": "In this paper, we study the problem of channel simulation via interactive communication, known as the coordination capacity, in a two-terminal network.",
+          "title": "Channel simulation via interactive communications",
+          "sourceUrl": "https://arxiv.org/abs/1203.3217"
+        },
+        {
+          "id": "arxiv:1508.06025",
+          "reason": "Surveys strong data-processing inequalities and their extension through Bayesian networks, useful for reasoning about information flow under side-information and communication constraints.",
+          "evidenceId": "0803e4077d:s4",
+          "quote": "Then we consider the basic extension: given SDPI for each constituent channel in a Bayesian network, how to produce an end-to-end SDPI?",
+          "title": "Strong data-processing inequalities for channels and Bayesian networks",
+          "sourceUrl": "https://arxiv.org/abs/1508.06025"
+        }
+      ],
+      "references": []
+    },
+    {
+      "caseId": "coding-side-information-r2",
+      "scenarioId": "coding-side-information",
+      "repetition": 2,
+      "variant": "all",
+      "status": "completed",
+      "knownNextCount": 0,
+      "referenceCount": 0,
+      "observedAt": "2026-09-21T13:46:16.163Z",
+      "inputTokens": 6950,
+      "outputTokens": 332,
+      "durationMs": 2432,
+      "errorCode": null,
+      "validationFailure": null,
+      "sourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "executionSourceCommit": "545ee74b2856562cc768221915fe7b1f8d49e29c",
+      "validationVersion": "numbered-excerpts-v1",
+      "systemFingerprint": "aeb56401ca74e127821c4f9126dcb669",
+      "requestHash": "3b60859d60fac19c80ee22740337d5479992a3d9bd43306fd91c04f8f53375ed",
+      "responseHash": "4ccc9f2feab64832866e3b129bfe98f7676614f18a7c6d129387591109f71fc0",
+      "rawRanking": [
+        "arxiv:1410.2687",
+        "arxiv:1203.3217",
+        "arxiv:1102.3944",
+        "arxiv:1510.02190",
+        "arxiv:1508.06025"
+      ],
+      "recommendations": [
+        {
+          "id": "arxiv:1410.2687",
+          "reason": "Directly addresses side information at both encoder and decoder with non-asymptotic bounds and second-order rates, clarifying terminal knowledge assumptions and excess-distortion probability criterion.",
+          "evidenceId": "0bcc6b5ad1:s1",
+          "quote": "This paper characterizes the second-order coding rates for lossy source coding with side information available at both the encoder and the decoder.",
+          "title": "Second-Order Coding Rates for Conditional Rate-Distortion",
+          "sourceUrl": "https://arxiv.org/abs/1410.2687"
+        },
+        {
+          "id": "arxiv:1203.3217",
+          "reason": "Studies two-terminal interactive communication with limited-rate links and shared randomness, clarifying which terminal knows what under communication constraints.",
+          "evidenceId": "2b00637b95:s3",
+          "quote": "The terminals are provided with two-way communication links, and shared common randomness, all at limited rates.",
+          "title": "Channel simulation via interactive communications",
+          "sourceUrl": "https://arxiv.org/abs/1203.3217"
+        },
+        {
+          "id": "arxiv:1102.3944",
+          "reason": "Provides tight fixed-blocklength bounds for lossy compression in terms of excess-distortion probability, useful for separating probability criteria in the finite-blocklength regime.",
+          "evidenceId": "8c9ffe509f:s1",
+          "quote": "This paper studies the minimum achievable source coding rate as a function of blocklength $n$ and probability $\\epsilon$ that the distortion exceeds a given level $d$.",
+          "title": "Fixed-length lossy compression in the finite blocklength regime",
+          "sourceUrl": "https://arxiv.org/abs/1102.3944"
+        },
+        {
+          "id": "arxiv:1510.02190",
+          "reason": "Gives non-asymptotic approximations for lossy source coding under excess-distortion probability, complementing the joint source-channel finite-blocklength framework.",
+          "evidenceId": "7fea790ebd:s1",
+          "quote": "This paper considers lossy source coding of $n$-dimensional memoryless sources and shows an explicit approximation to the minimum source coding rate required to sustain the probability of exceeding distortion $d$ no greater than $\\epsilon$, which is simpler than known dispersion-based approximations.",
+          "title": "Data compression with low distortion and finite blocklength",
+          "sourceUrl": "https://arxiv.org/abs/1510.02190"
+        },
+        {
+          "id": "arxiv:1508.06025",
+          "reason": "Surveys strong data-processing inequalities and their extension through Bayesian networks, relevant for reasoning about side-information structures and terminal knowledge.",
+          "evidenceId": "0803e4077d:s4",
+          "quote": "Then we consider the basic extension: given SDPI for each constituent channel in a Bayesian network, how to produce an end-to-end SDPI?",
+          "title": "Strong data-processing inequalities for channels and Bayesian networks",
+          "sourceUrl": "https://arxiv.org/abs/1508.06025"
+        }
+      ],
+      "references": []
+    }
+  ]
+}
