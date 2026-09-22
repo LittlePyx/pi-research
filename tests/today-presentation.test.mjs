@@ -1,7 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel } from '../lib/today-presentation.mjs';
+import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, resumeReading } from '../lib/today-presentation.mjs';
+
+test('Resume reading uses an explicit in-progress state, preserves source order and excludes finished or merely opened papers', () => {
+  const papers = [
+    {id:'earlier',readingStatus:'reading',openedAt:'2026-09-01'},
+    {id:'opened',readingStatus:'unread',openedAt:'2026-09-22'},
+    {id:'finished',readingStatus:'read',openedAt:'2026-09-22'},
+    {id:'current',readingStatus:'reading',openedAt:'2026-09-20',readingNote:'Original note'},
+    {id:'saved',readingStatus:'queued',openedAt:'2026-09-22'},
+  ];
+  const before = structuredClone(papers);
+  assert.equal(resumeReading(papers)?.id,'current');
+  assert.equal(resumeReading(papers)?.readingNote,'Original note');
+  assert.deepEqual(papers,before);
+  assert.equal(resumeReading(papers.filter(p=>p.readingStatus!=='reading')),null);
+});
 
 test('Historical brief prose uses its own date in both languages without changing stored history', () => {
   const brief = {date:'2026-09-07',isCurrent:false,headlineZh:'今天累计 4 篇',overviewEn:"Earlier today. Today's results."};

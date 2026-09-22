@@ -69,7 +69,8 @@ import { shouldReclaimMonitorLease } from "../lib/monitor-follower-control.mjs";
 import { shouldBlockManualMonitorStart } from "../lib/monitor-runtime-control.mjs";
 import { modelConnectionFailureState, modelConnectionProblemCopy } from "../lib/model-connection-state";
 import { activateModalFocus } from "../lib/modal-focus";
-import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, isReadReference, readingReferences } from "../lib/today-presentation.mjs";
+import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, isReadReference, readingReferences, resumeReading } from "../lib/today-presentation.mjs";
+import { TodayEntry } from "./components/today-entry";
 
 type Locale = "zh" | "en";
 type ModelConnectionState = "unconfigured" | "checking" | "connected" | "invalid" | "balance" | "rate_limited" | "unavailable";
@@ -3085,6 +3086,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [activeSpaceId, setActiveSpaceId] = useState(fallbackSpaces[0].id);
   const [spaceDialog, setSpaceDialog] = useState(false);
   const [creatingSpace, setCreatingSpace] = useState(false);
+  const [spaceCreateError, setSpaceCreateError] = useState("");
   const [newSpace, setNewSpace] = useState({ name: "", memberName: "", description: "" });
   const [selectedMonitorPaper, setSelectedMonitorPaper] = useState<MonitorPaper | null>(null);
   const updateOpenedPaperReviewStage = useCallback((paperId: string, qualityStage: "queued") => {
@@ -3205,6 +3207,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [monitor, setMonitor] = useState<MonitorState | null>(null);
   const [monitoring, setMonitoring] = useState(false);
   const [workspaceLoadFailed, setWorkspaceLoadFailed] = useState(false);
+  const [monitorLoadFailed, setMonitorLoadFailed] = useState(false);
+  const [reloadingMonitor, setReloadingMonitor] = useState(false);
   const monitorSpaceRef = useRef<string | null>(null);
   const [scanElapsedSeconds, setScanElapsedSeconds] = useState(0);
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
@@ -3361,7 +3365,23 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     ? (locale === "zh" ? "正在核对推荐依据" : "Checking recommendation evidence")
     : monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
-  const monitorReadNotice = workspaceLoadFailed ? <section className="pi-content-loading" role="alert"><strong>{locale === "zh" ? "研究空间暂时未能载入" : "Workspace could not be loaded"}</strong><button type="button" onClick={() => window.location.reload()}>{locale === "zh" ? "重新载入" : "Retry loading"}</button></section> : !monitor ? <section className="pi-content-loading" role="status"><strong>{locale === "zh" ? "正在读取已保存的论文…" : "Loading saved papers…"}</strong><p>{locale === "zh" ? "已有内容载入后即可阅读，无需等待后台扫描完成。" : "You can read saved content while discovery continues in the background."}</p></section> : monitor.status === "error" && !monitor.papers.length ? <section className="pi-content-loading" role="alert"><strong>{locale === "zh" ? "论文暂时未能载入" : "Papers could not be loaded"}</strong><button type="button" onClick={() => setLearningMonitorWake((value) => value + 1)}>{locale === "zh" ? "重新载入" : "Retry loading"}</button></section> : null;
+  const reloadSavedMonitor = async () => {
+    if (reloadingMonitor) return;
+    const spaceId = activeSpace.id;
+    setReloadingMonitor(true);
+    try {
+      const response = await fetch('/api/monitor?spaceId=' + encodeURIComponent(spaceId), { signal: AbortSignal.timeout(20_000) });
+      const data = await response.json() as { monitor?: MonitorState };
+      if (!response.ok || !data.monitor) throw Error('unavailable');
+      if (paperNetworkSpaceRef.current !== spaceId) return;
+      setMonitor(data.monitor); setMonitorLoadFailed(false);
+    } catch {
+      if (paperNetworkSpaceRef.current === spaceId) setMonitorLoadFailed(true);
+    } finally {
+      if (paperNetworkSpaceRef.current === spaceId) setReloadingMonitor(false);
+    }
+  };
+  const monitorReadNotice = workspaceLoadFailed ? <section className="pi-content-loading" role="alert"><strong>{locale === "zh" ? "研究空间暂时未能载入" : "Workspace could not be loaded"}</strong><button type="button" onClick={() => window.location.reload()}>{locale === "zh" ? "重新载入" : "Retry loading"}</button></section> : monitorLoadFailed ? <section className="pi-content-loading" role="alert"><strong>{locale === "zh" ? "论文暂时未能载入" : "Papers could not be loaded"}</strong><p>{locale === "zh" ? "这不代表空间为空。重新载入只读取已有内容。" : "This does not mean the workspace is empty. Reloading only retrieves saved content."}</p><button type="button" disabled={reloadingMonitor} onClick={() => void reloadSavedMonitor()}>{reloadingMonitor ? (locale === "zh" ? "正在载入…" : "Loading…") : (locale === "zh" ? "重新载入" : "Retry loading")}</button></section> : !monitor ? <section className="pi-content-loading" role="status"><strong>{locale === "zh" ? "正在读取已保存的论文…" : "Loading saved papers…"}</strong><p>{locale === "zh" ? "已有内容载入后即可阅读，无需等待后台扫描完成。" : "You can read saved content while discovery continues in the background."}</p></section> : null;
   const currentRunHasDiscovery = Boolean(activeScanJob && (activeScanJob.discoveredCount > 0
     || activeScanJob.horizonStats?.some((item) => item.candidates !== null)));
   const healthyCoverageCount = !scanIsActive || currentRunHasDiscovery
@@ -3399,6 +3419,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const latestDeepDeferredCount = monitor?.dailyBrief?.metrics.deepDeferred ?? 0;
   const dailyBriefPaperIds = new Set(monitor?.dailyBrief?.paperIds || []);
   const additionalTodayPapers: MonitorPaper[] = supplementaryReading([...rankedMonitorPapers, ...historyPapers], [...dailyBriefPaperIds]);
+  const resumePaper: MonitorPaper | null = resumeReading(historyPapers);
   const pendingActionNotifications = useMemo(() => (monitor?.notifications || []).filter((notification) => ACTION_NOTIFICATION_KINDS.has(notification.kind) && !notification.readAt), [monitor?.notifications]);
   const activityGroups = useMemo(() => {
     const groups = new Map<string, { key: string; primary: ResearchNotification; recovered: boolean }>();
@@ -3848,16 +3869,19 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   useEffect(() => {
     if (activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     let cancelled = false;
+    let savedContentLoaded = false;
     let stopPolling: () => void = () => undefined;
     const timer = window.setTimeout(() => {
       if (monitorSpaceRef.current !== activeSpace.id) setMonitor(null);
       monitorSpaceRef.current = activeSpace.id;
       setMonitoring(true);
+      setMonitorLoadFailed(false);
       // Render saved papers before requesting any visit-triggered background work.
       fetch("/api/monitor?spaceId=" + encodeURIComponent(activeSpace.id), { signal: AbortSignal.timeout(20_000) })
         .then(async (response) => {
           const data = await response.json() as { monitor?: MonitorState; error?: string };
           if (!response.ok || !data.monitor) throw new Error(data.error || "monitor unavailable");
+          savedContentLoaded = true;
           if (!cancelled) setMonitor(data.monitor);
         })
         .then(() => {
@@ -3884,12 +3908,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             await followMonitorPipeline(activeSpace.id, data.monitor, (nextMonitor) => { if (!cancelled) setMonitor(nextMonitor); }, () => cancelled);
           }
         })
-        .catch((error) => {
-          if (!cancelled) setMonitor((current) => current || {
-            status: "error", lastRunAt: null, nextRunAt: null, newCount: 0, scannedCount: 0,
-            knownCount: 0, error: monitorErrorText(error) || "unavailable", cadenceHours: 24, source: "Crossref · priority journals · arXiv · OpenAlex · Semantic Scholar · citation frontier",
-            horizons: ["days", "months", "years"], papers: [],
-          });
+        .catch(() => {
+          if (!cancelled && !savedContentLoaded) setMonitorLoadFailed(true);
         })
         .finally(() => {
           stopPolling();
@@ -4461,6 +4481,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     // loaded or initialized, no route, synthesis, or problem from the previous
     // workspace may remain visible.
     setMonitor(null);
+    setMonitorLoadFailed(false);
+    setReloadingMonitor(false);
     setMonitoring(false);
     setResearchMap(emptyResearchMapState());
     setSelectedThread(null);
@@ -4509,8 +4531,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
   const submitSpace = async (event: FormEvent) => {
     event.preventDefault();
-    if (demo || !newSpace.name.trim()) return;
+    if (demo || creatingSpace || !newSpace.name.trim()) return;
     setCreatingSpace(true);
+    setSpaceCreateError("");
     try {
       const response = await fetch("/api/spaces", {
         method: "POST",
@@ -4519,20 +4542,15 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       });
       if (!response.ok) throw new Error("create failed");
       const data = await response.json() as { space: Space };
+      if (!data.space?.id) throw new Error("invalid space response");
       setSpaces((current) => [...current, data.space]);
       setNewSpace({ name: "", memberName: "", description: "" });
       switchSpace(data.space);
     } catch {
-      const localSpace: Space = {
-        id: "local-" + crypto.randomUUID(),
-        name: newSpace.name,
-        memberName: newSpace.memberName || user.displayName,
-        description: newSpace.description,
-        accent: "plum",
-      };
-      setSpaces((current) => [...current, localSpace]);
-      setNewSpace({ name: "", memberName: "", description: "" });
-      switchSpace(localSpace);
+      const refreshed = await fetch('/api/spaces', { signal: AbortSignal.timeout(10_000) }).catch(() => null);
+      const data = refreshed?.ok ? await refreshed.json().catch(() => null) as { spaces?: Space[] } | null : null;
+      if (data?.spaces?.length) setSpaces(data.spaces);
+      setSpaceCreateError(locale === "zh" ? "暂未确认空间创建成功，填写内容已保留。请先在「切换空间」中检查是否已创建，再决定是否重试。" : "Space creation could not be confirmed. Your input is preserved. Check Switch space for an existing result before retrying.");
     } finally {
       setCreatingSpace(false);
     }
@@ -5945,8 +5963,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           </div>
         </header>
 
-        {demo && <DemoJourney view={view} locale={locale} space={activeSpace.id} />}
-
         {view === "today" && (
           <main className="v2-page v2-today pi-editorial-today">
 
@@ -5956,7 +5972,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               <div className="v2-today-hero-actions status-only"><span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{!monitor ? (locale === "zh" ? "正在读取已有内容" : "Loading saved content") : scanIsActive ? scanPhase : monitor?.status === "ready" ? monitorReadyLabel : monitor?.status === "error" ? t.scanError : t.neverScanned}</span></div>
             </section>
 
-            <ReadingCalendar key={`calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "today")} />
+            {monitor && !monitorLoadFailed && <TodayEntry locale={locale} resume={resumePaper} empty={!dailyBriefEntryCount && !additionalTodayPapers.length} hasLibrary={historyPapers.length > 0} discovering={scanIsActive} onRead={id => void openRoutePaper(id, "today")} onGoal={() => { setLearningTarget(activeSpace.description || ""); setLearningTargetTrackId(null); setLearningPlannerOpen(true); navigate("learn"); }} onContext={openResearchImport} onLibrary={() => navigate("library")} onDiscovery={() => document.querySelector(".v2-monitor-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })} />}
             <SectionNavigation label={locale === "zh" ? "本页" : "On this page"} items={[...((monitor?.dailyBrief || additionalTodayPapers.length) ? [{ label: locale === "zh" ? "推荐阅读" : "Reading", target: !dailyBriefEntryCount && additionalTodayPapers.length ? ".v2-today-more" : ".v2-ai-daily-brief" }] : []), ...(monitorQualityReviewStatus(monitor) ? [{ label: locale === "zh" ? "评审进度" : "Review status", target: ".v2-background-review-status" }] : []), { label: locale === "zh" ? "扫描与来源" : "Discovery & sources", target: ".v2-monitor-panel" }]} />
             {monitor?.dailyBrief && (dailyBriefEntryCount > 0 || !additionalTodayPapers.length) && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
               <div className="v2-daily-brief-lead">
@@ -6004,7 +6020,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               {readReferencePapers.map(paper => <article key={paper.id}><div><button type="button" onClick={() => openMonitorPaper(paper)}><MathText inline>{paper.title}</MathText></button><p>{readingStatusLabel(paper.readingStatus, locale)}{paper.authors ? ` · ${paper.authors}` : ""}</p></div><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "回看与笔记" : "Revisit & notes"} →</button></article>)}
             </section>}
 
-            {!activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-") && <ResearchStart key={activeSpace.id} spaceId={activeSpace.id} locale={locale} onRead={id => void openRoutePaper(id, "today")} onStart={startRecommendedResearch} />}
+            {demo && <DemoJourney view={view} locale={locale} space={activeSpace.id} />}
+            <ReadingCalendar key={`calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "today")} />
+            {historyPapers.length > 0 && !activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-") && <ResearchStart key={activeSpace.id} spaceId={activeSpace.id} locale={locale} onRead={id => void openRoutePaper(id, "today")} onStart={startRecommendedResearch} />}
 
             <QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} />
             <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
@@ -6428,6 +6446,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             </div>
             <form className="v2-new-space-form" hidden={spaceSection !== "new"} onSubmit={submitSpace}>
               <p className="v2-kicker">{t.createSpaceTitle}</p>
+              {spaceCreateError && <p role="alert" className="pi-space-create-error">{spaceCreateError}</p>}
               <div><label><span>{t.spaceName}</span><input required value={newSpace.name} onChange={(event) => setNewSpace((current) => ({ ...current, name: event.target.value }))} placeholder={locale === "zh" ? "例如：量子信息" : "e.g. Quantum Information"} /></label><label><span>{t.memberName}</span><input value={newSpace.memberName} onChange={(event) => setNewSpace((current) => ({ ...current, memberName: event.target.value }))} placeholder={user.displayName} /></label></div>
               <label><span>{t.spaceScope}</span><textarea value={newSpace.description} onChange={(event) => setNewSpace((current) => ({ ...current, description: event.target.value }))} placeholder={locale === "zh" ? "这个空间只关注哪些具体问题？" : "Which specific questions belong in this space?"} /></label>
               <div className="v2-form-actions"><button type="button" onClick={() => setSpaceDialog(false)}>{t.cancel}</button><button type="submit" title={demo ? "请返回正式工作区创建空间" : undefined} disabled={demo || creatingSpace || !newSpace.name.trim()}>{creatingSpace ? t.creating : t.create} →</button></div>
