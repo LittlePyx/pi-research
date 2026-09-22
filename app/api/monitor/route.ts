@@ -130,6 +130,7 @@ import { formalResearchMapEvidencePredicate, promoteAlreadyAcceptedResearchMapEv
 import { activeResearchRouteSupplyPredicate } from "../../../lib/research-map-curation";
 import { researchTrackTitleTopicalFit } from "../../../lib/research-map-reliability";
 import { researchProblemDiscoveryQuery } from "../../../lib/research-problem";
+import { prioritizedReviewTracks } from "../../../lib/review-context";
 import { fetchSemanticScholar } from "../../../lib/semantic-scholar";
 import { getDomainProfile, inferDomainProfile } from "./domain-profiles";
 
@@ -3357,9 +3358,6 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
     || spaceCount + expectedCalls > MONITOR_SPACE_DAILY_ANALYSIS_LIMIT)) {
     throw new Error("DeepSeek review budget reached; unreviewed papers were not published");
   }
-  const mapTracks = await database.prepare(
-    "SELECT id, title_zh, title_en, summary_en, search_queries, intelligence_json, intelligence_updated_at FROM research_tracks WHERE space_id = ? ORDER BY position LIMIT 6",
-  ).bind(space.id).all<MapTrackContext>();
   const activeProblems = await database.prepare(
     `SELECT problem.id, problem.track_id, problem.question, problem.objective, problem.scope,
       problem.success_criteria, problem.stage,
@@ -3374,6 +3372,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
      FROM research_problems problem WHERE problem.space_id = ? AND problem.status = 'active'
      ORDER BY problem.updated_at DESC LIMIT 6`,
   ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; latest_action_result_en: string; latest_action_decision_en: string }>();
+  const mapTracks = await prioritizedReviewTracks<MapTrackContext>(database, space.id, activeProblems.results.map(problem => problem.track_id));
   const validTrackIds = new Set(mapTracks.results.map((track) => track.id));
   const validProblemIds = new Set(activeProblems.results.map((problem) => problem.id));
   const problemByTrackId = new Map(activeProblems.results.map((problem) => [problem.track_id, problem]));

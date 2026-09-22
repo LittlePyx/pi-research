@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { briefPaperEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, resumeReading } from '../lib/today-presentation.mjs';
+import { briefPaperEntries, remainingBriefEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, resumeReading } from '../lib/today-presentation.mjs';
+
+test('Featured reading removes duplicate cards without losing saved brief guidance or history', () => {
+  const entries = briefPaperEntries(['a','b','c'],[{id:'a'},{id:'b'},{id:'c'}]);
+  const original = structuredClone(entries);
+  assert.deepEqual(remainingBriefEntries(entries,['a','b','a','outside']),[{paper:{id:'c'},briefIndex:2}]);
+  assert.deepEqual(remainingBriefEntries(entries,[]),entries);
+  assert.deepEqual(remainingBriefEntries(entries,['a','b','c']),[]);
+  assert.deepEqual(entries,original);
+});
 
 test('Resume reading uses an explicit in-progress state, preserves source order and excludes finished or merely opened papers', () => {
   const papers = [
