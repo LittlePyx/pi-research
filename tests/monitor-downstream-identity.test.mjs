@@ -4,6 +4,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import * as identity from '../lib/canonical-response.mjs';
 import * as evidence from '../lib/evidence-verification.ts';
+import { ABSTRACT_SCOPE_RULE } from '../lib/abstract-integrity.ts';
 import * as draft from '../lib/recommendation-draft.mjs';
 
 const source = await readFile(new URL('../app/api/monitor/route.ts', import.meta.url), 'utf8');
@@ -17,7 +18,7 @@ function load(name, dependencies) {
     assert.ok(node, key);
     return node.getText(ast);
   });
-  const deps = { ...identity, ...evidence, ...draft, parseJsonObject: JSON.parse,
+  const deps = { ABSTRACT_SCOPE_RULE, ...identity, ...evidence, ...draft, parseJsonObject: JSON.parse,
     MONITOR_MODEL: 'fixture', VERIFICATION_TIMEOUT_MS: 1000, VERIFICATION_CORRECTION_TIMEOUT_MS: 1000,
     recordUsage: async () => {}, traceVerificationResponse: () => {}, ...dependencies };
   const code = ts.transpileModule(nodes.join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -33,9 +34,9 @@ for (const field of ['summary', 'whyRead', 'problem', 'method', 'contribution', 
   review[field + 'Zh'] = '隔离测试摘要明确描述了有界估计及其使用的方法；所有结论仅限于提供的证据，不推断其适用范围。';
   review[field + 'En'] = sentence;
 }
-const verdict = { verdict: 'verified', coverageScore: 95, supportedFields: ['summary', 'problem', 'method', 'contribution'],
+const verdict = { verdict: 'verified', coverageScore: 95, supportedFields: ['summary', 'problem', 'method', 'contribution', 'limitations'],
   unsupportedFields: [], overstatements: [], contradictionRisks: [], supportedEvidenceIds: ['abstract-1'],
-  claimChecks: ['summary', 'problem', 'method', 'contribution'].map(field => ({ field, claimExcerpt: sentence,
+  claimChecks: ['summary', 'problem', 'method', 'contribution', 'limitations'].map(field => ({ field, claimExcerpt: sentence,
     evidenceId: 'abstract-1', verdict: 'supported', reason: 'Within supplied evidence.' })), reason: 'Grounded in the supplied abstract.' };
 const response = payload => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(payload) } }],
   usage: { prompt_tokens: 20, completion_tokens: 10 } }) });
@@ -200,4 +201,11 @@ test('actual route reconciliation preserves DOI, ignores ambiguous identity, and
     assert.equal(result[0].trackId, records.length === 1 && records[0] === assignment ? 'track' : '');
     if (result[0].trackId) assert.equal(result[0].mapRationaleEn, 'Evidence supports this route.');
   }
+});
+
+test('an audit that omits populated limitations cannot publish a recommendation',async()=>{
+ const incomplete={...verdict,supportedFields:verdict.supportedFields.filter(f=>f!=='limitations'),claimChecks:verdict.claimChecks.filter(c=>c.field!=='limitations')};
+ const result=(await verify([{canonicalId:id,...incomplete}]))[0];
+ assert.notEqual(result.verificationStatus,'verified');
+ assert.equal(result.verificationRetryable,true);
 });

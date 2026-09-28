@@ -62,13 +62,26 @@ export function recommendationEvidencePreflight(input: {
 
 export function abstractEvidenceUnits(
   value: unknown,
-  options: { prefix?: string; maxUnits?: number; maxChars?: number } = {},
+  options: { prefix?: string; maxUnits?: number; maxChars?: number; complete?: boolean } = {},
 ): VerificationEvidenceUnit[] {
   const text = cleanText(value, 12_000);
   if (!text) return [];
   const maxUnits = Math.max(1, Math.min(24, Math.round(options.maxUnits || 12)));
   const maxChars = Math.max(160, Math.min(900, Math.round(options.maxChars || 480)));
   const prefix = cleanText(options.prefix || "abstract", 80).replace(/[^a-zA-Z0-9:_-]+/g, "-") || "abstract";
+  // Deep review audits the same bounded abstract as the authoring pass.
+  // Packing contiguous spans avoids dropping a tail with many short sentences.
+  if (options.complete) {
+    const units: VerificationEvidenceUnit[] = [];
+    let remaining = text;
+    while (remaining) {
+      const boundary = remaining.slice(0, 901).lastIndexOf(" ");
+      const cut = remaining.length <= 900 ? remaining.length : boundary >= 450 ? boundary : 900;
+      units.push({ id: `${prefix}:${units.length + 1}`, text: remaining.slice(0, cut) });
+      remaining = remaining.slice(cut).trimStart();
+    }
+    return units;
+  }
   const sentences = text.match(/[^.!?。！？]+[.!?。！？]+|[^.!?。！？]+$/g) || [text];
   const chunks: string[] = [];
   for (const sentence of sentences) {

@@ -1,3 +1,4 @@
+import { needsAbstractRecovery, isPossiblyTruncatedAbstract } from "./abstract-integrity";
 import { publisherAbstractUrl, parsePublisherAbstract } from "./publisher-abstract";
 import { parseDataCiteArxivRecords } from "./discovery/datacite";
 import { arxivIdFromUrl, normalizeWorkTitle, parseArxivAtom } from "./discovery/arxiv";
@@ -128,26 +129,27 @@ export async function readAbstractRecovery(db: D1Database, spaceId: string, pape
 // A per-paper lease complements the existing shared provider cooldowns.
 export async function recoverPaperAbstract(db: D1Database, spaceId: string, paperId: string, preprintOnly = false, budgetMs = 24000) {
   const paper = await db.prepare(`SELECT p.doi,p.title,p.authors,p.url,i.abstract_text FROM monitored_papers p JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id WHERE p.id=? AND p.space_id=?`).bind(paperId, spaceId).first<AbstractIdentity & { abstract_text: string }>();
-  if (!paper || paper.abstract_text.trim().length >= 400) return readAbstractRecovery(db, spaceId, paperId);
+  if (!paper || !needsAbstractRecovery(paper.abstract_text)) return readAbstractRecovery(db, spaceId, paperId);
   const existing = await readAbstractRecovery(db, spaceId, paperId);
-  if (existing?.status === "found" && paper.abstract_text.trim().length >= 120) return existing;
+  if (existing?.status === "found" && paper.abstract_text.trim().length >= 120 && !isPossiblyTruncatedAbstract(paper.abstract_text)) return existing;
   const token = crypto.randomUUID(); const now = Date.now();
   await db.prepare("INSERT OR IGNORE INTO paper_abstract_recovery (paper_id,space_id) VALUES (?,?)").bind(paperId, spaceId).run();
   const lock = await db.prepare(`UPDATE paper_abstract_recovery SET status='searching',lock_token=?,lease_until=?,updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND lease_until<=? AND retry_at<=?`).bind(token, now + 90000, paperId, spaceId, now, now).run();
   if (!lock.meta.changes) return readAbstractRecovery(db, spaceId, paperId);
   const deadline = AbortSignal.timeout(budgetMs);
   const result = await lookupAbstract(paper, (url, sourceKey) => fetchExternalSource(url, { headers: { Accept: sourceKey === "springer" ? "text/html" : sourceKey === "arxiv" ? "application/atom+xml" : "application/json" }, signal: AbortSignal.any([deadline, AbortSignal.timeout(7000)]) }, { database: db, sourceKey, maxRetries: 0, maxInlineWaitMs: 500 }), preprintOnly);
-  const retryAt = result.hit ? 0 : Date.now() + Math.max(result.retryMs, result.related ? 24 * 3600000 : result.failed ? 5 * 60000 : 6 * 3600000);
-  const status = result.hit ? "found" : result.related ? "related_version" : result.failed ? "source_error" : "not_found";
+  const improved = result.hit && result.hit.abstractText.length > paper.abstract_text.trim().length;
+  const retryAt = improved && !needsAbstractRecovery(result.hit!.abstractText) ? 0 : Date.now() + Math.max(result.retryMs, result.related ? 24 * 3600000 : result.failed ? 5 * 60000 : 6 * 3600000);
+  const status = improved ? "found" : result.related ? "related_version" : result.failed ? "source_error" : "not_found";
   const statements = [];
-  if (result.hit) statements.push(db.prepare(`UPDATE paper_insights SET abstract_text=?,
+  if (improved && result.hit) statements.push(db.prepare(`UPDATE paper_insights SET abstract_text=?,
     analysis_model=CASE WHEN analysis_source='deepseek_rejected' AND ever_recommended=0 AND instr(screening_reason, '${ABSTRACT_BLOCK_REASON}')>0 THEN '' ELSE analysis_model END,
     analysis_source=CASE WHEN analysis_source='deepseek_rejected' AND ever_recommended=0 AND instr(screening_reason, '${ABSTRACT_BLOCK_REASON}')>0 THEN 'deepseek_screened' ELSE analysis_source END,
     updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND length(trim(abstract_text)) < length(?)
     AND EXISTS(SELECT 1 FROM paper_abstract_recovery WHERE paper_id=? AND lock_token=?)`)
     .bind(result.hit.abstractText, paperId, spaceId, result.hit.abstractText, paperId, token));
   statements.push(db.prepare("UPDATE paper_abstract_recovery SET status=?,source_url=?,retry_at=?,attempted_json=?,result_json=?,lock_token=NULL,lease_until=0,updated_at=CURRENT_TIMESTAMP WHERE paper_id=? AND space_id=? AND lock_token=?")
-    .bind(status, result.hit?.sourceUrl || "", retryAt, JSON.stringify(result.diagnostics), result.related ? JSON.stringify(result.related) : "", paperId, spaceId, token));
+    .bind(status, result.hit?.sourceUrl || "", retryAt, JSON.stringify([...result.diagnostics, ...(isPossiblyTruncatedAbstract(paper.abstract_text) ? [{source: "saved_abstract", outcome: "legacy_truncated"}] : [])]), result.related ? JSON.stringify(result.related) : "", paperId, spaceId, token));
   await db.batch(statements);
   return readAbstractRecovery(db, spaceId, paperId);
 }

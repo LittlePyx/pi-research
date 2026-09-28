@@ -74,7 +74,7 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
   {goal&&!editing&&<>
    <h3 className="pi-current-question"><MathText inline>{goal.question}</MathText></h3>
    {spaceName&&<p className="pi-question-status">{zh?'研究空间：':'Research space: '}{spaceName}</p>}
-   <p className="pi-question-status" role="status">{demo?(zh?'示例流程 · 未执行检索或模型评审':'Example flow · no search or model review'):inactive?(zh?'该问题已暂停或结束。':'This question is paused or resolved.'):saved?(zh?'问题已保存。后续新扫描会参考它；当前结果尚未因此重新计算。':'Question saved. Future new scans will consider it; current results have not been recalculated.'): (zh?'已确认的研究目标 · 最多展示 5 篇关联阅读':'Confirmed research goal · up to 5 related readings')}</p>
+   <p className="pi-question-status" role="status">{demo?(zh?'示例流程 · 未执行检索或模型评审':'Example flow · no search or model review'):inactive?(zh?'该问题已暂停或结束。':'This question is paused or resolved.'):result.papers.length>0?(zh?'已有关联阅读 · 根据当前问题的评审结果推荐':'Related readings are available from reviews linked to this question'):saved?(zh?'问题已保存，等待已核验的关联阅读。':'Question saved; awaiting verified related readings.'): (zh?'已确认的研究目标 · 最多展示 5 篇关联阅读':'Confirmed research goal · up to 5 related readings')}</p>
    {scanStatus&&!demo&&<p role="status">{scanStatus}</p>}
    {continuation}
    {queued.length>0&&<p className="pi-reading-sequence">{resume?(zh?'接下来读':'Up next'):(zh?'建议从这里开始':'Start here')}</p>}

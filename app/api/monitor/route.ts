@@ -1,3 +1,4 @@
+import { ABSTRACT_SCOPE_RULE } from "../../../lib/abstract-integrity";
 import { buildPreferenceGuidance, feedbackExampleContext, FEEDBACK_POLICY_VERSION, PREFERENCE_GUIDANCE_RULES } from "../../../lib/feedback-policy.mjs";
 import { researchSourcePlan, sourcePlanIssn, normalizeSourceTitle } from "../../../lib/research-source-plan";
 import { readDailyReviewProgress, needsDailyReviewTopup, dailyReviewTopupDue, DAILY_TOPUP_INTERVAL_MS } from "../../../lib/daily-review-target";
@@ -957,7 +958,7 @@ async function normalizeItem(item: CrossrefItem, horizon: Horizon): Promise<Omit
     venue,
     url: item.URL || (doi ? "https://doi.org/" + doi : ""),
     publishedAt: publicationDate(item),
-    abstractText: cleanText(item.abstract || "").slice(0, 2200),
+    abstractText: cleanText(item.abstract || "").slice(0, 12000),
     horizon,
     citationCount: Math.max(0, Math.round(item["is-referenced-by-count"] || 0)),
     relevanceScore: Math.max(0, Math.round(item.score || 0)),
@@ -981,7 +982,7 @@ async function normalizeSemanticScholarItem(item: SemanticScholarPaper, horizon:
     url: item.externalIds?.ArXiv ? "https://arxiv.org/abs/" + item.externalIds.ArXiv
       : item.url || (doi ? "https://doi.org/" + doi : ""),
     publishedAt,
-    abstractText: cleanText(item.abstract || "").slice(0, 2200),
+    abstractText: cleanText(item.abstract || "").slice(0, 12000),
     horizon,
     citationCount: Math.max(0, Math.round(item.citationCount || 0)),
     relevanceScore: 0,
@@ -995,7 +996,7 @@ function openAlexAbstract(index: Record<string, number[]> | null | undefined) {
   if (!index) return "";
   const words: Array<[number, string]> = [];
   for (const [word, positions] of Object.entries(index)) for (const position of positions) words.push([position, word]);
-  return cleanText(words.sort((left, right) => left[0] - right[0]).map((entry) => entry[1]).join(" ")).slice(0, 2200);
+  return cleanText(words.sort((left, right) => left[0] - right[0]).map((entry) => entry[1]).join(" ")).slice(0, 12000);
 }
 
 async function normalizeOpenAlexItem(item: OpenAlexWork, horizon: Horizon): Promise<Omit<Candidate, "qualityScore" | "priorityVenue"> | null> {
@@ -1032,7 +1033,7 @@ async function normalizeArxivItem(item: ReturnType<typeof parseArxivAtom>[number
     venue: item.primaryCategory ? `arXiv · ${item.primaryCategory}` : "arXiv",
     url: item.url || `https://arxiv.org/abs/${item.arxivId}`,
     publishedAt: item.publishedAt,
-    abstractText: cleanText(item.abstract).slice(0, 2200),
+    abstractText: cleanText(item.abstract).slice(0, 12000),
     horizon,
     citationCount: 0,
     relevanceScore: 0,
@@ -1054,7 +1055,7 @@ async function normalizeDataCiteArxivItem(item: ReturnType<typeof parseDataCiteA
     venue: item.primaryCategory ? `arXiv · ${item.primaryCategory}` : "arXiv",
     url: item.url || `https://arxiv.org/abs/${item.arxivId}`,
     publishedAt: item.publishedAt,
-    abstractText: cleanText(item.abstract).slice(0, 2200),
+    abstractText: cleanText(item.abstract).slice(0, 12000),
     horizon,
     citationCount: item.citationCount,
     relevanceScore: 0,
@@ -2584,7 +2585,7 @@ function recommendationVerificationRequiredFields(review: PaperReview) {
   // contribution, and factual summary. Personalized fit, reading focus, and
   // research decisions are grounded in the research-space context instead and
   // must not be rejected merely because the abstract cannot prove user intent.
-  return ["summary", "problem", "method", "contribution"].filter((field) => populated.has(field));
+  return ["summary", "problem", "method", "contribution", "limitations"].filter((field) => populated.has(field));
 }
 
 function correctedRecommendationReview(review: PaperReview, value: unknown): PaperReview | null {
@@ -2675,7 +2676,7 @@ async function recommendationVerificationEvidence(
       const text = cleanText(row.evidence_quote).slice(0, 700);
       return row.id && text ? [{ id: row.id, text }] : [];
     });
-    if (units.length) {
+    if (units.length && !candidate.abstractText.trim()) {
       return {
         source: "stored_claims",
         units,
@@ -2688,8 +2689,9 @@ async function recommendationVerificationEvidence(
     source: "abstract",
     units: abstractEvidenceUnits(candidate.abstractText, {
       prefix: candidate.canonicalId,
-      maxUnits: 10,
-      maxChars: 420,
+      maxUnits: 24,
+      maxChars: 900,
+      complete: true,
     }),
   };
 }
@@ -2768,10 +2770,11 @@ async function verifyRecommendationBatch(input: {
             ? "Correct every supplied draft conservatively using its audit. Return both Zh and En values for each changed field; omit unchanged fields, which the server will preserve exactly. Remove or qualify unsupported claims without adding new claims. Do not repeat the complete draft."
             : "Audit every supplied paper. coverageScore must be an integer from 0 to 100. supportedFields and unsupportedFields may use only: " + RECOMMENDATION_VERIFICATION_FIELDS.join(", ") + ".",
           correctionMode
-            ? "Every corrected paper-fact claim must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation. The verification object is the final evidence decision: cover the core fields summary, problem, method, and contribution when populated, and cite a supplied evidenceId for every supported or qualified core claim. Personalized fit and reading guidance remain research-context judgments."
-            : "claimChecks must cover the core paper-fact fields summary, problem, method, and contribution when populated. Personalized whyRead, readingFocus, researchProblemImpact, and researchDecision are research-context judgments, not abstract claims. Every supported or qualified core check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
+            ? "Every corrected paper-fact claim must remain grounded in the numbered evidence units. Missing detail must be described as unknown, not invented as a limitation. The verification object is the final evidence decision: cover the fields summary, problem, method, contribution, and limitations when populated, and cite a supplied evidenceId for every supported or qualified core claim. Personalized fit and reading guidance remain research-context judgments."
+            : "claimChecks must cover the paper-fact fields summary, problem, method, contribution, and limitations when populated. Personalized whyRead, readingFocus, researchProblemImpact, and researchDecision are research-context judgments, not abstract claims. Every supported or qualified core check must reference one supplied evidenceId. Do not repeat evidence quotes; return only the evidenceId.",
+          ABSTRACT_SCOPE_RULE,
           "Treat title, authors, venue, date, and citation count only as metadata. Evidence units support only what they state or directly entail. Route context and user fit do not prove paper findings.",
-          "Write audit reasons and claim checks in concise English only; the corrected draft fields remain bilingual. Budget at most 1000 output tokens per paper for the verification object. Use short claim excerpts (at most 25 words) and reasons (at most 15 words); summarize related issues without omitting any unsupported core claim. Do not repeat the draft or evidence text in the audit. Cover all four core fields with evidence IDs even when only a non-core field was corrected.",
+          "Write audit reasons and claim checks in concise English only; the corrected draft fields remain bilingual. Budget at most 1000 output tokens per paper for the verification object. Use short claim excerpts (at most 25 words) and reasons (at most 15 words); summarize related issues without omitting any unsupported core claim. Do not repeat the draft or evidence text in the audit. Cover all required paper-fact fields with evidence IDs even when only a non-core field was corrected.",
           "Flag novelty, proof, optimality, completeness, causality, empirical validation, convergence, or contradiction wording unless a supplied evidence unit explicitly entails it.",
           correctionMode ? "Assess the complete merged draft (original fields plus your changes), not only the changed fields. Keep each change concise, preserve every required bilingual field and at least two research questions per language, and never erase a required field. Preserve empty researchProblemImpact and researchDecision fields as empty; never invent user-specific context. If the corrected draft cannot pass, return insufficient; there will be no further rewrite loop." : "Keep reasons and claim excerpts concise. Do not rewrite the draft in this audit pass.",
           "Drafts and evidence: " + JSON.stringify(auditable.map((review) => {
@@ -3176,7 +3179,7 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE ${monitorPaperNotDismissedSql("?", "?")}
        ON CONFLICT(paper_id) DO UPDATE SET
-       abstract_text = CASE WHEN length(trim(excluded.abstract_text)) > 0 THEN excluded.abstract_text ELSE paper_insights.abstract_text END,
+       abstract_text = CASE WHEN length(trim(excluded.abstract_text)) > length(trim(paper_insights.abstract_text)) THEN excluded.abstract_text ELSE paper_insights.abstract_text END,
        summary_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.summary_zh ELSE excluded.summary_zh END,
        summary_en = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.summary_en ELSE excluded.summary_en END,
        why_read_zh = CASE WHEN paper_insights.ever_recommended = 1 AND excluded.ever_recommended = 0 THEN paper_insights.why_read_zh ELSE excluded.why_read_zh END,
@@ -3424,7 +3427,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       discoverySource: paper.source,
       discoveryChannel: paper.discoveryChannel,
       routeOrigins: routeReviewOrigins(paper, routeTitles),
-      abstract: paper.abstractText.slice(0, 1400),
+      abstract: paper.abstractText.slice(0, 12000),
     }));
     const prompt = [
       "Return one JSON object only, with shape {\"reviews\":[...]}. Review every supplied record.",
@@ -3436,6 +3439,7 @@ async function reviewCandidates(database: D1Database, space: SpaceRow, userId: s
       "A paper may be recommended as reserve reading when its connection is supporting rather than central, but the connection must still be concrete and useful. Do not reject a strong foundational or bridge paper merely because its title does not repeat the research-space keywords.",
       "Horizon standards: days = genuinely relevant new development; months = relevant, new, and high quality; years = highly relevant, durable, useful, and methodologically or strategically instructive.",
       "Use only supplied title, abstract, authors, venue, date, citation, and priority-venue evidence. Never invent a theorem, method, experiment, result, section, or conclusion.",
+      ABSTRACT_SCOPE_RULE,
       "Because only metadata and abstracts are supplied, never cite section, page, figure, table, appendix, or theorem numbers in readingFocus or any other field.",
       "Never claim that a work is the first, provides a complete characterization, proves a result, validates it experimentally, establishes a convergence rate, or is optimal unless the supplied abstract explicitly states that exact point.",
       "For recommended papers, summaryZh must be a concrete 100-180 Chinese-character introduction explaining the research question, approach, and evidence-backed contribution; summaryEn must convey the same substance in 55-95 words.",
@@ -3700,7 +3704,7 @@ async function reconcileRecommendedReviewTracks(
             `Recommended papers: ${JSON.stringify(missing.map((review) => ({
               canonicalId: review.canonicalId,
               title: candidateById.get(review.canonicalId)?.title || "",
-              abstract: candidateById.get(review.canonicalId)?.abstractText.slice(0, 1400) || "",
+              abstract: candidateById.get(review.canonicalId)?.abstractText.slice(0, 12000) || "",
               summaryZh: review.summaryZh,
               summaryEn: review.summaryEn,
               contributionZh: review.contributionZh,
@@ -3998,7 +4002,7 @@ async function generateDailyBrief(
         readingFocusEn: review.readingFocusEn,
         questionsZh: review.researchQuestionsZh,
         questionsEn: review.researchQuestionsEn,
-        abstract: candidate?.abstractText.slice(0, 1400) || "",
+        abstract: candidate?.abstractText.slice(0, 12000) || "",
       };
     });
     const response = await fetch("https://api.deepseek.com/chat/completions", {
@@ -4633,7 +4637,7 @@ async function fetchSemanticScholarAbstracts(database: D1Database, spaceId: stri
     if (!response.ok) return abstracts;
     const records = await response.json() as Array<SemanticScholarPaper | null>;
     records.forEach((record, index) => {
-      const abstractText = cleanText(record?.abstract || "").slice(0, 2200);
+      const abstractText = cleanText(record?.abstract || "").slice(0, 12000);
       if (abstractText && identified[index]) abstracts.set(identified[index].candidate.canonicalId, abstractText);
     });
   } catch {
@@ -4694,7 +4698,7 @@ async function fetchCrossrefAbstracts(database: D1Database, candidates: Candidat
       }
       const data = await response.json() as { message?: { DOI?: string; abstract?: string } };
       if (data.message?.DOI?.trim().toLocaleLowerCase() !== doi) continue;
-      const abstractText = cleanText(data.message.abstract || "").slice(0, 2200);
+      const abstractText = cleanText(data.message.abstract || "").slice(0, 12000);
       if (abstractText) abstracts.set(candidate.canonicalId, abstractText);
     } catch {
       // A shared source outage must not erase successful earlier DOI lookups.
