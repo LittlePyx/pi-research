@@ -9,10 +9,13 @@ async function owned(request: Request, spaceId: string) {
 }
 
 async function read(db: D1Database, spaceId: string, goalId = '') {
+  // The route editor can change model provenance. Entry IDs stay stable across
+  // edits, so provenance alone must not make a saved user question disappear.
   const goal = await db.prepare(`SELECT p.id, p.track_id AS trackId, p.question, p.scope,
     p.status, t.monitoring_status AS monitoringStatus FROM research_problems p
     JOIN research_tracks t ON t.id=p.track_id AND t.space_id=p.space_id
-    WHERE p.space_id=? AND p.model='user-entry-v1' AND (?='' OR p.id=?) ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1`)
+    WHERE p.space_id=? AND (p.model='user-entry-v1' OR (length(t.id)=70 AND t.id LIKE 'entry-%' AND p.id='question-' || substr(t.id,7)))
+    AND (?='' OR p.id=?) ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1`)
     .bind(spaceId,goalId,goalId).first<{ id: string; trackId: string; question: string; scope: string; status: string; monitoringStatus: string }>();
   const papers = goal ? (await db.prepare(`SELECT p.id,p.title,i.why_read_zh AS whyZh,i.why_read_en AS whyEn,
     i.reading_focus_zh AS focusZh,i.reading_focus_en AS focusEn,
@@ -28,7 +31,10 @@ export async function GET(request: Request) {
   const spaceId = new URL(request.url).searchParams.get('spaceId') || '';
   const db = await owned(request, spaceId);
   if (!db) return Response.json({error:'Space not found'}, {status:404});
-  return Response.json(await read(db, spaceId, new URL(request.url).searchParams.get('goalId') || ''), {headers:{'Cache-Control':'private, no-store'}});
+  const goalId = new URL(request.url).searchParams.get('goalId') || '';
+  const result = await read(db, spaceId, goalId);
+  if (goalId && !result.goal) return Response.json({error:'Saved question could not be found in this space'}, {status:404,headers:{'Cache-Control':'private, no-store'}});
+  return Response.json(result, {headers:{'Cache-Control':'private, no-store'}});
 }
 
 export async function POST(request: Request) {
@@ -61,5 +67,6 @@ export async function POST(request: Request) {
   ]);
   // Return the requested goal, including on retries of an older saved question.
   const result = await read(db, spaceId,id);
-  return Response.json({...result, confirmed:{id,trackId,question}, created:!existing});
+  if (!result.goal) return Response.json({error:'Could not verify the saved question'}, {status:503});
+  return Response.json({...result, confirmed:{id,trackId,question}, created:!existing}, {headers:{'Cache-Control':'private, no-store'}});
 }

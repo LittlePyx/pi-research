@@ -7,8 +7,17 @@ import './research-entry.css';
 type Goal = {id:string;trackId:string;question:string;status:string;monitoringStatus:string};
 type Reading = {id:string;title:string;whyZh:string;whyEn:string;focusZh:string;focusEn:string;checkZh:string;checkEn:string};
 type Result = {goal:Goal|null;papers:Reading[]};
-export function ResearchEntry({spaceId,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[]}: {
- spaceId:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
+function checkedResult(value:unknown, requireGoal=false):Result {
+ const data=value as Result|null;
+ if(!data||!Array.isArray(data.papers)||!('goal' in data))throw Error('Invalid question response');
+ const goal=data.goal;
+ if(goal===null){if(requireGoal)throw Error('Missing saved question')}
+ else if(!goal||typeof goal.id!=='string'||!goal.id||typeof goal.trackId!=='string'||typeof goal.question!=='string'||!goal.question.trim()||typeof goal.status!=='string'||typeof goal.monitoringStatus!=='string')throw Error('Invalid saved question');
+ if(data.papers.some(p=>!p||typeof p.id!=='string'||typeof p.title!=='string'))throw Error('Invalid reading response');
+ return data;
+}
+export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[]}: {
+ spaceId:string;spaceName?:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
  onDiscover:()=>void;onRead:(id:string)=>void;onRoute:(id:string)=>void;onSaved:()=>void;onReadingList:(ids:string[])=>void;
  resume:{id:string;title:string;readingNote:string}|null;onProgress:()=>void;
  excludedReadingIds?:string[];
@@ -16,29 +25,30 @@ export function ResearchEntry({spaceId,locale,demo,refreshKey,scanStatus,blocked
  const zh=locale==='zh';
  const [result,setResult]=useState<Result|null>(null),[editing,setEditing]=useState(false),[question,setQuestion]=useState(''),[seed,setSeed]=useState('');
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[readError,setReadError]=useState(false),[retry,setRetry]=useState(0),[saved,setSaved]=useState(false);
- const alive=useRef(true),chosen=useRef(''),generation=useRef(0);
+ const alive=useRef(true),chosen=useRef(''),generation=useRef(0),submitting=useRef(false);
  const readingCallback=useRef(onReadingList);
  useEffect(()=>{readingCallback.current=onReadingList},[onReadingList]);
  useEffect(()=>{alive.current=true;return()=>{alive.current=false};},[]);
  useEffect(()=>{
+  if(submitting.current)return;
   const abort=new AbortController(), request=++generation.current;
   fetch('/api/research-entry?'+new URLSearchParams({spaceId,goalId:chosen.current}),{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(20000)])})
    .then(async r=>{if(!r.ok)throw Error();return r.json() as Promise<Result>})
-   .then(data=>{if(!abort.signal.aborted&&request===generation.current){setResult(data);readingCallback.current(data.papers.map((p:Reading)=>p.id));setReadError(false)}})
+   .then(value=>{if(!abort.signal.aborted&&!submitting.current&&request===generation.current){const data=checkedResult(value,!!chosen.current);if(chosen.current&&data.goal?.id!==chosen.current)throw Error('Question changed');chosen.current=data.goal?.id||'';setResult(data);readingCallback.current(data.papers.map((p:Reading)=>p.id));setReadError(false)}})
    .catch(()=>{if(!abort.signal.aborted&&request===generation.current)setReadError(true)});
   return()=>abort.abort();
  },[spaceId,refreshKey,retry]);
  const submit=async(event:React.FormEvent)=>{
-  event.preventDefault();if(busy)return;generation.current++;setBusy(true);setError('');
+  event.preventDefault();if(submitting.current)return;submitting.current=true;generation.current++;setBusy(true);setError('');
   try {
    const r=await fetch('/api/research-entry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({spaceId,question,seed,locale}),signal:AbortSignal.timeout(20000)});
    if(!r.ok)throw Error(String(r.status));
-   const data=await r.json() as Result;
+   const data=checkedResult(await r.json(),true);
    if(!alive.current)return;
    generation.current++;chosen.current=data.goal?.id||'';setResult(data);readingCallback.current(data.papers.map(p=>p.id));setEditing(false);setSaved(true);setReadError(false);onSaved();
    if(!demo&&!blocked)onDiscover();
   } catch(e) {if(alive.current)setError(e instanceof Error&&e.message==='409'?(zh?'该问题已暂停或结束，请在研究路线中管理。':'This question is paused or resolved. Manage it in Research.'):(zh?'未能确认保存结果，输入已保留。可重试，同一问题不会重复创建。':'Could not confirm the save. Your input is preserved; retrying the same question is safe.'))}
-  finally {if(alive.current)setBusy(false)}
+  finally {submitting.current=false;if(alive.current)setBusy(false)}
  };
  const goal=result?.goal;
  const inactive=Boolean(goal&&(goal.status!=='active'||goal.monitoringStatus!=='active'));
@@ -54,6 +64,7 @@ export function ResearchEntry({spaceId,locale,demo,refreshKey,scanStatus,blocked
   {!result&&!readError&&<p role="status">{zh?'正在读取研究问题…':'Loading your question…'}</p>}
   {(!goal||editing)&&continuation}
   {(editing||result&&!goal)&&<form onSubmit={event=>void submit(event)}>
+   {spaceName&&<p className="pi-question-status">{zh?'保存到：':'Save to: '}{spaceName}</p>}
    <label>{zh?'你想弄清什么问题？':'What do you want to understand?'}<textarea rows={3} minLength={10} maxLength={520} required disabled={busy} value={question} onChange={e=>setQuestion(e.target.value)} placeholder={zh?'例如：随机局部化中的协方差控制如何影响 KLS 谱隙界？':'For example: how does covariance control in stochastic localization affect KLS bounds?'}/></label>
    <label>{zh?'起点论文（选填）':'Starting paper (optional)'}<input maxLength={300} disabled={busy} value={seed} onChange={e=>setSeed(e.target.value)} placeholder={zh?'论文题名或 DOI，作为待核对线索':'Title or DOI, used as an unverified lead'}/></label>
    <p>{demo?(zh?'演示可保存本次体验的问题，不执行检索；自定义问题不会套用预设阅读结果。':'The demo keeps your question for this session without searching. Custom questions do not inherit preset results.'):(zh?'确认后加入本空间研究目标，用于后续检索与评审；先找文献，再核对假设、方法与局限。':'Confirm to add a research goal for future discovery and review, then check papers’ assumptions, methods and limitations.')}</p>
@@ -62,6 +73,7 @@ export function ResearchEntry({spaceId,locale,demo,refreshKey,scanStatus,blocked
   </form>}
   {goal&&!editing&&<>
    <h3 className="pi-current-question"><MathText inline>{goal.question}</MathText></h3>
+   {spaceName&&<p className="pi-question-status">{zh?'研究空间：':'Research space: '}{spaceName}</p>}
    <p className="pi-question-status" role="status">{demo?(zh?'示例流程 · 未执行检索或模型评审':'Example flow · no search or model review'):inactive?(zh?'该问题已暂停或结束。':'This question is paused or resolved.'):saved?(zh?'问题已保存。后续新扫描会参考它；当前结果尚未因此重新计算。':'Question saved. Future new scans will consider it; current results have not been recalculated.'): (zh?'已确认的研究目标 · 最多展示 5 篇关联阅读':'Confirmed research goal · up to 5 related readings')}</p>
    {scanStatus&&!demo&&<p role="status">{scanStatus}</p>}
    {continuation}

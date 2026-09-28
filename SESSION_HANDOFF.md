@@ -1,5 +1,14 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-28 接续：研究问题保存回执与读取保护
+
+- 用户已在正式工作区提交有限码长有损压缩/超额失真/二阶近似问题。前轮日志07:34 UTC有research-entry POST200及后续goalId question-1b2f7a2c656d3845f090dd8b2eb18f074e0ac1a7b3a95f701e5cf1884eae3b32；日志spaceId脱敏，尚未独立核实该问题的归属与内容。不要把200直接当已跑通推荐，也不要反推脱敏标识。
+- CUA本轮可缓慢读取tab3。信息论/Yilin实际空间04948d10-d2e7-4d0c-9ac5-229e89abfb7e仍只有原有五条路线；原ambient 5a9c7342属于量子时钟同步。上一轮截图保存在outputs/submitted-question-workspace-check.png。没有替用户重新提交、读取Key/Cookie、改写正式数据或新建扫描。
+- 确定性代码缺口：research-problem草稿upsert会更新model，即使保留active问题；入口原来仅按model=user-entry-v1读取，可能过滤已保存问题。改用原有稳定question-/entry-配对身份（兼容原model）。指定问题不存在时404；POST写后无法回读返回503，不再返回空goal的成功回执。
+- 前端校验保存响应，缺失问题保留输入、不触发扫描；已显示问题刷新缺失/错配时保留内容并提示读取失败；保存期间旧GET与新增轮询不覆盖提交。显示保存目标空间与成功后的所属空间，沿用现有阶段与路线/阅读入口。新增真实组件处理函数回归及D1测试覆盖来源变化、空回执、迟到刷新、指定问题空间隔离和无法验证写入；725全量回归、构建通过。最终lint及发布结果见outputs/question-receipt-release.json。
+- 以上为已复现缺口的修复，不声称已定位用户这次记录的全部根因或完成新问题真实检索。仍需核对实际保存问题→新查询计划→明确关联且已核验的阅读结果。邮件暂停、旧自动任务未恢复、用户docs/未触碰。
+
+
 ## 2026-09-28 接续：反馈后的阅读衔接
 
 - 基线main 55bdffc/线上v304 active public一致。前轮原空间df03c7d2已于06:24自然恢复ready：日志保存5篇评审、其中3篇published=true；这是已有任务保存恢复，不是新问题端到端验收，详见outputs/workspace-entry-acceptance.json。

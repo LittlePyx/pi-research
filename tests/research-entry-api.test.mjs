@@ -47,6 +47,16 @@ test('Question entry persists an owned idempotent problem and exposes only verif
   assert.notEqual(newer.goal.id,first.goal.id);
   assert.equal((await request('/api/research-entry',body)).goal.id,first.goal.id,'retry returns requested goal, never another recent goal');
   assert.equal((await request('/api/research-entry?spaceId=entry&goalId='+first.goal.id)).goal.id,first.goal.id);
+  // The route editor updates model provenance even while retaining an active
+  // user question. Its durable entry identity must still be readable.
+  await sql([{sql:'UPDATE research_problems SET model=? WHERE id=?',values:['route-editor-model',newer.goal.id]}]);
+  assert.equal((await request('/api/research-entry?spaceId=entry')).goal.id,newer.goal.id);
+  assert.equal((await request('/api/research-entry',{...body,question:newer.goal.question})).goal.id,newer.goal.id);
+  await request('/api/research-entry?spaceId=entry&goalId=missing',null,404);
+  await sql([insert('research_spaces',{id:'other-entry',owner_user_id:'anonymous:'+owner,name:'Other',member_name:'Fixture'})]);
+  await request('/api/research-entry?spaceId=other-entry&goalId='+first.goal.id,null,404);
+  await sql([{sql:"CREATE TRIGGER suppress_entry_test BEFORE INSERT ON research_problems WHEN NEW.question='A question whose insertion cannot be verified?' BEGIN SELECT RAISE(IGNORE); END"}]);
+  await request('/api/research-entry',{...body,question:'A question whose insertion cannot be verified?'},503);
   await sql([{sql:"UPDATE research_tracks SET monitoring_status='paused' WHERE id=?",values:[first.goal.trackId]}]);
   await request('/api/research-entry',body,409);
   assert.equal((await sql([{sql:'SELECT monitoring_status FROM research_tracks WHERE id=?',values:[first.goal.trackId]}]))[0].results[0].monitoring_status,'paused');
