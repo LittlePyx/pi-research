@@ -8511,3 +8511,19 @@ export async function POST(request: Request) {
     }
   }
 }
+
+// Single-paper evidence refresh reuses the production audit/correction gate.
+// It never drafts into paper_insights or advances a discovery job.
+export async function auditSavedPaperReview(database: D1Database, spaceId: string, userId: string, paperId: string, apiKey: string, draft?: PaperReview) {
+  const paper = await database.prepare(`SELECT p.canonical_id,p.title,p.authors,p.venue,p.published_at,p.citation_count,i.abstract_text,i.priority_venue
+    FROM monitored_papers p JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id WHERE p.id=? AND p.space_id=?`)
+    .bind(paperId,spaceId).first<{canonical_id:string;title:string;authors:string;venue:string;published_at:string;citation_count:number;abstract_text:string;priority_venue:number}>();
+  if (!paper) throw Error("Paper unavailable");
+  const review = draft || (await loadPersistedReviews(database,spaceId,[paper.canonical_id]))[0];
+  if (!review?.recommended) throw Error("No saved recommendation to refresh");
+  const usageDate=shanghaiDateKey(new Date()), workspaceScope="monitor-workspace:"+userId.replace(/^anonymous:/,""), spaceScope="monitor-space:"+spaceId;
+  const counts=await Promise.all([usageCount(database,"monitor:global",usageDate),usageCount(database,workspaceScope,usageDate),usageCount(database,spaceScope,usageDate)]);
+  if (!developmentAnalysisUnbounded() && (counts[0]>=MONITOR_GLOBAL_DAILY_ANALYSIS_LIMIT || counts[1]>=MONITOR_WORKSPACE_DAILY_ANALYSIS_LIMIT || counts[2]>=MONITOR_SPACE_DAILY_ANALYSIS_LIMIT)) throw Error("budget_reached");
+  const candidate={canonicalId:paper.canonical_id,title:paper.title,authors:paper.authors,venue:paper.venue,publishedAt:paper.published_at,citationCount:paper.citation_count,abstractText:paper.abstract_text,priorityVenue:!!paper.priority_venue} as Candidate;
+  return (await verifyRecommendationBatch({database,spaceId,usageDate,workspaceScope,spaceScope,apiKey,candidates:[candidate],reviews:[review]}))[0];
+}

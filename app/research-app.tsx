@@ -4984,6 +4984,19 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setNavigationIssue("paper");
   };
 
+  const refreshOpenedPaperReview = async () => {
+    const spaceId=activeSpace.id,paperId=selectedMonitorPaper?.id;
+    if(!paperId)return;
+    const response=await fetch(`/api/monitor?spaceId=${encodeURIComponent(spaceId)}&paperId=${encodeURIComponent(paperId)}`,{signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw Error("Review refresh unavailable");
+    const data=await response.json() as {monitor?:MonitorState};
+    const paper=data.monitor?.historyPapers?.find(item=>item.id===paperId);
+    if(!paper||!data.monitor)throw Error("Updated review missing");
+    if(paperNetworkSpaceRef.current!==spaceId)return;
+    setMonitor(data.monitor);
+    setSelectedMonitorPaper(current=>current?.id===paperId?{...paper,readingNote:current.readingNote,readingStatus:current.readingStatus}:current);
+  };
+
   const openLearningResource = async (resource: LearningResource) => {
     const paperId = learningResourcePaperId(resource);
     if (!paperId || openingLearningResourceId) return;
@@ -6419,7 +6432,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             <SectionNavigation label={locale === "zh" ? "阅读导航" : "Reading"} items={[{ label: locale === "zh" ? "摘要与评审" : "Abstract & review", target: ".pi-paper-abstract" }, ...(isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && hasPaperGuide ? [{ label: locale === "zh" ? "论文解读" : "Reading guide", target: ".v2-paper-analysis" }] : []), { label: locale === "zh" ? "我的笔记" : "My notes", target: ".pi-paper-reading-tools" }]} />
             <div className="v2-paper-detail-grid">
               <div>
-                <PaperReadingContent key={`${activeSpace.id}:${selectedMonitorPaper.id}`} spaceId={activeSpace.id} paperId={selectedMonitorPaper.id} locale={locale} stage={selectedMonitorPaper.qualityStage} reason={selectedMonitorPaper.screeningReason} onReviewStage={updateOpenedPaperReviewStage} />
+                <PaperReadingContent key={`${activeSpace.id}:${selectedMonitorPaper.id}`} spaceId={activeSpace.id} paperId={selectedMonitorPaper.id} locale={locale} stage={selectedMonitorPaper.qualityStage} reason={selectedMonitorPaper.screeningReason} onReviewStage={updateOpenedPaperReviewStage} onReviewUpdated={demo ? undefined : refreshOpenedPaperReview} />
                 {Boolean(locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn) && <section className="v2-content-section"><p className="v2-kicker">{t.introLabel}</p><p className="pi-paper-summary"><MathText>{locale === "zh" ? selectedMonitorPaper.summaryZh : selectedMonitorPaper.summaryEn}</MathText></p></section>}
                 {isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && hasPaperGuide && <section className="v2-paper-analysis"><header><h2>{locale === "zh" ? "论文解读" : "Reading guide"}</h2><p>{locale === "zh" ? "基于已保存的评审内容，阅读时请结合原文核对。" : "Based on the saved review; check these points against the original paper."}</p></header><div>{[
                   [locale === "zh" ? "研究问题" : "Research question", locale === "zh" ? selectedMonitorPaper.problemZh : selectedMonitorPaper.problemEn],
