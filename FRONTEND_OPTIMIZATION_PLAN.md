@@ -1,5 +1,6 @@
 # Pi Research 优化与推进实施计划
 
+- 2026-09-28阅读衔接：原失败空间已自然恢复，5评审保存/3推荐见workspace-entry-acceptance记录。正式新问题验收仍因CUA连接失败未执行；先修复反馈后阅读列表与下一篇残留旧材料。正式/Demo共用已保存排除状态，成功后移出、撤回可恢复、收藏不算已读；下一篇跳过当前详情和回执论文。722全量回归/构建通过，发布结果见outputs/reading-continuation-release.json。
 - 2026-09-28自然恢复跟进：06:14原任务尚未重试，补现有saved-error恢复名额对到期D1 finalizing断点的识别；严格保留暂停/所有权/活动/租约/退避限制。713回归、构建及变更模块lint通过。最终部署和原任务结果以outputs/workspace-entry-acceptance.json为准。
 - 2026-09-28接续：今日页的日历、更新状态和邮件设置等待真实空间载入后再挂载，修复占位空间请求产生的401/404。711回归、构建及ResearchApp lint通过；邮件仍暂停。v302日历修复后的原任务自然恢复与发布结果见outputs/workspace-entry-acceptance.json，真实新问题验收仍待浏览器控制恢复。
 

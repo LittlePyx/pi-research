@@ -10,15 +10,25 @@ const require=createRequire(import.meta.url);
 const code=ts.transpileModule(readFileSync(new URL('../app/components/research-entry.tsx',import.meta.url),'utf8'),{
  compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},
 }).outputText;
-function render(result,resume){
+function render(result,resume,excludedReadingIds=[]){
  let stateIndex=0;
  const mod={exports:{}};
  const hookReact={...React,useState:initial=>[stateIndex++===0?result:initial,()=>{}],useEffect:()=>{},useRef:value=>({current:value})};
  new Function('require','exports',code)(name=>name==='react'?hookReact:name==='./math-text'?{MathText:({children})=>children}:name.endsWith('.css')?{}:name.includes('workspace-request')?{workspaceFetch:()=>{throw Error('Rendering must not fetch')}}:require(name),mod.exports);
- return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{spaceId:'test',locale:'en',demo:true,refreshKey:'',scanStatus:'',blocked:'',resume,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{}}));
+ return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{spaceId:'test',locale:'en',demo:true,refreshKey:'',scanStatus:'',blocked:'',resume,excludedReadingIds,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{}}));
 }
 const paper=id=>({id,title:id,whyEn:'Saved reason',focusEn:'Saved focus',checkEn:'Saved check'});
 const goal={id:'g',trackId:'t',question:'Current question',status:'active',monitoringStatus:'active'};
+test('Saved feedback removes stale question cards immediately while replacement readings load',()=>{
+ const result={goal,papers:[paper('Ignored paper'),paper('Deferred paper'),paper('Available paper')]};
+ const html=render(result,null,['Ignored paper','Deferred paper']);
+ assert.doesNotMatch(html,/Ignored paper|Deferred paper/);
+ assert.match(html,/Available paper/);assert.match(html,/Saved focus/);
+ const empty=render(result,null,result.papers.map(p=>p.id));
+ assert.match(empty,/No further preset papers/);
+ assert.doesNotMatch(empty,/Continue your current reading|Available paper/);
+ assert.match(render(result,null,[]),/Ignored paper/,'withdrawn feedback can restore the card');
+});
 test('An in-progress paper appears once in the shared research panel; queued reading stays accessible',()=>{
  const html=render({goal,papers:[paper('In-progress paper'),paper('Next paper')]},{id:'In-progress paper',title:'In-progress paper',readingNote:'Original note'});
  assert.equal(html.split('In-progress paper').length-1,1);

@@ -31,6 +31,18 @@ test('Question entry persists an owned idempotent problem and exposes only verif
   ]);
   await sql([insert('paper_reading_progress',{id:'read-progress',space_id:'entry',paper_id:'read',status:'read'}),insert('paper_feedback',{id:'ignore',space_id:'entry',paper_id:'ignored',feedback:'not_relevant'})]);
   assert.deepEqual((await request('/api/research-entry?spaceId=entry')).papers.map(p=>p.id),['related']);
+  // Exercise the real feedback and library handlers; no direct DB writes stand
+  // in for user actions and no model is called by these isolated requests.
+  await request('/api/feedback',{spaceId:'entry',paperId:'related',kind:'not_relevant',value:true});
+  assert.deepEqual((await request('/api/research-entry?spaceId=entry')).papers,[]);
+  await request('/api/feedback',{spaceId:'entry',paperId:'related',kind:'not_relevant',value:false});
+  assert.deepEqual((await request('/api/research-entry?spaceId=entry')).papers.map(p=>p.id),['related']);
+  await request('/api/feedback',{spaceId:'entry',paperId:'related',kind:'save',value:true});
+  assert.deepEqual((await request('/api/research-entry?spaceId=entry')).papers.map(p=>p.id),['related'],'saving is not reading');
+  const reading=await mf.dispatchFetch('http://localhost/api/library',{method:'PATCH',headers:{cookie:`pi_anonymous_workspace=${owner}`,'Content-Type':'application/json'},body:JSON.stringify({spaceId:'entry',paperId:'related',status:'read',note:'Isolated reading note; not a real evaluation.'})});
+  assert.equal(reading.status,200,await reading.text());
+  assert.deepEqual((await request('/api/research-entry?spaceId=entry')).papers,[]);
+  assert.equal((await sql([{sql:"SELECT note FROM paper_reading_progress WHERE paper_id='related'"}]))[0].results[0].note,'Isolated reading note; not a real evaluation.');
   const newer=await request('/api/research-entry',{...body,question:'Which assumptions connect concentration to isoperimetric bounds?'});
   assert.notEqual(newer.goal.id,first.goal.id);
   assert.equal((await request('/api/research-entry',body)).goal.id,first.goal.id,'retry returns requested goal, never another recent goal');

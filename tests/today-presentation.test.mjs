@@ -1,7 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { briefPaperEntries, remainingBriefEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, resumeReading } from '../lib/today-presentation.mjs';
+import { briefPaperEntries, remainingBriefEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, resumeReading, readingQueueExclusions, nextReadingPaperId } from '../lib/today-presentation.mjs';
+
+test('Reading continuation skips persisted negative feedback, deferrals and finished reading but preserves saved unread work', () => {
+  const papers = [
+    {id:'ignored',feedback:'not_relevant',readingStatus:'reading'},
+    {id:'later',userState:'snoozed',readingStatus:'reading'},
+    {id:'future',snoozedUntil:'2026-10-01'},
+    {id:'finished',readingStatus:'read'},
+    {id:'mastered',readingStatus:'mastered'},
+    {id:'cited',readingStatus:'cited'},
+    {id:'saved',saved:true,userState:'accepted',readingStatus:'unread'},
+    {id:'useful',feedback:'relevant',readingStatus:'reading'},
+  ];
+  const before=structuredClone(papers);
+  const excluded=readingQueueExclusions(papers,Date.parse('2026-09-28'));
+  assert.deepEqual(excluded,['ignored','later','future','finished','mastered','cited']);
+  assert.equal(nextReadingPaperId(['ignored','later','finished','saved','useful'],[],excluded),'saved');
+  assert.equal(nextReadingPaperId(['ignored','saved'],[papers[7]],excluded,['saved']),'useful');
+  assert.equal(nextReadingPaperId(['ignored'],[],excluded),undefined);
+  assert.equal(resumeReading(papers)?.id,'useful');
+  assert.deepEqual(papers,before,'presentation preserves original notes, feedback and ordering');
+});
+
+test('Next reading excludes both the open paper and the feedback receipt subject, with question readings first',()=>{
+  assert.equal(nextReadingPaperId(['receipt','open','question-next'],[{id:'fallback'}],[],['open','receipt']),'question-next');
+  assert.equal(nextReadingPaperId(['receipt','open'],[{id:'fallback'}],[],['open','receipt']),'fallback');
+  assert.equal(nextReadingPaperId(['from-question-api'],[],[],[]),'from-question-api','API results outside the bounded history remain readable');
+  const expired={id:'expired',userState:'seen',snoozedUntil:'2026-09-20'};
+  assert.deepEqual(readingQueueExclusions([expired],Date.parse('2026-09-28')),[]);
+});
 
 test('Featured reading removes duplicate cards without losing saved brief guidance or history', () => {
   const entries = briefPaperEntries(['a','b','c'],[{id:'a'},{id:'b'},{id:'c'}]);

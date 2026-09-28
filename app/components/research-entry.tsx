@@ -7,10 +7,11 @@ import './research-entry.css';
 type Goal = {id:string;trackId:string;question:string;status:string;monitoringStatus:string};
 type Reading = {id:string;title:string;whyZh:string;whyEn:string;focusZh:string;focusEn:string;checkZh:string;checkEn:string};
 type Result = {goal:Goal|null;papers:Reading[]};
-export function ResearchEntry({spaceId,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList}: {
+export function ResearchEntry({spaceId,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[]}: {
  spaceId:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
  onDiscover:()=>void;onRead:(id:string)=>void;onRoute:(id:string)=>void;onSaved:()=>void;onReadingList:(ids:string[])=>void;
  resume:{id:string;title:string;readingNote:string}|null;onProgress:()=>void;
+ excludedReadingIds?:string[];
 }) {
  const zh=locale==='zh';
  const [result,setResult]=useState<Result|null>(null),[editing,setEditing]=useState(false),[question,setQuestion]=useState(''),[seed,setSeed]=useState('');
@@ -41,7 +42,8 @@ export function ResearchEntry({spaceId,locale,demo,refreshKey,scanStatus,blocked
  };
  const goal=result?.goal;
  const inactive=Boolean(goal&&(goal.status!=='active'||goal.monitoringStatus!=='active'));
- const queued=result?.papers.filter(p=>p.id!==resume?.id)||[];
+ const visiblePapers=result?.papers.filter(p=>!excludedReadingIds.includes(p.id))||[];
+ const queued=visiblePapers.filter(p=>p.id!==resume?.id);
  const continuation=resume&&<article className="pi-question-resume" aria-label={zh?'继续阅读':'Continue reading'}>
   <div><p className="pi-entry-eyebrow">{zh?'正在读':'IN PROGRESS'}</p><h4><MathText inline>{resume.title}</MathText></h4>{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
   <button className="primary" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续阅读与笔记':'Continue reading & notes'} →</button>
@@ -70,7 +72,7 @@ export function ResearchEntry({spaceId,locale,demo,refreshKey,scanStatus,blocked
     {index===0&&!resume&&<><p><span>{zh?'先看哪里':'Start with'}</span><MathText inline>{(zh?p.focusZh:p.focusEn)||(zh?'先读摘要与主要结论，再查对应假设。':'Read the abstract and main result, then check the assumptions.')}</MathText></p>
     <p><span>{zh?'读后核对':'Check next'}</span><MathText inline>{(zh?p.checkZh:p.checkEn)||(zh?'记录哪些条件适用于你的问题，哪些仍需验证。':'Record which conditions apply to your question and what remains unverified.')}</MathText></p></>}
     <button className="pi-first-read" type="button" onClick={()=>onRead(p.id)}>{zh?'阅读与笔记':'Read & take notes'} →</button>
-   </li>)}</ol>:<p className="pi-question-empty">{result!.papers.length?(zh?'先继续当前阅读，后续关联材料会出现在这里。':'Continue your current reading. Further related papers will appear here.'):demo?(zh?'当前问题没有其他预设材料。':'No further preset papers for this question.'):(zh?'暂无新的已核验关联文献。已有论文和笔记仍可继续阅读。':'No new verified related papers yet. Existing papers and notes remain available.')}</p>}
+   </li>)}</ol>:<p className="pi-question-empty">{visiblePapers.length?(zh?'先继续当前阅读，后续关联材料会出现在这里。':'Continue your current reading. Further related papers will appear here.'):demo?(zh?'当前问题没有其他预设材料。':'No further preset papers for this question.'):(zh?'暂无新的已核验关联文献。已有论文和笔记仍可继续阅读。':'No new verified related papers yet. Existing papers and notes remain available.')}</p>}
    {!demo&&(scanStatus||blocked)&&<button type="button" className="pi-discovery-link" onClick={onProgress}>{zh?'查看发现进度与恢复操作':'View discovery progress & recovery'} →</button>}
    <footer>{!demo&&<button type="button" className="primary" disabled={!!blocked||inactive} onClick={onDiscover}>{zh?'查找相关文献':'Find related papers'}</button>}{goal.trackId&&<button type="button" onClick={()=>onRoute(goal.trackId)}>{zh?'查看研究路线':'Open research route'}</button>}{demo&&!goal.trackId&&<button type="button" onClick={()=>{void fetch('/api/research-entry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({spaceId,action:'reset'})}).then(r=>{if(!r.ok)throw Error();return r.json()}).then(data=>{if(alive.current){generation.current++;chosen.current='';setResult(data);readingCallback.current(data.papers.map((p:Reading)=>p.id));setSaved(false)}}).catch(()=>{if(alive.current)setReadError(true)})}}>{zh?'恢复示例问题':'Restore sample question'}</button>}{!demo&&blocked&&<small>{blocked}</small>}</footer>
   </>}
