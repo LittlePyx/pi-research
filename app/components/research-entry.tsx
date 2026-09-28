@@ -60,36 +60,37 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
  const homeReadings=[...queued,...fallbackPapers].filter((p,i,a)=>p.id!==resume?.id&&!excludedReadingIds.includes(p.id)&&a.findIndex(x=>x.id===p.id)===i);
  const lead=resume?null:homeReadings[0];
  const upNext=homeReadings.slice(resume?0:1,resume?3:4);
+ const showHomeReading=mode==='home'&&Boolean(resume||homeReadings.length);
  const continuation=resume&&<article className={`pi-question-resume ${mode==="home"?"pi-reading-poster":""}`} aria-label={zh?'继续阅读':'Continue reading'}>
   <div className="pi-poster-copy"><p className="pi-entry-eyebrow">{zh?'继续你的阅读':'CONTINUE READING'}</p><h4><MathText inline>{resume.title}</MathText></h4>{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
   {mode==="home"&&<PaperFigure key={spaceId+resume.id} spaceId={spaceId} paperId={resume.id} demo={demo} locale={locale}/>}
   <button className="primary" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续阅读与笔记':'Continue reading & notes'} →</button>
  </article>;
  return <section className={`pi-question-entry ${mode==="home"?"pi-home-entry":""}`} aria-label={zh?'问题与第一批阅读':'Question and first reading'}>
-  <header><h2>{goal?(zh?'当前研究':'Current research'):(zh?'从问题开始阅读':'Read with a question')}</h2>{goal&&!editing&&<button type="button" onClick={()=>{setQuestion('');setSeed('');setEditing(true);setSaved(false)}}>{demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}</header>
+  <header><h2>{goal?(zh?'当前研究':'Current research'):showHomeReading?(zh?'为你推荐':'For your research'):(zh?'从问题开始阅读':'Read with a question')}</h2>{(goal||showHomeReading)&&!editing&&<button type="button" onClick={()=>{setQuestion('');setSeed('');setEditing(true);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}</header>
   {readError&&<p role="alert">{zh?'研究问题暂未载入，已有内容保留。':'Could not load the research question; saved content is preserved.'} <button type="button" onClick={()=>setRetry(n=>n+1)}>{zh?'重试':'Retry'}</button></p>}
   {!result&&!readError&&<p role="status">{zh?'正在读取研究问题…':'Loading your question…'}</p>}
-  {(!goal||editing)&&continuation}
-  {(editing||result&&!goal)&&<form onSubmit={event=>void submit(event)}>
+  {(editing||!goal&&!showHomeReading)&&continuation}
+  {(editing||result&&!goal&&!showHomeReading)&&<form onSubmit={event=>void submit(event)}>
    {spaceName&&<p className="pi-question-status">{zh?'保存到：':'Save to: '}{spaceName}</p>}
    <label>{zh?'你想弄清什么问题？':'What do you want to understand?'}<textarea rows={3} minLength={10} maxLength={520} required disabled={busy} value={question} onChange={e=>setQuestion(e.target.value)} placeholder={zh?'例如：随机局部化中的协方差控制如何影响 KLS 谱隙界？':'For example: how does covariance control in stochastic localization affect KLS bounds?'}/></label>
    <label>{zh?'起点论文（选填）':'Starting paper (optional)'}<input maxLength={300} disabled={busy} value={seed} onChange={e=>setSeed(e.target.value)} placeholder={zh?'论文题名或 DOI，作为待核对线索':'Title or DOI, used as an unverified lead'}/></label>
    <p>{demo?(zh?'演示可保存本次体验的问题，不执行检索；自定义问题不会套用预设阅读结果。':'The demo keeps your question for this session without searching. Custom questions do not inherit preset results.'):(zh?'确认后加入本空间研究目标，用于后续检索与评审；先找文献，再核对假设、方法与局限。':'Confirm to add a research goal for future discovery and review, then check papers’ assumptions, methods and limitations.')}</p>
    {error&&<p role="alert">{error}</p>}
-   <footer><button className="primary" disabled={busy||question.trim().length<10} type="submit">{busy?(zh?'正在保存…':'Saving…'):demo?(zh?'保存演示问题':'Save demo question'):blocked?(zh?'确认问题':'Confirm question'):(zh?'确认问题并查找文献':'Confirm & find papers')}</button>{goal&&<button type="button" disabled={busy} onClick={()=>setEditing(false)}>{zh?'取消':'Cancel'}</button>}</footer>
+   <footer><button className="primary" disabled={busy||question.trim().length<10} type="submit">{busy?(zh?'正在保存…':'Saving…'):demo?(zh?'保存演示问题':'Save demo question'):blocked?(zh?'确认问题':'Confirm question'):(zh?'确认问题并查找文献':'Confirm & find papers')}</button>{(goal||showHomeReading)&&<button type="button" disabled={busy} onClick={()=>setEditing(false)}>{zh?'取消':'Cancel'}</button>}</footer>
   </form>}
-  {goal&&!editing&&(mode==="home"?<>
-   <button className="pi-home-question" title={goal.question} type="button" onClick={()=>onRoute(goal.trackId)}><span>{goal.question}</span><span aria-hidden="true">↗</span></button>
+  {(goal||showHomeReading)&&!editing&&(mode==="home"?<>
+   {goal&&<button className="pi-home-question" title={goal.question} type="button" onClick={()=>onRoute(goal.trackId)}><span>{goal.question}</span><span aria-hidden="true">↗</span></button>}
    {(inactive||demo)&&<p className="pi-question-status">{demo?(zh?'演示材料':'Sample materials'):(zh?'此问题已暂停或结束':'This problem is paused or resolved')}</p>}
    {continuation}
    {lead&&<article className="pi-home-lead pi-reading-poster"><div className="pi-poster-copy"><p className="pi-entry-eyebrow">{zh?'今日精选 / 为你的问题而选':'SELECTED FOR YOUR RESEARCH'}</p><h3><MathText inline>{lead.title}</MathText></h3><p className="pi-home-reason"><MathText inline>{zh?lead.whyZh:lead.whyEn}</MathText></p></div><PaperFigure key={spaceId+lead.id} spaceId={spaceId} paperId={lead.id} demo={demo} locale={locale}/><button className="primary" type="button" onClick={()=>onRead(lead.id)}>{zh?'开始阅读':'Start reading'} →</button></article>}
    {!resume&&!lead&&<p className="pi-question-empty">{zh?'正在为这个问题寻找值得读的材料。已有论文仍可在论文库查看。':'Looking for useful reading for this question. Existing papers remain in your library.'}</p>}
    {upNext.length>0&&<section className="pi-home-next"><header><h3>{zh?'接下来读':'Up next'}</h3><button type="button" onClick={onAll}>{zh?'查看全部':'View all'} →</button></header><ol>{upNext.map(p=><li key={p.id}><button type="button" onClick={()=>onRead(p.id)}><MathText inline>{p.title}</MathText><span aria-hidden="true">↗</span></button><p><MathText inline>{zh?p.whyZh:p.whyEn}</MathText></p></li>)}</ol></section>}
-  </>:mode==="discovery"?<>
+  </>:mode==="discovery"&&goal?<>
    <h3 className="pi-current-question"><MathText inline>{goal.question}</MathText></h3>
    {!demo&&<ProblemDiscovery key={spaceId+goal.id} spaceId={spaceId} problemId={goal.id} locale={locale} onRead={onRead} expanded/>}
    {demo&&<p>{zh?'演示空间不执行检索。':'The demo does not run searches.'}</p>}
-  </>:<>
+  </>:goal?<>
    <h3 className="pi-current-question"><MathText inline>{goal.question}</MathText></h3>
    {spaceName&&<p className="pi-question-status">{zh?'研究空间：':'Research space: '}{spaceName}</p>}
    <p className="pi-question-status" role="status">{demo?(zh?'示例流程 · 未执行检索或模型评审':'Example flow · no search or model review'):inactive?(zh?'该问题已暂停或结束。':'This question is paused or resolved.'):result.papers.length>0?(zh?'已有关联阅读 · 根据当前问题的评审结果推荐':'Related readings are available from reviews linked to this question'):saved?(zh?'问题已保存，等待已核验的关联阅读。':'Question saved; awaiting verified related readings.'): (zh?'已确认的研究目标 · 最多展示 5 篇关联阅读':'Confirmed research goal · up to 5 related readings')}</p>
@@ -106,6 +107,6 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
 
    {!demo&&(scanStatus||blocked)&&<button type="button" className="pi-discovery-link" onClick={onProgress}>{zh?'查看发现进度与恢复操作':'View discovery progress & recovery'} →</button>}
    <footer>{!demo&&<button type="button" className="primary" disabled={!!blocked||inactive} onClick={onDiscover}>{zh?'查找相关文献':'Find related papers'}</button>}{goal.trackId&&<button type="button" onClick={()=>onRoute(goal.trackId)}>{zh?'查看研究路线':'Open research route'}</button>}{demo&&!goal.trackId&&<button type="button" onClick={()=>{void fetch('/api/research-entry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({spaceId,action:'reset'})}).then(r=>{if(!r.ok)throw Error();return r.json()}).then(data=>{if(alive.current){generation.current++;chosen.current='';setResult(data);readingCallback.current(data.papers.map((p:Reading)=>p.id));setSaved(false)}}).catch(()=>{if(alive.current)setReadError(true)})}}>{zh?'恢复示例问题':'Restore sample question'}</button>}{!demo&&blocked&&<small>{blocked}</small>}</footer>
-  </>)}
+  </>:null)}
  </section>;
 }

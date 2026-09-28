@@ -83,3 +83,27 @@
 }
 
 .pi-today-navigation a { text-decoration:none; }
+
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice { display:flex; align-items:flex-start; gap:20px; padding:28px 30px; margin:0 0 28px; background:#e7efeb; border:1px solid #c5d6cd; border-left:4px solid #3f6e60; border-radius:6px; }
+.pi-discovery-message { flex:1; min-width:0; }
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice h2 { margin:0 0 10px; font-size:23px; line-height:1.35; color:#234c41; font-weight:600; }
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice p { margin:0; font-size:15px; line-height:1.7; color:#45645b; }
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice .pi-discovery-phase { margin-top:16px; font-weight:600; font-size:14px; }
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice .pi-discovery-counts { margin-top:6px; font-size:13px; }
+.pi-discovery-indicator { display:grid; place-items:center; flex-shrink:0; width:32px; height:32px; border:1px solid #9fbbaf; border-radius:50%; color:#315b4f; }
+.pi-discovery-indicator span { width:10px; height:10px; background:#3f6e60; border-radius:50%; animation:pi-discovery-pulse 1.8s ease-in-out infinite; }
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice>a { align-self:center; display:inline-flex; align-items:center; gap:12px; min-height:44px; padding:8px 16px; border:1px solid #9fbbaf; border-radius:4px; white-space:nowrap; font-size:14px; font-weight:600; color:#285143; text-decoration:none; background:#f7faf8; }
+.pi-discovery-notice>a:hover { background:white; }
+.pi-discovery-notice>a:focus-visible { outline:2px solid #315d55; outline-offset:3px; }
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice.is-compact { padding:18px 22px; gap:16px; }
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice.is-compact h2 { font-size:17px; margin-bottom:4px; }
+.v2-app.pi-workspace .pi-focus-today .pi-discovery-notice.is-error { background:#faf4e9; border-color:#d9c9a9; }
+.pi-discovery-notice.is-error .pi-discovery-indicator { border-color:#c7ae7e; color:#80632d; }
+@keyframes pi-discovery-pulse { 50% { opacity:.35; transform:scale(.8); } }
+@media(prefers-reduced-motion:reduce) { .pi-discovery-indicator span { animation:none; } }
+@media(max-width:640px) {
+ .v2-app.pi-workspace .pi-focus-today .pi-discovery-notice { flex-wrap:wrap; gap:12px; padding:22px 18px; }
+ .v2-app.pi-workspace .pi-focus-today .pi-discovery-notice h2 { font-size:20px; }
+ .pi-discovery-message { flex-basis:calc(100% - 44px); }
+ .v2-app.pi-workspace .pi-focus-today .pi-discovery-notice>a { margin-left:44px; }
+}

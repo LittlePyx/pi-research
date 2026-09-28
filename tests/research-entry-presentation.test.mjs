@@ -19,6 +19,13 @@ function render(result,resume,excludedReadingIds=[],demo=true,mode="reading",fal
 }
 const paper=id=>({id,title:id,whyEn:'Saved reason',focusEn:'Saved focus',checkEn:'Saved check'});
 const goal={id:'g',trackId:'t',question:'Current question',status:'active',monitoringStatus:'active'};
+test('home shows discovered reading even before a research question is supplied',()=>{
+ const html=render({goal:null,papers:[]},null,[],false,'home',[paper('Discovered paper')]);
+ assert.match(html,/Discovered paper/);assert.match(html,/Add a research question/);assert.match(html,/Start reading/);assert.doesNotMatch(html,/<form/);
+ const resumed=render({goal:null,papers:[]},{id:'resume',title:'Saved reading',readingNote:'Original note'},[],false,'home');
+ assert.equal(resumed.split('Saved reading').length-1,1);assert.match(resumed,/Original note/);
+ assert.match(render({goal:null,papers:[]},null,[],false,'home'),/<form/);
+});
 test('Saved feedback removes stale question cards immediately while replacement readings load',()=>{
  const result={goal,papers:[paper('Ignored paper'),paper('Deferred paper'),paper('Available paper')]};
  const html=render(result,null,['Ignored paper','Deferred paper']);
