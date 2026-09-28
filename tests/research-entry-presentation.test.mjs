@@ -10,12 +10,12 @@ const require=createRequire(import.meta.url);
 const code=ts.transpileModule(readFileSync(new URL('../app/components/research-entry.tsx',import.meta.url),'utf8'),{
  compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},
 }).outputText;
-function render(result,resume,excludedReadingIds=[],demo=true,mode="reading",fallbackPapers=[]){
+function render(result,resume,excludedReadingIds=[],demo=true,mode="reading",fallbackPapers=[],extra={}){
  let stateIndex=0;
  const mod={exports:{}};
  const hookReact={...React,useState:initial=>[stateIndex++===0?result:initial,()=>{}],useEffect:()=>{},useRef:value=>({current:value})};
  new Function('require','exports',code)(name=>name==='react'?hookReact:name==='./paper-figure'?{PaperFigure:()=>null}:name==='./problem-discovery'?{ProblemDiscovery:()=>null}:name==='./math-text'?{MathText:({children})=>children}:name.endsWith('.css')?{}:name.includes('workspace-request')?{workspaceFetch:()=>{throw Error('Rendering must not fetch')}}:require(name),mod.exports);
- return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{mode,fallbackPapers,spaceId:'test',locale:'en',demo,refreshKey:'',scanStatus:'',blocked:'',resume,excludedReadingIds,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{}}));
+ return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{...extra,mode,fallbackPapers,spaceId:'test',locale:'en',demo,refreshKey:'',scanStatus:'',blocked:'',resume,excludedReadingIds,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{}}));
 }
 const paper=id=>({id,title:id,whyEn:'Saved reason',focusEn:'Saved focus',checkEn:'Saved check'});
 const goal={id:'g',trackId:'t',question:'Current question',status:'active',monitoringStatus:'active'};
@@ -68,3 +68,15 @@ test('home has one lead and at most three deduplicated next papers without revie
  const resume=render({goal,papers:[paper('First'),paper('Second')]},{id:'First',title:'First',readingNote:'User note'},[],false,'home');
  assert.equal(resume.split('First').length-1,1);assert.match(resume,/User note/);assert.doesNotMatch(resume,/START HERE/);
 });
+
+ test('home brief remains visible with and without selected reading, ahead of the empty form',()=>{
+ const extra={homeBrief:React.createElement('section',null,'Persistent discovery brief'),bibliography:[{id:'Cover paper',venue:'Verified Journal',authors:'Actual Author',publishedAt:'2024-01-01'}]};
+ const selected=render({goal,papers:[paper('Cover paper'),paper('Next paper')]},null,[],false,'home',[],extra);
+ assert.equal(selected.split('Persistent discovery brief').length-1,1);
+ assert.ok(selected.indexOf('Cover paper')<selected.indexOf('Persistent discovery brief'));
+ assert.ok(selected.indexOf('Persistent discovery brief')<selected.indexOf('Up next'));
+ assert.match(selected,/Verified Journal · 2024/);assert.match(selected,/Actual Author/);
+ const empty=render({goal:null,papers:[]},null,[],false,'home',[],extra);
+ assert.ok(empty.indexOf('Persistent discovery brief')<empty.indexOf('<form'));
+ assert.doesNotMatch(render({goal,papers:[]},null,[],false,'reading',[],extra),/Persistent discovery brief/);
+ });

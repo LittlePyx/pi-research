@@ -18,3 +18,7 @@ test('a run with no material shows an honest brief instead of fictional paper ca
  assert.match(render({active:true}),/仍在进行/);assert.match(render({}),/暂未载入可展示的文献条目/);assert.doesNotMatch(render({}),/<li/);
  assert.match(render({demo:true}),/演示材料/);
 });
+
+test('brief alongside selected reading does not claim selection is empty',()=>{
+ const html=render({hasSelection:true});assert.match(html,/精选之外/);assert.doesNotMatch(html,/当前没有可展示的精选/);
+});

@@ -18,11 +18,12 @@ function checkedResult(value:unknown, requireGoal=false):Result {
  if(data.papers.some(p=>!p||typeof p.id!=='string'||typeof p.title!=='string'))throw Error('Invalid reading response');
  return data;
 }
-export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll}: {
+export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll,homeBrief,bibliography=[]}: {
  spaceId:string;spaceName?:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
  onDiscover:()=>void;onRead:(id:string)=>void;onRoute:(id:string)=>void;onSaved:()=>void;onReadingList:(ids:string[])=>void;
  resume:{id:string;title:string;readingNote:string}|null;onProgress:()=>void;
  excludedReadingIds?:string[];
+ homeBrief?:React.ReactNode;bibliography?:{id:string;venue:string;authors:string;publishedAt:string|null}[];
  mode?:"home"|"reading"|"discovery";fallbackPapers?:Reading[];onAll?:()=>void;
 }) {
  const zh=locale==='zh';
@@ -61,12 +62,16 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
  const lead=resume?null:homeReadings[0];
  const upNext=homeReadings.slice(resume?0:1,resume?3:4);
  const showHomeReading=mode==='home'&&Boolean(resume||homeReadings.length);
+ const details=bibliography.find(p=>p.id===(resume?.id||lead?.id));
+ const metadata=details&&<p className="pi-poster-bibliography"><span>{details.venue}{details.publishedAt?' · '+details.publishedAt.slice(0,4):''}</span><span>{details.authors}</span></p>;
+ const masthead=<div className="pi-poster-masthead"><span>PI RESEARCH</span><span>{resume?(zh?'继续阅读':'READING NOTES'):(zh?'精选阅读':'SELECTED READING')}</span></div>;
  const continuation=resume&&<article className={`pi-question-resume ${mode==="home"?"pi-reading-poster":""}`} aria-label={zh?'继续阅读':'Continue reading'}>
-  <div className="pi-poster-copy"><p className="pi-entry-eyebrow">{zh?'继续你的阅读':'CONTINUE READING'}</p><h4><MathText inline>{resume.title}</MathText></h4>{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
+  {mode==="home"&&masthead}<div className="pi-poster-copy">{mode!=="home"&&<p className="pi-entry-eyebrow">{zh?'继续你的阅读':'CONTINUE READING'}</p>}<h4><MathText inline>{resume.title}</MathText></h4>{mode==="home"&&metadata}{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
   {mode==="home"&&<PaperFigure key={spaceId+resume.id} spaceId={spaceId} paperId={resume.id} demo={demo} locale={locale}/>}
   <button className="primary" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续阅读与笔记':'Continue reading & notes'} →</button>
  </article>;
  return <section className={`pi-question-entry ${mode==="home"?"pi-home-entry":""}`} aria-label={zh?'问题与第一批阅读':'Question and first reading'}>
+  {mode==="home"&&(!showHomeReading||editing)&&homeBrief}
   <header><h2>{goal?(zh?'当前研究':'Current research'):showHomeReading?(zh?'为你推荐':'For your research'):(zh?'从问题开始阅读':'Read with a question')}</h2>{(goal||showHomeReading)&&!editing&&<button type="button" onClick={()=>{setQuestion('');setSeed('');setEditing(true);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}</header>
   {readError&&<p role="alert">{zh?'研究问题暂未载入，已有内容保留。':'Could not load the research question; saved content is preserved.'} <button type="button" onClick={()=>setRetry(n=>n+1)}>{zh?'重试':'Retry'}</button></p>}
   {!result&&!readError&&<p role="status">{zh?'正在读取研究问题…':'Loading your question…'}</p>}
@@ -83,8 +88,9 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
    {goal&&<button className="pi-home-question" title={goal.question} type="button" onClick={()=>onRoute(goal.trackId)}><span>{goal.question}</span><span aria-hidden="true">↗</span></button>}
    {(inactive||demo)&&<p className="pi-question-status">{demo?(zh?'演示材料':'Sample materials'):(zh?'此问题已暂停或结束':'This problem is paused or resolved')}</p>}
    {continuation}
-   {lead&&<article className="pi-home-lead pi-reading-poster"><div className="pi-poster-copy"><p className="pi-entry-eyebrow">{zh?'今日精选 / 为你的问题而选':'SELECTED FOR YOUR RESEARCH'}</p><h3><MathText inline>{lead.title}</MathText></h3><p className="pi-home-reason"><MathText inline>{zh?lead.whyZh:lead.whyEn}</MathText></p></div><PaperFigure key={spaceId+lead.id} spaceId={spaceId} paperId={lead.id} demo={demo} locale={locale}/><button className="primary" type="button" onClick={()=>onRead(lead.id)}>{zh?'开始阅读':'Start reading'} →</button></article>}
+   {lead&&<article className="pi-home-lead pi-reading-poster">{masthead}<div className="pi-poster-copy"><h3><MathText inline>{lead.title}</MathText></h3>{metadata}<p className="pi-home-reason"><MathText inline>{zh?lead.whyZh:lead.whyEn}</MathText></p></div><PaperFigure key={spaceId+lead.id} spaceId={spaceId} paperId={lead.id} demo={demo} locale={locale}/><button className="primary" type="button" onClick={()=>onRead(lead.id)}>{zh?'开始阅读':'Start reading'} →</button></article>}
    {!resume&&!lead&&<p className="pi-question-empty">{zh?'正在为这个问题寻找值得读的材料。已有论文仍可在论文库查看。':'Looking for useful reading for this question. Existing papers remain in your library.'}</p>}
+   {showHomeReading&&homeBrief}
    {upNext.length>0&&<section className="pi-home-next"><header><h3>{zh?'接下来读':'Up next'}</h3><button type="button" onClick={onAll}>{zh?'查看全部':'View all'} →</button></header><ol>{upNext.map(p=><li key={p.id}><button type="button" onClick={()=>onRead(p.id)}><MathText inline>{p.title}</MathText><span aria-hidden="true">↗</span></button><p><MathText inline>{zh?p.whyZh:p.whyEn}</MathText></p></li>)}</ol></section>}
   </>:mode==="discovery"&&goal?<>
    <h3 className="pi-current-question"><MathText inline>{goal.question}</MathText></h3>
