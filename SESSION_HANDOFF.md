@@ -1,6 +1,14 @@
 # Pi Research 新任务交接（2026-09-10）
 
-## 2026-09-28：优先修复真实任务收尾与失败恢复（进行中）
+## 2026-09-28：评审保存与阅读日历冲突
+
+- v301于05:52:57 UTC发布（源码0cbf171、部署appgdep_6aba00b02ef081918d4772e0c4d7618e，public/环境修订6）。710项全量回归通过，先补await收尾及安全错误分类。05:54:16自然external scheduler日志准确捕获原任务5063b529批量5篇unique_constraint；只读monitor_runs确认已落入error/保留退避至06:09:16，原错明确为reading_calendar_events的(space_id,day,paper_id,kind)唯一约束。这验证了恢复catch已接住，不能称论文交付完成。
+- 根因：日历触发器使用INSERT OR IGNORE，但被外层paper_insights UPSERT更新分支的冲突策略覆盖，重复同日推荐事件导致整个评审批次回滚。原测试只执行普通INSERT/UPDATE，未覆盖正式UPSERT与触发器组合。
+- 新0067自定义Drizzle迁移只替换7个日历触发器，改为触发器INSERT自己显式ON CONFLICT(space_id,day,paper_id,kind) DO NOTHING；新库bootstrap同步。0065/0066及已有事件不改、不删除、不回填，不放松质量门槛，也不通过忽略主评审写入来掩盖错误。
+- 新Miniflare D1测试执行正式persistReviewBatch的SQL，先装旧0065准确复现同一唯一约束且整批另一篇也回滚；再迁移原数据库，原样重试成功、事件ID与最初时间保留、跨北京日期新增一条。同样覆盖浏览/读完UPSERT反复写入、7个触发器的插入/更新、跨空间保护与迁移保留旧事件。
+- 最终完整构建、变更模块lint、711项全量回归通过；发布结果保存于本轮工具记录及outputs/calendar-recovery-release.json。原任务自然退避未清空、未人工重扫，须区分本地根因复现/修复和线上任务最终完成。CUA仍不可用；未做新问题真实验收。邮件、旧自动任务、用户docs/继续保持原约束。
+
+### 本轮先行定位与收尾修复
 
 - 本轮从产品整体核对，基线main 2eb5d1a、线上v300 active/public。最新生产日志每10分钟出现scheduler内部monitor路由D1错误，外层仍HTTP200；准确堆栈落在persistReviewBatch与finalizeMain，不能将外层200视作完成。只读monitor_runs发现任务5063b529仍deep_reviewing；没有人工推进、重扫或修改生产记录。
 - 确定性发现：POST的两条finalizeMain及两条continueAfterFreshLane返回未await，会提前执行finally、停止心跳并释放advance lock，异步异常绕过保存断点与退避的catch。四处改为return await，保留既有租约条件、质量门槛、断点内容和重试策略。
