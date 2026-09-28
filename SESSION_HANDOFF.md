@@ -1,5 +1,11 @@
 # Pi Research 新任务交接（2026-09-10）
 
+## 2026-09-28 接续：初始空间加载与自然恢复验收
+
+- 基线293148c/线上v302 active public一致。06:03检查CUA仍nodeRepl.fetch失败，未手动发起扫描、未提交新研究问题。06:06只读原空间df03c7d2确认保留05:54日历冲突记录、next_run_at=06:09:16；06:04 scheduler外层200只是尚处退避，不能据此称恢复完成。
+- 生产06:02日志发现占位space-info-theory被ResearchMaintenance/EmailSubscription子组件在父空间初始化前请求，产生401/404。今日页给这两个面板及可提前展开的ReadingCalendar沿用现有真实空间/加载成功条件；正式UUID与demo-*均照常显示，不改邮件开关、数据或调度策略。
+- 完整构建、大ResearchApp独立6GB lint及711全量回归通过。新问题真实端到端与视觉验收仍未执行，不把这些回归当模型成功。发布及原任务自然恢复结果另存outputs/workspace-entry-acceptance.json，须依据该记录和最新线上状态接续。
+
 ## 2026-09-28：评审保存与阅读日历冲突
 
 - v301于05:52:57 UTC发布（源码0cbf171、部署appgdep_6aba00b02ef081918d4772e0c4d7618e，public/环境修订6）。710项全量回归通过，先补await收尾及安全错误分类。05:54:16自然external scheduler日志准确捕获原任务5063b529批量5篇unique_constraint；只读monitor_runs确认已落入error/保留退避至06:09:16，原错明确为reading_calendar_events的(space_id,day,paper_id,kind)唯一约束。这验证了恢复catch已接住，不能称论文交付完成。

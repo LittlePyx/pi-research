@@ -6031,12 +6031,12 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             </section>}
 
             {demo && <DemoJourney view={view} locale={locale} space={activeSpace.id} />}
-            <ReadingCalendar key={`calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "today")} />
+            {!workspaceLoadFailed && activeSpaceSupportsLearning && <ReadingCalendar key={`calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "today")} />}
             {historyPapers.length > 0 && !activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-") && <ResearchStart key={activeSpace.id} spaceId={activeSpace.id} locale={locale} onRead={id => void openRoutePaper(id, "today")} onStart={startRecommendedResearch} />}
 
             <QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} />
-            <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
-            <EmailSubscription key={`email:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />
+            {!workspaceLoadFailed && activeSpaceSupportsLearning && <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />}
+            {!workspaceLoadFailed && activeSpaceSupportsLearning && <EmailSubscription key={`email:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />}
 
             {monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
               <summary><span><p className="v2-kicker">7D {locale === "zh" ? "阶段研究回顾" : "RESEARCH REVIEW"}</p><strong>{locale === "zh" ? monitor.weeklyReview.titleZh : monitor.weeklyReview.titleEn}</strong><small>{locale === "zh" ? `来自 ${monitor.weeklyReview.sourceDays} 天真实记录` : `Based on ${monitor.weeklyReview.sourceDays} days of real activity`}</small></span><b>＋</b></summary>
