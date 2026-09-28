@@ -3,6 +3,7 @@ import {useEffect,useRef,useState} from 'react';
 import { workspaceFetch as fetch } from '../../lib/workspace-request';
 import {MathText} from './math-text';
 import './research-entry.css';
+import {PaperFigure} from './paper-figure';
 import {ProblemDiscovery} from './problem-discovery';
 
 type Goal = {id:string;trackId:string;question:string;status:string;monitoringStatus:string};
@@ -59,8 +60,9 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
  const homeReadings=[...queued,...fallbackPapers].filter((p,i,a)=>p.id!==resume?.id&&!excludedReadingIds.includes(p.id)&&a.findIndex(x=>x.id===p.id)===i);
  const lead=resume?null:homeReadings[0];
  const upNext=homeReadings.slice(resume?0:1,resume?3:4);
- const continuation=resume&&<article className="pi-question-resume" aria-label={zh?'继续阅读':'Continue reading'}>
-  <div><p className="pi-entry-eyebrow">{zh?'正在读':'IN PROGRESS'}</p><h4><MathText inline>{resume.title}</MathText></h4>{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
+ const continuation=resume&&<article className={`pi-question-resume ${mode==="home"?"pi-reading-poster":""}`} aria-label={zh?'继续阅读':'Continue reading'}>
+  <div className="pi-poster-copy"><p className="pi-entry-eyebrow">{zh?'继续你的阅读':'CONTINUE READING'}</p><h4><MathText inline>{resume.title}</MathText></h4>{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
+  {mode==="home"&&<PaperFigure key={spaceId+resume.id} spaceId={spaceId} paperId={resume.id} demo={demo} locale={locale}/>}
   <button className="primary" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续阅读与笔记':'Continue reading & notes'} →</button>
  </article>;
  return <section className={`pi-question-entry ${mode==="home"?"pi-home-entry":""}`} aria-label={zh?'问题与第一批阅读':'Question and first reading'}>
@@ -80,7 +82,7 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
    <button className="pi-home-question" title={goal.question} type="button" onClick={()=>onRoute(goal.trackId)}><span>{goal.question}</span><span aria-hidden="true">↗</span></button>
    {(inactive||demo)&&<p className="pi-question-status">{demo?(zh?'演示材料':'Sample materials'):(zh?'此问题已暂停或结束':'This problem is paused or resolved')}</p>}
    {continuation}
-   {lead&&<article className="pi-home-lead"><p className="pi-entry-eyebrow">{zh?'从这篇开始':'START HERE'}</p><h3><MathText inline>{lead.title}</MathText></h3><p className="pi-home-reason"><MathText inline>{zh?lead.whyZh:lead.whyEn}</MathText></p><button className="primary" type="button" onClick={()=>onRead(lead.id)}>{zh?'开始阅读':'Start reading'} →</button></article>}
+   {lead&&<article className="pi-home-lead pi-reading-poster"><div className="pi-poster-copy"><p className="pi-entry-eyebrow">{zh?'今日精选 / 为你的问题而选':'SELECTED FOR YOUR RESEARCH'}</p><h3><MathText inline>{lead.title}</MathText></h3><p className="pi-home-reason"><MathText inline>{zh?lead.whyZh:lead.whyEn}</MathText></p></div><PaperFigure key={spaceId+lead.id} spaceId={spaceId} paperId={lead.id} demo={demo} locale={locale}/><button className="primary" type="button" onClick={()=>onRead(lead.id)}>{zh?'开始阅读':'Start reading'} →</button></article>}
    {!resume&&!lead&&<p className="pi-question-empty">{zh?'正在为这个问题寻找值得读的材料。已有论文仍可在论文库查看。':'Looking for useful reading for this question. Existing papers remain in your library.'}</p>}
    {upNext.length>0&&<section className="pi-home-next"><header><h3>{zh?'接下来读':'Up next'}</h3><button type="button" onClick={onAll}>{zh?'查看全部':'View all'} →</button></header><ol>{upNext.map(p=><li key={p.id}><button type="button" onClick={()=>onRead(p.id)}><MathText inline>{p.title}</MathText><span aria-hidden="true">↗</span></button><p><MathText inline>{zh?p.whyZh:p.whyEn}</MathText></p></li>)}</ol></section>}
   </>:mode==="discovery"?<>
