@@ -83,6 +83,21 @@
 }
 
 .pi-today-navigation a { text-decoration:none; }
+.v2-app.pi-workspace .pi-discovery-brief { background:#fff; border:1px solid #d6dfda; border-top:3px solid #557a6c; border-radius:4px; padding:28px 30px; margin:0 0 28px; }
+.pi-discovery-brief header { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.v2-app.pi-workspace .pi-discovery-brief .pi-brief-eyebrow { font-size:12px; letter-spacing:.1em; color:#627b70; margin:0 0 8px; }
+.v2-app.pi-workspace .pi-discovery-brief h2 { font-size:26px; margin:0; color:#263c34; }
+.pi-discovery-brief header button { min-height:44px; font-size:14px; color:#315d4d; }
+.v2-app.pi-workspace .pi-discovery-brief .pi-brief-summary { font-size:15px; line-height:1.8; margin:20px 0; color:#465c54; }
+.v2-app.pi-workspace .pi-discovery-brief .pi-brief-scope,.pi-brief-empty { font-size:13px; color:#738179; }
+.pi-discovery-brief ol { list-style:none; margin:0; padding:0; }
+.pi-discovery-brief li { border-top:1px solid #e3e8e5; padding:18px 0; }
+.pi-discovery-brief li:last-child { padding-bottom:0; }
+.pi-brief-bibliography { display:flex; flex-wrap:wrap; gap:6px 18px; justify-content:space-between; color:#6a7b72; font-size:12px; line-height:1.6; }
+.v2-app.pi-workspace .pi-discovery-brief .pi-brief-paper { display:flex; align-items:baseline; justify-content:space-between; gap:20px; text-align:left; width:100%; padding:8px 0 0; font-size:18px; line-height:1.5; color:#293f36; background:none; border:0; }
+.pi-brief-paper span:last-child { flex-shrink:0; }
+.pi-discovery-brief button:focus-visible { outline:2px solid #315d55; outline-offset:3px; }
+@media(max-width:640px) { .v2-app.pi-workspace .pi-discovery-brief { padding:22px 20px; }.pi-discovery-brief header { align-items:flex-start; flex-direction:column; gap:8px; }.v2-app.pi-workspace .pi-discovery-brief h2 { font-size:23px; } }
 
 .v2-app.pi-workspace .pi-focus-today .pi-discovery-notice { display:flex; align-items:flex-start; gap:20px; padding:28px 30px; margin:0 0 28px; background:#e7efeb; border:1px solid #c5d6cd; border-left:4px solid #3f6e60; border-radius:6px; }
 .pi-discovery-message { flex:1; min-width:0; }
