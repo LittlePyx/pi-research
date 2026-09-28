@@ -44,12 +44,12 @@
 /* A visible, persistent destination bar; the selected page stays in context. */
 .v2-app.pi-workspace .pi-today-navigation { display:flex; align-items:stretch; gap:24px; border-bottom:1px solid #cbd5d8; margin:24px 0 30px; }
 .pi-today-tabs { display:flex; gap:28px; min-width:0; flex:1; }
-.v2-app.pi-workspace .pi-today-navigation button { position:relative; display:inline-flex; align-items:center; justify-content:center; min-height:52px; padding:0 4px; border:0; border-radius:0; background:transparent; color:#68777e; font-size:15px; white-space:nowrap; cursor:pointer; }
-.v2-app.pi-workspace .pi-today-navigation button:hover { color:#224b4c; background:#e8eeee; }
-.v2-app.pi-workspace .pi-today-navigation button[aria-current=page] { color:#204b48; font-weight:700; }
-.pi-today-navigation button[aria-current=page]::after { content:''; position:absolute; bottom:-1px; left:0; right:0; height:3px; background:#315d55; }
+.v2-app.pi-workspace .pi-today-navigation :is(button,a) { position:relative; display:inline-flex; align-items:center; justify-content:center; min-height:52px; padding:0 4px; border:0; border-radius:0; background:transparent; color:#68777e; font-size:15px; white-space:nowrap; cursor:pointer; }
+.v2-app.pi-workspace .pi-today-navigation :is(button,a):hover { color:#224b4c; background:#e8eeee; }
+.v2-app.pi-workspace .pi-today-navigation :is(button,a)[aria-current=page] { color:#204b48; font-weight:700; }
+.pi-today-navigation :is(button,a)[aria-current=page]::after { content:''; position:absolute; bottom:-1px; left:0; right:0; height:3px; background:#315d55; }
 .pi-today-settings { gap:8px; }
-.pi-today-navigation button:focus-visible { outline:2px solid #315d55; outline-offset:3px; }
+.pi-today-navigation :is(button,a):focus-visible { outline:2px solid #315d55; outline-offset:3px; }
 .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-reading-poster { position:relative; display:grid; grid-template-columns:minmax(0,1fr); gap:28px; padding:44px 44px 36px; border:0; border-top:4px solid #afc6b8; border-radius:4px; background:#203f40; color:#f6f5ee; overflow:hidden; box-shadow:0 12px 30px -24px #15373880; }
 .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-reading-poster:has(.pi-poster-figure) { grid-template-columns:minmax(0,1.15fr) minmax(230px,.85fr); column-gap:36px; }
 .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-reading-poster .pi-entry-eyebrow { font-size:12px; font-weight:500; letter-spacing:.15em; color:#c0d5cc; margin:0 0 26px; }
@@ -70,8 +70,8 @@
 .pi-figure-dialog .pi-figure-close { display:block; margin-left:auto; min-width:44px; min-height:44px; font-size:24px; }
 @media(max-width:700px) {
  .v2-app.pi-workspace .pi-today-navigation { gap:8px; margin:20px 0 24px; }
- .pi-today-tabs { gap:0; justify-content:space-between; }
- .v2-app.pi-workspace .pi-today-navigation button { font-size:13px; padding:0 3px; min-height:48px; }
+ .pi-today-tabs { gap:4px; justify-content:space-between; }
+ .v2-app.pi-workspace .pi-today-navigation :is(button,a) { font-size:12px; padding:0; min-height:48px; }
  .v2-app.pi-workspace .pi-today-navigation .pi-today-settings { min-width:32px; }
  .pi-today-settings span { display:none; }
  .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-reading-poster,
@@ -81,3 +81,5 @@
  .pi-reading-poster .pi-poster-figure { grid-column:1; grid-row:auto; }
  .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-reading-poster>.primary { width:100%; }
 }
+
+.pi-today-navigation a { text-decoration:none; }
