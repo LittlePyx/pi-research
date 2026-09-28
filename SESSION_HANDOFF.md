@@ -2,6 +2,8 @@
 
 ## 2026-09-28 接续：初始空间加载与自然恢复验收
 
+- v303（5bd3656）已发布，06:09新页面请求中spaces、research-maintenance、email-subscription均200，未见旧占位空间401/404；此为日志验证，非浏览器视觉验收。06:14自然调度后原任务仍停在05:54失败记录：正常队列偏向活跃空间，已有saved-error修复名额未接受D1收尾失败，故尚未重试0067修复。
+- 补现有恢复名额的严格候选条件：D1_ERROR、最新失败任务、retry_pending/stage_failed、有效JSON的finalizing断点、任务及空间退避均已到期；暂停、所有权、活动窗口、租约和原配额限制照旧。SQLite/Miniflare D1回归覆盖进入恢复及各类排除；713全量回归、构建和变更模块lint通过。发布及自然恢复最终证据见outputs/workspace-entry-acceptance.json；不清退避、不手动扫描、不重写旧失败。
 - 基线293148c/线上v302 active public一致。06:03检查CUA仍nodeRepl.fetch失败，未手动发起扫描、未提交新研究问题。06:06只读原空间df03c7d2确认保留05:54日历冲突记录、next_run_at=06:09:16；06:04 scheduler外层200只是尚处退避，不能据此称恢复完成。
 - 生产06:02日志发现占位space-info-theory被ResearchMaintenance/EmailSubscription子组件在父空间初始化前请求，产生401/404。今日页给这两个面板及可提前展开的ReadingCalendar沿用现有真实空间/加载成功条件；正式UUID与demo-*均照常显示，不改邮件开关、数据或调度策略。
 - 完整构建、大ResearchApp独立6GB lint及711全量回归通过。新问题真实端到端与视觉验收仍未执行，不把这些回归当模型成功。发布及原任务自然恢复结果另存outputs/workspace-entry-acceptance.json，须依据该记录和最新线上状态接续。

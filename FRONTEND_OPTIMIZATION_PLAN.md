@@ -1,5 +1,6 @@
 # Pi Research 优化与推进实施计划
 
+- 2026-09-28自然恢复跟进：06:14原任务尚未重试，补现有saved-error恢复名额对到期D1 finalizing断点的识别；严格保留暂停/所有权/活动/租约/退避限制。713回归、构建及变更模块lint通过。最终部署和原任务结果以outputs/workspace-entry-acceptance.json为准。
 - 2026-09-28接续：今日页的日历、更新状态和邮件设置等待真实空间载入后再挂载，修复占位空间请求产生的401/404。711回归、构建及ResearchApp lint通过；邮件仍暂停。v302日历修复后的原任务自然恢复与发布结果见outputs/workspace-entry-acceptance.json，真实新问题验收仍待浏览器控制恢复。
 
 ## 2026-09-28：整体产品优先级
