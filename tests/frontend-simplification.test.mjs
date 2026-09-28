@@ -121,7 +121,8 @@ test("learning, demo, share, and modal copy keep product facts ahead of interfac
 test("primary product copy states research content, status, and actions without interface narration", async () => {
   const app = await readFile(appUrl, "utf8");
 
-  assert.match(app, /"今日" : "Today"/);
+  assert.match(app, /home:"今日"/);
+  assert.match(app, /home:"Today"/);
   assert.match(app, /"论文扫描" : "Paper scan"/);
   assert.match(app, /"部分路线待补充" : "Some routes need evidence"/);
   assert.match(app, /"待收录与待核对材料" : "Materials to collect and check"/);

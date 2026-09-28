@@ -10,12 +10,12 @@ const require=createRequire(import.meta.url);
 const code=ts.transpileModule(readFileSync(new URL('../app/components/research-entry.tsx',import.meta.url),'utf8'),{
  compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},
 }).outputText;
-function render(result,resume,excludedReadingIds=[],demo=true){
+function render(result,resume,excludedReadingIds=[],demo=true,mode="reading",fallbackPapers=[]){
  let stateIndex=0;
  const mod={exports:{}};
  const hookReact={...React,useState:initial=>[stateIndex++===0?result:initial,()=>{}],useEffect:()=>{},useRef:value=>({current:value})};
  new Function('require','exports',code)(name=>name==='react'?hookReact:name==='./problem-discovery'?{ProblemDiscovery:()=>null}:name==='./math-text'?{MathText:({children})=>children}:name.endsWith('.css')?{}:name.includes('workspace-request')?{workspaceFetch:()=>{throw Error('Rendering must not fetch')}}:require(name),mod.exports);
- return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{spaceId:'test',locale:'en',demo,refreshKey:'',scanStatus:'',blocked:'',resume,excludedReadingIds,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{}}));
+ return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{mode,fallbackPapers,spaceId:'test',locale:'en',demo,refreshKey:'',scanStatus:'',blocked:'',resume,excludedReadingIds,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{}}));
 }
 const paper=id=>({id,title:id,whyEn:'Saved reason',focusEn:'Saved focus',checkEn:'Saved check'});
 const goal={id:'g',trackId:'t',question:'Current question',status:'active',monitoringStatus:'active'};
@@ -52,4 +52,12 @@ test('Live linked readings replace the waiting receipt without claiming new sear
  const inactive=render({goal:{...goal,status:'paused'},papers:[paper('Matched paper')]},null,[],false);
  assert.match(inactive,/paused or resolved/);
  assert.doesNotMatch(inactive,/Related readings are available/);
+});
+
+test('home has one lead and at most three deduplicated next papers without review or scan detail',()=>{
+ const html=render({goal,papers:[paper('First'),paper('Second'),paper('Third'),paper('Fourth'),paper('Fifth')]},null,[],false,'home',[paper('First'),paper('Extra')]);
+ assert.match(html,/Start reading/);assert.match(html,/Up next/);assert.doesNotMatch(html,/Saved focus|Saved check|Fifth|Extra|Discovery record/);
+ assert.equal(html.split('First').length-1,1);
+ const resume=render({goal,papers:[paper('First'),paper('Second')]},{id:'First',title:'First',readingNote:'User note'},[],false,'home');
+ assert.equal(resume.split('First').length-1,1);assert.match(resume,/User note/);assert.doesNotMatch(resume,/START HERE/);
 });

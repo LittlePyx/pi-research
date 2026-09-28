@@ -41,3 +41,9 @@ test('section navigation reveals nested notes, focuses content and respects redu
     for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; }
   }
 });
+
+test('today secondary surfaces survive a shareable hash and reject unknown panel names',()=>{
+ const location=readWorkspaceLocation(workspaceHash({view:'today',space:'s',panel:'discovery'}));
+ assert.equal(location.panel,'discovery');assert.equal(location.space,'s');
+ assert.equal(readWorkspaceLocation('#today?panel=unknown').panel,undefined);
+});

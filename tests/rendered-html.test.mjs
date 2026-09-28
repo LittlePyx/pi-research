@@ -22,10 +22,11 @@ test("server-renders the Pi Research application", async () => {
   const html = await response.text();
   assert.match(html, /<title>Pi Research — Your AI Research Agent<\/title>/i);
   assert.match(html, /Pi Research/);
-  assert.match(html, /论文发现/);
-  assert.match(html, /近 14 天/);
-  assert.match(html, /论文扫描/);
-  assert.match(html, /设置重点来源/);
+  assert.match(html, /发现进度/);
+  assert.match(html, /全部阅读/);
+  assert.doesNotMatch(html, /<h2>论文扫描<\/h2>/);
+  assert.doesNotMatch(html, /设置重点来源/);
+  assert.match(html, /研究记录/);
   assert.match(html, />今日</);
   assert.doesNotMatch(html, /class="v2-isolation"/);
 });

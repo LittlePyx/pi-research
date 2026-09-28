@@ -50,7 +50,7 @@ test("route priority uses the same compact count model on desktop and narrow scr
   assert.match(client, /onClick=\{onAction\}/);
   assert.match(client, /const routePortfolio = researchMap\.routePortfolio;/);
   assert.match(client, /const monitorReadyLabel = demo \?[\s\S]*? : monitorScanCompletionLabel\(monitor, locale\);/);
-  assert.equal(client.match(/monitorReadyLabel/g)?.length, 3);
+  assert.equal(client.match(/monitorReadyLabel/g)?.length, 2);
   assert.doesNotMatch(client, /researchMap\.routePortfolio\s*\|\|/);
   const portfolio = client.slice(client.indexOf("function RoutePortfolioOverview"), client.indexOf("function RouteDiscoveryLoop"));
   assert.match(portfolio, /portfolio\.discoveredCount/);

@@ -1,13 +1,14 @@
 'use client';
-import {useState} from 'react';
+import {useEffect,useState} from 'react';
 import { workspaceFetch as fetch } from '../../lib/workspace-request';
 
 type Trace = {job:{status:string}|null;queries?:{days:string;months:string;years:string};branches:{horizon:string;candidates:number;error:string|null}[];papers:{id:string;title:string;query:string;decision:string|null;reason:string|null;recommended:number|null}[]};
-export function ProblemDiscovery({spaceId,problemId,locale,onRead}:{spaceId:string;problemId:string;locale:'zh'|'en';onRead:(id:string)=>void}) {
+export function ProblemDiscovery({spaceId,problemId,locale,onRead,expanded=false}:{expanded?:boolean;spaceId:string;problemId:string;locale:'zh'|'en';onRead:(id:string)=>void}) {
  const [data,setData]=useState<Trace|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(false);
  const zh=locale==='zh';
  async function load(){setBusy(true);setError(false);try{const r=await fetch('/api/problem-discovery?'+new URLSearchParams({spaceId,problemId}),{signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error();setData(await r.json() as Trace)}catch{setError(true)}finally{setBusy(false)}}
- return <details className="pi-question-discovery"><summary onClick={()=>{if(!data&&!busy)void load()}}>{zh?'检索记录':'Discovery record'}</summary>
+ useEffect(()=>{if(expanded)void load()},[expanded,spaceId,problemId]);
+ return <details open={expanded||undefined} className="pi-question-discovery"><summary onClick={()=>{if(!data&&!busy)void load()}}>{zh?'检索记录':'Discovery record'}</summary>
  {busy&&<p role="status">{zh?'正在读取…':'Loading…'}</p>}
  {error&&<p role="alert">{zh?'记录暂未读到。':'Could not load the record.'}</p>}
  {data&&!data.job&&<p>{zh?'最近任务没有保存此问题的独立查询记录。下一次新扫描将生成，已有推荐不会因此重算。':'The latest task has no separate query record for this problem. The next new scan will create one; existing recommendations are unchanged.'}</p>}
