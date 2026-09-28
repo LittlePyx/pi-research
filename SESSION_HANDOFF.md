@@ -1,3 +1,19 @@
+## 2026-09-28：问题跨时间窗检索与查询去向
+
+- 在v308上实现problem-horizons-v1：最新用户入口的active问题优先，规划返回并校验problemId/trackId和三个英文查询。各时间窗首位保留问题查询，合并领域校准后仍在原查询数预算内；Crossref执行计划也保留一个问题名额，总分支数不变。专属years分支不设起始年份，按相关性检索基础文献；其他分支日期和质量门槛不变。已有冻结任务不变，新任务缓存随策略修订失效。
+- 专属Crossref来源保存问题ID、时间窗、查询、路线，沿用已有来源/评审表。新增只读problem-discovery接口和默认折叠的检索记录：所有权/问题/空间校验，按最近任务冻结计划展示三个问题查询，最多30条查询累计材料及该任务精确jobId的评审；旧评审不冒充本轮，未评审不冒充拒绝，明确只展示Crossref专属分支。无新迁移，不写用户笔记或反馈。
+- research-app计时器改用已有timeValue按UTC解析SQLite时间，修复新任务误显示旧任务恢复。模型规划失败仍沿原降级路径，缺少有效problemQueries不虚构问题覆盖；实际规划调用计入用量，包括响应校验失败。
+- 构建和740项回归通过，新增问题查询限额/ID校验、UTC、实际只读SQL与所有权/任务隔离测试。已有组件测试仅补新增子组件mock，原断言不删。发布及后续验收见outputs/problem-coverage-release.json；不能把本地回归当真实推荐质量提升。
+- 邮件暂停，旧自动任务不恢复，docs/未改。此前真实扫描只证明问题影响近期检索，尚无新关联推荐；新策略仍须真实任务验证。
+
+## 2026-09-28：新问题检索真实验收（只读代码，线上正常扫描一次）
+
+- 基线main a7a3478 / 线上v308 active。内置浏览器信息论空间04948d10-d2e7-4d0c-9ac5-229e89abfb7e，未重复提问。正常UI一次手动扫描，任务8732f6c5-7bf4-49dd-b62e-7bc0ecfcea70，09:12:49 UTC开始，attempt1、resumeOfJobId=null、full；明确是新任务。
+- 实际queryPlan为deepseek-flash、非降级，明确引用有限码长有损压缩/超额失真/二阶近似/源假设问题。近14天实际查询finite blocklength lossy source coding excess distortion probability achievable code length，DataCite返回3个新候选；不能声称3篇均相关，未取得逐篇去向链路。6月/5年计划仍偏原有高斯极值/多终端/传输逆界方向。
+- 页面本轮收尾为305候选、57筛选、14深评、2入选、轮次26，按钮恢复可用；最终接口终态未单独捕获。当前问题阅读区最终仍为原来3篇，无本轮新增关联阅读。新发现且通过核验的On the Rate-Distortion-Perception Function未关联当前问题。验证了问题进入实际检索，未验证新发现到问题推荐的完整成功链路，不宣称推荐质量提升。
+- 暴露UI时间bug：research-app.tsx计时器new Date(startedAt)将SQLite UTC当本地，增加约8小时并错误显示旧任务恢复；仅定位，尚未修复。下一优先级：问题驱动检索跨时间窗及基础文献覆盖，保留逐候选查询/筛选/核验来源，修复时间提示。不要为凑推荐强行关联或降低门槛。
+- 证据outputs/question-retrieval-live.json与png。无应用代码变更/部署/新回归；邮件暂停、旧自动任务未恢复、docs/未触碰、未写用户反馈或笔记。
+
 ## 2026-09-28：单篇证据更新后的评审闭环
 
 - 用户授权本轮只做P0：核验旧评审→必要时纠正→通过后同步。新增paper-review-refresh接口与单篇按钮，复用正式verifyRecommendationBatch，不重跑检索，不先把未核验草稿写入paper_insights。

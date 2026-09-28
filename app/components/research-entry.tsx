@@ -3,6 +3,7 @@ import {useEffect,useRef,useState} from 'react';
 import { workspaceFetch as fetch } from '../../lib/workspace-request';
 import {MathText} from './math-text';
 import './research-entry.css';
+import {ProblemDiscovery} from './problem-discovery';
 
 type Goal = {id:string;trackId:string;question:string;status:string;monitoringStatus:string};
 type Reading = {id:string;title:string;whyZh:string;whyEn:string;focusZh:string;focusEn:string;checkZh:string;checkEn:string};
@@ -85,6 +86,7 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
     <p><span>{zh?'读后核对':'Check next'}</span><MathText inline>{(zh?p.checkZh:p.checkEn)||(zh?'记录哪些条件适用于你的问题，哪些仍需验证。':'Record which conditions apply to your question and what remains unverified.')}</MathText></p></>}
     <button className="pi-first-read" type="button" onClick={()=>onRead(p.id)}>{zh?'阅读与笔记':'Read & take notes'} →</button>
    </li>)}</ol>:<p className="pi-question-empty">{visiblePapers.length?(zh?'先继续当前阅读，后续关联材料会出现在这里。':'Continue your current reading. Further related papers will appear here.'):demo?(zh?'当前问题没有其他预设材料。':'No further preset papers for this question.'):(zh?'暂无新的已核验关联文献。已有论文和笔记仍可继续阅读。':'No new verified related papers yet. Existing papers and notes remain available.')}</p>}
+   {!demo&&<ProblemDiscovery key={spaceId+goal.id} spaceId={spaceId} problemId={goal.id} locale={locale} onRead={onRead}/>}
    {!demo&&(scanStatus||blocked)&&<button type="button" className="pi-discovery-link" onClick={onProgress}>{zh?'查看发现进度与恢复操作':'View discovery progress & recovery'} →</button>}
    <footer>{!demo&&<button type="button" className="primary" disabled={!!blocked||inactive} onClick={onDiscover}>{zh?'查找相关文献':'Find related papers'}</button>}{goal.trackId&&<button type="button" onClick={()=>onRoute(goal.trackId)}>{zh?'查看研究路线':'Open research route'}</button>}{demo&&!goal.trackId&&<button type="button" onClick={()=>{void fetch('/api/research-entry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({spaceId,action:'reset'})}).then(r=>{if(!r.ok)throw Error();return r.json()}).then(data=>{if(alive.current){generation.current++;chosen.current='';setResult(data);readingCallback.current(data.papers.map((p:Reading)=>p.id));setSaved(false)}}).catch(()=>{if(alive.current)setReadError(true)})}}>{zh?'恢复示例问题':'Restore sample question'}</button>}{!demo&&blocked&&<small>{blocked}</small>}</footer>
   </>}

@@ -3951,7 +3951,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       const resetTimer = window.setTimeout(() => setScanElapsedSeconds(0), 0);
       return () => window.clearTimeout(resetTimer);
     }
-    const update = () => setScanElapsedSeconds(Math.max(1, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000)));
+    const update = () => setScanElapsedSeconds(Math.max(1, Math.floor((Date.now() - timeValue(startedAt)) / 1000)));
     const initialTimer = window.setTimeout(update, 0);
     const timer = window.setInterval(update, 1000);
     return () => { window.clearTimeout(initialTimer); window.clearInterval(timer); };

@@ -42,3 +42,11 @@
 .pi-brief-fully-featured>header { display:none!important; }
 @media(max-width:620px) { .pi-question-resume { flex-direction:column;align-items:stretch;padding:18px;gap:16px; } .pi-question-resume .primary { text-align:center; } }
 @media(max-width:620px) { .v2-app.pi-workspace .pi-question-entry { padding:20px; } .v2-app.pi-workspace .pi-question-entry .pi-current-question { font-size:21px; } .pi-question-entry footer { align-items:stretch;gap:8px; } .pi-question-entry footer .primary { width:100%;text-align:center; } }
+
+.pi-question-discovery { margin-top: 1.5rem; border-top: 1px solid var(--border, #dde2e6); padding-top: 1rem; }
+.pi-question-discovery summary { cursor: pointer; font-size: .9rem; }
+.pi-question-discovery dl div { margin: 1rem 0; }
+.pi-question-discovery dt { font-weight: 600; }
+.pi-question-discovery dd { margin: .4rem 0; overflow-wrap: anywhere; }
+.pi-question-discovery article { padding: 1rem 0; border-top: 1px solid var(--border, #dde2e6); }
+.pi-question-discovery small { overflow-wrap: anywhere; }

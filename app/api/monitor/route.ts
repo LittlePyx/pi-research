@@ -1,3 +1,4 @@
+import { PROBLEM_QUERY_POLICY, parseProblemQueries, protectProblemQueries, problemSourceKey, type ProblemQueries } from "../../../lib/problem-query-plan";
 import { ABSTRACT_SCOPE_RULE } from "../../../lib/abstract-integrity";
 import { buildPreferenceGuidance, feedbackExampleContext, FEEDBACK_POLICY_VERSION, PREFERENCE_GUIDANCE_RULES } from "../../../lib/feedback-policy.mjs";
 import { researchSourcePlan, sourcePlanIssn, normalizeSourceTitle } from "../../../lib/research-source-plan";
@@ -198,6 +199,7 @@ type SpaceRow = {
 type ExplorationMode = "focused" | "balanced" | "open";
 type PreferenceRow = { profile_key: string; priority_venues: string; tracked_authors: string; exploration_mode: string; user_modified: number };
 type QueryPlan = {
+  problemQueries?: ProblemQueries;
   planDate: string;
   explorationMode: ExplorationMode;
   queries: Record<Horizon, string[]>;
@@ -453,6 +455,7 @@ async function loadRouteReviewTitles(database: D1Database, spaceId: string, cand
   return new Map(rows.results.map((row) => [row.id, { titleZh: row.title_zh, titleEn: row.title_en }]));
 }
 type DiscoveryQuery = {
+  foundational?: boolean;
   key: string;
   query: string;
   sort: "relevance" | "is-referenced-by-count" | "published";
@@ -1089,12 +1092,16 @@ function discoveryQueries(space: SpaceRow, horizon: typeof HORIZONS[number], pro
     { key: "profile-cluster", sourceKey: "crossref:profile", query: `${space.description} ${profileWindow.join(" ")}`, sort: "relevance", rotating: true, channel: "topic" },
   ];
   for (const [index, query] of (queryPlan?.queries[horizon.key] || []).entries()) {
-    const isAdjacentBridge = queryPlan?.explorationMode !== "focused" && index === (queryPlan?.queries[horizon.key]?.length || 0) - 1;
+    const problem = queryPlan?.problemQueries;
+    const isProblem = problem && query === problem[horizon.key];
+    const isAdjacentBridge = !isProblem && queryPlan?.explorationMode !== "focused" && index === (queryPlan?.queries[horizon.key]?.length || 0) - 1;
     queries.push({
-      key: `ai-plan-${index + 1}`,
-      sourceKey: `crossref:ai-plan:${index + 1}`,
+      key: isProblem ? `problem-${horizon.key}` : `ai-plan-${index + 1}`,
+      sourceKey: isProblem ? problemSourceKey(problem.problemId, horizon.key) : `crossref:ai-plan:${index + 1}`,
+      routeId: isProblem ? problem.trackId : undefined,
+      foundational: Boolean(isProblem && horizon.key === "years"),
       query,
-      sort: horizon.key === "days" ? "published" : horizon.sort,
+      sort: isProblem ? "relevance" : horizon.key === "days" ? "published" : horizon.sort,
       rotating: true,
       channel: "topic",
       explorationRole: isAdjacentBridge ? "adjacent" : "core",
@@ -1481,7 +1488,9 @@ async function prioritizeDiscoveryPlans(database: D1Database, spaceId: string, p
     const score = Math.max(5, Math.min(100, (exact ?? route ?? source ?? 55) + (plan.key === "topic-anchor" ? 8 : 0) + (plan.routeUrgency || 0)));
     return { ...plan, explorationRole: plan.explorationRole || "core", adaptiveScore: score };
   }));
-  return selectPrioritizedDiscoveryPlans(enriched, mode);
+  const selected = selectPrioritizedDiscoveryPlans(enriched, mode);
+  const problem = enriched.find(plan => plan.sourceKey.startsWith("crossref:problem:"));
+  return problem && !selected.includes(problem) ? [problem, ...selected.slice(0, Math.max(0, selected.length - 1))] : selected;
 }
 
 async function discoveryOffset(database: D1Database, spaceId: string, horizon: Horizon, query: DiscoveryQuery) {
@@ -1637,7 +1646,7 @@ async function fetchHorizon(
     if (plan.channel === "journal" && plan.venue && !plan.issn) endpoint.searchParams.set("query.container-title", plan.venue);
     if (plan.channel === "author" && plan.author) endpoint.searchParams.set("query.author", plan.author);
     if (!(plan.channel === "journal" && horizon.key === "days") && plan.channel !== "author") endpoint.searchParams.set("query.bibliographic", plan.query);
-    endpoint.searchParams.set("filter", `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
+    endpoint.searchParams.set("filter", plan.foundational ? `until-pub-date:${isoDate(now)}` : `from-pub-date:${isoDate(dateBefore(now, horizon.daysFrom))},until-pub-date:${isoDate(dateBefore(now, horizon.daysUntil))}`);
     endpoint.searchParams.set("rows", String(planRows));
     endpoint.searchParams.set("offset", String(offset));
     endpoint.searchParams.set("sort", plan.sort);
@@ -1738,6 +1747,7 @@ async function fetchHorizon(
 }
 
 function sourceFocusQuery(space: SpaceRow, round: number, horizon: Horizon, queryPlan?: QueryPlan) {
+  if (queryPlan?.problemQueries) return queryPlan.problemQueries[horizon];
   const planned = queryPlan?.queries[horizon] || [];
   if (planned.length) return planned[round % planned.length];
   const branches = [
@@ -2278,22 +2288,23 @@ async function ensureDailyQueryPlan(
     actionRunRevision: guidance?.action_run_revision || "",
     confirmedEvidence: confirmedEvidence.results,
   });
-  const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(FEEDBACK_POLICY_VERSION + ":" + guidanceIdentity));
+  const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(PROBLEM_QUERY_POLICY + ":" + FEEDBACK_POLICY_VERSION + ":" + guidanceIdentity));
   const guidanceRevision = Array.from(new Uint8Array(guidanceDigest)).slice(0, 12).map((value) => value.toString(16).padStart(2, "0")).join("");
-  let existingQueries: (Partial<Record<Horizon, string[]>> & { guidanceRevision?: string }) = {};
+  let existingQueries: (Partial<Record<Horizon, string[]>> & { guidanceRevision?: string; problemQueries?: ProblemQueries }) = {};
   try { existingQueries = existing ? JSON.parse(existing.queries_json) as typeof existingQueries : {}; } catch { existingQueries = {}; }
   const staleFallback = Boolean(existing && apiKey && existing.model === "deterministic-fallback");
   const stalePipelinePlan = Boolean(existing && databaseTime(existing.created_at) < MONITOR_QUERY_PLAN_RELEASED_AT);
   const staleGuidancePlan = Boolean(existing && existingQueries.guidanceRevision !== guidanceRevision);
   if (existing && !staleFallback && !stalePipelinePlan && !staleGuidancePlan) {
     return {
+      problemQueries: parseProblemQueries(existingQueries.problemQueries),
       planDate: existing.plan_date,
       explorationMode: preference.explorationMode,
-      queries: mergeBenchmarkQueryCoverage(preference.profileKey, {
+      queries: protectProblemQueries(mergeBenchmarkQueryCoverage(preference.profileKey, {
         days: normalizePlannedQueries(existingQueries.days, 4),
         months: normalizePlannedQueries(existingQueries.months, 4),
         years: normalizePlannedQueries(existingQueries.years, 4),
-      }, planDate, queryCoverageLimit),
+      }, planDate, queryCoverageLimit), parseProblemQueries(existingQueries.problemQueries), queryCoverageLimit),
       rationaleZh: existing.rationale_zh,
       rationaleEn: existing.rationale_en,
       model: existing.model,
@@ -2343,7 +2354,7 @@ async function ensureDailyQueryPlan(
        JOIN research_tracks problem_track ON problem_track.id = problem.track_id AND problem_track.space_id = problem.space_id
        WHERE problem.space_id = ? AND problem.status = 'active'
         AND COALESCE(problem_track.monitoring_status, 'active') = 'active'
-       ORDER BY problem.updated_at DESC LIMIT 8`,
+       ORDER BY CASE WHEN problem.id LIKE 'question-%' THEN 0 ELSE 1 END, problem.confirmed_at DESC, problem.updated_at DESC LIMIT 8`,
     ).bind(space.id).all<{ id: string; track_id: string; question: string; objective: string; scope: string; success_criteria: string; stage: string; uncertainty_en: string; next_decision_en: string; next_search_query: string; latest_action_result_en: string; latest_action_decision_en: string; latest_action_search_query: string }>(),
     database.prepare(
       `SELECT metadata_json, created_at FROM monitor_reliability_events
@@ -2379,6 +2390,7 @@ async function ensureDailyQueryPlan(
     yieldCalibration = { profileKey: preference.profileKey };
   }
   let queries: Record<Horizon, string[]> = { days: [], months: [], years: [] };
+  let problemQueries: ProblemQueries | undefined;
   let rationaleZh = "";
   let rationaleEn = "";
   let error: string | null = null;
@@ -2405,6 +2417,7 @@ async function ensureDailyQueryPlan(
               "For the days horizon, prioritize a direct update to a core route and an under-covered route or active research problem. Pi evaluates this newest horizon first; do not spend both slots on synonyms for one fashionable subtopic. Journal issue, tracked-author, citation-frontier, arXiv, OpenAlex, and Semantic Scholar branches run alongside these planned queries.",
               "Move beyond yesterday's obvious wording. Cover core depth, one adjacent bridge when mode allows, unresolved questions, under-covered subdirections, methods, and representative venues. When a grounded cross-paper synthesis or direction assessment contains an evidence gap or nextSearchQuery, use at least one horizon slot to test that gap instead of merely repeating broad topic keywords. Do not include dates, API syntax, Boolean operators, journal names alone, or generic words such as research/study/paper.",
               "Return {\"days\":[...],\"months\":[...],\"years\":[...],\"rationaleZh\":\"...\",\"rationaleEn\":\"...\"}.",
+              activeProblems.results.length ? `Also return problemQueries: {problemId,trackId,days,months,years} for this exact active problem: ${JSON.stringify(activeProblems.results[0])}. Use concise English bibliographic queries: days targets recent progress, months targets the exact method, assumptions and uncertainty, years targets foundational theorems, source/model assumptions and second-order conditions where relevant. The years problem branch searches without a lower publication-date bound. These three slots are mandatory and must address this problem directly, not substitute a broad neighboring topic. Other queries retain space-wide coverage.` : "No active problem: omit problemQueries.",
               `Explicit and inferred preference evidence: ${JSON.stringify(buildPreferenceGuidance(signals))}`,
               `Existing directions and user depth: ${JSON.stringify(tracks.results.map((track) => ({ title: track.title_en, role: track.user_role, depth: track.depth_score, interaction: track.interaction_score, summary: track.summary_en, queries: parseVenues(track.search_queries).slice(0, 4) })))}`,
               `Grounded direction opportunities, watch signals, and evidence gaps; Grounded cross-paper synthesis that today's search should test: ${JSON.stringify(directionSignals)}`,
@@ -2427,7 +2440,14 @@ async function ensureDailyQueryPlan(
       });
       const data = await response.json() as DeepSeekResponse;
       if (!response.ok) throw new Error(data.error?.message || "DeepSeek query planning failed");
+      await Promise.all([
+        recordUsage(database, "query-planner:global", planDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+        recordUsage(database, "query-planner-workspace:" + userId.replace(/^anonymous:/, ""), planDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+        recordUsage(database, "monitor-space:" + space.id, planDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+      ]);
       const parsed = parseJsonObject(data.choices?.[0]?.message?.content || "");
+      problemQueries = activeProblems.results.length ? parseProblemQueries(parsed.problemQueries, activeProblems.results[0]) : undefined;
+      if (activeProblems.results.length && !problemQueries) throw new Error("Active problem queries are missing or invalid");
       queries = {
         days: normalizePlannedQueries(parsed.days, queryLimit),
         months: normalizePlannedQueries(parsed.months, queryLimit),
@@ -2436,17 +2456,13 @@ async function ensureDailyQueryPlan(
       if (Object.values(queries).some((items) => !items.length)) throw new Error("DeepSeek query plan was incomplete");
       rationaleZh = cleanText(String(parsed.rationaleZh || "")).slice(0, 700);
       rationaleEn = cleanText(String(parsed.rationaleEn || "")).slice(0, 900);
-      await Promise.all([
-        recordUsage(database, "query-planner:global", planDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
-        recordUsage(database, "query-planner-workspace:" + userId.replace(/^anonymous:/, ""), planDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
-        recordUsage(database, "monitor-space:" + space.id, planDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
-      ]);
+
     } catch (caught) {
       error = caught instanceof Error ? caught.message.slice(0, 280) : "DeepSeek query planning failed";
       model = "deterministic-fallback";
     }
   }
-  queries = mergeBenchmarkQueryCoverage(preference.profileKey, queries, planDate, queryCoverageLimit);
+  queries = protectProblemQueries(mergeBenchmarkQueryCoverage(preference.profileKey, queries, planDate, queryCoverageLimit), problemQueries, queryCoverageLimit);
   await database.prepare(
     `INSERT INTO monitor_query_plans
      (id, space_id, plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error)
@@ -2455,8 +2471,8 @@ async function ensureDailyQueryPlan(
      queries_json = excluded.queries_json, rationale_zh = excluded.rationale_zh,
      rationale_en = excluded.rationale_en, model = excluded.model, error = excluded.error,
      created_at = CURRENT_TIMESTAMP`,
-  ).bind(crypto.randomUUID(), space.id, planDate, preference.explorationMode, JSON.stringify({ ...queries, guidanceRevision }), rationaleZh, rationaleEn, model, error).run();
-  return { planDate, explorationMode: preference.explorationMode, queries, rationaleZh, rationaleEn, model, error };
+  ).bind(crypto.randomUUID(), space.id, planDate, preference.explorationMode, JSON.stringify({ ...queries, guidanceRevision, problemQueries }), rationaleZh, rationaleEn, model, error).run();
+  return { planDate, explorationMode: preference.explorationMode, queries, problemQueries, rationaleZh, rationaleEn, model, error };
 }
 
 async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceRow): Promise<SpaceRow> {
@@ -5893,6 +5909,7 @@ function parseFrozenQueryPlan(value: unknown): QueryPlan | undefined {
   const explorationMode: ExplorationMode = ["focused", "balanced", "open"].includes(parsed.explorationMode || "")
     ? parsed.explorationMode as ExplorationMode : "balanced";
   return {
+    problemQueries: parseProblemQueries(parsed.problemQueries),
     planDate: typeof parsed.planDate === "string" ? parsed.planDate : "",
     explorationMode,
     queries: {
