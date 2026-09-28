@@ -9,7 +9,7 @@ import { developmentUnboundedEnabled } from "../../../lib/development-policy.mjs
 import { createScreeningRequestTrace } from "../../../lib/screening-request-trace.mjs";
 import { matchScreeningRecords } from "../../../lib/screening-identity.mjs";
 import { canonicalResponseId, uniqueCanonicalResponses } from "../../../lib/canonical-response.mjs";
-import { traceReviewQueue, traceReviewOutcome, traceReviewEvent, traceVerificationResponse } from "../../../lib/review-progress-trace.mjs";
+import { traceReviewQueue, traceReviewOutcome, traceReviewEvent, traceVerificationResponse, traceReviewPersistenceFailure } from "../../../lib/review-progress-trace.mjs";
 import { researchGapQuestion } from "../../../lib/research-gap-scope.mjs";
 import { arxivIdFromUrl, buildArxivSearchQuery, normalizeWorkTitle, parseArxivAtom } from "../../../lib/discovery/arxiv";
 import { buildDataCiteArxivQuery, parseDataCiteArxivRecords } from "../../../lib/discovery/datacite";
@@ -3239,7 +3239,13 @@ async function persistReviewBatch(database: D1Database, spaceId: string, scanJob
       spaceId, paperId) }];
   });
   if (!insightWrites.length) return [] as PaperReview[];
-  const insightResults = await database.batch(insightWrites.map((write) => write.statement));
+  let insightResults;
+  try {
+    insightResults = await database.batch(insightWrites.map((write) => write.statement));
+  } catch (error) {
+    traceReviewPersistenceFailure({ spaceId, scanJobId, batchSize: insightWrites.length, error });
+    throw error;
+  }
   const persistedReviews = retainChangedMonitorWrites(insightWrites.map((write) => write.review), insightResults);
   for (const review of persistedReviews) {
     const candidate = candidateByCanonical.get(review.canonicalId);
@@ -7771,7 +7777,7 @@ export async function POST(request: Request) {
         await database.prepare(
           "UPDATE monitor_scan_jobs SET duplicate_count = ?, reviewed_count = 0, recommended_count = ?, rejected_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ).bind(Math.max(0, work.rawCandidateCount - work.newCandidateCount), earlyPublished, job.id).run();
-        if (!work.candidateIds.length) return finalizeMain([], []);
+        if (!work.candidateIds.length) return await finalizeMain([], []);
         await setStage("enriching_screening_abstracts", "screening", 54,
           work.screens.length
             ? `已从长期候选池接续 ${work.screens.length} 篇既有筛选结果；正在补全本轮新候选证据`
@@ -8095,7 +8101,7 @@ export async function POST(request: Request) {
           return Response.json(await readOwnedState({ earlyVerification: true }), { status: 202 });
         }
         if (processedDeepCount >= work.deepIds.length) {
-          if (work.freshLaneActive) return continueAfterFreshLane();
+          if (work.freshLaneActive) return await continueAfterFreshLane();
           const recommendationShortfall = Math.max(0, HIGH_POTENTIAL_DRAFT_TARGET - potentialRecommendations);
           if (recommendationShortfall && work.deepIds.length < DEEP_REVIEW_MAX_LIMIT) {
             const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
@@ -8361,7 +8367,7 @@ export async function POST(request: Request) {
               },
             });
           }
-          if (work.freshLaneActive) return continueAfterFreshLane();
+          if (work.freshLaneActive) return await continueAfterFreshLane();
           const allCandidates = await pendingCandidateQueue(database, space.id, work.candidateIds);
           const rescueCandidates = evidenceReadyRescueCandidates(
             allCandidates,
@@ -8426,7 +8432,9 @@ export async function POST(request: Request) {
       } else if (job.checkpoint === "finalizing") {
         const candidates = await pendingCandidateQueue(database, space.id, work.deepIds);
         const persistedReviews = await loadPersistedReviews(database, space.id, work.deepCompletedIds);
-        return finalizeMain(candidates, persistedReviews);
+        // Keep the lease and the recovery boundary until every write settles.
+        // Returning the promise directly runs finally early and bypasses catch.
+        return await finalizeMain(candidates, persistedReviews);
       }
       return Response.json(await readOwnedState({ advanced: true }), { status: 202 });
     } catch (error) {
