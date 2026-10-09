@@ -80,3 +80,11 @@ test('home has one lead and at most three deduplicated next papers without revie
  assert.ok(empty.indexOf('Persistent discovery brief')<empty.indexOf('<form'));
  assert.doesNotMatch(render({goal,papers:[]},null,[],false,'reading',[],extra),/Persistent discovery brief/);
  });
+
+test('home brief receives only exact question readings, excluding fallback and saved dismissals',()=>{
+ let context;
+ render({goal,papers:[paper('Related'),paper('Dismissed')]},null,['Dismissed'],false,'home',[paper('Space fallback')],{homeBrief:c=>{context=c;return React.createElement('p',null,'Brief')}});
+ assert.equal(context.goal.id,goal.id);assert.deepEqual(context.papers.map(p=>p.id),['Related']);
+ render({goal:null,papers:[]},null,[],false,'home',[paper('Space fallback')],{homeBrief:c=>{context=c;return null}});
+ assert.deepEqual(context.papers,[]);
+});

@@ -6,19 +6,22 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import React from 'react';
 const out=await build({entryPoints:['app/components/discovery-brief.tsx'],bundle:true,write:false,format:'cjs',platform:'node',external:['react','react/jsx-runtime'],jsx:'automatic',plugins:[{name:'math',setup(b){b.onResolve({filter:/math-text$/},()=>({path:'math',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:'export const MathText=({children})=>children;'}))}}]});
 const mod={exports:{}};new Function('require','module','exports',out.outputFiles[0].text)(createRequire(import.meta.url),mod,mod.exports);
-const render=props=>renderToStaticMarkup(React.createElement(mod.exports.DiscoveryBrief,{papers:[],pending:0,awaiting:0,active:false,demo:false,locale:'zh',onRead:()=>{},onLibrary:()=>{},...props}));
-const paper=(id,stage,date)=>({id,title:id,venue:'Real Journal',publishedAt:'2020-01-01',discoveredAt:date,qualityStage:stage});
-test('discovery brief distinguishes queued, unselected and verified reading without inventing a fresh run',()=>{
- const papers=[paper('Older','discovered','2020-01-01'),paper('Selected','recommended','2026-09-28'),paper('Waiting','reviewing','2026-09-27'),paper('Checked','reviewed','2026-09-26'),paper('Evidence','awaiting_evidence','2026-09-25')];
- const html=render({papers,pending:8,awaiting:2});
- assert.match(html,/8 篇候选等待评审或核验/);assert.match(html,/2 篇待补充摘要/);assert.match(html,/尚非精选推荐/);assert.match(html,/Real Journal/);assert.match(html,/推荐依据待核验/);assert.match(html,/已评审 · 未入精选/);assert.match(html,/待补充摘要/);
- assert.doesNotMatch(html,/Selected|Older|本轮新发现|推荐分/);assert.equal(papers[0].id,'Older');
+const goal={id:'current',question:'Finite blocklength coding?',status:'active',monitoringStatus:'active'};
+const reading=id=>({id,title:id,whyZh:'已核验的关联依据',whyEn:'Verified rationale'});
+const render=props=>renderToStaticMarkup(React.createElement(mod.exports.DiscoveryBrief,{context:{goal,papers:[],loading:false,unavailable:false},active:false,demo:false,locale:'zh',onRead:()=>{},onLibrary:()=>{},onProgress:()=>{},...props}));
+test('brief uses exact question readings, not unscoped recent papers or queue counts',()=>{
+ const html=render({context:{goal,papers:[reading('Related'),reading('Related')],loading:false,unavailable:false},papers:[{id:'unrelated',title:'Unrelated intrusion detection'}],pending:1297});
+ assert.match(html,/Related/);assert.match(html,/已核验的关联依据/);assert.doesNotMatch(html,/1297|Unrelated|尚非精选/);assert.equal(html.split('<li>').length-1,1);
 });
-test('a run with no material shows an honest brief instead of fictional paper cards',()=>{
- assert.match(render({active:true}),/仍在进行/);assert.match(render({}),/暂未载入可展示的文献条目/);assert.doesNotMatch(render({}),/<li/);
- assert.match(render({demo:true}),/演示材料/);
+test('empty, paused and missing question states retain useful progress and library actions',()=>{
+ assert.match(render({}),/没有已核验/);assert.match(render({active:true}),/本空间有检索或评审任务/);
+ assert.match(render({context:{goal:{...goal,status:'paused'},papers:[]}}),/已暂停或结束/);
+ assert.match(render({context:{goal:null,papers:[reading('Wrong')]}}),/提出一个研究问题/);
+ assert.doesNotMatch(render({context:{goal:null,papers:[reading('Wrong')]}}),/Wrong/);
+ assert.match(render({}),/查看发现进度/);assert.match(render({}),/浏览空间文献库/);assert.match(render({demo:true}),/演示材料/);
 });
-
-test('brief alongside selected reading does not claim selection is empty',()=>{
- const html=render({hasSelection:true});assert.match(html,/精选之外/);assert.doesNotMatch(html,/当前没有可展示的精选/);
+test('loading or failed question refresh never presents old links as checked current results',()=>{
+ for(const state of [{loading:true},{unavailable:true}]){
+  const html=render({context:{goal,papers:[reading('Stale link')],...state}});assert.doesNotMatch(html,/Stale link|以下阅读已关联/);
+ }
 });

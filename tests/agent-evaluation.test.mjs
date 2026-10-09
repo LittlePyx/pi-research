@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import ts from 'typescript';
+import {currentReadingMemories} from '../lib/current-reading-memories.ts';
 import {buildPreferenceGuidance,feedbackChannel,feedbackExampleContext,feedbackSignalKind,PREFERENCE_GUIDANCE_RULES} from '../lib/feedback-policy.mjs';
 import {candidatePoolHash,evaluatePersonalization} from '../lib/personalization-evaluation.mjs';
 import {MEMORY_EVAL_CASES} from '../benchmarks/memory-ablation.mjs';
@@ -37,7 +38,7 @@ test('saved, quality and depth examples cannot silently become topic exclusion o
  const ast=ts.createSourceFile('route.ts',source,ts.ScriptTarget.Latest,true);
  const declaration=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='enrichSpaceWithImportedMemory');
  const code=ts.transpileModule(declaration.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
- const run=new Function('feedbackExampleContext','PREFERENCE_GUIDANCE_RULES','cleanText','parseVenues',code+';return enrichSpaceWithImportedMemory;')(feedbackExampleContext,PREFERENCE_GUIDANCE_RULES,s=>s,s=>JSON.parse(s||'[]'));
+ const run=new Function('currentReadingMemories','feedbackExampleContext','PREFERENCE_GUIDANCE_RULES','cleanText','parseVenues',code+';return enrichSpaceWithImportedMemory;')(currentReadingMemories,feedbackExampleContext,PREFERENCE_GUIDANCE_RULES,s=>s,s=>JSON.parse(s||'[]'));
  const db={prepare(sql){return {bind(){return {async all(){return {results:sql.includes('FROM paper_feedback f')?rows:[]}}}}}}};
  const enriched=await run(db,{id:'fixture',name:'Fixture'});
  assert.match(enriched.negativeExamples,/Scope/);
@@ -45,7 +46,7 @@ test('saved, quality and depth examples cannot silently become topic exclusion o
  assert.match(enriched.memoryContext,/quality: Quality/);
  assert.match(enriched.memoryContext,/mastery: Mastered/);
  assert.match(source,/JSON\.stringify\(buildPreferenceGuidance\(signals\)\)/);
- assert.match(source,/FEEDBACK_POLICY_VERSION \+ ":" \+ guidanceIdentity/);
+ assert.match(source,/FEEDBACK_POLICY_VERSION \+ ":note-consistency-v1:" \+ guidanceIdentity/);
 });
 
 const task={id:'a',contextId:'frozen',candidates:[

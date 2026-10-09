@@ -130,7 +130,7 @@ function readingHarness(fetch) {
     user: { userId: "qa-user" }, sessionDraftKey: (...parts) => parts.join(":"), clearSessionDraft: (...args) => state.clearedDrafts.push(args),
     setNoteSaveError: value => { state.noteError = value; },
     setSavedReadingId: value => { state.savedReadingId = value; },
-    fetch, readingWriteRef, paperNetworkSpaceRef, activeSpace: { id: "space-a" }, locale: "en",
+    demo:false, fetch, readingWriteRef, paperNetworkSpaceRef, activeSpace: { id: "space-a" }, locale: "en",
     setReadingSaving: (value) => { state.saving = value; }, setReadingMemoryAnalyzing: () => {},
     setSelectedMonitorPaper: (update) => { state.selected = update(state.selected); },
     setMonitor: (update) => { state.monitor = typeof update === "function" ? update(state.monitor) : update; },
@@ -156,7 +156,7 @@ test("failed reading saves leave the displayed persisted state and learning path
 test("reading saves are single-flight and update the learning path only after persistence", async () => {
   let finish;
   let requests = 0;
-  const harness = readingHarness(() => { requests++; return new Promise((resolve) => { finish = resolve; }); });
+  const harness = readingHarness((url) => { if (url.startsWith("/api/monitor")) return Promise.resolve(Response.json({})); requests++; return new Promise((resolve) => { finish = resolve; }); });
   const pending = harness.update(harness.paper, "mastered", "new note");
   assert.equal(harness.state.selected.readingStatus, "unread");
   assert.equal(harness.state.saving, true);
@@ -206,4 +206,14 @@ test("supplementary history remains readable without being presented as the requ
   assert.doesNotMatch(html, /现在读/);
   const stage = await readFile(new URL("../app/components/learning-stage-workspace.tsx",import.meta.url),"utf8");
   assert.match(stage, /帮助理解主题，不计入本阶段完成/);
+});
+
+test("successful note edits immediately remove only their own derived UI memory, even if refresh fails",async()=>{
+ const harness=readingHarness(async url=>url.startsWith('/api/monitor')?new Response('offline',{status:503}):Response.json({ok:true}));
+ harness.state.monitor.preferenceSignals=[{id:'old',sourceType:'reading_note',sourcePaperId:'paper'},{id:'explicit',sourceType:'paper_feedback',sourcePaperId:'paper'},{id:'other',sourceType:'reading_note',sourcePaperId:'another'}];
+ harness.state.monitor.readingMemories=[{paperId:'paper'},{paperId:'another'}];
+ await harness.update(harness.paper,'reading','changed note');
+ assert.deepEqual(harness.state.monitor.preferenceSignals.map(s=>s.id),['explicit','other']);
+ assert.deepEqual(harness.state.monitor.readingMemories.map(s=>s.paperId),['another']);
+ assert.equal(harness.state.noteError,'');
 });

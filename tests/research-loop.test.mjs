@@ -37,7 +37,7 @@ test("reading notes are deduplicated before LLM memory synthesis", async () => {
   assert.match(library, /sourceType: "reading_note"/);
   assert.match(memory, /layer: PreferenceLayer/);
   assert.match(ask, /Insights distilled from the researcher's own reading notes/);
-  assert.match(monitor, /FROM paper_reading_memories WHERE space_id/);
+  assert.match(monitor, /currentReadingMemories\(database, space.id, 16\)/);
 });
 
 test("research memory stays visible while operational quality telemetry stays internal", async () => {

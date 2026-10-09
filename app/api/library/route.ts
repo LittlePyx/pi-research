@@ -1,7 +1,9 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
-import { upsertPreferenceSignal } from "../../../lib/preference-memory";
+import { preferenceSignalStatement } from "../../../lib/preference-memory";
 import { reconcileResearchMapEvidenceStatements } from "../../../lib/research-map-evidence";
+
+import { readingNoteHash as contentHash, readingNoteGuard, invalidateReadingNoteStatements } from "../../../lib/reading-note-consistency.mjs";
 
 const READING_STATUSES = new Set(["unread", "queued", "reading", "read", "mastered", "cited"]);
 const READING_MEMORY_MODEL = "deepseek-flash";
@@ -67,11 +69,6 @@ function textArray(value: unknown, max = 6) {
   return Array.from(new Set(value.map((item) => cleanText(String(item)).slice(0, 320)).filter(Boolean))).slice(0, max);
 }
 
-async function contentHash(value: string) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function usageCount(database: D1Database, scope: string, date: string) {
   const row = await database.prepare("SELECT request_count FROM ai_usage_daily WHERE scope = ? AND usage_date = ? LIMIT 1")
     .bind(scope, date).first<{ request_count: number }>();
@@ -91,16 +88,19 @@ async function recordUsage(database: D1Database, scope: string, date: string, in
 async function analyzeReadingNote(database: D1Database, space: { id: string; name: string }, userId: string, paper: ReadingPaper, note: string, readingStatus: string, apiKey: string) {
   const noteHash = await contentHash(note);
   const existing = await database.prepare(
-    "SELECT note_hash, analysis_status FROM paper_reading_memories WHERE space_id = ? AND paper_id = ? LIMIT 1",
-  ).bind(space.id, paper.id).first<{ note_hash: string; analysis_status: string }>();
+    `SELECT m.note_hash, m.analysis_status FROM paper_reading_memories m JOIN paper_reading_progress r ON r.space_id=m.space_id AND r.paper_id=m.paper_id WHERE m.space_id=? AND m.paper_id=? AND r.note=? LIMIT 1`,
+  ).bind(space.id, paper.id, note).first<{ note_hash: string; analysis_status: string }>();
   if (existing?.note_hash === noteHash && existing.analysis_status === "ready") return { status: "ready", cached: true };
 
-  await database.prepare(
+  const attemptId = crypto.randomUUID();
+  const guard = readingNoteGuard(space.id, paper.id, note, attemptId, noteHash);
+  const started = await database.prepare(
     `INSERT INTO paper_reading_memories (id, space_id, paper_id, note_hash, analysis_status, model)
-     VALUES (?, ?, ?, ?, 'pending', ?)
-     ON CONFLICT(space_id, paper_id) DO UPDATE SET note_hash = excluded.note_hash, analysis_status = 'pending',
+     SELECT ?, ?, ?, ?, 'pending', ? WHERE EXISTS (SELECT 1 FROM paper_reading_progress WHERE space_id=? AND paper_id=? AND note=?)
+     ON CONFLICT(space_id, paper_id) DO UPDATE SET id=excluded.id, note_hash = excluded.note_hash, analysis_status = 'pending',
      model = excluded.model, error = NULL, updated_at = CURRENT_TIMESTAMP`,
-  ).bind(crypto.randomUUID(), space.id, paper.id, noteHash, READING_MEMORY_MODEL).run();
+  ).bind(attemptId, space.id, paper.id, noteHash, READING_MEMORY_MODEL, space.id, paper.id, note).run();
+  if (!started.meta.changes) return { status: "stale", cached: false };
 
   if (!apiKey) return { status: "pending", cached: false };
   const usageDate = new Date().toISOString().slice(0, 10);
@@ -110,8 +110,8 @@ async function analyzeReadingNote(database: D1Database, space: { id: string; nam
     usageCount(database, "reading-memory:global", usageDate),
   ]);
   if (workspaceUsage >= READING_MEMORY_DAILY_LIMIT || globalUsage >= READING_MEMORY_GLOBAL_DAILY_LIMIT) {
-    await database.prepare("UPDATE paper_reading_memories SET analysis_status = 'error', error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
-      .bind("Daily reading-memory analysis limit reached", space.id, paper.id).run();
+    await database.prepare(`UPDATE paper_reading_memories SET analysis_status = 'error', error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ? AND ${guard.sql}`)
+      .bind("Daily reading-memory analysis limit reached", space.id, paper.id, ...guard.values).run();
     return { status: "error", cached: false };
   }
 
@@ -158,18 +158,19 @@ async function analyzeReadingNote(database: D1Database, space: { id: string; nam
       trackId: allowedTrackIds.has(cleanText(draft.trackId || "")) ? cleanText(draft.trackId || "") : "",
     };
     if (!memory.takeawayZh || !memory.takeawayEn) throw new Error("DeepSeek returned an incomplete reading memory");
-    await database.prepare(
+    const statements = [database.prepare(
       `UPDATE paper_reading_memories SET analysis_status = 'ready', takeaway_zh = ?, takeaway_en = ?,
        methods_zh = ?, methods_en = ?, questions_zh = ?, questions_en = ?, connections_zh = ?, connections_en = ?,
        topics_zh = ?, topics_en = ?, track_id = ?, model = ?, error = NULL, analyzed_at = CURRENT_TIMESTAMP,
-       updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?`,
+       updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ? AND ${guard.sql}`,
     ).bind(memory.takeawayZh, memory.takeawayEn, JSON.stringify(memory.methodsZh), JSON.stringify(memory.methodsEn),
       JSON.stringify(memory.questionsZh), JSON.stringify(memory.questionsEn), JSON.stringify(memory.connectionsZh),
       JSON.stringify(memory.connectionsEn), JSON.stringify(memory.topicsZh), JSON.stringify(memory.topicsEn),
-      memory.trackId || null, READING_MEMORY_MODEL, space.id, paper.id).run();
+      memory.trackId || null, READING_MEMORY_MODEL, space.id, paper.id, ...guard.values)];
 
-    await database.prepare("UPDATE research_preference_signals SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND source_type = 'reading_note' AND source_id LIKE ?")
-      .bind(space.id, `${paper.id}:%`).run();
+    statements.push(database.prepare(`UPDATE research_preference_signals SET active=0, updated_at=CURRENT_TIMESTAMP
+      WHERE space_id=? AND source_type='reading_note' AND substr(source_id,1,length(?))=? AND ${guard.sql}`)
+      .bind(space.id, paper.id+':', paper.id+':', ...guard.values));
     const signalGroups = [
       { kind: "reading_topic", zh: memory.topicsZh, en: memory.topicsEn, confidence: 82 },
       { kind: "reading_method", zh: memory.methodsZh, en: memory.methodsEn, confidence: 78 },
@@ -177,28 +178,32 @@ async function analyzeReadingNote(database: D1Database, space: { id: string; nam
     ];
     for (const group of signalGroups) {
       for (let index = 0; index < Math.min(group.zh.length, group.en.length, 5); index += 1) {
-        await upsertPreferenceSignal(database, {
+        const signal = preferenceSignalStatement(database, {
           spaceId: space.id, layer: "inferred", kind: group.kind, labelZh: group.zh[index], labelEn: group.en[index],
           evidence: `From the researcher's reading note on “${paper.title}”.`, confidence: group.confidence, weight: group.confidence,
           sourceType: "reading_note", sourceId: `${paper.id}:${noteHash}:${group.kind}:${index}`,
           expiresAt: new Date(Date.now() + 730 * 86_400_000).toISOString(),
-        });
+        }, guard);
+        if (signal) statements.push(signal);
       }
     }
     if (memory.trackId) {
-      await database.prepare(
-        "UPDATE research_tracks SET interaction_score = MIN(35, interaction_score + 2), depth_score = MIN(100, depth_score + ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?",
-      ).bind(["read", "mastered", "cited"].includes(readingStatus) ? 2 : 1, memory.trackId, space.id).run();
+      statements.push(database.prepare(
+        `UPDATE research_tracks SET interaction_score = MIN(35, interaction_score + 2), depth_score = MIN(100, depth_score + ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND ${guard.sql}`,
+      ).bind(["read", "mastered", "cited"].includes(readingStatus) ? 2 : 1, memory.trackId, space.id, ...guard.values));
     }
+    statements.push(database.prepare(`DELETE FROM monitor_query_plans WHERE space_id=? AND plan_date>=date('now') AND ${guard.sql}`)
+      .bind(space.id, ...guard.values));
+    const committed = await database.batch(statements);
     await Promise.all([
       recordUsage(database, "reading-memory:global", usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
       recordUsage(database, workspaceScope, usageDate, data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
     ]);
-    return { status: "ready", cached: false, memory };
+    return committed[0].meta.changes ? { status: "ready", cached: false, memory } : { status: "stale", cached: false };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 300) : "Reading-memory analysis failed";
-    await database.prepare("UPDATE paper_reading_memories SET analysis_status = 'error', error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ?")
-      .bind(message, space.id, paper.id).run();
+    await database.prepare(`UPDATE paper_reading_memories SET analysis_status = 'error', error = ?, updated_at = CURRENT_TIMESTAMP WHERE space_id = ? AND paper_id = ? AND ${guard.sql}`)
+      .bind(message, space.id, paper.id, ...guard.values).run();
     return { status: "error", cached: false };
   }
 }
@@ -291,6 +296,7 @@ export async function PATCH(request: Request) {
     ["read", "mastered", "cited"].includes(status) ? now : null);
   await context.database.batch([
     readingProgressStatement,
+    ...invalidateReadingNoteStatements(context.database, spaceId, paperId, await contentHash(note)),
     ...reconcileResearchMapEvidenceStatements(context.database, spaceId, paperId),
   ]);
   const memoryAnalysis = payload?.analyze

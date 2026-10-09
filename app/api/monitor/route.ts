@@ -1,3 +1,5 @@
+import { readingNoteHash } from "../../../lib/reading-note-consistency.mjs";
+import { currentReadingMemories } from "../../../lib/current-reading-memories";
 import { PROBLEM_QUERY_POLICY, parseProblemQueries, protectProblemQueries, problemSourceKey, type ProblemQueries } from "../../../lib/problem-query-plan";
 import { ABSTRACT_SCOPE_RULE } from "../../../lib/abstract-integrity";
 import { buildPreferenceGuidance, feedbackExampleContext, FEEDBACK_POLICY_VERSION, PREFERENCE_GUIDANCE_RULES } from "../../../lib/feedback-policy.mjs";
@@ -2257,7 +2259,7 @@ async function ensureDailyQueryPlan(
 ): Promise<QueryPlan> {
   const planDate = new Date().toISOString().slice(0, 10);
   const queryCoverageLimit = preference.explorationMode === "focused" ? 2 : preference.explorationMode === "open" ? 4 : 3;
-  const [existing, guidanceTracks, guidance, confirmedEvidence] = await Promise.all([
+  const [existing, guidanceTracks, guidance, confirmedEvidence, signals] = await Promise.all([
     database.prepare(
       "SELECT plan_date, exploration_mode, queries_json, rationale_zh, rationale_en, model, error, created_at FROM monitor_query_plans WHERE space_id = ? AND plan_date = ? LIMIT 1",
     ).bind(space.id, planDate).first<{
@@ -2275,6 +2277,7 @@ async function ensureDailyQueryPlan(
       action_run_revision: string;
     }>(),
     database.prepare(RECENT_CONFIRMED_ROUTE_EVIDENCE_SQL).bind(space.id).all<ConfirmedRouteEvidenceSnapshot>(),
+    readPreferenceSignals(database, space.id, 28),
   ]);
   const guidanceIdentity = researchGuidanceIdentity({
     tracks: guidanceTracks.results,
@@ -2288,7 +2291,7 @@ async function ensureDailyQueryPlan(
     actionRunRevision: guidance?.action_run_revision || "",
     confirmedEvidence: confirmedEvidence.results,
   });
-  const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(PROBLEM_QUERY_POLICY + ":" + FEEDBACK_POLICY_VERSION + ":" + guidanceIdentity));
+  const guidanceDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(PROBLEM_QUERY_POLICY + ":" + FEEDBACK_POLICY_VERSION + ":note-consistency-v1:" + guidanceIdentity + ":" + JSON.stringify(signals.map(({id,kind,labelEn,evidence,confidence,observedAt})=>({id,kind,labelEn,evidence,confidence,observedAt})))));
   const guidanceRevision = Array.from(new Uint8Array(guidanceDigest)).slice(0, 12).map((value) => value.toString(16).padStart(2, "0")).join("");
   let existingQueries: (Partial<Record<Horizon, string[]>> & { guidanceRevision?: string; problemQueries?: ProblemQueries }) = {};
   try { existingQueries = existing ? JSON.parse(existing.queries_json) as typeof existingQueries : {}; } catch { existingQueries = {}; }
@@ -2317,8 +2320,7 @@ async function ensureDailyQueryPlan(
   }
 
   const queryLimit = preference.explorationMode === "focused" ? 1 : preference.explorationMode === "open" ? 3 : 2;
-  const [signals, tracks, recentCoverage, branchPerformance, activeProblems, latestYieldAttribution] = await Promise.all([
-    readPreferenceSignals(database, space.id, 28),
+  const [tracks, recentCoverage, branchPerformance, activeProblems, latestYieldAttribution] = await Promise.all([
     database.prepare(
       `SELECT track.id, track.title_en, track.summary_en, track.search_queries, track.user_role, track.depth_score,
        track.support_score, track.interaction_score, track.intelligence_json, track.intelligence_updated_at,
@@ -2489,11 +2491,7 @@ async function enrichSpaceWithImportedMemory(database: D1Database, space: SpaceR
        WHERE f.space_id = ? AND (f.saved = 1 OR f.feedback IN ('relevant', 'not_relevant'))
        ORDER BY f.updated_at DESC LIMIT 30`,
     ).bind(space.id).all<{ title: string; venue: string; feedback: string | null; saved: number; reason_code: string | null }>(),
-    database.prepare(
-      `SELECT takeaway_en, methods_en, questions_en, connections_en, topics_en
-       FROM paper_reading_memories WHERE space_id = ? AND analysis_status = 'ready'
-       ORDER BY updated_at DESC LIMIT 16`,
-    ).bind(space.id).all<{ takeaway_en: string; methods_en: string; questions_en: string; connections_en: string; topics_en: string }>(),
+    currentReadingMemories(database, space.id, 16),
     database.prepare(
       `SELECT p.title, claim.kind, claim.claim_en, claim.section_label
        FROM paper_evidence_claims claim
@@ -4224,11 +4222,7 @@ async function maybeGenerateWeeklyReview(database: D1Database, space: SpaceRow, 
        FROM paper_feedback WHERE space_id = ? AND updated_at >= datetime('now', '-7 days') AND feedback IS NOT NULL
        GROUP BY reason_code, feedback ORDER BY count DESC LIMIT 12`,
     ).bind(space.id).all<{ reason_code: string; feedback: string; count: number }>(),
-    database.prepare(
-      `SELECT takeaway_zh, takeaway_en, questions_zh, questions_en FROM paper_reading_memories
-       WHERE space_id = ? AND analysis_status = 'ready' AND updated_at >= datetime('now', '-7 days')
-       ORDER BY updated_at DESC LIMIT 10`,
-    ).bind(space.id).all<{ takeaway_zh: string; takeaway_en: string; questions_zh: string; questions_en: string }>(),
+    currentReadingMemories(database, space.id, 10, true),
     database.prepare(
       `SELECT c.title_zh, c.title_en, c.summary_zh, c.summary_en FROM research_map_changes c
        WHERE c.space_id = ? AND c.created_at >= datetime('now', '-7 days')
@@ -5218,14 +5212,14 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
        last_scanned_at DESC LIMIT 30`,
     ).bind(space.id).all<{ horizon: Horizon; source_key: string; channel: string; query_key: string; query_text: string; next_cursor: number; attempt_count: number; total_candidate_count: number; new_candidate_count: number; zero_yield_streak: number; branch_status: string; cooldown_until: string | null; first_scanned_at: string | null; last_scanned_at: string | null; last_error: string | null }>(),
     database.prepare(
-      `SELECT m.paper_id, m.analysis_status, m.takeaway_zh, m.takeaway_en, m.methods_zh, m.methods_en,
+      `SELECT m.paper_id, m.note_hash, m.analysis_status, m.takeaway_zh, m.takeaway_en, m.methods_zh, m.methods_en,
        m.questions_zh, m.questions_en, m.connections_zh, m.connections_en, m.topics_zh, m.topics_en,
        m.track_id, m.model, m.error, m.analyzed_at, m.updated_at, p.title, p.authors, p.venue,
        COALESCE(r.status, 'unread') AS reading_status, COALESCE(r.note, '') AS note
        FROM paper_reading_memories m JOIN monitored_papers p ON p.id = m.paper_id AND p.space_id = m.space_id
        LEFT JOIN paper_reading_progress r ON r.paper_id = m.paper_id AND r.space_id = m.space_id
        WHERE m.space_id = ? ORDER BY m.updated_at DESC LIMIT 24`,
-    ).bind(space.id).all<{ paper_id: string; analysis_status: string; takeaway_zh: string; takeaway_en: string; methods_zh: string; methods_en: string; questions_zh: string; questions_en: string; connections_zh: string; connections_en: string; topics_zh: string; topics_en: string; track_id: string | null; model: string; error: string | null; analyzed_at: string | null; updated_at: string; title: string; authors: string; venue: string; reading_status: string; note: string }>(),
+    ).bind(space.id).all<{ paper_id: string; note_hash: string; analysis_status: string; takeaway_zh: string; takeaway_en: string; methods_zh: string; methods_en: string; questions_zh: string; questions_en: string; connections_zh: string; connections_en: string; topics_zh: string; topics_en: string; track_id: string | null; model: string; error: string | null; analyzed_at: string | null; updated_at: string; title: string; authors: string; venue: string; reading_status: string; note: string }>(),
     database.prepare(
       `SELECT COALESCE(reason_code, 'unspecified') AS reason_code, feedback, COUNT(*) AS count
        FROM paper_feedback WHERE space_id = ? AND feedback IN ('relevant','not_relevant')
@@ -5431,30 +5425,33 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   const pilotTotalTokens = dailyUsageRows.results
     .filter((row) => Date.parse(`${row.usage_date}T00:00:00Z`) >= pilotTokenCutoff)
     .reduce((sum, row) => sum + (row.input_tokens || 0) + (row.output_tokens || 0), 0);
-  const readingMemories = readingMemoryRows.results.map((row) => ({
+  const readingMemories = await Promise.all(readingMemoryRows.results.map(async (row) => {
+    const current = Boolean(row.note) && await readingNoteHash(row.note) === row.note_hash;
+    const ready = current && row.analysis_status === "ready";
+    return ({
     paperId: row.paper_id,
     title: row.title,
     authors: row.authors,
     venue: row.venue,
     readingStatus: row.reading_status,
     noteExcerpt: cleanText(row.note).slice(0, 260),
-    analysisStatus: row.analysis_status,
-    takeawayZh: row.takeaway_zh,
-    takeawayEn: row.takeaway_en,
-    methodsZh: parseVenues(row.methods_zh),
-    methodsEn: parseVenues(row.methods_en),
-    questionsZh: parseVenues(row.questions_zh),
-    questionsEn: parseVenues(row.questions_en),
-    connectionsZh: parseVenues(row.connections_zh),
-    connectionsEn: parseVenues(row.connections_en),
-    topicsZh: parseVenues(row.topics_zh),
-    topicsEn: parseVenues(row.topics_en),
-    trackId: row.track_id,
+    analysisStatus: current ? row.analysis_status : "stale",
+    takeawayZh: ready ? row.takeaway_zh : "",
+    takeawayEn: ready ? row.takeaway_en : "",
+    methodsZh: ready ? parseVenues(row.methods_zh) : [],
+    methodsEn: ready ? parseVenues(row.methods_en) : [],
+    questionsZh: ready ? parseVenues(row.questions_zh) : [],
+    questionsEn: ready ? parseVenues(row.questions_en) : [],
+    connectionsZh: ready ? parseVenues(row.connections_zh) : [],
+    connectionsEn: ready ? parseVenues(row.connections_en) : [],
+    topicsZh: ready ? parseVenues(row.topics_zh) : [],
+    topicsEn: ready ? parseVenues(row.topics_en) : [],
+    trackId: ready ? row.track_id : null,
     model: row.model,
     error: row.error,
-    analyzedAt: row.analyzed_at,
+    analyzedAt: ready ? row.analyzed_at : null,
     updatedAt: row.updated_at,
-  }));
+  });}));
   const dailyBrief = dailyBriefRow ? {
     date: dailyBriefRow.brief_date,
     isCurrent: dailyBriefRow.brief_date === shanghaiDateKey(new Date(now)),

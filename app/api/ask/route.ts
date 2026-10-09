@@ -1,3 +1,4 @@
+import { currentReadingMemories } from "../../../lib/current-reading-memories";
 import { recoverPaperAbstract } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
@@ -103,10 +104,7 @@ export async function POST(request: Request) {
         database.prepare(
           "SELECT analysis_json FROM research_imports WHERE space_id = ? AND status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 5",
         ).bind(space.id).all<{ analysis_json: string }>(),
-        database.prepare(
-          `SELECT takeaway_en, methods_en, questions_en, connections_en FROM paper_reading_memories
-           WHERE space_id = ? AND analysis_status = 'ready' ORDER BY updated_at DESC LIMIT 12`,
-        ).bind(space.id).all<{ takeaway_en: string; methods_en: string; questions_en: string; connections_en: string }>(),
+        currentReadingMemories(database, space.id, 12),
         database.prepare(
           "SELECT title_en, summary_en, user_role, depth_score, interaction_score FROM research_tracks WHERE space_id = ? ORDER BY interaction_score DESC, depth_score DESC LIMIT 10",
         ).bind(space.id).all<{ title_en: string; summary_en: string; user_role: string; depth_score: number; interaction_score: number }>(),

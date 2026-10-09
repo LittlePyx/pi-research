@@ -1,3 +1,4 @@
+import { readingNoteHash } from "./reading-note-consistency.mjs";
 import { feedbackSignalKind } from "./feedback-policy.mjs";
 export type PreferenceLayer = "explicit" | "inferred";
 
@@ -51,14 +52,14 @@ function bounded(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-export async function upsertPreferenceSignal(database: D1Database, signal: PreferenceSignalInput) {
+export function preferenceSignalStatement(database: D1Database, signal: PreferenceSignalInput, guard = { sql: "1", values: [] as string[] }) {
   const labelZh = signal.labelZh.trim().slice(0, 240);
   const labelEn = signal.labelEn.trim().slice(0, 320);
   if (!labelZh || !labelEn) return;
-  await database.prepare(
+  return database.prepare(
     `INSERT INTO research_preference_signals
      (id, space_id, layer, kind, label_zh, label_en, evidence, confidence, weight, source_type, source_id, active, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ? WHERE ${guard.sql}
      ON CONFLICT(space_id, source_type, source_id, kind, label_en) DO UPDATE SET
        layer = excluded.layer, label_zh = excluded.label_zh, evidence = excluded.evidence,
        confidence = excluded.confidence, weight = excluded.weight, active = 1,
@@ -66,23 +67,47 @@ export async function upsertPreferenceSignal(database: D1Database, signal: Prefe
   ).bind(
     crypto.randomUUID(), signal.spaceId, signal.layer, signal.kind, labelZh, labelEn,
     (signal.evidence || "").trim().slice(0, 700), bounded(signal.confidence), bounded(signal.weight ?? signal.confidence),
-    signal.sourceType, signal.sourceId.slice(0, 240), signal.expiresAt || null,
-  ).run();
+    signal.sourceType, signal.sourceId.slice(0, 240), signal.expiresAt || null, ...guard.values,
+  );
+}
+
+export async function upsertPreferenceSignal(database: D1Database, signal: PreferenceSignalInput) {
+  await preferenceSignalStatement(database, signal)?.run();
 }
 
 export async function readPreferenceSignals(database: D1Database, spaceId: string, limit = 40) {
-  const result = await database.prepare(
-    `SELECT id, layer, kind, label_zh, label_en, evidence, confidence, weight, source_type,
-     source_id, observed_at, expires_at
-     FROM research_preference_signals
-     WHERE space_id = ? AND active = 1 AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-     ORDER BY CASE layer WHEN 'explicit' THEN 0 ELSE 1 END, confidence DESC, observed_at DESC LIMIT ?`,
-  ).bind(spaceId, limit).all<{
+  type Row = {
     id: string; layer: PreferenceLayer; kind: string; label_zh: string; label_en: string; evidence: string;
     confidence: number; weight: number; source_type: string; source_id: string; observed_at: string; expires_at: string | null;
-  }>();
+    current_note: string | null; current_hash: string | null; memory_status: string | null;
+  };
+  const rows: Row[] = [];
+  const hashes = new Map<string, Promise<string>>();
+  for (let offset = 0; rows.length < limit; offset += 100) {
+    const result = await database.prepare(
+      `SELECT s.id, s.layer, s.kind, s.label_zh, s.label_en, s.evidence, s.confidence, s.weight, s.source_type,
+       s.source_id, s.observed_at, s.expires_at, r.note AS current_note, m.note_hash AS current_hash,
+       m.analysis_status AS memory_status FROM research_preference_signals s
+       LEFT JOIN paper_reading_progress r ON s.source_type='reading_note' AND r.space_id=s.space_id
+         AND r.paper_id=substr(s.source_id,1,instr(s.source_id,':')-1)
+       LEFT JOIN paper_reading_memories m ON m.space_id=r.space_id AND m.paper_id=r.paper_id
+       WHERE s.space_id=? AND s.active=1 AND (s.expires_at IS NULL OR s.expires_at>CURRENT_TIMESTAMP)
+       ORDER BY CASE s.layer WHEN 'explicit' THEN 0 ELSE 1 END, s.confidence DESC, s.observed_at DESC, s.id
+       LIMIT 100 OFFSET ?`,
+    ).bind(spaceId, offset).all<Row>();
+    for (const row of result.results) {
+      if (row.source_type === "reading_note") {
+        if (!row.current_note || row.memory_status !== "ready" || row.source_id.split(":")[1] !== row.current_hash) continue;
+        if (!hashes.has(row.current_note)) hashes.set(row.current_note, readingNoteHash(row.current_note));
+        if (await hashes.get(row.current_note) !== row.current_hash) continue;
+      }
+      rows.push(row);
+      if (rows.length >= limit) break;
+    }
+    if (result.results.length < 100) break;
+  }
   const now = Date.now();
-  return result.results.map((row) => {
+  return rows.map((row) => {
     const ageDays = Math.max(0, (now - Date.parse(row.observed_at)) / 86_400_000);
     const decay = row.layer === "explicit" ? Math.max(0.82, 1 - ageDays / 1825) : Math.max(0.45, 1 - ageDays / 540);
     const reasonCode = row.source_type === "paper_feedback" ? row.source_id?.split(":").at(-1) : null;
