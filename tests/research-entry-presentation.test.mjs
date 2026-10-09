@@ -24,7 +24,7 @@ test('home shows discovered reading even before a research question is supplied'
  assert.match(html,/Discovered paper/);assert.match(html,/Add a research question/);assert.match(html,/Start reading/);assert.doesNotMatch(html,/<form/);
  const resumed=render({goal:null,papers:[]},{id:'resume',title:'Saved reading',readingNote:'Original note'},[],false,'home');
  assert.equal(resumed.split('Saved reading').length-1,1);assert.match(resumed,/Original note/);
- assert.match(render({goal:null,papers:[]},null,[],false,'home'),/<form/);
+ assert.doesNotMatch(render({goal:null,papers:[]},null,[],false,'home'),/<form/);
 });
 test('Saved feedback removes stale question cards immediately while replacement readings load',()=>{
  const result={goal,papers:[paper('Ignored paper'),paper('Deferred paper'),paper('Available paper')]};
@@ -77,7 +77,7 @@ test('home has one lead and at most three deduplicated next papers without revie
  assert.ok(selected.indexOf('Persistent discovery brief')<selected.indexOf('Up next'));
  assert.match(selected,/Verified Journal · 2024/);assert.match(selected,/Actual Author/);
  const empty=render({goal:null,papers:[]},null,[],false,'home',[],extra);
- assert.ok(empty.indexOf('Persistent discovery brief')<empty.indexOf('<form'));
+ assert.match(empty,/Persistent discovery brief/);assert.doesNotMatch(empty,/<form/);
  assert.doesNotMatch(render({goal,papers:[]},null,[],false,'reading',[],extra),/Persistent discovery brief/);
  });
 
@@ -87,4 +87,14 @@ test('home brief receives only exact question readings, excluding fallback and s
  assert.equal(context.goal.id,goal.id);assert.deepEqual(context.papers.map(p=>p.id),['Related']);
  render({goal:null,papers:[]},null,[],false,'home',[paper('Space fallback')],{homeBrief:c=>{context=c;return null}});
  assert.deepEqual(context.papers,[]);
+});
+
+test('without a question the field brief keeps a lead cover and a compact continuation, not an empty form',()=>{
+ const html=render({goal:null,papers:[]},{id:'resume',title:'Earlier reading',readingNote:'User note'},[],false,'home',[paper('Field recommendation'),paper('Next field reading')],{fieldDescription:'Finite blocklength coding',homeBrief:React.createElement('p',null,'Empty placeholder')});
+ assert.match(html,/FIELD BRIEF/);assert.match(html,/Finite blocklength coding/);assert.match(html,/pi-reading-poster/);assert.match(html,/Field recommendation/);assert.match(html,/Next field reading/);assert.match(html,/Continue reading: /);
+ assert.doesNotMatch(html,/<form|Empty placeholder/);assert.equal(html.split('Field recommendation').length-1,1);
+});
+test('question mode never borrows unrelated field recommendations to fill a missing match',()=>{
+ const html=render({goal,papers:[]},null,[],false,'home',[paper('Unrelated field paper')]);
+ assert.doesNotMatch(html,/Unrelated field paper|FIELD BRIEF/);
 });

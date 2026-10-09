@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { DAILY_REVIEW_PROGRESS_SQL, dailyReviewTopupDue, needsDailyReviewTopup } from '../lib/daily-review-target.ts';
-import { supplementaryReading } from '../lib/supplementary-reading.mjs';
+import { supplementaryReading, fieldBriefReading } from '../lib/supplementary-reading.mjs';
 
 test('daily depth counts distinct actual drafts by Shanghai day and space, not retries or verification', () => {
   const db = new DatabaseSync(':memory:');
@@ -43,4 +43,9 @@ test('supplementary reading never promotes unreviewed, read, snoozed, duplicate 
     {...p,id:'dismissed',feedback:'not_relevant'},{...p,id:'later',userState:'snoozed'},
     {...p,id:'selected'},{...p,id:'b',readingStatus:'queued'}];
   assert.deepEqual(supplementaryReading(rows,['selected']).map(p=>p.id),['a','b']);
+});
+
+test('field brief reuses published in-progress reading without promoting candidates or resurfacing exclusions',()=>{
+ const rows=[{id:'reading',qualityStage:'recommended',readingStatus:'reading'},{id:'new',qualityStage:'recommended',readingStatus:'unread'},{id:'candidate',qualityStage:'reviewing',readingStatus:'unread'},{id:'read',qualityStage:'recommended',readingStatus:'read'},{id:'dismissed',qualityStage:'recommended',feedback:'not_relevant'},{id:'excluded',qualityStage:'recommended'}, {id:'reading',qualityStage:'recommended'}];
+ assert.deepEqual(fieldBriefReading(rows,['excluded']).map(p=>p.id),['reading','new']);
 });

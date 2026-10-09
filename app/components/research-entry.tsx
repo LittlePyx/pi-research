@@ -18,12 +18,12 @@ function checkedResult(value:unknown, requireGoal=false):Result {
  if(data.papers.some(p=>!p||typeof p.id!=='string'||typeof p.title!=='string'))throw Error('Invalid reading response');
  return data;
 }
-export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll,homeBrief,bibliography=[]}: {
- spaceId:string;spaceName?:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
+export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll,homeBrief,bibliography=[]}: {
+ spaceId:string;spaceName?:string;fieldDescription?:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
  onDiscover:()=>void;onRead:(id:string)=>void;onRoute:(id:string)=>void;onSaved:()=>void;onReadingList:(ids:string[])=>void;
  resume:{id:string;title:string;readingNote:string}|null;onProgress:()=>void;
  excludedReadingIds?:string[];
- homeBrief?:React.ReactNode|((context:{goal:Goal|null;papers:Reading[];loading:boolean;unavailable:boolean})=>React.ReactNode);bibliography?:{id:string;venue:string;authors:string;publishedAt:string|null}[];
+ homeBrief?:React.ReactNode|((context:{goal:Goal|null;papers:Reading[];loading:boolean;unavailable:boolean;fieldDescription?:string})=>React.ReactNode);bibliography?:{id:string;venue:string;authors:string;publishedAt:string|null}[];
  mode?:"home"|"reading"|"discovery";fallbackPapers?:Reading[];onAll?:()=>void;
 }) {
  const zh=locale==='zh';
@@ -60,32 +60,33 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
   submitting.current=true;generation.current++;setBusy(true);setError('');
   try {
    const r=await fetch('/api/research-entry',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({spaceId,goalId:result.goal.id}),signal:AbortSignal.timeout(20000)});
-   if(!r.ok)throw Error();const data=await r.json();if(data.removed!==true)throw Error();
+   if(!r.ok)throw Error();const data=await r.json() as {removed?:boolean}|null;if(data?.removed!==true)throw Error();
    if(!alive.current)return;
-   generation.current++;chosen.current='';setResult({goal:null,papers:[]});readingCallback.current([]);setRemoving(false);setEditing(true);setQuestion('');setSeed('');setSaved(false);setReadError(false);onSaved();
+   generation.current++;chosen.current='';setResult({goal:null,papers:[]});readingCallback.current([]);setRemoving(false);setEditing(false);setQuestion('');setSeed('');setSaved(false);setReadError(false);onSaved();
   }catch{if(alive.current)setError(zh?'未能确认移除，请重试。':'Could not confirm removal. Please retry.')}
   finally{submitting.current=false;if(alive.current)setBusy(false)}
  };
  const goal=result?.goal;
  const inactive=Boolean(goal&&(goal.status!=='active'||goal.monitoringStatus!=='active'));
  const visiblePapers=result?.papers.filter(p=>!excludedReadingIds.includes(p.id))||[];
- const brief=typeof homeBrief==='function'?homeBrief({goal:goal||null,papers:goal&&!readError?visiblePapers:[],loading:!result&&!readError,unavailable:readError}):homeBrief;
+ const brief=typeof homeBrief==='function'?homeBrief({goal:goal||null,papers:goal&&!readError?visiblePapers:[],loading:!result&&!readError,unavailable:readError,fieldDescription}):homeBrief;
  const queued=visiblePapers.filter(p=>p.id!==resume?.id);
- const homeReadings=[...queued,...fallbackPapers].filter((p,i,a)=>p.id!==resume?.id&&!excludedReadingIds.includes(p.id)&&a.findIndex(x=>x.id===p.id)===i);
- const lead=resume?null:homeReadings[0];
- const upNext=homeReadings.slice(resume?0:1,resume?3:4);
+ const homeReadings=(goal?queued:fallbackPapers).filter((p,i,a)=>p.id!==resume?.id&&!excludedReadingIds.includes(p.id)&&a.findIndex(x=>x.id===p.id)===i);
+ const fieldCover=Boolean(result&&!goal&&!readError&&(homeReadings.length||resume));
+ const lead=resume&&!fieldCover?null:homeReadings[0];
+ const upNext=homeReadings.slice(lead?1:0,lead?4:3);
  const showHomeReading=mode==='home'&&Boolean(resume||homeReadings.length);
- const details=bibliography.find(p=>p.id===(resume?.id||lead?.id));
+ const details=bibliography.find(p=>p.id===(lead?.id||resume?.id));
  const metadata=details&&<p className="pi-poster-bibliography"><span>{details.venue}{details.publishedAt?' · '+details.publishedAt.slice(0,4):''}</span><span>{details.authors}</span></p>;
- const masthead=<div className="pi-poster-masthead"><span>PI RESEARCH</span><span>{resume?(zh?'继续阅读':'READING NOTES'):(zh?'精选阅读':'SELECTED READING')}</span></div>;
+ const masthead=<div className="pi-poster-masthead"><span>PI RESEARCH</span><span>{lead?fieldCover?(zh?'领域精选 · 研究简报':'FIELD BRIEF'):(zh?'精选阅读':'SELECTED READING'):(zh?'继续阅读':'READING NOTES')}</span></div>;
  const continuation=resume&&<article className={`pi-question-resume ${mode==="home"?"pi-reading-poster":""}`} aria-label={zh?'继续阅读':'Continue reading'}>
   {mode==="home"&&masthead}<div className="pi-poster-copy">{mode!=="home"&&<p className="pi-entry-eyebrow">{zh?'继续你的阅读':'CONTINUE READING'}</p>}<h4><MathText inline>{resume.title}</MathText></h4>{mode==="home"&&metadata}{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
   {mode==="home"&&<PaperFigure key={spaceId+resume.id} spaceId={spaceId} paperId={resume.id} demo={demo} locale={locale}/>}
   <button className="primary" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续阅读与笔记':'Continue reading & notes'} →</button>
  </article>;
  return <section className={`pi-question-entry ${mode==="home"?"pi-home-entry":""}`} aria-label={zh?'问题与第一批阅读':'Question and first reading'}>
-  {mode==="home"&&(!showHomeReading||editing)&&brief}
-  <header><h2>{goal?(zh?'当前研究':'Current research'):showHomeReading?(zh?'为你推荐':'For your research'):(zh?'从问题开始阅读':'Read with a question')}</h2>{(goal||showHomeReading)&&!editing&&<button type="button" disabled={busy} onClick={()=>{setQuestion('');setSeed('');setEditing(true);setRemoving(false);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}</header>
+  {mode==="home"&&(!showHomeReading||editing)&&!fieldCover&&brief}
+  <header><h2>{goal?(zh?'当前研究':'Current research'):(showHomeReading||mode==='home')?(zh?'研究简报':'Research brief'):(zh?'从问题开始阅读':'Read with a question')}</h2>{(goal||showHomeReading||mode==='home'&&result)&&!editing&&<button type="button" disabled={busy} onClick={()=>{setQuestion('');setSeed('');setEditing(true);setRemoving(false);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}</header>
   {goal&&!editing&&<div className="pi-question-remove">
    {!removing?<button type="button" disabled={busy} onClick={()=>{setRemoving(true);setError('')}}>{zh?'移除当前问题':'Remove question'}</button>:<div role="group" aria-label={zh?'确认移除问题':'Confirm question removal'}>
     <p>{zh?'从今日移除这个问题，并停止后续跟踪？已有论文、收藏、笔记和研究记录保留。':'Remove this question from Today and stop future tracking? Papers, saves, notes and research history will be kept.'}</p>
@@ -97,7 +98,7 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
   {readError&&<p role="alert">{zh?'研究问题暂未载入，已有内容保留。':'Could not load the research question; saved content is preserved.'} <button type="button" onClick={()=>setRetry(n=>n+1)}>{zh?'重试':'Retry'}</button></p>}
   {!result&&!readError&&<p role="status">{zh?'正在读取研究问题…':'Loading your question…'}</p>}
   {(editing||!goal&&!showHomeReading)&&continuation}
-  {(editing||result&&!goal&&!showHomeReading)&&<form onSubmit={event=>void submit(event)}>
+  {(editing||mode!=='home'&&result&&!goal&&!showHomeReading)&&<form onSubmit={event=>void submit(event)}>
    {spaceName&&<p className="pi-question-status">{zh?'保存到：':'Save to: '}{spaceName}</p>}
    <label>{zh?'你想弄清什么问题？':'What do you want to understand?'}<textarea rows={3} minLength={10} maxLength={520} required disabled={busy} value={question} onChange={e=>setQuestion(e.target.value)} placeholder={zh?'例如：随机局部化中的协方差控制如何影响 KLS 谱隙界？':'For example: how does covariance control in stochastic localization affect KLS bounds?'}/></label>
    <label>{zh?'起点论文（选填）':'Starting paper (optional)'}<input maxLength={300} disabled={busy} value={seed} onChange={e=>setSeed(e.target.value)} placeholder={zh?'论文题名或 DOI，作为待核对线索':'Title or DOI, used as an unverified lead'}/></label>
@@ -108,11 +109,13 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
   {(goal||showHomeReading)&&!editing&&(mode==="home"?<>
    {goal&&<button className="pi-home-question" title={goal.question} type="button" onClick={()=>onRoute(goal.trackId)}><span>{goal.question}</span><span aria-hidden="true">↗</span></button>}
    {(inactive||demo)&&<p className="pi-question-status">{demo?(zh?'演示材料':'Sample materials'):(zh?'此问题已暂停或结束':'This problem is paused or resolved')}</p>}
-   {continuation}
+   {fieldCover&&fieldDescription&&<p className="pi-field-scope">{fieldDescription}</p>}
+   {(!fieldCover||!lead)&&continuation}
    {lead&&<article className="pi-home-lead pi-reading-poster">{masthead}<div className="pi-poster-copy"><h3><MathText inline>{lead.title}</MathText></h3>{metadata}<p className="pi-home-reason"><MathText inline>{zh?lead.whyZh:lead.whyEn}</MathText></p></div><PaperFigure key={spaceId+lead.id} spaceId={spaceId} paperId={lead.id} demo={demo} locale={locale}/><button className="primary" type="button" onClick={()=>onRead(lead.id)}>{zh?'开始阅读':'Start reading'} →</button></article>}
    {!resume&&!lead&&<p className="pi-question-empty">{zh?'正在为这个问题寻找值得读的材料。已有论文仍可在论文库查看。':'Looking for useful reading for this question. Existing papers remain in your library.'}</p>}
-   {showHomeReading&&brief}
+   {showHomeReading&&!fieldCover&&brief}
    {upNext.length>0&&<section className="pi-home-next"><header><h3>{zh?'接下来读':'Up next'}</h3><button type="button" onClick={onAll}>{zh?'查看全部':'View all'} →</button></header><ol>{upNext.map(p=><li key={p.id}><button type="button" onClick={()=>onRead(p.id)}><MathText inline>{p.title}</MathText><span aria-hidden="true">↗</span></button><p><MathText inline>{zh?p.whyZh:p.whyEn}</MathText></p></li>)}</ol></section>}
+   {fieldCover&&lead&&resume&&<button className="pi-field-resume" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续上次阅读：':'Continue reading: '}<MathText inline>{resume.title}</MathText> →</button>}
   </>:mode==="discovery"&&goal?<>
    <h3 className="pi-current-question"><MathText inline>{goal.question}</MathText></h3>
    {!demo&&<ProblemDiscovery key={spaceId+goal.id} spaceId={spaceId} problemId={goal.id} locale={locale} onRead={onRead} expanded/>}

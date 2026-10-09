@@ -148,3 +148,7 @@
  .pi-discovery-message { flex-basis:calc(100% - 44px); }
  .v2-app.pi-workspace .pi-focus-today .pi-discovery-notice>a { margin-left:44px; }
 }
+
+/* Field mode keeps the editorial cover primary, without repeating it in a second brief. */
+.v2-app.pi-workspace .pi-home-entry>.pi-field-scope { margin:12px 0 24px; max-width:70ch; font-size:15px; color:#62768a; }
+.v2-app.pi-workspace .pi-home-entry>.pi-field-resume { display:block; width:100%; padding:20px 0; border-top:1px solid #dce3eb; color:#586d80; font-size:14px; }

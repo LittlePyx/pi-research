@@ -16,7 +16,7 @@ test('brief uses exact question readings, not unscoped recent papers or queue co
 test('empty, paused and missing question states retain useful progress and library actions',()=>{
  assert.match(render({}),/没有已核验/);assert.match(render({active:true}),/本空间有检索或评审任务/);
  assert.match(render({context:{goal:{...goal,status:'paused'},papers:[]}}),/已暂停或结束/);
- assert.match(render({context:{goal:null,papers:[reading('Wrong')]}}),/提出一个研究问题/);
+ assert.match(render({context:{goal:null,papers:[reading('Wrong')]}}),/按研究领域整理阅读/);
  assert.doesNotMatch(render({context:{goal:null,papers:[reading('Wrong')]}}),/Wrong/);
  assert.match(render({}),/查看发现进度/);assert.match(render({}),/浏览空间文献库/);assert.match(render({demo:true}),/演示材料/);
 });

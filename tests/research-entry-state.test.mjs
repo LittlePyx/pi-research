@@ -65,3 +65,11 @@ test('unconfirmed removal preserves the question and allows retry',async()=>{
  h.nodes().find(n=>n.type==='button'&&n.props.children==='Confirm removal').props.onClick();h.requests.shift().resolve({});await settle();h.render();
  assert.match(h.text(),/Could not confirm removal/);assert.match(h.text(),/What assumptions govern/);assert.deepEqual(h.counts(),{saved:0,discovered:0});
 });
+
+test('removing a question returns immediately to the field cover rather than forcing another question',async()=>{
+ const h=harness();h.props.mode='home';h.props.fallbackPapers=[{id:'field',title:'Published field reading',whyEn:'Field recommendation reason'}];
+ h.requests.shift().resolve({goal,papers:[]});await settle();h.render();
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Remove question').props.onClick();h.render();
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Confirm removal').props.onClick();h.requests.shift().resolve({removed:true,goal:null,papers:[]});await settle();h.render();
+ assert.match(h.text(),/Published field reading|FIELD BRIEF/);assert.equal(h.nodes().some(n=>n.type==='form'),false);assert.deepEqual(h.counts(),{saved:1,discovered:0});
+});

@@ -82,7 +82,8 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   if (request.headers.get('origin') && request.headers.get('origin') !== new URL(request.url).origin) return Response.json({error:'Origin mismatch'}, {status:403});
-  const body = await request.json().catch(()=>null);
+  const parsed = await request.json().catch(()=>null);
+  const body = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string,unknown> : {};
   const spaceId = typeof body?.spaceId === 'string' ? body.spaceId : '';
   const goalId = typeof body?.goalId === 'string' ? body.goalId : '';
   if (!goalId) return Response.json({error:'Question required'}, {status:400});
