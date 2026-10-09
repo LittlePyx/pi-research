@@ -86,14 +86,14 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
  </article>;
  return <section className={`pi-question-entry ${mode==="home"?"pi-home-entry":""}`} aria-label={zh?'问题与第一批阅读':'Question and first reading'}>
   {mode==="home"&&(!showHomeReading||editing)&&!fieldCover&&brief}
-  <header><h2>{goal?(zh?'当前研究':'Current research'):(showHomeReading||mode==='home')?(zh?'研究简报':'Research brief'):(zh?'从问题开始阅读':'Read with a question')}</h2>{(goal||showHomeReading||mode==='home'&&result)&&!editing&&<button type="button" disabled={busy} onClick={()=>{setQuestion('');setSeed('');setEditing(true);setRemoving(false);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}</header>
-  {goal&&!editing&&<div className="pi-question-remove">
-   {!removing?<button type="button" disabled={busy} onClick={()=>{setRemoving(true);setError('')}}>{zh?'移除当前问题':'Remove question'}</button>:<div role="group" aria-label={zh?'确认移除问题':'Confirm question removal'}>
+  <header><h2>{goal?(zh?'当前研究':'Current research'):(showHomeReading||mode==='home')?(zh?'研究简报':'Research brief'):(zh?'从问题开始阅读':'Read with a question')}</h2><div className="pi-entry-actions">{(goal||showHomeReading||mode==='home'&&result)&&!editing&&<button type="button" disabled={busy} onClick={()=>{setQuestion('');setSeed('');setEditing(true);setRemoving(false);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}{goal&&!editing&&!removing&&<button className="pi-action-remove" type="button" disabled={busy} onClick={()=>{setRemoving(true);setError('')}}>{zh?'移除当前问题':'Remove question'}</button>}</div></header>
+  {goal&&!editing&&removing&&<div className="pi-question-remove">
+   <div role="group" aria-label={zh?'确认移除问题':'Confirm question removal'}>
     <p>{zh?'从今日移除这个问题，并停止后续跟踪？已有论文、收藏、笔记和研究记录保留。':'Remove this question from Today and stop future tracking? Papers, saves, notes and research history will be kept.'}</p>
-    <button type="button" disabled={busy} onClick={()=>void remove()}>{busy?(zh?'正在移除…':'Removing…'):(zh?'确认移除':'Confirm removal')}</button>
+    <button className="pi-action-remove-confirm" type="button" disabled={busy} onClick={()=>void remove()}>{busy?(zh?'正在移除…':'Removing…'):(zh?'确认移除':'Confirm removal')}</button>
     <button type="button" disabled={busy} onClick={()=>{setRemoving(false);setError('')}}>{zh?'取消':'Cancel'}</button>
     {error&&<p role="alert">{error}</p>}
-   </div>}
+   </div>
   </div>}
   {readError&&<p role="alert">{zh?'研究问题暂未载入，已有内容保留。':'Could not load the research question; saved content is preserved.'} <button type="button" onClick={()=>setRetry(n=>n+1)}>{zh?'重试':'Retry'}</button></p>}
   {!result&&!readError&&<p role="status">{zh?'正在读取研究问题…':'Loading your question…'}</p>}

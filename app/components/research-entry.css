@@ -51,7 +51,29 @@
 .pi-question-discovery article { padding: 1rem 0; border-top: 1px solid var(--border, #dde2e6); }
 .pi-question-discovery small { overflow-wrap: anywhere; }
 
-.pi-question-remove { margin-top:8px; }
-.pi-question-remove > button { color:#687581; font-size:13px; }
-.pi-question-remove [role="group"] { padding:16px 0; border-bottom:1px solid #e0e2e6; }
-.pi-question-remove [role="group"] button { margin-right:20px; }
+/* Secondary actions retain a visible shape without competing with the reading cover. */
+.pi-entry-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.v2-app.pi-workspace .pi-question-entry :is(.pi-entry-actions button,footer>button:not(.primary),[role=alert]>button,.pi-first-read,.pi-discovery-link,.pi-home-next header>button),
+.v2-app.pi-workspace .pi-discovery-brief :is(header>button,section>button),
+.v2-app.pi-workspace .pi-discovery-brief>button {
+ display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:9px 14px;
+ border:1px solid #c3cfdb; border-radius:6px; background:#f8fafc; color:#315573;
+ font-size:14px; font-weight:600; line-height:1.5; text-decoration:none; cursor:pointer;
+ transition:background-color .15s,border-color .15s;
+}
+.v2-app.pi-workspace .pi-question-entry :is(.pi-entry-actions button,footer>button:not(.primary),[role=alert]>button,.pi-first-read,.pi-discovery-link,.pi-home-next header>button):hover:not(:disabled),
+.v2-app.pi-workspace .pi-discovery-brief :is(header>button,section>button):hover:not(:disabled),
+.v2-app.pi-workspace .pi-discovery-brief>button:hover:not(:disabled) { background:#edf3f8; border-color:#8da6bc; }
+.v2-app.pi-workspace .pi-question-entry .pi-entry-actions .pi-action-remove { color:#92504d; border-color:#dfc7c5; background:#fffafa; }
+.v2-app.pi-workspace .pi-question-entry .pi-entry-actions .pi-action-remove:hover:not(:disabled) { background:#faeeed; border-color:#bb8580; }
+.pi-question-remove { margin:16px 0 20px; }
+.pi-question-remove [role="group"] { padding:18px 20px; border:1px solid #dfc7c5; border-radius:8px; background:#fffafa; }
+.v2-app.pi-workspace .pi-question-remove p { margin:0 0 14px; font-size:14px; color:#604e4d; }
+.v2-app.pi-workspace .pi-question-remove button { min-height:44px; padding:9px 16px; margin:0 8px 0 0; border:1px solid #c3cfdb; border-radius:6px; background:white; color:#344f65; font-size:14px; font-weight:600; cursor:pointer; }
+.v2-app.pi-workspace .pi-question-remove button:hover:not(:disabled) { background:#edf3f8; }
+.v2-app.pi-workspace .pi-question-remove .pi-action-remove-confirm { border-color:#994b46; background:#994b46; color:white; }
+.v2-app.pi-workspace .pi-question-remove .pi-action-remove-confirm:hover:not(:disabled) { background:#803d39; }
+.v2-app.pi-workspace .pi-question-entry button:focus-visible { outline:2px solid #315d80; outline-offset:3px; }
+.v2-app.pi-workspace .pi-question-entry button:disabled { cursor:not-allowed; opacity:.5; }
+@media(max-width:620px) { .pi-entry-actions { width:100%; } .pi-entry-actions button { flex:1 1 auto; } }
+@media(prefers-reduced-motion:reduce) { .pi-entry-actions button { transition:none!important; } }
