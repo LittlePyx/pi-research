@@ -38,3 +38,13 @@ test('Demo question flow is isolated, custom goals never inherit preset recommen
  await demoResponse('/api/library',{method:'PATCH',body:JSON.stringify({spaceId:'demo-mathematics',paperId:before.papers[0].id,status:'read',note:'Test-only saved note'})});
  assert.deepEqual((await get('demo-mathematics')).papers.map(p=>p.id),before.papers.slice(1).map(p=>p.id));
 });
+
+test('demo removal stays removed across reads and preserves papers and notes',async()=>{
+ const {demoResponse}=await import('../lib/demo-workspace.mjs?entry-removal');
+ const spaceId='demo-information';const get=async path=>(await demoResponse(path+'?spaceId='+spaceId)).json();
+ const before=await get('/api/research-entry'),library=await get('/api/monitor');
+ const response=await demoResponse('/api/research-entry',{method:'DELETE',body:JSON.stringify({spaceId,goalId:before.goal.id})});assert.equal((await response.json()).removed,true);
+ assert.deepEqual(await get('/api/research-entry'),{goal:null,papers:[]});assert.deepEqual(await get('/api/monitor'),library);
+ await demoResponse('/api/research-entry',{method:'POST',body:JSON.stringify({spaceId,question:'A new question about coding assumptions?'})});
+ assert.equal((await get('/api/research-entry')).goal.question,'A new question about coding assumptions?');
+});

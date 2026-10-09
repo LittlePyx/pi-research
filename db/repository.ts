@@ -391,6 +391,7 @@ async function bootstrapSchema(database: D1Database) {
   const recoveryColumns = await database.prepare("PRAGMA table_info(paper_abstract_recovery)").all<{ name: string }>();
   if (!recoveryColumns.results.some(column => column.name === "result_json")) await database.prepare("ALTER TABLE paper_abstract_recovery ADD COLUMN result_json TEXT NOT NULL DEFAULT ''").run();
   await ensurePaperInsightReviewColumns(database);
+  await database.prepare("CREATE TABLE IF NOT EXISTS research_entry_removals (space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, problem_id TEXT NOT NULL REFERENCES research_problems(id) ON DELETE CASCADE, removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (space_id, problem_id))").run();
   await database.prepare(reviewRefreshSchema).run();
   await database.batch(readingCalendarBootstrapSql.map(statement => database.prepare(statement)));
   await database.prepare("CREATE INDEX IF NOT EXISTS idx_paper_insights_space_recommendation_history ON paper_insights(space_id, ever_recommended, last_recommended_at)").run();

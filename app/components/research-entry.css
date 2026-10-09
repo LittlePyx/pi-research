@@ -50,3 +50,8 @@
 .pi-question-discovery dd { margin: .4rem 0; overflow-wrap: anywhere; }
 .pi-question-discovery article { padding: 1rem 0; border-top: 1px solid var(--border, #dde2e6); }
 .pi-question-discovery small { overflow-wrap: anywhere; }
+
+.pi-question-remove { margin-top:8px; }
+.pi-question-remove > button { color:#687581; font-size:13px; }
+.pi-question-remove [role="group"] { padding:16px 0; border-bottom:1px solid #e0e2e6; }
+.pi-question-remove [role="group"] button { margin-right:20px; }

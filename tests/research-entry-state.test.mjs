@@ -45,3 +45,23 @@ test('A refresh while saving cannot replace the pending submission or erase its 
  stale.resolve({goal:null,papers:[]});await settle();h.render();assert.equal(h.nodes().find(n=>n.type==='textarea').props.value,goal.question);
  post.resolve({goal,papers:[]});await settle();h.render();assert.match(h.text(),/Question saved/);assert.deepEqual(h.counts(),{saved:1,discovered:0});
 });
+
+test('question removal requires confirmation, survives late polling, and never triggers a scan',async()=>{
+ const h=harness();h.requests.shift().resolve({goal,papers:[]});await settle();h.render();
+ h.props.refreshKey='before-remove';h.render();const stale=h.requests.shift();
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Remove question').props.onClick();h.render();
+ assert.equal(h.requests.length,0);assert.match(h.text(),/Papers, saves, notes/);
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Confirm removal').props.onClick();
+ const del=h.requests.shift();assert.equal(del.init.method,'DELETE');assert.equal(JSON.parse(del.init.body).goalId,goal.id);
+ stale.resolve({goal,papers:[]});await settle();
+ del.resolve({removed:true,goal:null,papers:[]});await settle();h.render();
+ assert.doesNotMatch(h.text(),/What assumptions govern/);assert.ok(h.nodes().some(n=>n.type==='textarea'));assert.deepEqual(h.counts(),{saved:1,discovered:0});
+ h.props.refreshKey='after-remove';h.render();assert.match(h.requests[0].url,/goalId=$/);
+ h.requests.shift().resolve({goal:null,papers:[]});await settle();h.render();assert.doesNotMatch(h.text(),/Could not load/);
+});
+test('unconfirmed removal preserves the question and allows retry',async()=>{
+ const h=harness();h.requests.shift().resolve({goal,papers:[]});await settle();h.render();
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Remove question').props.onClick();h.render();
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Confirm removal').props.onClick();h.requests.shift().resolve({});await settle();h.render();
+ assert.match(h.text(),/Could not confirm removal/);assert.match(h.text(),/What assumptions govern/);assert.deepEqual(h.counts(),{saved:0,discovered:0});
+});

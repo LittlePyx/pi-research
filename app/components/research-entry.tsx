@@ -29,6 +29,7 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
  const zh=locale==='zh';
  const [result,setResult]=useState<Result|null>(null),[editing,setEditing]=useState(false),[question,setQuestion]=useState(''),[seed,setSeed]=useState('');
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[readError,setReadError]=useState(false),[retry,setRetry]=useState(0),[saved,setSaved]=useState(false);
+ const [removing,setRemoving]=useState(false);
  const alive=useRef(true),chosen=useRef(''),generation=useRef(0),submitting=useRef(false);
  const readingCallback=useRef(onReadingList);
  useEffect(()=>{readingCallback.current=onReadingList},[onReadingList]);
@@ -54,6 +55,17 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
   } catch(e) {if(alive.current)setError(e instanceof Error&&e.message==='409'?(zh?'该问题已暂停或结束，请在研究路线中管理。':'This question is paused or resolved. Manage it in Research.'):(zh?'未能确认保存结果，输入已保留。可重试，同一问题不会重复创建。':'Could not confirm the save. Your input is preserved; retrying the same question is safe.'))}
   finally {submitting.current=false;if(alive.current)setBusy(false)}
  };
+ const remove=async()=>{
+  if(!result?.goal||submitting.current)return;
+  submitting.current=true;generation.current++;setBusy(true);setError('');
+  try {
+   const r=await fetch('/api/research-entry',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({spaceId,goalId:result.goal.id}),signal:AbortSignal.timeout(20000)});
+   if(!r.ok)throw Error();const data=await r.json();if(data.removed!==true)throw Error();
+   if(!alive.current)return;
+   generation.current++;chosen.current='';setResult({goal:null,papers:[]});readingCallback.current([]);setRemoving(false);setEditing(true);setQuestion('');setSeed('');setSaved(false);setReadError(false);onSaved();
+  }catch{if(alive.current)setError(zh?'未能确认移除，请重试。':'Could not confirm removal. Please retry.')}
+  finally{submitting.current=false;if(alive.current)setBusy(false)}
+ };
  const goal=result?.goal;
  const inactive=Boolean(goal&&(goal.status!=='active'||goal.monitoringStatus!=='active'));
  const visiblePapers=result?.papers.filter(p=>!excludedReadingIds.includes(p.id))||[];
@@ -73,7 +85,15 @@ export function ResearchEntry({spaceId,spaceName,locale,demo,refreshKey,scanStat
  </article>;
  return <section className={`pi-question-entry ${mode==="home"?"pi-home-entry":""}`} aria-label={zh?'问题与第一批阅读':'Question and first reading'}>
   {mode==="home"&&(!showHomeReading||editing)&&brief}
-  <header><h2>{goal?(zh?'当前研究':'Current research'):showHomeReading?(zh?'为你推荐':'For your research'):(zh?'从问题开始阅读':'Read with a question')}</h2>{(goal||showHomeReading)&&!editing&&<button type="button" onClick={()=>{setQuestion('');setSeed('');setEditing(true);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}</header>
+  <header><h2>{goal?(zh?'当前研究':'Current research'):showHomeReading?(zh?'为你推荐':'For your research'):(zh?'从问题开始阅读':'Read with a question')}</h2>{(goal||showHomeReading)&&!editing&&<button type="button" disabled={busy} onClick={()=>{setQuestion('');setSeed('');setEditing(true);setRemoving(false);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}</header>
+  {goal&&!editing&&<div className="pi-question-remove">
+   {!removing?<button type="button" disabled={busy} onClick={()=>{setRemoving(true);setError('')}}>{zh?'移除当前问题':'Remove question'}</button>:<div role="group" aria-label={zh?'确认移除问题':'Confirm question removal'}>
+    <p>{zh?'从今日移除这个问题，并停止后续跟踪？已有论文、收藏、笔记和研究记录保留。':'Remove this question from Today and stop future tracking? Papers, saves, notes and research history will be kept.'}</p>
+    <button type="button" disabled={busy} onClick={()=>void remove()}>{busy?(zh?'正在移除…':'Removing…'):(zh?'确认移除':'Confirm removal')}</button>
+    <button type="button" disabled={busy} onClick={()=>{setRemoving(false);setError('')}}>{zh?'取消':'Cancel'}</button>
+    {error&&<p role="alert">{error}</p>}
+   </div>}
+  </div>}
   {readError&&<p role="alert">{zh?'研究问题暂未载入，已有内容保留。':'Could not load the research question; saved content is preserved.'} <button type="button" onClick={()=>setRetry(n=>n+1)}>{zh?'重试':'Retry'}</button></p>}
   {!result&&!readError&&<p role="status">{zh?'正在读取研究问题…':'Loading your question…'}</p>}
   {(editing||!goal&&!showHomeReading)&&continuation}

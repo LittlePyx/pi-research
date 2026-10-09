@@ -57,6 +57,21 @@ test('Question entry persists an owned idempotent problem and exposes only verif
   await request('/api/research-entry?spaceId=other-entry&goalId='+first.goal.id,null,404);
   await sql([{sql:"CREATE TRIGGER suppress_entry_test BEFORE INSERT ON research_problems WHEN NEW.question='A question whose insertion cannot be verified?' BEGIN SELECT RAISE(IGNORE); END"}]);
   await request('/api/research-entry',{...body,question:'A question whose insertion cannot be verified?'},503);
+  // Removing a question keeps research material, persists across refresh and is idempotent.
+  const remove=async(who=owner,spaceId='entry',goalId=newer.goal.id)=>{
+   const response=await mf.dispatchFetch('http://localhost/api/research-entry',{method:'DELETE',headers:{cookie:`pi_anonymous_workspace=${who}`,'Content-Type':'application/json'},body:JSON.stringify({spaceId,goalId})});return {status:response.status,body:await response.json()};
+  };
+  assert.equal((await remove('question-entry-other-owner-002')).status,404);
+  assert.equal((await remove(owner,'other-entry')).status,404);
+  assert.equal((await remove()).body.removed,true);assert.equal((await remove()).status,200);
+  assert.deepEqual(await request('/api/research-entry?spaceId=entry'),{goal:null,papers:[]},'do not resurrect an older question');
+  await request('/api/research-entry?spaceId=entry&goalId='+newer.goal.id,null,404);
+  const kept=await sql([{sql:'SELECT status FROM research_problems WHERE id=?',values:[newer.goal.id]},{sql:'SELECT monitoring_status FROM research_tracks WHERE id=?',values:[newer.goal.trackId]},{sql:"SELECT note FROM paper_reading_progress WHERE paper_id='related'"},{sql:"SELECT saved FROM paper_feedback WHERE paper_id='related'"}]);
+  assert.equal(kept[0].results[0].status,'paused');assert.equal(kept[1].results[0].monitoring_status,'paused');assert.match(kept[2].results[0].note,/Isolated reading note/);assert.equal(kept[3].results[0].saved,1);
+  const restored=await request('/api/research-entry',{...body,question:newer.goal.question});
+  assert.equal(restored.goal.status,'active');assert.equal((await request('/api/research-entry?spaceId=entry')).goal.id,newer.goal.id);
+  const fresh=await request('/api/research-entry',{...body,question:'A later question after restoring a removed question?'});
+  assert.equal((await request('/api/research-entry?spaceId=entry')).goal.id,fresh.goal.id);
   await sql([{sql:"UPDATE research_tracks SET monitoring_status='paused' WHERE id=?",values:[first.goal.trackId]}]);
   await request('/api/research-entry',body,409);
   assert.equal((await sql([{sql:'SELECT monitoring_status FROM research_tracks WHERE id=?',values:[first.goal.trackId]}]))[0].results[0].monitoring_status,'paused');
