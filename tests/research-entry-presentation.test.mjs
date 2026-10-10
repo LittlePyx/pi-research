@@ -14,14 +14,14 @@ function render(result,resume,excludedReadingIds=[],demo=true,mode="reading",fal
  let stateIndex=0;
  const mod={exports:{}};
  const hookReact={...React,useState:initial=>[stateIndex++===0?result:initial,()=>{}],useEffect:()=>{},useRef:value=>({current:value})};
- new Function('require','exports',code)(name=>name==='react'?hookReact:name==='./paper-figure'?{PaperFigure:()=>null}:name==='./problem-discovery'?{ProblemDiscovery:()=>null}:name==='./math-text'?{MathText:({children})=>children}:name.endsWith('.css')?{}:name.includes('workspace-request')?{workspaceFetch:()=>{throw Error('Rendering must not fetch')}}:require(name),mod.exports);
+ new Function('require','exports',code)(name=>name==='../../lib/research-digest.mjs'?require('../lib/research-digest.mjs'):name==='react'?hookReact:name==='./paper-figure'?{PaperFigure:()=>null}:name==='./problem-discovery'?{ProblemDiscovery:()=>null}:name==='./math-text'?{MathText:({children})=>children}:name.endsWith('.css')?{}:name.includes('workspace-request')?{workspaceFetch:()=>{throw Error('Rendering must not fetch')}}:require(name),mod.exports);
  return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{...extra,mode,fallbackPapers,spaceId:'test',locale:'en',demo,refreshKey:'',scanStatus:'',blocked:'',resume,excludedReadingIds,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{}}));
 }
 const paper=id=>({id,title:id,whyEn:'Saved reason',focusEn:'Saved focus',checkEn:'Saved check'});
 const goal={id:'g',trackId:'t',question:'Current question',status:'active',monitoringStatus:'active'};
 test('home shows discovered reading even before a research question is supplied',()=>{
  const html=render({goal:null,papers:[]},null,[],false,'home',[paper('Discovered paper')]);
- assert.match(html,/Discovered paper/);assert.match(html,/Add a research question/);assert.match(html,/Start reading/);assert.doesNotMatch(html,/<form/);
+ assert.match(html,/Discovered paper/);assert.match(html,/Add a research question/);assert.match(html,/Read &amp; take notes/);assert.doesNotMatch(html,/<form/);
  const resumed=render({goal:null,papers:[]},{id:'resume',title:'Saved reading',readingNote:'Original note'},[],false,'home');
  assert.equal(resumed.split('Saved reading').length-1,1);assert.match(resumed,/Original note/);
  assert.doesNotMatch(render({goal:null,papers:[]},null,[],false,'home'),/<form/);
@@ -61,40 +61,36 @@ test('Live linked readings replace the waiting receipt without claiming new sear
  assert.doesNotMatch(inactive,/Related readings are available/);
 });
 
-test('home has one lead and at most three deduplicated next papers without review or scan detail',()=>{
- const html=render({goal,papers:[paper('First'),paper('Second'),paper('Third'),paper('Fourth'),paper('Fifth')]},null,[],false,'home',[paper('First'),paper('Extra')]);
- assert.match(html,/Start reading/);assert.match(html,/Up next/);assert.doesNotMatch(html,/Saved focus|Saved check|Fifth|Extra|Discovery record/);
+test('home gives up to six readings equal weight without an oversized lead',()=>{
+ const html=render({goal,papers:[paper('First'),paper('Second'),paper('Third'),paper('Fourth'),paper('Fifth')]},null,[],false,'home',[paper('Unrelated')]);
+ assert.match(html,/Fifth/);assert.match(html,/pi-digest-grid/);assert.doesNotMatch(html,/pi-reading-poster|Up next|Unrelated|Discovery record/);
  assert.equal(html.split('First').length-1,1);
- const resume=render({goal,papers:[paper('First'),paper('Second')]},{id:'First',title:'First',readingNote:'User note'},[],false,'home');
- assert.equal(resume.split('First').length-1,1);assert.match(resume,/User note/);assert.doesNotMatch(resume,/START HERE/);
+ const resumed=render({goal,papers:[paper('First'),paper('Second')]},{id:'First',title:'First',readingNote:'User note'},[],false,'home');
+ assert.equal(resumed.split('First').length-1,1);assert.match(resumed,/User note/);assert.match(resumed,/Continue reading:/);
 });
-
- test('home brief remains visible with and without selected reading, ahead of the empty form',()=>{
- const extra={homeBrief:React.createElement('section',null,'Persistent discovery brief'),bibliography:[{id:'Cover paper',venue:'Verified Journal',authors:'Actual Author',publishedAt:'2024-01-01'}]};
- const selected=render({goal,papers:[paper('Cover paper'),paper('Next paper')]},null,[],false,'home',[],extra);
- assert.equal(selected.split('Persistent discovery brief').length-1,1);
- assert.ok(selected.indexOf('Cover paper')<selected.indexOf('Persistent discovery brief'));
- assert.ok(selected.indexOf('Persistent discovery brief')<selected.indexOf('Up next'));
- assert.match(selected,/Verified Journal · 2024/);assert.match(selected,/Actual Author/);
+test('digest includes publication metadata and retains a useful empty edition',()=>{
+ const extra={bibliography:[{id:'Paper',venue:'Verified Journal',authors:'Actual Author',publishedAt:'2024-01-01'}]};
+ const selected=render({goal,papers:[paper('Paper')]},null,[],false,'home',[],extra);
+ assert.match(selected,/Verified Journal · 2024/);assert.match(selected,/Actual Author/);assert.match(selected,/Discovery leads/);
  const empty=render({goal:null,papers:[]},null,[],false,'home',[],extra);
- assert.match(empty,/Persistent discovery brief/);assert.doesNotMatch(empty,/<form/);
- assert.doesNotMatch(render({goal,papers:[]},null,[],false,'reading',[],extra),/Persistent discovery brief/);
- });
-
-test('home brief receives only exact question readings, excluding fallback and saved dismissals',()=>{
- let context;
- render({goal,papers:[paper('Related'),paper('Dismissed')]},null,['Dismissed'],false,'home',[paper('Space fallback')],{homeBrief:c=>{context=c;return React.createElement('p',null,'Brief')}});
- assert.equal(context.goal.id,goal.id);assert.deepEqual(context.papers.map(p=>p.id),['Related']);
- render({goal:null,papers:[]},null,[],false,'home',[paper('Space fallback')],{homeBrief:c=>{context=c;return null}});
- assert.deepEqual(context.papers,[]);
+ assert.match(empty,/pi-research-digest/);assert.doesNotMatch(empty,/<form/);assert.match(empty,/No published reading/);
 });
 
-test('without a question the field brief keeps a lead cover and a compact continuation, not an empty form',()=>{
+test('without a question the field brief keeps multiple readings and a compact continuation, not an empty form',()=>{
  const html=render({goal:null,papers:[]},{id:'resume',title:'Earlier reading',readingNote:'User note'},[],false,'home',[paper('Field recommendation'),paper('Next field reading')],{fieldDescription:'Finite blocklength coding',homeBrief:React.createElement('p',null,'Empty placeholder')});
- assert.match(html,/FIELD BRIEF/);assert.match(html,/Finite blocklength coding/);assert.match(html,/pi-reading-poster/);assert.match(html,/Field recommendation/);assert.match(html,/Next field reading/);assert.match(html,/Continue reading: /);
+ assert.match(html,/YOUR RESEARCH FIELD/);assert.match(html,/Finite blocklength coding/);assert.match(html,/pi-digest-grid/);assert.match(html,/Field recommendation/);assert.match(html,/Next field reading/);assert.match(html,/Continue reading: /);
  assert.doesNotMatch(html,/<form|Empty placeholder/);assert.equal(html.split('Field recommendation').length-1,1);
 });
 test('question mode never borrows unrelated field recommendations to fill a missing match',()=>{
  const html=render({goal,papers:[]},null,[],false,'home',[paper('Unrelated field paper')]);
  assert.doesNotMatch(html,/Unrelated field paper|FIELD BRIEF/);
+});
+
+test('discovery leads retain provenance and status without becoming recommendations',()=>{
+ const source={key:'crossref',labelZh:'Crossref',labelEn:'Crossref'};
+ const extra={searchPapers:[{id:'candidate',title:'Search candidate',qualityStage:'queued',discoveredAt:'2026-10-01',discoverySources:[source]}, {id:'rejected',title:'Reviewed lead',qualityStage:'reviewed',screeningReason:'Different assumptions',discoverySources:[source]}, {id:'hidden',title:'Hidden feedback',qualityStage:'queued',discoverySources:[source]}]};
+ const html=render({goal,papers:[paper('Selected')]},null,['hidden'],false,'home',[],extra);
+ assert.match(html,/Search candidate/);assert.match(html,/Awaiting review/);assert.match(html,/Crossref · Found 2026-10-01/);assert.match(html,/Different assumptions/);assert.match(html,/Reviewed · not selected/);assert.doesNotMatch(html,/Hidden feedback/);
+ assert.ok(html.indexOf('Search candidate')>html.indexOf('Discovery leads'));
+ assert.match(html,/not necessarily new this run or recommended for this question/);
 });

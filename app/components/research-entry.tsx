@@ -4,6 +4,7 @@ import { workspaceFetch as fetch } from '../../lib/workspace-request';
 import {MathText} from './math-text';
 import './research-entry.css';
 import {PaperFigure} from './paper-figure';
+import {digestDiscoveries} from '../../lib/research-digest.mjs';
 import {ProblemDiscovery} from './problem-discovery';
 
 type Goal = {id:string;trackId:string;question:string;status:string;monitoringStatus:string};
@@ -18,12 +19,14 @@ function checkedResult(value:unknown, requireGoal=false):Result {
  if(data.papers.some(p=>!p||typeof p.id!=='string'||typeof p.title!=='string'))throw Error('Invalid reading response');
  return data;
 }
-export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll,homeBrief,bibliography=[]}: {
+export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll,bibliography=[],searchPapers=[],briefDate,onLibrary}: {
  spaceId:string;spaceName?:string;fieldDescription?:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
  onDiscover:()=>void;onRead:(id:string)=>void;onRoute:(id:string)=>void;onSaved:()=>void;onReadingList:(ids:string[])=>void;
  resume:{id:string;title:string;readingNote:string}|null;onProgress:()=>void;
  excludedReadingIds?:string[];
- homeBrief?:React.ReactNode|((context:{goal:Goal|null;papers:Reading[];loading:boolean;unavailable:boolean;fieldDescription?:string})=>React.ReactNode);bibliography?:{id:string;venue:string;authors:string;publishedAt:string|null}[];
+ bibliography?:{id:string;venue:string;authors:string;publishedAt:string|null;recommendedAt?:string|null}[];
+ searchPapers?:{id:string;title:string;venue?:string;authors?:string;publishedAt?:string|null;discoveredAt?:string;qualityStage?:string|null;screeningReason?:string;researchProblemId?:string;discoverySources?:{key:string;labelZh:string;labelEn:string}[];userState?:string;feedback?:string|null;readingStatus?:string}[];
+ briefDate?:string;onLibrary?:()=>void;
  mode?:"home"|"reading"|"discovery";fallbackPapers?:Reading[];onAll?:()=>void;
 }) {
  const zh=locale==='zh';
@@ -69,23 +72,19 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
  const goal=result?.goal;
  const inactive=Boolean(goal&&(goal.status!=='active'||goal.monitoringStatus!=='active'));
  const visiblePapers=result?.papers.filter(p=>!excludedReadingIds.includes(p.id))||[];
- const brief=typeof homeBrief==='function'?homeBrief({goal:goal||null,papers:goal&&!readError?visiblePapers:[],loading:!result&&!readError,unavailable:readError,fieldDescription}):homeBrief;
  const queued=visiblePapers.filter(p=>p.id!==resume?.id);
  const homeReadings=(goal?queued:fallbackPapers).filter((p,i,a)=>p.id!==resume?.id&&!excludedReadingIds.includes(p.id)&&a.findIndex(x=>x.id===p.id)===i);
- const fieldCover=Boolean(result&&!goal&&!readError&&(homeReadings.length||resume));
- const lead=resume&&!fieldCover?null:homeReadings[0];
- const upNext=homeReadings.slice(lead?1:0,lead?4:3);
  const showHomeReading=mode==='home'&&Boolean(resume||homeReadings.length);
- const details=bibliography.find(p=>p.id===(lead?.id||resume?.id));
- const metadata=details&&<p className="pi-poster-bibliography"><span>{details.venue}{details.publishedAt?' · '+details.publishedAt.slice(0,4):''}</span><span>{details.authors}</span></p>;
- const masthead=<div className="pi-poster-masthead"><span>PI RESEARCH</span><span>{lead?fieldCover?(zh?'领域精选 · 研究简报':'FIELD BRIEF'):(zh?'精选阅读':'SELECTED READING'):(zh?'继续阅读':'READING NOTES')}</span></div>;
+ const digestPapers=homeReadings.slice(0,6);
+ const discoveries=digestDiscoveries(searchPapers,[...excludedReadingIds,...homeReadings.map(p=>p.id),...(resume?[resume.id]:[])],4);
+ const metadataFor=(id:string)=>bibliography.find(p=>p.id===id);
  const continuation=resume&&<article className={`pi-question-resume ${mode==="home"?"pi-reading-poster":""}`} aria-label={zh?'继续阅读':'Continue reading'}>
-  {mode==="home"&&masthead}<div className="pi-poster-copy">{mode!=="home"&&<p className="pi-entry-eyebrow">{zh?'继续你的阅读':'CONTINUE READING'}</p>}<h4><MathText inline>{resume.title}</MathText></h4>{mode==="home"&&metadata}{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
+<div className="pi-poster-copy">{mode!=="home"&&<p className="pi-entry-eyebrow">{zh?'继续你的阅读':'CONTINUE READING'}</p>}<h4><MathText inline>{resume.title}</MathText></h4>{resume.readingNote&&<p className="pi-resume-note">{resume.readingNote}</p>}</div>
   {mode==="home"&&<PaperFigure key={spaceId+resume.id} spaceId={spaceId} paperId={resume.id} demo={demo} locale={locale}/>}
   <button className="primary" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续阅读与笔记':'Continue reading & notes'} →</button>
  </article>;
  return <section className={`pi-question-entry ${mode==="home"?"pi-home-entry":""}`} aria-label={zh?'问题与第一批阅读':'Question and first reading'}>
-  {mode==="home"&&(!showHomeReading||editing)&&!fieldCover&&brief}
+
   <header><h2>{goal?(zh?'当前研究':'Current research'):(showHomeReading||mode==='home')?(zh?'研究简报':'Research brief'):(zh?'从问题开始阅读':'Read with a question')}</h2><div className="pi-entry-actions">{(goal||showHomeReading||mode==='home'&&result)&&!editing&&<button type="button" disabled={busy} onClick={()=>{setQuestion('');setSeed('');setEditing(true);setRemoving(false);setSaved(false)}}>{!goal?(zh?'提出研究问题':'Add a research question'):demo?(zh?'体验自定义问题':'Try your own question'):(zh?'提出另一个问题':'Another question')}</button>}{goal&&!editing&&!removing&&<button className="pi-action-remove" type="button" disabled={busy} onClick={()=>{setRemoving(true);setError('')}}>{zh?'移除当前问题':'Remove question'}</button>}</div></header>
   {goal&&!editing&&removing&&<div className="pi-question-remove">
    <div role="group" aria-label={zh?'确认移除问题':'Confirm question removal'}>
@@ -106,16 +105,31 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
    {error&&<p role="alert">{error}</p>}
    <footer><button className="primary" disabled={busy||question.trim().length<10} type="submit">{busy?(zh?'正在保存…':'Saving…'):demo?(zh?'保存演示问题':'Save demo question'):blocked?(zh?'确认问题':'Confirm question'):(zh?'确认问题并查找文献':'Confirm & find papers')}</button>{(goal||showHomeReading)&&<button type="button" disabled={busy} onClick={()=>setEditing(false)}>{zh?'取消':'Cancel'}</button>}</footer>
   </form>}
-  {(goal||showHomeReading)&&!editing&&(mode==="home"?<>
+  {(mode==='home'||goal||showHomeReading)&&!editing&&(mode==="home"?<>
    {goal&&<button className="pi-home-question" title={goal.question} type="button" onClick={()=>onRoute(goal.trackId)}><span>{goal.question}</span><span aria-hidden="true">↗</span></button>}
-   {(inactive||demo)&&<p className="pi-question-status">{demo?(zh?'演示材料':'Sample materials'):(zh?'此问题已暂停或结束':'This problem is paused or resolved')}</p>}
-   {fieldCover&&fieldDescription&&<p className="pi-field-scope">{fieldDescription}</p>}
-   {(!fieldCover||!lead)&&continuation}
-   {lead&&<article className="pi-home-lead pi-reading-poster">{masthead}<div className="pi-poster-copy"><h3><MathText inline>{lead.title}</MathText></h3>{metadata}<p className="pi-home-reason"><MathText inline>{zh?lead.whyZh:lead.whyEn}</MathText></p></div><PaperFigure key={spaceId+lead.id} spaceId={spaceId} paperId={lead.id} demo={demo} locale={locale}/><button className="primary" type="button" onClick={()=>onRead(lead.id)}>{zh?'开始阅读':'Start reading'} →</button></article>}
-   {!resume&&!lead&&<p className="pi-question-empty">{zh?'正在为这个问题寻找值得读的材料。已有论文仍可在论文库查看。':'Looking for useful reading for this question. Existing papers remain in your library.'}</p>}
-   {showHomeReading&&!fieldCover&&brief}
-   {upNext.length>0&&<section className="pi-home-next"><header><h3>{zh?'接下来读':'Up next'}</h3><button type="button" onClick={onAll}>{zh?'查看全部':'View all'} →</button></header><ol>{upNext.map(p=><li key={p.id}><button type="button" onClick={()=>onRead(p.id)}><MathText inline>{p.title}</MathText><span aria-hidden="true">↗</span></button><p><MathText inline>{zh?p.whyZh:p.whyEn}</MathText></p></li>)}</ol></section>}
-   {fieldCover&&lead&&resume&&<button className="pi-field-resume" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续上次阅读：':'Continue reading: '}<MathText inline>{resume.title}</MathText> →</button>}
+   {inactive&&<p className="pi-question-status">{zh?'此问题已暂停或结束':'This problem is paused or resolved'}</p>}
+   <section className="pi-research-digest" aria-label={zh?'阅读与发现简报':'Reading and discovery brief'}>
+    <div className="pi-digest-masthead"><strong>PI RESEARCH</strong><span>{demo?(zh?'演示简报':'SAMPLE EDITION'):briefDate?(zh?'最近简报 · ':'LATEST BRIEF · ')+briefDate:(zh?'研究简报':'RESEARCH BRIEF')}</span></div>
+    <header className="pi-digest-heading"><div><p>{goal?(zh?'围绕当前问题':'YOUR RESEARCH QUESTION'):(zh?'你的研究领域':'YOUR RESEARCH FIELD')}</p><h3>{zh?'阅读与发现':'Reading & discovery'}</h3></div></header>
+    {!goal&&fieldDescription&&<p className="pi-digest-scope">{fieldDescription}</p>}
+    {readError||!result?<p role="status">{readError?(zh?'问题关联暂未核对，推荐稍后显示。':'Question links could not be verified. Recommendations will appear when available.'):(zh?'正在整理已有阅读…':'Loading saved readings…')}</p>:<>
+    <div className="pi-digest-section-heading"><h4>{zh?'值得读的文献':'Worth reading'}</h4><span>{digestPapers.length?(zh?`${digestPapers.length} 篇 · ${demo?'阅读样例':'已保存推荐'}`:`${digestPapers.length} ${demo?'sample readings':'saved recommendations'}`):(zh?'暂无可展示的推荐':'No available recommendations')}</span></div>
+    {digestPapers.length>0?<div className="pi-digest-grid">{digestPapers.map(p=>{const meta=metadataFor(p.id);return <article key={p.id}>
+     <p className="pi-digest-meta">{meta?.venue}{meta?.publishedAt?' · '+meta.publishedAt.slice(0,4):''}</p>
+     <h4><button type="button" onClick={()=>onRead(p.id)}><MathText inline>{p.title}</MathText></button></h4>
+     {meta?.authors&&<p className="pi-digest-authors">{meta.authors}</p>}
+     <p className="pi-digest-reason"><MathText inline>{(zh?p.whyZh:p.whyEn)||(zh?'打开论文，查看已保存的解读与推荐依据。':'Open the paper for its saved analysis and rationale.')}</MathText></p>
+     <PaperFigure key={spaceId+p.id} spaceId={spaceId} paperId={p.id} demo={demo} locale={locale}/>
+     <footer>{meta?.recommendedAt&&<span>{zh?'推荐于 ':'Recommended '}{meta.recommendedAt.slice(0,10)}</span>}<button type="button" onClick={()=>onRead(p.id)}>{zh?'阅读与笔记':'Read & take notes'}</button></footer>
+    </article>})}</div>:<p className="pi-digest-empty">{goal?(zh?'当前问题暂无可读的已核验推荐。下面仍可查看本领域检索材料。':'No verified reading is available for this question. Field discovery materials remain below.'):(zh?'本领域暂无可读的正式推荐。先看看已发现的材料，评审通过后会进入阅读区。':'No published reading is available for this field. Discovered materials remain below while reviews continue.')}</p>}
+    </>}
+    <section className="pi-digest-discoveries"><div className="pi-digest-section-heading"><h4>{zh?'检索线索':'Discovery leads'}</h4><button type="button" onClick={onProgress}>{zh?'查看发现进度':'View discovery'}</button></div>
+     <p className="pi-digest-caption">{demo?(zh?'空间检索样例，未执行真实检索或评审。':'Sample discovery materials; no live search or review.'):(zh?'来自本空间已有来源记录，按发现时间排列；不等于本轮新增或当前问题的推荐。':'From saved source records in this space, ordered by discovery date; not necessarily new this run or recommended for this question.')}</p>
+     {discoveries.length?<ul>{discoveries.map(p=><li key={p.id}><div><p className="pi-digest-meta">{p.discoverySources?.map(source=>zh?source.labelZh:source.labelEn).filter(Boolean).join(' · ')}{p.discoveredAt?' · '+(zh?'发现于 ':'Found ')+p.discoveredAt.slice(0,10):''}</p><h4><button type="button" onClick={()=>onRead(p.id)}><MathText inline>{p.title}</MathText></button></h4>{p.venue&&<p className="pi-digest-authors">{p.venue}{p.publishedAt?' · '+p.publishedAt.slice(0,4):''}</p>}{p.qualityStage==='reviewed'&&p.screeningReason&&<p className="pi-digest-reason">{p.screeningReason}</p>}</div><span className="pi-digest-stage">{p.qualityStage==='reviewed'?(zh?'已评审 · 未入选':'Reviewed · not selected'):p.qualityStage==='reviewing'?(zh?'核验中':'Under verification'):p.qualityStage==='awaiting_evidence'?(zh?'待补证据':'Evidence needed'):(zh?'待评审':'Awaiting review')}</span></li>)}</ul>:<p className="pi-digest-empty">{zh?'暂无可展示的未入选检索材料。可在发现进度中查看任务及来源记录。':'No unselected discovery materials are available. See Discovery for tasks and source records.'}</p>}
+    </section>
+    <footer className="pi-digest-footer"><button type="button" onClick={onAll}>{zh?'全部阅读':'All reading'}</button><button type="button" onClick={onLibrary||onProgress}>{zh?'查看检索文献库':'Browse discovered papers'}</button></footer>
+   </section>
+   {resume&&<button className="pi-field-resume" type="button" onClick={()=>onRead(resume.id)}>{zh?'继续上次阅读：':'Continue reading: '}<MathText inline>{resume.title}</MathText>{resume.readingNote&&<small>{resume.readingNote}</small>}</button>}
   </>:mode==="discovery"&&goal?<>
    <h3 className="pi-current-question"><MathText inline>{goal.question}</MathText></h3>
    {!demo&&<ProblemDiscovery key={spaceId+goal.id} spaceId={spaceId} problemId={goal.id} locale={locale} onRead={onRead} expanded/>}
