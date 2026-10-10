@@ -199,3 +199,18 @@
  .pi-digest-stage { padding:0; }
  .pi-research-digest .pi-digest-footer { justify-content:flex-start; }
 }
+
+/* A reading brief begins with a synthesis, followed by traceable findings. */
+.v2-app.pi-workspace .pi-digest-overview { padding:26px 0 12px; max-width:850px; }
+.v2-app.pi-workspace .pi-digest-overview .pi-digest-edition { margin:0 0 14px; font-size:12px !important; letter-spacing:.05em; color:#708394; }
+.v2-app.pi-workspace .pi-digest-overview h3 { margin:0 0 18px; font-size:28px; line-height:1.45; color:#253e53; letter-spacing:-.025em; }
+.v2-app.pi-workspace .pi-digest-overview .pi-digest-opening { margin:0 0 24px; font-size:17px !important; line-height:1.95; color:#405b70; }
+.v2-app.pi-workspace .pi-digest-findings h4 { margin:0 0 16px; font-size:14px; color:#6b8091; font-weight:600; }
+.pi-digest-finding { display:flex; gap:18px; margin:0 0 24px; }
+.pi-digest-finding>span { color:#8294a3; font:16px/1.9 Georgia,serif; }
+.pi-digest-finding>div { min-width:0; }
+.v2-app.pi-workspace .pi-digest-finding p { margin:0 0 8px; font-size:16px !important; line-height:1.85; color:#344e62; }
+.v2-app.pi-workspace .pi-digest-finding .pi-digest-reading-action { color:#697e8e; font-size:14px !important; }
+.v2-app.pi-workspace .pi-digest-finding button { padding:0; min-height:36px; background:transparent; border:0; text-align:left; color:#315d80; font-size:13px !important; line-height:1.6; text-decoration:underline; text-decoration-color:#bdcbd6; text-underline-offset:4px; cursor:pointer; }
+.v2-app.pi-workspace .pi-digest-finding button:hover { color:#174565; text-decoration-color:currentColor; }
+@media(max-width:700px) { .v2-app.pi-workspace .pi-digest-overview h3 { font-size:24px; }.v2-app.pi-workspace .pi-digest-overview .pi-digest-opening { font-size:16px !important; }.pi-digest-finding { gap:12px; } }

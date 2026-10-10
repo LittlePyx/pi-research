@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import { workspaceFetch as fetch } from '../../lib/workspace-request';
+import {DigestOverview,type DigestOverviewData} from './digest-overview';
 import {MathText} from './math-text';
 import './research-entry.css';
 import {PaperFigure} from './paper-figure';
@@ -19,14 +20,14 @@ function checkedResult(value:unknown, requireGoal=false):Result {
  if(data.papers.some(p=>!p||typeof p.id!=='string'||typeof p.title!=='string'))throw Error('Invalid reading response');
  return data;
 }
-export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll,bibliography=[],searchPapers=[],briefDate,onLibrary}: {
+export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll,bibliography=[],searchPapers=[],briefDate,onLibrary,overview}: {
  spaceId:string;spaceName?:string;fieldDescription?:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
  onDiscover:()=>void;onRead:(id:string)=>void;onRoute:(id:string)=>void;onSaved:()=>void;onReadingList:(ids:string[])=>void;
  resume:{id:string;title:string;readingNote:string}|null;onProgress:()=>void;
  excludedReadingIds?:string[];
  bibliography?:{id:string;venue:string;authors:string;publishedAt:string|null;recommendedAt?:string|null}[];
  searchPapers?:{id:string;title:string;venue?:string;authors?:string;publishedAt?:string|null;discoveredAt?:string;qualityStage?:string|null;screeningReason?:string;researchProblemId?:string;discoverySources?:{key:string;labelZh:string;labelEn:string}[];userState?:string;feedback?:string|null;readingStatus?:string}[];
- briefDate?:string;onLibrary?:()=>void;
+ overview?:DigestOverviewData|null;briefDate?:string;onLibrary?:()=>void;
  mode?:"home"|"reading"|"discovery";fallbackPapers?:Reading[];onAll?:()=>void;
 }) {
  const zh=locale==='zh';
@@ -110,7 +111,7 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
    {inactive&&<p className="pi-question-status">{zh?'此问题已暂停或结束':'This problem is paused or resolved'}</p>}
    <section className="pi-research-digest" aria-label={zh?'阅读与发现简报':'Reading and discovery brief'}>
     <div className="pi-digest-masthead"><strong>PI RESEARCH</strong><span>{demo?(zh?'演示简报':'SAMPLE EDITION'):briefDate?(zh?'最近简报 · ':'LATEST BRIEF · ')+briefDate:(zh?'研究简报':'RESEARCH BRIEF')}</span></div>
-    <header className="pi-digest-heading"><div><p>{goal?(zh?'围绕当前问题':'YOUR RESEARCH QUESTION'):(zh?'你的研究领域':'YOUR RESEARCH FIELD')}</p><h3>{zh?'阅读与发现':'Reading & discovery'}</h3></div></header>
+    {overview?<DigestOverview data={overview} locale={locale} demo={demo} onRead={onRead}/>:<header className="pi-digest-heading"><div><p>{goal?(zh?'围绕当前问题':'YOUR RESEARCH QUESTION'):(zh?'你的研究领域':'YOUR RESEARCH FIELD')}</p><h3>{zh?'阅读与发现':'Reading & discovery'}</h3></div></header>}
     {!goal&&fieldDescription&&<p className="pi-digest-scope">{fieldDescription}</p>}
     {readError||!result?<p role="status">{readError?(zh?'问题关联暂未核对，推荐稍后显示。':'Question links could not be verified. Recommendations will appear when available.'):(zh?'正在整理已有阅读…':'Loading saved readings…')}</p>:<>
     <div className="pi-digest-section-heading"><h4>{zh?'值得读的文献':'Worth reading'}</h4><span>{digestPapers.length?(zh?`${digestPapers.length} 篇 · ${demo?'阅读样例':'已保存推荐'}`:`${digestPapers.length} ${demo?'sample readings':'saved recommendations'}`):(zh?'暂无可展示的推荐':'No available recommendations')}</span></div>
