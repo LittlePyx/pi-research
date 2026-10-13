@@ -2133,7 +2133,7 @@ async function readMonitorAnalysisBudget(
   };
 }
 
-type AutomationPauseReason = "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable";
+type AutomationPauseReason = "unattended_runs" | "inactive" | "daily_budget" | "model_unavailable" | "space_deleted";
 
 async function readAutomationCounters(database: D1Database, spaceId: string) {
   const usageDate = shanghaiDateKey(new Date());
@@ -6794,6 +6794,8 @@ export async function POST(request: Request) {
 
   try {
     if (action === "start") {
+      const restoredPause=await database.prepare("SELECT automation_pause_reason FROM monitor_runs WHERE space_id=?").bind(space.id).first<{automation_pause_reason:string}>();
+      if(trigger!=='manual'&&restoredPause?.automation_pause_reason==='space_deleted')return Response.json(await readState(database,space,{cached:true,automationPaused:true}));
       await database.prepare(
         `INSERT OR IGNORE INTO monitor_runs
          (id, space_id, status, last_trigger, last_user_activity_at, updated_at)

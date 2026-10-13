@@ -1,0 +1,23 @@
+.pi-managed-spaces{color:#283c55}
+.pi-managed-spaces>article{display:flex;align-items:center;gap:16px;padding:18px 0;border-bottom:1px solid #e5eaf0}
+.pi-managed-spaces>article.current{background:#f7f9fc}
+.pi-managed-spaces .pi-space-select{display:flex;align-items:center;justify-content:space-between;flex:1;min-width:0;gap:16px;text-align:left;padding:6px 10px;border:0;background:transparent;color:#273d57;min-height:44px}
+.pi-space-item-body{display:grid;gap:6px;min-width:0;flex:1}
+.pi-space-item-body strong{font-size:16px!important;font-weight:600;overflow-wrap:anywhere}
+.pi-space-item-body :is(span,p){font-size:13px!important;color:#7b8796;line-height:1.7;margin:0;overflow-wrap:anywhere}
+.pi-space-select>small{font-size:12px!important;color:#597a9d;white-space:nowrap}
+.pi-managed-spaces :is(.pi-space-remove,.pi-space-restore),.pi-space-remove-confirm>div>button{min-height:44px;padding:10px 14px;border:1px solid #d4dce7;border-radius:6px;background:#fff;color:#4b6380;font-size:13px!important;line-height:1.5;cursor:pointer;white-space:nowrap}
+.pi-managed-spaces .pi-space-remove{border-color:#ecd8d8;background:#fffafa;color:#a5575a}
+.pi-managed-spaces button:hover:not(:disabled){background:#f0f4fa}
+.pi-managed-spaces .pi-space-remove:hover:not(:disabled){background:#fbf0f0}
+.pi-space-list-note,.pi-space-list-empty{font-size:13px!important;color:#7c8899;line-height:1.8;margin:0 0 10px}
+.pi-space-list-error{font-size:13px!important;color:#a2575b;line-height:1.8}
+.pi-space-remove-confirm{margin-top:24px;padding:22px;background:#fcf8f8;border:1px solid #eedede;border-radius:8px}
+.pi-space-remove-confirm h3{font-size:17px!important;margin:0 0 10px;color:#7e4046;overflow-wrap:anywhere}
+.pi-space-remove-confirm p{font-size:13px!important;line-height:1.8;color:#86686e;margin:8px 0}
+.pi-space-remove-confirm>div{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+.pi-managed-spaces :is(button,section):focus-visible{outline:2px solid #6488af;outline-offset:3px}
+.pi-managed-spaces button:disabled{opacity:.5;cursor:default}
+.v2-app.pi-workspace .v2-space-modal>.pi-dialog-nav{flex-wrap:wrap;gap:16px}
+.v2-app.pi-workspace .v2-space-modal>.pi-dialog-nav button{white-space:nowrap}
+@media(max-width:620px){.pi-managed-spaces>article{gap:10px;padding:16px 0}.pi-space-remove-confirm{padding:18px}.pi-space-remove-confirm>div>button{flex:1}.pi-space-select>small{display:none}.v2-app.pi-workspace .v2-space-modal>.pi-dialog-nav{gap:14px}.v2-app.pi-workspace .v2-space-modal>.pi-dialog-nav button{flex:0 0 auto}}

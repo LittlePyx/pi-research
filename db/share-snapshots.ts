@@ -1,4 +1,5 @@
 import { ensureSchema, getDatabase } from "./repository";
+import {spaceDeletionAvailable} from '../lib/space-deletion';
 
 export type ShareKind = "daily" | "paper";
 export type ShareLocale = "zh" | "en";
@@ -65,8 +66,9 @@ export async function getShareSnapshot(token: string): Promise<ShareSnapshot | n
   if (!/^[a-zA-Z0-9_-]{24,64}$/.test(token)) return null;
   const database = getDatabase();
   await ensureSchema(database);
+  const deletionAvailable=await spaceDeletionAvailable(database);
   const row = await database
-    .prepare("SELECT token, kind, locale, title, payload, created_at FROM share_snapshots WHERE token = ?")
+    .prepare(`SELECT token, kind, locale, title, payload, created_at FROM share_snapshots WHERE token = ?${deletionAvailable?' AND NOT EXISTS(SELECT 1 FROM research_space_deletions d WHERE d.space_id=share_snapshots.space_id)':''}`)
     .bind(token)
     .first<ShareRow>();
   if (!row || (row.kind !== "daily" && row.kind !== "paper") || (row.locale !== "zh" && row.locale !== "en")) return null;

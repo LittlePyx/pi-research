@@ -9,8 +9,8 @@ import "./paper-reading.css";
 type ReadingSummary = { zh: string; en: string; sourceUrl: string; kind: "overview" | "abstract-summary" };
 type ReadingResponse = { paper?: { abstractText?: string; analysisSource?: string; readingSummary?: ReadingSummary }; recovery?: { status: string; attempted_json?: string; source_url: string; retry_at: number; related?: { abstractText: string; sourceUrl: string; doi: string } | null } | null };
 
-export function PaperReadingContent({ spaceId, paperId, locale, stage, reason, onReviewStage, onReviewUpdated }: {
-  spaceId: string; paperId: string; locale: "zh" | "en"; stage: string; reason: string; onReviewStage?: (paperId: string, stage: "queued") => void; onReviewUpdated?: () => Promise<void>;
+export function PaperReadingContent({ spaceId, paperId, locale, stage, reason, onReviewStage, onReviewUpdated, showReview=true }: {
+  spaceId: string; paperId: string; locale: "zh" | "en"; stage: string; reason: string; onReviewStage?: (paperId: string, stage: "queued") => void; onReviewUpdated?: () => Promise<void>; showReview?:boolean;
 }) {
   const [abstract, setAbstract] = useState<string | null>(null);
   const [summary, setSummary] = useState<ReadingSummary | null>(null);
@@ -69,7 +69,7 @@ export function PaperReadingContent({ spaceId, paperId, locale, stage, reason, o
       {!summary&&(failed||(!searching&&abstract!==null&&needsAbstractRecovery(abstract)&&(recovery?.status!=='found'||isPossiblyTruncatedAbstract(abstract)||placeholder)))&&<div className="pi-paper-abstract-actions"><button type="button" disabled={searching||(coolingDown&&!failed)} onClick={()=>{setFailed(false);setSearching(true);setAttempt(value=>value+1)}}>{searching?(zh?'正在读取…':'Reading…'):coolingDown&&!failed?(zh?'等待来源恢复':'Waiting for sources'):(zh?'重试读取':'Retry')}</button>{coolingDown&&<span>{zh?'可重试时间：':'Retry after: '}{new Date(recovery!.retry_at).toLocaleString(zh?'zh-CN':'en-US')}</span>}</div>}
     </section>
     {!summary && onReviewUpdated && <PaperReviewRefresh key={`${spaceId}:${paperId}:${abstract?.length || 0}`} spaceId={spaceId} paperId={paperId} locale={locale} onUpdated={onReviewUpdated} onReady={setReviewCurrent} />}
-    {!summary && stage !== "recommended" && <section className="pi-paper-review"><h2>{zh ? "评审情况" : "Review status"}</h2>
+    {showReview && !summary && stage !== "recommended" && <section className="pi-paper-review"><h2>{zh ? "评审情况" : "Review status"}</h2>
       <p>{awaitingAbstract ? (abstract && !placeholder && abstract.trim().length >= 120 ? (zh ? "摘要已补到，等待重新评审" : "Abstract recovered; awaiting review") : (zh ? "材料不足，暂无法完成评审" : "Materials incomplete; review cannot finish yet")) : stage === "reviewed" ? (zh ? "未通过本空间的推荐评审" : "Not selected for this workspace") : stage === "reviewing" ? (zh ? "正在核对评审结果" : "Review results are being checked") : stage === "queued" ? (zh ? "等待质量评审" : "Awaiting quality review") : (zh ? "尚未形成推荐评审结果" : "No recommendation review result yet")}</p>
       {reason ? <div><small>{zh ? "已保存的评审记录" : "SAVED REVIEW RECORD"}</small><p><MathText>{reason}</MathText></p></div> : <p className="pi-paper-muted">{zh ? "当前记录未提供具体评审原因。" : "No specific review reason is available in this record."}</p>}
     </section>}

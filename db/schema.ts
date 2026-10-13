@@ -26,6 +26,11 @@ export const workspaceAccounts = sqliteTable('workspace_accounts', {
   createdAt: text('created_at').notNull().default(sql.raw('CURRENT_TIMESTAMP')),
 }, table => [uniqueIndex('idx_workspace_accounts_owner').on(table.ownerUserId)]);
 
+export const researchSpaceDeletions=sqliteTable('research_space_deletions',{
+ spaceId:text('space_id').primaryKey().notNull().references(()=>researchSpaces.id,{onDelete:'cascade'}),
+ deletedAt:text('deleted_at').notNull().default(sql.raw('CURRENT_TIMESTAMP')),
+});
+
 export const researchThreads = sqliteTable(
   "research_threads",
   {

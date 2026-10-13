@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import {readFileSync} from 'node:fs';
 import { createRequire } from "node:module";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -79,15 +80,16 @@ test("workspace choices display supplied metadata only and preserve selection ca
     { id: "b", name: "Applied mathematics", memberName: "Researcher", description: "Convex geometry", accent: "sage" },
   ];
   const selected = [];
-  const tree = evaluate(jsx, { spaceSection: "existing", spaces, activeSpace: spaces[0], locale: "zh", initials: (name) => name[0], defaultSpaceName: (name) => name, switchSpace: (space) => selected.push(space.id) });
+  const management={exports:{}};
+  new Function('require','exports',compile(readFileSync(new URL('../app/components/space-management-list.tsx',import.meta.url),'utf8')))(name=>name.includes('workspace-request')?{workspaceFetch(){throw Error('no request during rendering')}}:require(name),management.exports);
+  const tree = evaluate(jsx, { spaceSection: "existing", spaces, activeSpace: spaces[0], locale: "zh", SpaceManagementList:management.exports.SpaceManagementList,spaceDeletionEnabled:true,changeSpaceList(){},switchSpace: (space) => selected.push(space.id) });
   const html = renderToStaticMarkup(tree);
   assert.match(html, /Information theory/);
   assert.match(html, /Applied mathematics/);
-  assert.match(html, /<small>Yilin<\/small>/);
-  assert.match(html, /<small>Researcher<\/small>/);
+  assert.match(html, /Gaussian channels/);
+  assert.match(html, /Convex geometry/);
   assert.doesNotMatch(html.replace(/<[^>]*>/g, ""), /\d|undefined|NaN|论文|线索/);
-  assert.equal(tree.props.children.length, 2);
-  tree.props.children[1].props.onClick();
+  tree.props.children.props.onSelect(spaces[1]);
   assert.deepEqual(selected, ["b"]);
 });
 

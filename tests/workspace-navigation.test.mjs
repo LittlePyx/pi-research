@@ -47,3 +47,9 @@ test('today secondary surfaces survive a shareable hash and reject unknown panel
  assert.equal(location.panel,'discovery');assert.equal(location.space,'s');
  assert.equal(readWorkspaceLocation('#today?panel=unknown').panel,undefined);
 });
+test('paper panels preserve reading origin and route context without leaking into other pages',()=>{
+ const original={view:'paper-detail',id:'p',space:'s',from:'today',panel:'reading',track:'t',tab:'evidence',paperPanel:'notes'};
+ assert.deepEqual(readWorkspaceLocation(workspaceHash(original)),{...original,graph:undefined,step:undefined,path:undefined});
+ assert.equal(readWorkspaceLocation('#paper/p?paperPanel=unknown').paperPanel,undefined);
+ assert.equal(readWorkspaceLocation('#today?paperPanel=notes').paperPanel,undefined);
+});

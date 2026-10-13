@@ -80,10 +80,12 @@ test("library and paper detail keep reading primary while management and audit s
   assert.match(paperHead, /v2-paper-primary-actions/);
   assert.match(paperHead, /<details className="v2-paper-more-actions">/);
   assert.doesNotMatch(paperHead, /askAboutMonitorPaper/);
-  assert.match(paperDetail, /PaperReadingContent[\s\S]*v2-paper-fit-summary/);
+  assert.match(paperDetail, /v2-paper-fit-summary[\s\S]*PaperReadingContent/);
+  assert.match(paperDetail, /<PaperPanelNavigation/);
+  for(const panel of ['reading','notes','record'])assert.ok(paperDetail.includes(`hidden={paperPanel!=="${panel}"}`));
   assert.match(paperDetail, /与路线的关联[\s\S]*<RouteImpactNote paper=\{selectedMonitorPaper\}/);
   assert.match(paperDetail, /pi-paper-reading-tools/);
-  assert.match(paperDetail, /<details className="v2-content-section v2-paper-record">/);
+  assert.match(paperDetail, /paperPanel!=="record"[\s\S]*来源与核验[\s\S]*书目信息/);
   assert.doesNotMatch(paperDetail, /RouteImpactNote paper=\{selectedMonitorPaper\} locale=\{locale\} detail/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.v2-paper-top \{ align-items: flex-start; flex-wrap: wrap; \}/);
 });

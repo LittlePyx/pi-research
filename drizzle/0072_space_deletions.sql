@@ -1,0 +1,4 @@
+CREATE TABLE research_space_deletions (
+ space_id TEXT PRIMARY KEY NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE,
+ deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

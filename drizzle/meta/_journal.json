@@ -505,6 +505,13 @@
       "when": 1791880582466,
       "tag": "0071_workspace_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "6",
+      "when": 1791886918156,
+      "tag": "0072_space_deletions",
+      "breakpoints": true
     }
   ]
 }

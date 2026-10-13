@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
-import handler from "vinext/server/app-router-entry";
+import nativeHandler from "vinext/server/app-router-entry";
+import {deletedSpaceRequest} from '../lib/space-deletion';
 import {
   MONITOR_SCHEDULER_BUCKET_MS,
   SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
@@ -38,6 +39,12 @@ import {
   materializeStoredDirectionGapDiscovery,
   supersedeResearchGapDiscovery,
 } from "../lib/research-gap-discovery";
+
+const handler={fetch:workspaceHandler};
+async function workspaceHandler(request:Request,env:Env,ctx:ExecutionContext){
+ if(env.DB&&await deletedSpaceRequest(request,env.DB))return Response.json({error:'Space is deleted; restore it from space management',code:'space_deleted'},{status:410,headers:{'Cache-Control':'private, no-store'}});
+ return nativeHandler.fetch(request,env,ctx);
+}
 
 interface Env {
   ASSETS: Fetcher;

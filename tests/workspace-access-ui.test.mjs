@@ -8,7 +8,7 @@ function harness(name,props){
  const cells=[],requests=[];let index=0,tree,reloads=0;
  const hooks={useState(initial){const i=index++;cells[i]??={value:initial};return[cells[i].value,v=>{cells[i].value=typeof v==='function'?v(cells[i].value):v}]},useRef(initial){const i=index++;return cells[i]??={current:initial}},useEffect(){}};
  const code=ts.transpileModule(readFileSync(new URL('../app/components/'+(name==='WorkspaceAccess'?'workspace-access':'workspace-welcome')+'.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,mod={exports:{}};
- new Function('require','exports','window','localStorage',code)(n=>n==='react'?hooks:n.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true)=>resolve({ok,status:ok?200:503,json:async()=>data})}))}:n==='./workspace-access'?{WorkspaceAccess:()=>null}:require(n),mod.exports,{location:{reload(){reloads++}}},{getItem:()=> 'original-browser-workspace-12345'});
+ new Function('require','exports','window','localStorage',code)(n=>n==='react'?hooks:n.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true)=>resolve({ok,status:ok?200:503,json:async()=>data})}))}:n==='./workspace-access'?{WorkspaceAccess:()=>null}:n==='./space-management-list'?{SpaceManagementList:()=>null}:require(n),mod.exports,{location:{reload(){reloads++}}},{getItem:()=> 'original-browser-workspace-12345'});
  const render=()=>{index=0;tree=mod.exports[name](props);return tree};
  const nodes=()=>{const found=[];const visit=n=>{if(Array.isArray(n))n.forEach(visit);else if(n&&typeof n==='object'){found.push(n);visit(n.props?.children)}};visit(tree);return found};
  render();return{props,requests,render,nodes,reloads:()=>reloads,text:()=>JSON.stringify(tree),click(label){nodes().find(n=>n.type==='button'&&n.props.children===label).props.onClick();render()}};
@@ -34,9 +34,16 @@ test('welcome separates creation and recovery without losing an unfinished resea
  const h=harness('WorkspaceWelcome',{session,locale:'zh',onLocale(){},onCreated(){}});
  h.nodes().find(n=>n.type==='input').props.onChange({target:{value:'Information theory'}});h.render();
  h.nodes().find(n=>n.type==='textarea').props.onChange({target:{value:'Finite blocklength source coding'}});h.render();
- h.click('恢复已有工作区');assert.equal(h.nodes().find(n=>n.type==='form').props.hidden,true);assert.equal(h.requests.length,0);
+ h.click('恢复工作区');assert.equal(h.nodes().find(n=>n.type==='form').props.hidden,true);assert.equal(h.requests.length,0);
  h.click('创建研究空间');assert.equal(h.nodes().find(n=>n.type==='form').props.hidden,false);assert.equal(h.nodes().find(n=>n.type==='input').props.value,'Information theory');assert.equal(h.nodes().find(n=>n.type==='textarea').props.value,'Finite blocklength source coding');assert.equal(h.requests.length,0);
 });
 test('returning to the original browser workspace is explicit and does not remove the account link',async()=>{
  const h=harness('WorkspaceAccess',{session:{...session,mode:'account',linked:true,canReturnToBrowser:true},locale:'zh'});h.click('返回本浏览器原工作区');assert.equal(h.requests.length,0);assert.match(h.text(),/账号连接仍然保留/);h.click('确认返回');assert.deepEqual(JSON.parse(h.requests[0].init.body),{action:'browser',legacyWorkspaceId:'original-browser-workspace-12345'});h.requests.shift().resolve({...session,mode:'browser'});await settle();assert.equal(h.reloads(),1);
+});
+test('an empty workspace can restore its last deleted space without recreating it',()=>{
+ const deleted={id:'original-last-space',name:'Original direction',description:'Original notes',memberName:'Fixture',accent:'blue',deletedAt:'2026-10-13'},restored=[];
+ const h=harness('WorkspaceWelcome',{session,locale:'zh',deletedSpaces:[deleted],onLocale(){},onCreated(){throw Error('must not create')},onRestored:space=>restored.push(space)});
+ h.nodes().find(n=>n.type==='button'&&Array.isArray(n.props.children)&&n.props.children[0]==='已删除').props.onClick();h.render();
+ const list=h.nodes().find(n=>typeof n.type==='function'&&n.props.removed);assert.deepEqual(list.props.spaces,[deleted]);list.props.onChanged(deleted,false);
+ assert.equal(restored[0].id,'original-last-space');assert.equal(h.requests.length,0);
 });
