@@ -38,7 +38,7 @@ test('a recovered abstract requeues only a missing-evidence rejection',()=>{
     for(const [id,reason,ever] of [['unrelated','Outside the research direction',0],['missing',marker,0],['recommended',marker,1]]) {
       db.prepare('INSERT INTO paper_insights VALUES(?,?,?,?,?,?,?,NULL)').run(id,'s','short','model','deepseek_rejected',ever,reason);
       db.prepare('INSERT INTO paper_abstract_recovery VALUES(?,?)').run(id,'lease');
-      db.prepare(sql).run('A recovered abstract with more detail',id,'s','A recovered abstract with more detail',id,'lease');
+      db.prepare(sql).run('A recovered abstract with more detail',id,'s','short',id,'lease');
     }
     const row=id=>db.prepare('SELECT * FROM paper_insights WHERE paper_id=?').get(id);
     assert.equal(row('unrelated').analysis_source,'deepseek_rejected');

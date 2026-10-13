@@ -79,3 +79,38 @@ test('verification uses the full current abstract even when old claim snippets e
  assert.equal(result.source,'abstract');
  assert.equal(result.units.map(x=>x.text).join(' '),full);
 });
+
+test('legacy no-abstract descriptions remain placeholders regardless of their length',()=>{
+ const legacy='This classic paper supplies information measures. '.repeat(12)+'The abstract is missing, so specific results cannot be verified.';
+ assert.equal(integrity.isAbstractPlaceholder(legacy),true);assert.equal(integrity.needsAbstractRecovery(legacy),true);
+ assert.equal(integrity.isAbstractPlaceholder('这篇论文介绍信息度量。摘要缺失，无法确认具体证明细节。'),true);
+ assert.equal(integrity.isAbstractPlaceholder('We study an abstract representation of missing observations.'),false);
+});
+test('a shorter verified abstract replaces a legacy placeholder, preserves notes and cannot overwrite a concurrent correction',async()=>{
+ const mf=new Miniflare({host:'127.0.0.1',cf:false,modules:true,d1Databases:['DB'],script:'export default {fetch(){return new Response("QA")}}'});
+ try{
+  const db=await mf.getD1Database('DB');
+  await db.batch([
+   db.prepare('CREATE TABLE monitored_papers(id TEXT,space_id TEXT,doi TEXT,title TEXT,authors TEXT,url TEXT)'),
+   db.prepare('CREATE TABLE paper_insights(paper_id TEXT,space_id TEXT,abstract_text TEXT,analysis_model TEXT,analysis_source TEXT,ever_recommended INTEGER,screening_reason TEXT,updated_at TEXT,notes TEXT)'),
+   db.prepare('CREATE TABLE paper_abstract_recovery(paper_id TEXT PRIMARY KEY,space_id TEXT,status TEXT,source_url TEXT,retry_at INTEGER DEFAULT 0,attempted_json TEXT,result_json TEXT,lock_token TEXT,lease_until INTEGER DEFAULT 0,updated_at TEXT)'),
+  ]);
+  const old='Legacy description of a classic paper. '.repeat(16)+'The abstract is missing, so its results remain unverified.',short='Verified source abstract for an isolated test; not a real academic statement. '.repeat(3);
+  await db.prepare("INSERT INTO monitored_papers VALUES('p','s','10.0000/a','Title','Author','https://example.org')").run();
+  await db.prepare("INSERT INTO paper_insights VALUES('p','s',?,'saved-model','deepseek',1,'saved review','','Keep this note')").bind(old).run();
+  let calls=0,beforeReply=async()=>{};
+  const recover=await loadFunction('lib/abstract-recovery.ts','recoverPaperAbstract',{
+   ...integrity,ABSTRACT_BLOCK_REASON:'Abstract evidence unavailable after bounded enrichment',
+   readAbstractRecovery:async(db,s,p)=>db.prepare('SELECT * FROM paper_abstract_recovery WHERE paper_id=? AND space_id=?').bind(p,s).first(),
+   lookupAbstract:async()=>{calls++;await beforeReply();return {hit:{abstractText:short,sourceUrl:'https://example.org/abstract'},diagnostics:[],retryMs:0,related:null,failed:false}},fetchExternalSource:()=>{throw Error('No network')},
+  });
+  assert.equal((await recover(db,'s','p')).status,'found');
+  let row=await db.prepare('SELECT * FROM paper_insights').first();assert.equal(row.abstract_text,short);assert.equal(row.notes,'Keep this note');assert.equal(row.analysis_model,'saved-model');assert.equal(row.analysis_source,'deepseek');
+  await recover(db,'s','p');assert.equal(calls,1,'a complete short abstract with source provenance is not repeatedly retrieved');
+  const correction='Concurrent verified correction. '.repeat(24);
+  await db.prepare('UPDATE paper_insights SET abstract_text=?').bind(old).run();await db.prepare('UPDATE paper_abstract_recovery SET retry_at=0').run();
+  beforeReply=()=>db.prepare('UPDATE paper_insights SET abstract_text=?').bind(correction).run();
+  const stale=await recover(db,'s','p');assert.equal(stale.status,'superseded');assert.equal(stale.source_url,'');
+  row=await db.prepare('SELECT * FROM paper_insights').first();assert.equal(row.abstract_text,correction);assert.equal(row.notes,'Keep this note');
+ }finally{await mf.dispose()}
+});

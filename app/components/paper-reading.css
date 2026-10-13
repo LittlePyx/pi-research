@@ -30,3 +30,14 @@
 .pi-related-abstract { margin: 24px 0; padding: 18px 0; border-top: 1px solid #dfe3df; }
 .pi-related-abstract h3 { font-size: 18px; line-height: 1.6; }
 .pi-related-abstract a { overflow-wrap: anywhere; font-size: 14px; }
+.pi-paper-saved-description{margin:16px 0;padding:0!important;background:none!important;border:0!important}
+.pi-paper-saved-description>summary{min-height:44px;display:flex;align-items:center;gap:10px;color:#506a87;font-size:14px!important;cursor:pointer;list-style:none}
+.pi-paper-saved-description>summary::after{content:'+';color:#8190a4}.pi-paper-saved-description[open]>summary::after{content:'−'}
+.pi-paper-saved-description>summary::-webkit-details-marker{display:none}
+.pi-paper-abstract .pi-paper-source-status{font-size:12px!important;line-height:1.8;color:#7a889c}
+.pi-paper-abstract-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:18px}
+.pi-paper-abstract-actions>button{min-height:44px;padding:10px 18px;border:1px solid #c9d5e3;border-radius:6px;background:#f5f8fc;color:#3d5d81;font-size:14px!important;line-height:1.5;cursor:pointer}
+.pi-paper-abstract-actions>button:disabled{opacity:.65;cursor:default}
+.pi-paper-abstract-actions>button:hover:not(:disabled){background:#ebf1f8;border-color:#95aecb}
+.pi-paper-abstract-actions>span{font-size:12px;color:#7a889c;line-height:1.8}
+.pi-paper-abstract-actions>button:focus-visible,.pi-paper-saved-description>summary:focus-visible{outline:2px solid #688db7;outline-offset:3px}

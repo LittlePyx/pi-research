@@ -59,3 +59,7 @@ test('finding another version does not stop the exact work search', async () => 
   assert.ok(result.related);
   assert.ok(result.hit, 'continue to the exact preprint instead of waiting 24 hours');
 });
+test('an indexed no-abstract description cannot be accepted as source evidence',async()=>{
+ const result=await lookupAbstract(paper,async(url,source)=>source==='crossref'&&new URL(url).pathname!=='/works'?Response.json({message:{DOI:paper.doi,abstract:'A stored description. '.repeat(30)+'The abstract is missing.'}}):new Response('',{status:404}));
+ assert.equal(result.hit,null);assert.equal(result.diagnostics[0].outcome,'placeholder');
+});
