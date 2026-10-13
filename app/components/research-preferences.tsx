@@ -2,14 +2,15 @@
 import { useState } from "react";
 import type { PreferenceSignal } from "../../lib/preference-memory";
 
-export function ResearchPreferences({ signals, locale, demo, loading, failed, onToggle, onRecords, onPaper }: {
-  signals: PreferenceSignal[]; locale: "zh" | "en"; demo: boolean; loading: boolean; failed: boolean;
-  onToggle: (signal: PreferenceSignal, active: boolean) => Promise<boolean>; onRecords: () => void; onPaper: (id: string) => void;
+export function ResearchPreferences({ signals, locale, demo, loading, failed, retrying, onRetry, onToggle, onRecords, onPaper }: {
+  signals: PreferenceSignal[]; locale: "zh" | "en"; demo: boolean; loading: boolean; failed: boolean; retrying: boolean;
+  onRetry: () => void; onToggle: (signal: PreferenceSignal, active: boolean) => Promise<boolean>; onRecords: () => void; onPaper: (id: string) => void;
 }) {
   const zh = locale === "zh";
   const [disabled, setDisabled] = useState<PreferenceSignal[]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const hasContent = signals.length > 0 || disabled.length > 0;
   async function toggle(signal: PreferenceSignal, active: boolean) {
     if (pending) return;
     setPending(signal.id); setError("");
@@ -32,7 +33,9 @@ export function ResearchPreferences({ signals, locale, demo, loading, failed, on
   }
   return <section className="pi-preference-memory">
     <header><div><h2>{zh ? "你的研究偏向" : "Your research interests"}</h2><p>{zh ? "用于后续发现，随你的研究逐步更新。" : "Guiding future discovery as your research evolves."}</p></div>{demo && <small>{zh ? "示例" : "Example"}</small>}</header>
-    {loading ? <p role="status">{zh ? "正在读取研究偏向…" : "Loading interests…"}</p> : failed ? <p role="alert">{zh ? "研究偏向暂未载入，请重新进入此页重试。" : "Interests could not load. Reopen this page to retry."}</p> : <>
+    {loading && !hasContent && <p role="status">{zh ? "正在读取研究偏向…" : "Loading interests…"}</p>}
+    {failed && <div className="pi-preference-load-error" role="alert"><p>{hasContent ? (zh ? "暂时未能更新研究偏向，先显示上次载入的记录。" : "Could not refresh interests. Your previously loaded records are shown below.") : (zh ? "研究偏向暂时未能读取，已有记录仍会保留。" : "Interests could not load. Your saved records are retained.")}</p><button type="button" disabled={retrying} onClick={onRetry}>{retrying ? (zh ? "正在载入…" : "Loading…") : (zh ? "重新载入" : "Retry loading")}</button></div>}
+    {((!loading && !failed) || hasContent) && <>
       {!signals.length && !disabled.length && <div className="pi-preference-empty"><h3>{zh ? "从一次阅读开始" : "Start with a paper"}</h3><p>{zh ? "阅读、记录问题或反馈相关性，帮助 Pi 理解你的研究。" : "Read, note questions or give relevance feedback to help Pi understand your research."}</p></div>}
       {(["explicit", "inferred"] as const).map(layer => {
         const items = signals.filter(signal => signal.layer === layer);

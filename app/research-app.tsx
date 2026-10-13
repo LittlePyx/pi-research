@@ -6478,7 +6478,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               </> : <p className="pi-memory-empty">{locale === "zh" ? "可以导入已有论文、项目或研究记录，确认后用于整理研究背景。" : "Import papers, projects or research notes and confirm the extracted context."}</p>}
             </section>}
             {memorySection === "preferences" && <div className="pi-memory-preferences">
-<ResearchPreferences key={activeSpace.id} signals={monitor?.preferenceSignals || []} locale={locale} demo={demo} loading={!monitor} failed={monitor?.status === "error"} onToggle={updateMemorySignal} onRecords={() => setMemorySection("reading")} onPaper={id => void openRoutePaper(id, "memory")} />
+<ResearchPreferences key={activeSpace.id} signals={monitor?.preferenceSignals || []} locale={locale} demo={demo} loading={!monitor && !monitorLoadFailed} failed={monitorLoadFailed} retrying={reloadingMonitor} onRetry={() => void reloadSavedMonitor()} onToggle={updateMemorySignal} onRecords={() => setMemorySection("reading")} onPaper={id => void openRoutePaper(id, "memory")} />
               <p className="pi-memory-scope">{locale === "zh" ? "这些记录仅用于当前研究空间。" : "These records belong to this research space."}<button type="button" onClick={() => setSpaceDialog(true)}>{t.switchSpace} →</button></p>
             </div>}
             <footer className="v2-lab-attribution"><span>{locale === "zh" ? "研究团队" : "Research team"}</span><Image src="/pi-lab-logo.png" width={78} height={25} alt="P&amp;I Lab" /></footer>

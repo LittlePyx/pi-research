@@ -106,6 +106,9 @@
 .v2-app.pi-workspace .pi-preference-disabled { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:14px 18px; margin:12px 0; background:#eaf0ed; border-radius:8px; color:#596e62; font-size:13px; }
 .v2-app.pi-workspace .pi-preference-disabled button { flex-shrink:0; }
 .v2-app.pi-workspace .pi-preference-memory button:disabled { opacity:.5; cursor:wait; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-preference-load-error { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px 20px; margin:0 0 24px; padding:16px 18px; border:1px solid #dce4ed; border-radius:8px; background:#f8fafc; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-preference-load-error p { flex:1 1 260px; margin:0; color:#62738a; font-size:13px!important; line-height:1.7; }
+.v2-app.pi-workspace .pi-memory-workspace .pi-preference-load-error button { min-height:44px; padding:10px 15px; border:1px solid #cbd7e5; border-radius:6px; background:white; color:#35587e; font-size:13px!important; font-weight:600; }
 .v2-app.pi-workspace .pi-memory-scope { border:0; margin:24px 0 0; padding:0; font-size:12px; color:#8a949a; }
 .v2-app.pi-workspace .pi-memory-scope button { font-size:12px; color:#6d7f89; }
 .v2-app.pi-workspace .pi-memory-record-nav { display:flex; flex-wrap:wrap; gap:24px; }
