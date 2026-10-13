@@ -280,6 +280,14 @@ export const monitorDailyBriefs = sqliteTable(
   ],
 );
 
+export const monitorTaskBriefs = sqliteTable('monitor_task_briefs', {
+ id:text('id').primaryKey(),
+ spaceId:text('space_id').notNull().references(()=>researchSpaces.id,{onDelete:'cascade'}),
+ scanJobId:text('scan_job_id').notNull().references(()=>monitorScanJobs.id,{onDelete:'cascade'}),
+ payloadJson:text('payload_json').notNull(),
+ createdAt:text('created_at').notNull().default(sql.raw('CURRENT_TIMESTAMP')),
+},table=>[index('idx_monitor_task_briefs_space_job').on(table.spaceId,table.scanJobId,table.createdAt)]);
+
 export const monitorWeeklyReviews = sqliteTable(
   "monitor_weekly_reviews",
   {

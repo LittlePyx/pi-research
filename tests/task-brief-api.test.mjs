@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {glob,readFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
+import {Miniflare} from 'miniflare';
+import ts from 'typescript';
+test('task briefs retain independent immutable evidence, retry safely and isolate owners',{timeout:60000},async()=>{
+ const root=fileURLToPath(new URL('../dist/server/',import.meta.url)),modules=[];
+ for await(const p of glob('**/*.js',{cwd:root}))modules.push({type:'ESModule',path:root+p});
+ const captureCode=ts.transpileModule(await readFile(new URL('../lib/task-brief.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const mf=new Miniflare({cf:false,d1Databases:['DB'],compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],modulesRoot:root,modules:[{type:'ESModule',path:root+'task-brief-fixture.js',contents:`import app from './index.js';import {prepareTaskBriefCapture} from './capture-fixture.js';export default{async fetch(r,e,c){const path=new URL(r.url).pathname;if(path==='/fixture')return Response.json(await e.DB.batch((await r.json()).map(x=>e.DB.prepare(x.sql).bind(...(x.values||[])))));if(path==='/capture'){const b=await r.json();const s=await prepareTaskBriefCapture(e.DB,b.spaceId,b.jobId,'Fixture field',b.summary,b.candidates,b.reviews,b.selected);if(!s)return Response.json({captured:false});try{return Response.json(await e.DB.batch([...(b.before||[]).map(x=>e.DB.prepare(x.sql).bind(...(x.values||[]))),s]))}catch{return Response.json({error:'batch rejected'},{status:500})}}return app.fetch(r,e,c)}}`},{type:'ESModule',path:root+'capture-fixture.js',contents:captureCode},...modules],outboundService:()=>{throw Error('Capturing a brief must not call a model')}});
+ const call=(path,body,owner='task-brief-fixture-owner')=>mf.dispatchFetch('http://localhost'+path,{method:body?'POST':'GET',headers:{cookie:`pi_anonymous_workspace=${owner}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+ const sql=async items=>{const r=await call('/fixture',items);assert.equal(r.status,200,await r.clone().text());return r.json()};
+ const insert=(table,values)=>({sql:`INSERT INTO ${table} (${Object.keys(values).join(',')}) VALUES (${Object.keys(values).map(()=>'?').join(',')})`,values:Object.values(values)});
+ const candidate={canonicalId:'fixture:paper',title:'Memoryless source coding',authors:'Fixture',venue:'Fixture',doi:'10.fixture/p',url:'https://example.test/p',publishedAt:'2020-01-01',abstractText:'The theorem assumes an independent memoryless source.',source:'crossref',horizon:'years',provenance:[{sourceKey:'problem',channel:'topic',queryText:'finite blocklength source coding'}]};
+ const review={canonicalId:candidate.canonicalId,isPaper:true,recommended:true,verificationStatus:'verified',verificationCoverageScore:100,screeningReason:'Confirmed',researchProblemId:'problem-frozen',summaryZh:'原始解读',summaryEn:'Original analysis',contributionZh:'原始发现',contributionEn:'Original finding',whyReadZh:'原始理由',whyReadEn:'Original rationale',readingFocusZh:'核对源条件',readingFocusEn:'Check source assumptions',limitationsZh:'独立无记忆假设',limitationsEn:'Independent memoryless assumption'};
+ const summary={briefDate:'2026-10-13',status:'ready',headlineZh:'本轮发现',headlineEn:'This run',overviewZh:'本轮核对了无记忆源设置。',overviewEn:'This run checked the memoryless setting.',signalsZh:['冻结的关注点'],signalsEn:['Frozen finding'],readingPlanZh:['核对假设'],readingPlanEn:['Check assumptions'],metrics:{scanned:2,reviewed:1,recommended:1},model:'evidence-summary'};
+ const input={spaceId:'s',jobId:'old',summary,candidates:[candidate],reviews:[review],selected:[candidate.canonicalId]};
+ const get=async query=>{const r=await call('/api/task-brief?spaceId=s&'+query);assert.equal(r.status,200,await r.clone().text());return (await r.json()).brief};
+ try{
+  await call('/api/task-brief?spaceId=s');
+  const migration=await readFile(new URL('../drizzle/0070_task_brief_snapshots.sql',import.meta.url),'utf8');await sql(migration.split('--> statement-breakpoint').map(sql=>({sql})));
+  await sql([insert('research_spaces',{id:'s',owner_user_id:'anonymous:task-brief-fixture-owner',name:'Fixture',member_name:'Fixture'}),insert('research_spaces',{id:'other',owner_user_id:'anonymous:other-owner',name:'Other',member_name:'Other'}),...['old','new'].map((id,i)=>insert('monitor_scan_jobs',{id,space_id:'s',started_at:`2026-10-13 0${i+1}:00:00`,work_queue_json:JSON.stringify({frozenQueryPlan:{queries:{days:['recent coding'],months:['source assumptions'],years:['foundations']},problemQueries:{problemId:'problem-frozen'}}})})),insert('monitored_papers',{id:'p',space_id:'s',canonical_id:candidate.canonicalId,title:candidate.title,authors:'Fixture',venue:'Fixture',url:candidate.url,horizon:'years'}),insert('paper_insights',{paper_id:'p',space_id:'s',abstract_text:candidate.abstractText,llm_recommended:1,analysis_source:'deepseek'}),insert('paper_reading_progress',{id:'note',space_id:'s',paper_id:'p',status:'reading',note:'User note stays untouched'})]);
+  assert.equal((await call('/capture',input)).status,200);
+  const original=await get('jobId=old&evidence=1');assert.equal(original.job.id,'old');assert.equal(original.scope.problemId,'problem-frozen');assert.deepEqual(original.plan.years,['foundations']);assert.equal(original.records[0].abstractHash,createHash('sha256').update(candidate.abstractText).digest('hex'));
+  await call('/capture',input);assert.equal((await sql([{sql:'SELECT COUNT(*) n FROM monitor_task_briefs'}]))[0].results[0].n,1,'repeated capture is idempotent');
+  await sql([{sql:"UPDATE paper_insights SET abstract_text='Later source text',llm_recommended=0 WHERE paper_id='p'"}]);
+  const unchanged=await get('snapshotId='+original.snapshotId+'&evidence=1');assert.equal(unchanged.records[0].abstractText,candidate.abstractText);assert.equal(unchanged.records[0].review.contributionEn,'Original finding');assert.equal(unchanged.currentStates[0].recommended,false);
+  const zero={...input,jobId:'new',summary:{...summary,overviewEn:'No recommendation this run',signalsZh:[],signalsEn:[],readingPlanZh:[],readingPlanEn:[],metrics:{scanned:3,reviewed:1,recommended:0}},reviews:[{...review,recommended:false,verificationStatus:'degraded',screeningReason:'Evidence did not support the draft'}],selected:[]};await call('/capture',zero);
+  assert.equal((await get('')).job.id,'new');assert.equal((await get('')).summary.metrics.recommended,0);assert.equal((await get('')).records[0].selected,false);
+  await call('/capture',{...input,summary:{...summary,overviewEn:'Older task revised later'}});assert.equal((await get('')).job.id,'new','late old-task capture cannot replace the newer task');assert.equal((await get('snapshotId='+original.snapshotId+'&evidence=1')).summary.overviewEn,summary.overviewEn);
+  const failed=await call('/capture',{...zero,summary:{...zero.summary,overviewEn:'Must roll back'},before:[{sql:"INSERT INTO research_spaces(id,owner_user_id,name,member_name) VALUES('s','duplicate','duplicate','duplicate')"}]});assert.equal(failed.status,500);assert.equal((await get('')).summary.overviewEn,'No recommendation this run');
+  assert.equal((await call('/api/task-brief?spaceId=other')).status,404);assert.equal((await call('/api/task-brief?spaceId=s',null,'other-owner-000000000000')).status,404);
+  assert.equal((await get('')).records[0].abstractText,'','overview endpoint does not load full evidence by default');
+  assert.equal((await sql([{sql:"SELECT note,status FROM paper_reading_progress WHERE paper_id='p'"}]))[0].results[0].note,'User note stays untouched');
+ }finally{await mf.dispose()}
+});

@@ -1,0 +1,45 @@
+type Candidate={canonicalId:string;title:string;authors:string;venue:string;doi:string|null;url:string;publishedAt:string|null;abstractText:string;source:string;horizon:string;provenance?:{channel:string;queryText?:string;sourceKey:string}[]};
+type Review={canonicalId:string;recommended:boolean;isPaper:boolean;verificationStatus:string;verificationRetryable?:boolean;verificationCoverageScore:number;screeningReason:string;researchProblemId:string;summaryZh:string;summaryEn:string;contributionZh:string;contributionEn:string;whyReadZh:string;whyReadEn:string;readingFocusZh:string;readingFocusEn:string;limitationsZh:string;limitationsEn:string};
+export type TaskBriefSummary={briefDate:string;status:string;headlineZh:string;headlineEn:string;overviewZh:string;overviewEn:string;signalsZh:string[];signalsEn:string[];readingPlanZh:string[];readingPlanEn:string[];metrics:Record<string,number>;model:string;error?:string|null};
+export type TaskBriefRecord={paperId:string|null;canonicalId:string;title:string;authors:string;venue:string;doi:string|null;url:string;publishedAt:string|null;discoveredAt:string|null;source:string;horizon:string;queries:{channel:string;query:string}[];abstractText:string;abstractHash:string|null;abstractTruncated:boolean;selected:boolean;signalZh:string;signalEn:string;actionZh:string;actionEn:string;review:Review|null};
+export type TaskBriefPayload={version:1;job:{id:string;startedAt:string;trigger:string;resumeOfJobId:string|null};scope:{description:string;problemId:string|null};plan:{days:string[];months:string[];years:string[]}|null;summary:TaskBriefSummary;records:TaskBriefRecord[];coverage:{candidateCount:number;reviewCount:number;capturedCount:number;bounded:boolean}};
+export type TaskBriefView=TaskBriefPayload & {snapshotId:string;capturedAt:string;currentStates:{paperId:string;readingStatus:string;feedback:string|null;saved:boolean;recommended:boolean;snoozed:boolean}[]};
+async function storageAvailable(db:D1Database){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='monitor_task_briefs'").first());}
+function object(text:string):Record<string,unknown>{try{const v=JSON.parse(text);return v&&typeof v==='object'&&!Array.isArray(v)?v:{}}catch{return {}}}
+async function hash(text:string){const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));return Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('');}
+
+/** Captures the actual candidates/reviews supplied to this task's brief, before daily merging. */
+export async function prepareTaskBriefCapture(db:D1Database,spaceId:string,jobId:string,description:string,summary:TaskBriefSummary,candidates:Candidate[],reviews:Review[],selectedCanonicalIds:string[]) {
+ const job=await db.prepare('SELECT id,started_at,trigger_source,resume_of_job_id,work_queue_json FROM monitor_scan_jobs WHERE id=? AND space_id=?').bind(jobId,spaceId).first<{id:string;started_at:string;trigger_source:string;resume_of_job_id:string|null;work_queue_json:string}>();
+ // Legacy/test databases may predate the migration. Never invent an unbound snapshot.
+ if(!job||!await storageAvailable(db))return null;
+ const work=object(job.work_queue_json),frozen=work.frozenQueryPlan as {queries?:Record<string,unknown>;problemQueries?:{problemId?:unknown}}|undefined;
+ const plan=frozen?.queries?Object.fromEntries(['days','months','years'].map(h=>[h,Array.isArray(frozen.queries?.[h])?(frozen.queries![h] as unknown[]).filter((q):q is string=>typeof q==='string'):[]])) as TaskBriefPayload['plan']:null;
+ const candidateById=new Map(candidates.map(c=>[c.canonicalId,c])),reviewById=new Map(reviews.map(r=>[r.canonicalId,r]));
+ const order=Array.from(new Set([...selectedCanonicalIds,...reviews.map(r=>r.canonicalId),...candidates.map(c=>c.canonicalId)])).filter(id=>candidateById.has(id));
+ const ids=order.slice(0,48);
+ const rows=ids.length?(await db.prepare(`SELECT id,canonical_id,discovered_at FROM monitored_papers WHERE space_id=? AND canonical_id IN (${ids.map(()=>'?').join(',')})`).bind(spaceId,...ids).all<{id:string;canonical_id:string;discovered_at:string}>()).results:[];
+ const records=await Promise.all(ids.map(async canonicalId=>{
+  const c=candidateById.get(canonicalId)!,r=reviewById.get(canonicalId),row=rows.find(p=>p.canonical_id===canonicalId),index=selectedCanonicalIds.indexOf(canonicalId);
+  // Abstract text is the task's supplied evidence, not a later paper_insights value.
+  const abstractText=r?c.abstractText.slice(0,12000):'';
+  const review=r?{canonicalId:r.canonicalId,recommended:r.recommended,isPaper:r.isPaper,verificationStatus:r.verificationStatus,verificationRetryable:r.verificationRetryable||false,verificationCoverageScore:r.verificationCoverageScore,screeningReason:r.screeningReason,researchProblemId:r.researchProblemId,summaryZh:r.summaryZh,summaryEn:r.summaryEn,contributionZh:r.contributionZh,contributionEn:r.contributionEn,whyReadZh:r.whyReadZh,whyReadEn:r.whyReadEn,readingFocusZh:r.readingFocusZh,readingFocusEn:r.readingFocusEn,limitationsZh:r.limitationsZh,limitationsEn:r.limitationsEn}:null;
+  return {paperId:row?.id||null,canonicalId,title:c.title,authors:c.authors,venue:c.venue,doi:c.doi,url:c.url,publishedAt:c.publishedAt,discoveredAt:row?.discovered_at||null,source:c.source,horizon:c.horizon,queries:(c.provenance||[]).filter(p=>p.queryText).map(p=>({channel:p.channel,query:p.queryText!})),abstractText,abstractHash:abstractText?await hash(abstractText):null,abstractTruncated:Boolean(r&&c.abstractText.length>abstractText.length),selected:index>=0&&Boolean(r?.recommended&&!r.verificationRetryable&&['verified','revised'].includes(r.verificationStatus)),signalZh:index>=0?summary.signalsZh[index]||'':'',signalEn:index>=0?summary.signalsEn[index]||'':'',actionZh:index>=0?summary.readingPlanZh[index]||'':'',actionEn:index>=0?summary.readingPlanEn[index]||'':'',review};
+ }));
+ const payload:TaskBriefPayload={version:1,job:{id:job.id,startedAt:job.started_at,trigger:job.trigger_source,resumeOfJobId:job.resume_of_job_id},scope:{description,problemId:typeof frozen?.problemQueries?.problemId==='string'?frozen.problemQueries.problemId:null},plan,summary,records,coverage:{candidateCount:candidates.length,reviewCount:reviews.length,capturedCount:records.length,bounded:order.length>records.length}};
+ let json=JSON.stringify(payload);
+ while(new TextEncoder().encode(json).byteLength>1200000&&payload.records.length>6){payload.records.pop();payload.coverage.capturedCount=payload.records.length;payload.coverage.bounded=true;json=JSON.stringify(payload)}
+ if(new TextEncoder().encode(json).byteLength>1200000)throw Error('Task brief evidence exceeds the capture bound');
+ const snapshotId=await hash(JSON.stringify({spaceId,payload}));
+ return db.prepare(`INSERT INTO monitor_task_briefs(id,space_id,scan_job_id,payload_json) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM monitor_scan_jobs WHERE id=? AND space_id=?) ON CONFLICT(id) DO NOTHING`).bind(snapshotId,spaceId,jobId,json,jobId,spaceId);
+}
+
+export async function readTaskBrief(db:D1Database,spaceId:string,jobId='',snapshotId=''):Promise<TaskBriefView|null>{
+ if(!await storageAvailable(db))return null;
+ const row=await db.prepare(`SELECT b.id,b.payload_json,b.created_at FROM monitor_task_briefs b JOIN monitor_scan_jobs j ON j.id=b.scan_job_id AND j.space_id=b.space_id WHERE b.space_id=? AND (?='' OR b.scan_job_id=?) AND (?='' OR b.id=?) ORDER BY j.started_at DESC,j.rowid DESC,b.created_at DESC,b.rowid DESC LIMIT 1`).bind(spaceId,jobId,jobId,snapshotId,snapshotId).first<{id:string;payload_json:string;created_at:string}>();
+ if(!row)return null;
+ const payload=JSON.parse(row.payload_json) as TaskBriefPayload;
+ const ids=payload.records.map(r=>r.paperId).filter((id):id is string=>Boolean(id));
+ const states=ids.length?(await db.prepare(`SELECT p.id AS paperId,COALESCE(r.status,'unread') AS readingStatus,f.feedback,COALESCE(f.saved,0) AS saved,CASE WHEN julianday(d.snoozed_until)>julianday('now') THEN 1 ELSE 0 END AS snoozed,CASE WHEN i.llm_recommended=1 AND i.analysis_source='deepseek' THEN 1 ELSE 0 END AS recommended FROM monitored_papers p LEFT JOIN paper_delivery_state d ON d.paper_id=p.id AND d.space_id=p.space_id LEFT JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id LEFT JOIN paper_reading_progress r ON r.paper_id=p.id AND r.space_id=p.space_id LEFT JOIN paper_feedback f ON f.paper_id=p.id AND f.space_id=p.space_id WHERE p.space_id=? AND p.id IN (${ids.map(()=>'?').join(',')})`).bind(spaceId,...ids).all<{paperId:string;readingStatus:string;feedback:string|null;saved:number;recommended:number;snoozed:number}>()).results:[];
+ return {...payload,snapshotId:row.id,capturedAt:row.created_at,currentStates:states.map(s=>({...s,saved:Boolean(s.saved),recommended:Boolean(s.recommended),snoozed:Boolean(s.snoozed)}))};
+}

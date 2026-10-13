@@ -220,3 +220,14 @@
 .v2-app.pi-workspace :is(.pi-library-pagination,.v2-library-export) button { min-height:44px; padding:8px 14px; border:1px solid #c7d3df; border-radius:5px; background:#f8fafc; color:#315d80; font-size:14px !important; cursor:pointer; }
 .pi-library-pagination button:disabled,.v2-library-export button:disabled { opacity:.5; cursor:default; }
 @media(max-width:640px) { .pi-library-pagination { gap:10px; }.pi-library-pagination span { font-size:12px; } }
+
+.v2-app.pi-workspace .pi-task-brief-evidence { margin:0 0 24px; padding-bottom:16px; border-bottom:1px solid #dbe2e9; }
+.pi-task-brief-evidence>summary { min-height:44px; display:flex; align-items:center; gap:8px; font-size:14px; color:#315d80; cursor:pointer; list-style:none; }
+.pi-task-brief-evidence>summary:before { content:'+'; color:#718695; font-size:18px; }
+.pi-task-brief-evidence[open]>summary:before { content:'−'; }
+.v2-app.pi-workspace .pi-task-brief-evidence p,.pi-task-brief-evidence dd { font-size:14px !important; line-height:1.8; color:#607588; overflow-wrap:anywhere; }
+.pi-task-brief-evidence dt { font-size:14px; font-weight:600; color:#36536c; }
+.pi-task-brief-evidence dd { margin:8px 0 18px; }
+.pi-task-brief-evidence article { padding:20px 0; border-top:1px solid #e3e8ee; }
+.v2-app.pi-workspace .pi-task-brief-evidence h4 { font-size:18px; line-height:1.5; margin:0 0 12px; }
+.pi-task-brief-evidence blockquote { margin:12px 0; padding-left:18px; border-left:2px solid #b8c8d6; color:#445f75; font-size:15px; line-height:1.85; }

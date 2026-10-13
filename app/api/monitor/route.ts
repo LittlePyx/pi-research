@@ -1,3 +1,4 @@
+import {prepareTaskBriefCapture} from '../../../lib/task-brief';
 import {librarySearchWhere,librarySearchOrder,libraryUserStateSql} from '../../../lib/library-search.mjs';
 import { readingNoteHash } from "../../../lib/reading-note-consistency.mjs";
 import { currentReadingMemories } from "../../../lib/current-reading-memories";
@@ -3806,6 +3807,7 @@ async function saveDailyBrief(
     model: string;
     error?: string | null;
   },
+  capture?:D1PreparedStatement|null,
 ) {
   const existingRow = await database.prepare(
     `SELECT headline_zh, headline_en, overview_zh, overview_en, signals_zh, signals_en,
@@ -3830,7 +3832,7 @@ async function saveDailyBrief(
     paperIds: parseVenues(existingRow.paper_ids),
     metrics: parseJsonObject(existingRow.metrics_json) as Record<string, number>,
   } : null, input);
-  await database.prepare(
+  const statement=database.prepare(
     `INSERT INTO monitor_daily_briefs
      (id, space_id, brief_date, scan_job_id, status, headline_zh, headline_en, overview_zh, overview_en,
       signals_zh, signals_en, reading_plan_zh, reading_plan_en, watchlist_zh, watchlist_en,
@@ -3851,7 +3853,8 @@ async function saveDailyBrief(
     JSON.stringify(mergedInput.readingPlanZh), JSON.stringify(mergedInput.readingPlanEn),
     JSON.stringify(mergedInput.watchlistZh), JSON.stringify(mergedInput.watchlistEn),
     JSON.stringify(mergedInput.paperIds), JSON.stringify(mergedInput.metrics), input.model, input.error || null,
-  ).run();
+  );
+  await database.batch(capture?[statement,capture]:[statement]);
 }
 
 function selectDiverseItems<T>(
@@ -3919,8 +3922,12 @@ async function generateDailyBrief(
     const byCanonical = new Map(rows.results.map((row) => [row.canonical_id, row.id]));
     paperIds = selectedCanonicalIds.map((id) => byCanonical.get(id)).filter((id): id is string => Boolean(id));
   }
+  const persistBrief=async(input:Parameters<typeof saveDailyBrief>[1])=>{
+    const capture=await prepareTaskBriefCapture(database,space.id,jobId,space.description,input,candidates,reviews,selectedCanonicalIds);
+    await saveDailyBrief(database,input,capture);
+  };
   const saveEvidenceBrief = async (enhancementError?: string) => {
-    await saveDailyBrief(database, {
+    await persistBrief({
     spaceId: space.id, briefDate, jobId, status: analysisUnavailable ? "degraded" : "ready",
     headlineZh: selected.length
       ? `今天 ${selected.length} 篇已确认${verificationPending ? `，${verificationPending} 篇正在后台核对` : ""}`
@@ -4066,7 +4073,7 @@ async function generateDailyBrief(
     const overviewZh = cleanText(String(parsed.overviewZh || "")).slice(0, 900);
     const overviewEn = cleanText(String(parsed.overviewEn || "")).slice(0, 1200);
     if (!headlineZh || !headlineEn || !overviewZh || !overviewEn) throw new Error("DeepSeek returned an incomplete daily brief");
-    await saveDailyBrief(database, {
+    await persistBrief({
       spaceId: space.id, briefDate, jobId, status: "ready", headlineZh, headlineEn, overviewZh, overviewEn,
       signalsZh: briefList(parsed.signalsZh, selected.length, 280), signalsEn: briefList(parsed.signalsEn, selected.length, 420),
       readingPlanZh: briefList(parsed.readingPlanZh, selected.length, 240), readingPlanEn: briefList(parsed.readingPlanEn, selected.length, 360),

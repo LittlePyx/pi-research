@@ -13,7 +13,7 @@ function harness(){
  const state={monitor:{papers:[paper,{...paper,id:'second'}],historyPapers:[paper,{...paper,id:'second'}]},selected:null,receipt:null,saved:{}};
  const ref={current:false},space={current:'a'};
  const update=(key,value)=>{state[key]=typeof value==='function'?value(state[key]):value};
- const scope={setLibraryRevision:()=>{},activeSpace:{id:'a'},saved:state.saved,locale:'en',feedbackSaving:ref,paperNetworkSpaceRef:space,
+ const scope={taskBriefState:{patchPaper:()=>{}},setLibraryRevision:()=>{},activeSpace:{id:'a'},saved:state.saved,locale:'en',feedbackSaving:ref,paperNetworkSpaceRef:space,
   document:{querySelectorAll:()=>[]},setFeedbackBusy:()=>{},setFeedbackReceipt:v=>update('receipt',v),setToast:()=>{},
   setSaved:v=>update('saved',v),setSelectedMonitorPaper:v=>update('selected',v),setMonitor:v=>update('monitor',v),
   setFeedbackPrompt:()=>{},setFeedbackNote:()=>{},historyCountsFor:()=>({}),feedbackEffectCopy:()=> 'Saved',
