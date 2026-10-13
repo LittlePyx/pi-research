@@ -18,6 +18,8 @@ const shapes = {
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   check: <path d="m5 12 4 4L19 6" />,
   add: <path d="M12 5v14M5 12h14" />,
+  bookmark: <path d="M6 4h12v17l-6-4-6 4z" />,
+  more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
   refresh: <><path d="M20 8a8 8 0 0 0-14-2L3 9m0-6v6h6m-5 7a8 8 0 0 0 14 2l3-3m0 6v-6h-6" /></>,
   warning: <><path d="m10.3 4-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0ZM12 9v4m0 4h.01" /></>,
   loading: <path d="M21 12a9 9 0 1 1-9-9" />,
