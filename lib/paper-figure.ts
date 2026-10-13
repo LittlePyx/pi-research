@@ -2,7 +2,7 @@ import {normalizeWorkTitle} from './discovery/arxiv';
 export type PaperFigure={url:string;caption:string;sourceUrl:string};
 export function figureArxivId(url:string,doi:string|null) {
  let path='';
- try {const u=new URL(url);if(u.protocol==='https:'&&u.hostname==='arxiv.org')path=u.pathname.replace(/^\/(?:abs|pdf|html)\//,'').replace(/\.pdf$/,'')}catch{}
+ try {const u=new URL(url);if(u.protocol==='https:'&&u.hostname==='arxiv.org')path=u.pathname.replace(/^\/(?:abs|pdf|html)\//,'').replace(/\.pdf$/,'')}catch{ /* A DOI can still identify an arXiv paper when its URL is absent or invalid. */ }
  if(!path&&doi?.toLowerCase().startsWith('10.48550/arxiv.'))path=doi.slice(15);
  return /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/.test(path)?path:'';
 }

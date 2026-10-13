@@ -24,7 +24,7 @@ export async function GET(request:Request) {
     resolvedId=nextId;response=await fetchHtml('https://arxiv.org/html/'+resolvedId);
    }
    figure=firstArxivFigure(await boundedFigureHtml(response),resolvedId,paper.title);
-  }catch{}
+  }catch{ /* A missing or unavailable figure leaves the text recommendation usable. */ }
   if(figures.size>=128)figures.delete(figures.keys().next().value!);
   figures.set(key,{figure,until:Date.now()+(figure?3_600_000:300_000)});
  }}

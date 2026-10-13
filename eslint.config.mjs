@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     "dist/**",
     "out/**",
     "build/**",
+    // Local QA scripts and screenshots are generated, Git-ignored artifacts.
+    "outputs/**",
     "next-env.d.ts",
   ]),
   eslint.configs.recommended,

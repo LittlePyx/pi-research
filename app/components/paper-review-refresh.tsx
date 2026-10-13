@@ -4,8 +4,15 @@ import { workspaceFetch as fetch } from '../../lib/workspace-request';
 type State={eligible:boolean;status:string;retryAt:number;busy?:boolean;attempts?:number};
 export function PaperReviewRefresh({spaceId,paperId,locale,onUpdated,onReady}:{spaceId:string;paperId:string;locale:'zh'|'en';onUpdated:()=>Promise<void>;onReady:(ready:boolean)=>void}) {
  const [state,setState]=useState<State|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
- const alive=useRef(true),running=useRef(false),ready=useRef(onReady);ready.current=onReady;
+ const alive=useRef(true),running=useRef(false),ready=useRef(onReady);
+ const [now,setNow]=useState(()=>Date.now());
  const zh=locale==='zh';
+ useEffect(()=>{ready.current=onReady},[onReady]);
+ useEffect(()=>{
+  if(!state?.retryAt||state.retryAt<=now)return;
+  const timer=setTimeout(()=>setNow(Date.now()),Math.max(0,Math.min(2147483647,state.retryAt-Date.now()+1)));
+  return()=>clearTimeout(timer);
+ },[state?.retryAt,now]);
  useEffect(()=>{alive.current=true;const controller=new AbortController();
   fetch('/api/paper-review-refresh?'+new URLSearchParams({spaceId,paperId}),{signal:controller.signal}).then(async r=>{if(!r.ok)throw Error();return r.json() as Promise<State>}).then(data=>{if(alive.current){setState(data);ready.current(data.status==='ready')}}).catch(()=>{});
   return()=>{alive.current=false;controller.abort()};
@@ -28,7 +35,7 @@ export function PaperReviewRefresh({spaceId,paperId,locale,onUpdated,onReady}:{s
  if(!state?.eligible)return null;
  return <div className="pi-paper-review-refresh">
   <p className="pi-paper-muted" role="status">{busy?(zh?'正在核验并更新这篇论文的评审…':'Checking and updating this paper’s review…'):state.status==='ready'?(zh?'评审已按当前摘要核验并同步。':'Review checked against the current abstract and synchronized.'):(zh?'摘要更新后，可重新核验这篇论文的解读与推荐理由。':'Recheck the interpretation and reading rationale against the updated abstract.')}</p>
-  {(state.status!=='ready'||error)&&<button type="button" disabled={busy||state.busy||state.retryAt>Date.now()||(state.attempts||0)>=4&&state.status!=='ready'} onClick={()=>void run()}>{busy?(zh?'正在更新…':'Updating…'):state.status==='ready'?(zh?'重新载入评审':'Reload review'):(zh?'核验并更新评审':'Check & update review')}</button>}
+  {(state.status!=='ready'||error)&&<button type="button" disabled={busy||state.busy||state.retryAt>now||(state.attempts||0)>=4&&state.status!=='ready'} onClick={()=>void run()}>{busy?(zh?'正在更新…':'Updating…'):state.status==='ready'?(zh?'重新载入评审':'Reload review'):(zh?'核验并更新评审':'Check & update review')}</button>}
   {(state.attempts||0)>=4&&state.status!=='ready'&&<p role="status">{zh?'本次更新已达到重试上限，原评审保留。':'Retry limit reached; the original review is retained.'}</p>}
   {error&&<p role="alert">{error}</p>}
  </div>;

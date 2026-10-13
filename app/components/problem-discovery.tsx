@@ -1,13 +1,19 @@
 'use client';
-import {useEffect,useState} from 'react';
+import {useCallback,useEffect,useState} from 'react';
 import { workspaceFetch as fetch } from '../../lib/workspace-request';
 
 type Trace = {job:{status:string}|null;queries?:{days:string;months:string;years:string};branches:{horizon:string;candidates:number;error:string|null}[];papers:{id:string;title:string;query:string;decision:string|null;reason:string|null;recommended:number|null}[]};
 export function ProblemDiscovery({spaceId,problemId,locale,onRead,expanded=false}:{expanded?:boolean;spaceId:string;problemId:string;locale:'zh'|'en';onRead:(id:string)=>void}) {
- const [data,setData]=useState<Trace|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(false);
+ const [data,setData]=useState<Trace|null>(null),[busy,setBusy]=useState(expanded),[error,setError]=useState(false);
  const zh=locale==='zh';
- async function load(){setBusy(true);setError(false);try{const r=await fetch('/api/problem-discovery?'+new URLSearchParams({spaceId,problemId}),{signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error();setData(await r.json() as Trace)}catch{setError(true)}finally{setBusy(false)}}
- useEffect(()=>{if(expanded)void load()},[expanded,spaceId,problemId]);
+ const read=useCallback(async(signal:AbortSignal)=>{const r=await fetch('/api/problem-discovery?'+new URLSearchParams({spaceId,problemId}),{signal});if(!r.ok)throw Error();return await r.json() as Trace},[spaceId,problemId]);
+ async function load(){setBusy(true);setError(false);try{setData(await read(AbortSignal.timeout(20000)))}catch{setError(true)}finally{setBusy(false)}}
+ useEffect(()=>{
+  if(!expanded)return;
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);let cancelled=false;
+  void read(controller.signal).then(value=>{if(!cancelled){setData(value);setError(false)}}).catch(()=>{if(!cancelled)setError(true)}).finally(()=>{clearTimeout(timer);if(!cancelled)setBusy(false)});
+  return()=>{cancelled=true;clearTimeout(timer);controller.abort()};
+ },[expanded,read]);
  return <details open={expanded||undefined} className="pi-question-discovery"><summary onClick={()=>{if(!data&&!busy)void load()}}>{zh?'检索记录':'Discovery record'}</summary>
  {busy&&<p role="status">{zh?'正在读取…':'Loading…'}</p>}
  {error&&<p role="alert">{zh?'记录暂未读到。':'Could not load the record.'}</p>}

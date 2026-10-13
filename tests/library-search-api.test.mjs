@@ -32,7 +32,7 @@ test('full-library search and exports find oldest notes beyond display limits an
   assert.equal((await search('filter=accepted')).total,1);
   const backupResponse=await call('/api/library?spaceId=s&format=json');assert.equal(backupResponse.status,200);const backup=await backupResponse.json();
   assert.equal(backup.papers.length,2102);const old=backup.papers.find(p=>p.id==='p0000');assert.equal(old.readingNote,'Unique dispersion note');assert.equal(old.saved,true);assert.equal(old.feedbackReasonCode,'method_fit');assert.equal(old.feedbackNote,'Useful assumption');assert.equal(backup.papers.some(p=>p.id==='foreign'),false);
-  const ris=await (await call('/api/library?spaceId=s&format=ris&scope=all')).text();assert.equal((ris.match(/TY  - JOUR/g)||[]).length,2102);assert.match(ris,/Oldest Lossy Compression/);
+  const ris=await (await call('/api/library?spaceId=s&format=ris&scope=all')).text();assert.equal((ris.match(/TY {2}- JOUR/g)||[]).length,2102);assert.match(ris,/Oldest Lossy Compression/);
   const bib=await (await call('/api/library?spaceId=s&format=bibtex&scope=accepted')).text();assert.equal((bib.match(/@article/g)||[]).length,1);assert.match(bib,/Oldest Lossy Compression/);
   assert.equal((await call('/api/library?spaceId=other&format=json')).status,404);
  }finally{await mf.dispose()}
