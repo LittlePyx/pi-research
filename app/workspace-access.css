@@ -1,26 +1,66 @@
-.pi-workspace-welcome{min-height:100dvh;background:#f6f7f9;color:#243243;padding:32px clamp(24px,6vw,88px);font-family:Arial,"Microsoft YaHei",sans-serif}
-.pi-workspace-welcome>header{display:flex;justify-content:space-between;align-items:center;padding-bottom:30px;border-bottom:1px solid #dce2e8}
-.pi-workspace-welcome>header>strong{font:700 26px Georgia,serif;text-decoration:none;color:#243243}
-.pi-workspace-welcome>header button{min-height:44px;padding:0 14px;color:#52677d;border:0;background:transparent;border-bottom:2px solid transparent}
-.pi-workspace-welcome>header button[aria-pressed=true]{border-color:#365b7a;color:#244763;font-weight:700}
-.pi-welcome-layout{max-width:1080px;margin:72px auto;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:clamp(36px,7vw,100px)}
-.pi-workspace-welcome h1{font:500 clamp(28px,3vw,38px)/1.35 Georgia,"Microsoft YaHei",serif;margin:14px 0 18px}
-.pi-workspace-welcome p,.pi-workspace-access p{font-size:14px!important;line-height:1.8;color:#5c6c7d}
-.pi-workspace-welcome .pi-welcome-kicker{font-size:11px!important;letter-spacing:.16em;color:#456984}
-.pi-workspace-welcome form{display:grid;gap:24px;margin:34px 0 28px}
-.pi-workspace-welcome label{display:grid;gap:10px;font-size:14px;color:#263c50}
-.pi-workspace-welcome input,.pi-workspace-welcome textarea{width:100%;box-sizing:border-box;padding:14px;background:#fff;border:1px solid #cbd5df;border-radius:6px;font-family:inherit;font-size:15px;line-height:1.6;color:#243243}
-.pi-workspace-welcome textarea{min-height:130px;resize:vertical}
-.pi-workspace-welcome button[type=submit],.pi-access-actions a,.pi-access-actions button,.pi-access-confirm button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:12px 18px;border:1px solid #bccbd7;border-radius:6px;background:#fff;color:#315773;font-size:14px!important;text-decoration:none;cursor:pointer}
-.pi-workspace-welcome button[type=submit],.pi-access-confirm button:first-child{background:#315b7a;color:#fff;border-color:#315b7a}
-.pi-workspace-welcome button:disabled,.pi-workspace-access button:disabled{opacity:.55;cursor:default}
-.pi-workspace-access{padding:28px 0;border-top:2px solid #426580}
-.v2-space-modal>.pi-workspace-access{margin:0 28px 28px;padding:28px 0 0;border-top:0}
-.pi-workspace-access h3{font-size:21px!important;font-weight:600;color:#253f55;margin:0 0 16px}
-.pi-access-actions,.pi-access-confirm>div{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}
-.pi-access-confirm{margin-top:24px;padding:18px;background:#f1f5f8;border:1px solid #d6e0e8;border-radius:6px}
-.pi-workspace-access .pi-access-note,.pi-workspace-welcome .pi-access-note{font-size:12px!important;color:#748293;margin-top:24px}
-.pi-access-account{overflow-wrap:anywhere;font-weight:600;color:#345872!important}
-.pi-welcome-demo{display:inline-flex;align-items:center;min-height:44px;color:#426581;font-size:14px;text-underline-offset:4px}
-.pi-workspace-welcome :is(input,textarea,button,a):focus-visible,.pi-workspace-access :is(button,a):focus-visible{outline:2px solid #6389a7;outline-offset:3px}
-@media(max-width:720px){.pi-workspace-welcome{padding:24px}.pi-welcome-layout{grid-template-columns:1fr;margin:42px auto;gap:38px}.pi-workspace-welcome>header>strong{font-size:22px}.pi-workspace-welcome form{margin-top:26px}.pi-access-actions>*{width:100%}}
+.pi-workspace-welcome{min-height:100dvh;box-sizing:border-box;background:#f7f8fa;color:#202d40;padding:28px clamp(24px,5vw,72px) 40px;font-family:Arial,"Microsoft YaHei",sans-serif}
+.pi-workspace-welcome [hidden]{display:none!important}
+.pi-workspace-welcome>header{display:flex;justify-content:space-between;align-items:center;gap:20px;max-width:1280px;margin:auto}
+.pi-welcome-brand{display:flex;align-items:center;gap:12px}
+.pi-welcome-brand strong,.pi-workspace-welcome>header>strong{font:700 23px Georgia,serif;letter-spacing:-.03em}
+.pi-welcome-mark{width:32px;height:29px;background:url('/pi-research-mark.png') center/contain no-repeat}
+.pi-workspace-welcome>header button{min-height:44px;padding:0 12px;color:#748092;border:0;background:transparent;border-bottom:2px solid transparent;font-family:inherit;font-size:14px;cursor:pointer}
+.pi-workspace-welcome>header button[aria-pressed=true]{border-color:#355d85;color:#243f60;font-weight:600}
+.pi-welcome-layout{width:100%;max-width:560px;margin:64px auto 0}
+.pi-welcome-heading{margin-bottom:28px;text-align:center}
+.pi-workspace-welcome h1{font:600 clamp(28px,3vw,36px)/1.35 Arial,"Microsoft YaHei",sans-serif;letter-spacing:-.03em;margin:0 0 12px}
+.pi-workspace-welcome p{font-size:15px;line-height:1.75;color:#697688;margin:0}
+.pi-welcome-card{background:#fff;border:1px solid #e2e6ec;border-radius:12px;padding:30px 34px;box-shadow:0 8px 32px #263c5a05}
+.pi-welcome-intent{display:flex;gap:24px;border-bottom:1px solid #e5e9ef;margin-bottom:28px}
+.pi-welcome-intent button{flex:1;min-height:44px;padding:0 0 14px;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;color:#7b8797;font-size:15px;line-height:1.5;cursor:pointer}
+.pi-welcome-intent button[aria-pressed=true]{color:#234b76;border-bottom-color:#355d85;font-weight:600}
+.pi-workspace-welcome form{display:grid;gap:22px;margin:0}
+.pi-workspace-welcome label{display:grid;gap:9px;font-size:14px;font-weight:500;color:#34455c}
+.pi-workspace-welcome input,.pi-workspace-welcome textarea{width:100%;box-sizing:border-box;padding:12px 14px;background:#fff;border:1px solid #ccd5e0;border-radius:6px;font-family:inherit;font-size:16px;line-height:1.6;color:#243243;transition:border-color .15s}
+.pi-workspace-welcome :is(input,textarea)::placeholder{color:#98a2b1}
+.pi-workspace-welcome textarea{min-height:120px;resize:vertical}
+.pi-workspace-welcome .pi-welcome-form-note{font-size:13px;margin-top:-8px;line-height:1.7;color:#7a8697}
+.pi-workspace-welcome button[type=submit],.pi-workspace-access :is(.pi-access-actions,.pi-access-confirm,.pi-access-secondary) :is(a,button){display:inline-flex;align-items:center;justify-content:center;min-height:44px;box-sizing:border-box;padding:11px 18px;border:1px solid #cdd7e3;border-radius:6px;background:#fff;color:#3d5471;font-family:inherit;font-size:14px!important;line-height:1.5;text-decoration:none;cursor:pointer;transition:background .15s,border-color .15s}
+.pi-workspace-welcome button[type=submit],.pi-workspace-access :is(.pi-access-actions,.pi-access-confirm) .pi-access-primary{background:#2f547f;border-color:#2f547f;color:#fff}
+.pi-workspace-welcome button[type=submit]{font-size:15px!important;min-height:48px;margin-top:2px}
+.pi-workspace-welcome button[type=submit]:hover:not(:disabled),.pi-workspace-access :is(.pi-access-actions,.pi-access-confirm) .pi-access-primary:hover:not(:disabled){background:#244367;border-color:#244367}
+.pi-workspace-access :is(.pi-access-actions,.pi-access-confirm,.pi-access-secondary) :is(a,button):hover:not(:disabled):not(.pi-access-primary){background:#f4f7fb;border-color:#abbcd1}
+.pi-workspace-welcome button:disabled,.pi-workspace-access button:disabled{opacity:.5;cursor:default}
+.pi-welcome-demo{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;width:fit-content;margin:16px auto 0;color:#657b96;font-size:14px;text-decoration:none}
+.pi-welcome-demo:hover{color:#244b75;text-decoration:underline;text-underline-offset:5px}
+.pi-workspace-access{color:#273c55}
+.pi-access-status{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.pi-access-symbol{display:grid;place-items:center;flex:none;width:46px;height:46px;border-radius:10px;background:#eff4fa;color:#355c87}
+.pi-access-symbol svg{width:24px;height:24px}
+.pi-workspace-access h3{font-size:18px!important;line-height:1.5;font-weight:600;color:#263d59;margin:0}
+.pi-workspace-access p{font-size:14px!important;line-height:1.8;color:#6c7b8e;margin:0}
+.pi-workspace-access .pi-access-account{margin-top:3px;font-size:13px!important;color:#8190a3;overflow-wrap:anywhere}
+.pi-access-actions,.pi-access-confirm>div{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}
+.pi-access-actions:empty{display:none}
+.pi-access-confirm{margin-top:22px;padding:20px;background:#f6f8fb;border:1px solid #dce4ef;border-radius:8px}
+.pi-access-confirm h4{font-size:15px!important;font-weight:600;margin:0 0 8px;color:#304d70}
+.pi-workspace-access .pi-access-note{font-size:12px!important;color:#8a96a6;margin-top:22px;line-height:1.7}
+.pi-access-help{margin-top:10px;border:0!important;padding:0!important;background:none!important}
+.pi-access-help summary{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:44px;font-size:13px!important;color:#57708f;cursor:pointer;list-style:none;border-bottom:1px solid #e6ebf1}
+.pi-access-help summary::-webkit-details-marker{display:none}
+.pi-access-help summary::after{content:'+';font-size:18px;color:#8b9bb0}
+.pi-access-help[open] summary::after{content:'−'}
+.pi-workspace-access .pi-access-help p{padding:14px 0 0;font-size:13px!important}
+.pi-access-secondary{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.pi-workspace-welcome [role=alert],.pi-workspace-access [role=alert]{padding:12px 14px;border-left:2px solid #b3595d;background:#fcf5f5;color:#9b4248;font-size:13px!important;line-height:1.8;margin-top:16px}
+.pi-workspace-welcome :is(input,textarea,button,a):focus-visible,.pi-workspace-access :is(button,a,summary):focus-visible{outline:2px solid #6389b2;outline-offset:3px}
+.v2-app.pi-workspace .pi-dialog-workspace .v2-space-modal{width:min(680px,100%)}
+.v2-app.pi-workspace .v2-space-modal>.pi-workspace-access{margin:4px 28px 28px;padding:8px 0 0}
+@media(max-width:620px){
+ .pi-workspace-welcome{padding:20px 20px 32px}
+ .pi-welcome-brand{gap:9px}.pi-welcome-brand strong{font-size:21px}.pi-welcome-mark{width:27px;height:25px}
+ .pi-workspace-welcome>header button{padding:0 8px}
+ .pi-welcome-layout{margin-top:40px}.pi-welcome-heading{margin-bottom:24px}
+ .pi-welcome-card{padding:24px 22px}.pi-welcome-intent{gap:16px;margin-bottom:24px}
+ .pi-welcome-intent button{font-size:14px}
+ .pi-access-actions>*{width:100%}
+ .pi-access-secondary{flex-direction:column}
+ .pi-access-confirm{padding:16px}.pi-access-confirm>div>*{flex:1}
+ .v2-app.pi-workspace .v2-space-modal>.pi-workspace-access{margin:0 18px 22px;padding:0}
+}
+@media(prefers-reduced-motion:reduce){.pi-workspace-welcome :is(input,textarea,button),.pi-workspace-access :is(a,button){transition:none}}

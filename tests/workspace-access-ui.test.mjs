@@ -6,7 +6,7 @@ import ts from 'typescript';
 const require=createRequire(import.meta.url),settle=()=>new Promise(resolve=>setImmediate(resolve));
 function harness(name,props){
  const cells=[],requests=[];let index=0,tree,reloads=0;
- const hooks={useState(initial){const i=index++;cells[i]??={value:initial};return[cells[i].value,v=>{cells[i].value=typeof v==='function'?v(cells[i].value):v}]}};
+ const hooks={useState(initial){const i=index++;cells[i]??={value:initial};return[cells[i].value,v=>{cells[i].value=typeof v==='function'?v(cells[i].value):v}]},useRef(initial){const i=index++;return cells[i]??={current:initial}},useEffect(){}};
  const code=ts.transpileModule(readFileSync(new URL('../app/components/'+(name==='WorkspaceAccess'?'workspace-access':'workspace-welcome')+'.tsx',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,mod={exports:{}};
  new Function('require','exports','window','localStorage',code)(n=>n==='react'?hooks:n.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true)=>resolve({ok,status:ok?200:503,json:async()=>data})}))}:n==='./workspace-access'?{WorkspaceAccess:()=>null}:require(n),mod.exports,{location:{reload(){reloads++}}},{getItem:()=> 'original-browser-workspace-12345'});
  const render=()=>{index=0;tree=mod.exports[name](props);return tree};
@@ -29,6 +29,13 @@ test('welcome preserves failed creation drafts and reconciles a committed insert
 test('locked account access cannot create new spaces and offers top-level platform sign-in',()=>{
  const h=harness('WorkspaceWelcome',{session:{...session,mode:'locked'},locale:'zh',onLocale(){},onCreated(){}});assert.equal(h.nodes().some(n=>n.type==='form'),false);
  const access=harness('WorkspaceAccess',{session:{...session,mode:'locked'},locale:'zh'});const signin=access.nodes().find(n=>n.type==='a'&&n.props.href.startsWith('/signin-with-chatgpt'));assert.equal(signin.props.target,'_top');assert.equal(access.requests.length,0);
+});
+test('welcome separates creation and recovery without losing an unfinished research direction',()=>{
+ const h=harness('WorkspaceWelcome',{session,locale:'zh',onLocale(){},onCreated(){}});
+ h.nodes().find(n=>n.type==='input').props.onChange({target:{value:'Information theory'}});h.render();
+ h.nodes().find(n=>n.type==='textarea').props.onChange({target:{value:'Finite blocklength source coding'}});h.render();
+ h.click('恢复已有工作区');assert.equal(h.nodes().find(n=>n.type==='form').props.hidden,true);assert.equal(h.requests.length,0);
+ h.click('创建研究空间');assert.equal(h.nodes().find(n=>n.type==='form').props.hidden,false);assert.equal(h.nodes().find(n=>n.type==='input').props.value,'Information theory');assert.equal(h.nodes().find(n=>n.type==='textarea').props.value,'Finite blocklength source coding');assert.equal(h.requests.length,0);
 });
 test('returning to the original browser workspace is explicit and does not remove the account link',async()=>{
  const h=harness('WorkspaceAccess',{session:{...session,mode:'account',linked:true,canReturnToBrowser:true},locale:'zh'});h.click('返回本浏览器原工作区');assert.equal(h.requests.length,0);assert.match(h.text(),/账号连接仍然保留/);h.click('确认返回');assert.deepEqual(JSON.parse(h.requests[0].init.body),{action:'browser',legacyWorkspaceId:'original-browser-workspace-12345'});h.requests.shift().resolve({...session,mode:'browser'});await settle();assert.equal(h.reloads(),1);

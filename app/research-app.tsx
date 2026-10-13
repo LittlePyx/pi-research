@@ -755,7 +755,7 @@ const copy = {
     suggestedReading: "如果只有 20 分钟",
     askAboutPaper: "围绕这篇论文提问",
     spaceDialogTitle: "你的研究空间",
-    spaceDialogIntro: "每个空间代表一个独立研究方向，记忆和回答不会与其他方向混用。",
+    spaceDialogIntro: "管理研究方向、现有空间与访问方式。",
     threadsCount: "条研究线索",
     papersCount: "篇论文",
     createSpaceTitle: "创建独立研究空间",
@@ -977,7 +977,7 @@ const copy = {
     suggestedReading: "If you only have 20 minutes",
     askAboutPaper: "Ask about this paper",
     spaceDialogTitle: "Your research spaces",
-    spaceDialogIntro: "Each space represents one research direction, with memory and answers kept separate from every other direction.",
+    spaceDialogIntro: "Manage research directions, saved spaces and workspace access.",
     threadsCount: "threads",
     papersCount: "papers",
     createSpaceTitle: "Create an isolated research space",
@@ -5972,7 +5972,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     return activateModalFocus(dialog, () => closeActiveDialogRef.current(), document.querySelector<HTMLElement>(".v2-mobile-menu"));
   }, [activeDialogKind]);
 
-  if(!workspaceReady&&!workspaceLoadFailed)return <main className="pi-workspace-welcome"><header><strong>Pi Research</strong></header><section className="pi-welcome-layout" role="status"><div><h1>{locale==='zh'?'正在读取你的工作区':'Loading your workspace'}</h1><p>{locale==='zh'?'先核对访问身份与已有空间。':'Checking workspace access and saved spaces.'}</p></div></section></main>;
+  if(!workspaceReady&&!workspaceLoadFailed)return <main className="pi-workspace-welcome"><header><div className="pi-welcome-brand"><span className="pi-welcome-mark" aria-hidden="true"/><strong>Pi Research</strong></div></header><section className="pi-welcome-layout" role="status"><div className="pi-welcome-heading"><h1>{locale==='zh'?'正在读取你的工作区':'Loading your workspace'}</h1><p>{locale==='zh'?'先核对访问身份与已有空间。':'Checking workspace access and saved spaces.'}</p></div></section></main>;
   if(!demo&&workspaceReady&&workspaceEmpty)return <WorkspaceWelcome locale={locale} onLocale={setLocale} session={workspaceSession} onCreated={space=>{setSpaces(current=>[...current,space]);setWorkspaceEmpty(false);switchSpace(space)}}/>;
   return (
     <div className="v2-app pi-workspace">
@@ -6499,7 +6499,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         <div className="v2-modal pi-dialog-workspace" data-pi-dialog="space" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.spaceDialogTitle}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)} />
           <div className="v2-space-modal">
-            <div className="v2-modal-head"><div><p className="v2-kicker">{workspaceSession?.mode==='account'?(locale==='zh'?'已连接 ChatGPT':'CONNECTED TO CHATGPT'):t.workspaceLabel}</p><h2>{t.spaceDialogTitle}</h2><p>{t.spaceDialogIntro}</p></div><button type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)}>×</button></div>
+            <div className="v2-modal-head"><div><h2>{t.spaceDialogTitle}</h2><p>{t.spaceDialogIntro}</p></div><button type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)}>×</button></div>
             <nav className="pi-dialog-nav" aria-label={locale === "zh" ? "空间管理" : "Manage spaces"}>{[["existing", "切换空间", "Switch space"], ["new", "新建空间", "New space"], ["identity", "访问与恢复", "Access & recovery"]].map(([id, zh, en]) => <button type="button" key={id} aria-pressed={spaceSection === id} onClick={() => setSpaceSection(id)}>{locale === "zh" ? zh : en}</button>)}</nav>
             {spaceSection==='identity'&&<WorkspaceAccess session={workspaceSession} locale={locale} demo={demo}/>}
             <div className="v2-space-list" hidden={spaceSection !== "existing"}>
