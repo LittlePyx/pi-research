@@ -1,4 +1,17 @@
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
+import {readPreferenceSignals} from '../../../lib/preference-memory';
+
+export async function GET(request:Request){
+  const user=getApiUser(request);
+  if(!user)return Response.json({error:'Authentication required'},{status:401});
+  const spaceId=new URL(request.url).searchParams.get('spaceId')?.trim();
+  if(!spaceId)return Response.json({error:'spaceId is required'},{status:400});
+  const database=getDatabase();await ensureSchema(database);
+  const space=await database.prepare('SELECT id,description FROM research_spaces WHERE id=? AND owner_user_id=? LIMIT 1').bind(spaceId,user.userId).first<{id:string;description:string|null}>();
+  if(!space)return Response.json({error:'Research space not found'},{status:404});
+  const signals=await readPreferenceSignals(database,spaceId,32);
+  return Response.json({signals,scopeDescription:space.description||''},{headers:{'Cache-Control':'private, no-store'}});
+}
 
 export async function PATCH(request: Request) {
   const user = getApiUser(request);

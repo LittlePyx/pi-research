@@ -1,16 +1,21 @@
 "use client";
 import { useState } from "react";
 import type { PreferenceSignal } from "../../lib/preference-memory";
+import type {SavedReadFailure} from '../../lib/saved-read';
 
-export function ResearchPreferences({ signals, locale, demo, loading, failed, retrying, onRetry, onToggle, onRecords, onPaper }: {
+export function ResearchPreferences({ signals, scopeDescription='', locale, demo, loading, failed, failure, retrying, onRetry, onToggle, onRecords, onPaper }: {
   signals: PreferenceSignal[]; locale: "zh" | "en"; demo: boolean; loading: boolean; failed: boolean; retrying: boolean;
+  failure?:SavedReadFailure|null;
+  scopeDescription?:string;
   onRetry: () => void; onToggle: (signal: PreferenceSignal, active: boolean) => Promise<boolean>; onRecords: () => void; onPaper: (id: string) => void;
 }) {
   const zh = locale === "zh";
   const [disabled, setDisabled] = useState<PreferenceSignal[]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const hasContent = signals.length > 0 || disabled.length > 0;
+  const accessible = failure!=='access' && failure!=='missing';
+  const showScope = Boolean(scopeDescription.trim())&&!signals.some(signal=>signal.sourceType==='research_space');
+  const hasContent = accessible && (signals.length > 0 || disabled.length > 0 || showScope);
   async function toggle(signal: PreferenceSignal, active: boolean) {
     if (pending) return;
     setPending(signal.id); setError("");
@@ -34,14 +39,15 @@ export function ResearchPreferences({ signals, locale, demo, loading, failed, re
   return <section className="pi-preference-memory">
     <header><div><h2>{zh ? "你的研究偏向" : "Your research interests"}</h2><p>{zh ? "用于后续发现，随你的研究逐步更新。" : "Guiding future discovery as your research evolves."}</p></div>{demo && <small>{zh ? "示例" : "Example"}</small>}</header>
     {loading && !hasContent && <p role="status">{zh ? "正在读取研究偏向…" : "Loading interests…"}</p>}
-    {failed && <div className="pi-preference-load-error" role="alert"><p>{hasContent ? (zh ? "暂时未能更新研究偏向，先显示上次载入的记录。" : "Could not refresh interests. Your previously loaded records are shown below.") : (zh ? "研究偏向暂时未能读取，已有记录仍会保留。" : "Interests could not load. Your saved records are retained.")}</p><button type="button" disabled={retrying} onClick={onRetry}>{retrying ? (zh ? "正在载入…" : "Loading…") : (zh ? "重新载入" : "Retry loading")}</button></div>}
-    {((!loading && !failed) || hasContent) && <>
-      {!signals.length && !disabled.length && <div className="pi-preference-empty"><h3>{zh ? "从一次阅读开始" : "Start with a paper"}</h3><p>{zh ? "阅读、记录问题或反馈相关性，帮助 Pi 理解你的研究。" : "Read, note questions or give relevance feedback to help Pi understand your research."}</p></div>}
+    {failed && <div className="pi-preference-load-error" role="alert"><p>{failure==='access'||failure==='missing'?(zh?'当前空间暂不可访问，请核对工作区。':'This workspace cannot be accessed. Check your workspace.'):hasContent ? (zh ? "暂时未能更新研究偏向，先显示上次载入的记录。" : "Could not refresh interests. Your previously loaded records are shown below.") : failure==='timeout'?(zh?'读取研究偏向超时，可以重新载入。':'Loading interests timed out. Retry when ready.'):(zh ? "研究偏向暂时未能读取，已有记录仍会保留。" : "Interests could not load. Your saved records are retained.")}</p><button type="button" disabled={retrying} onClick={onRetry}>{retrying ? (zh ? "正在载入…" : "Loading…") : (zh ? "重新载入" : "Retry loading")}</button></div>}
+    {accessible && ((!loading && !failed) || hasContent) && <>
+      {!hasContent && <div className="pi-preference-empty"><h3>{zh ? "从一次阅读开始" : "Start with a paper"}</h3><p>{zh ? "阅读、记录问题或反馈相关性，帮助 Pi 理解你的研究。" : "Read, note questions or give relevance feedback to help Pi understand your research."}</p></div>}
       {(["explicit", "inferred"] as const).map(layer => {
-        const items = signals.filter(signal => signal.layer === layer);
-        return items.length > 0 && <section className="pi-preference-group" key={layer}>
+        const items = signals.filter(signal => signal.layer === layer && !disabled.some(item=>item.id===signal.id));
+        const scopeContext=layer==='explicit'&&showScope;
+        return (items.length > 0 || scopeContext) && <section className="pi-preference-group" key={layer}>
           <h3>{layer === "explicit" ? (zh ? "你明确表达的" : "From you") : (zh ? "从行为中发现" : "From your activity")}</h3>
-          <div className="pi-preference-list">{items.map(signal => <article className="pi-preference-item" key={signal.id}>
+          <div className="pi-preference-list">{scopeContext&&<article className="pi-preference-item"><h4>{scopeDescription}</h4><p className="pi-preference-effect">{zh?'来自当前空间的研究方向，用于后续检索范围。':'The research direction saved for this workspace guides search scope.'}</p></article>}{items.map(signal => <article className="pi-preference-item" key={signal.id}>
             <h4>{zh ? signal.labelZh : signal.labelEn}</h4>
             <p className="pi-preference-effect">{impact(signal)}</p>
             <details className="pi-preference-evidence"><summary>{zh ? "查看依据" : "View evidence"}<span aria-hidden="true">＋</span></summary>

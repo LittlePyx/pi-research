@@ -16,7 +16,8 @@ import {LibraryExport} from "./components/library-export";
 import {digestOverview} from "../lib/digest-overview.mjs";
 import {TodayDiscoveryStatus} from "./components/today-discovery-status";
 import { RecommendationMemoryLink } from "./components/recommendation-memory-link";
-import { ResearchPreferences } from "./components/research-preferences";
+import { ResearchPreferencesPanel } from "./components/research-preferences-panel";
+import {readSavedJson,SavedReadError} from '../lib/saved-read';
 import { MemoryResume } from "./components/memory-resume";
 import { workspaceFetch as fetch } from "../lib/workspace-request";
 
@@ -3222,6 +3223,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [workspaceLoadFailed, setWorkspaceLoadFailed] = useState(false);
   const [monitorLoadFailed, setMonitorLoadFailed] = useState(false);
   const [reloadingMonitor, setReloadingMonitor] = useState(false);
+  const savedMonitorReadRef=useRef<{spaceId:string;controller:AbortController}|null>(null);
   const monitorSpaceRef = useRef<string | null>(null);
   const [scanElapsedSeconds, setScanElapsedSeconds] = useState(0);
   const [sourceSettingsOpen, setSourceSettingsOpen] = useState(false);
@@ -3282,6 +3284,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const t = copy[locale];
   useEffect(() => { paperNetworkSpaceRef.current = activeSpaceId; }, [activeSpaceId]);
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
+  useEffect(()=>()=>{savedMonitorReadRef.current?.controller.abort()},[activeSpace.id]);
   const currentGraphTask = graphTask.spaceId === activeSpace.id ? graphTask : {spaceId:activeSpace.id,question:"",papers:[]};
   const activeSpaceSupportsLearning = !activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-");
   const activeLearningReady = learningLoadedSpaceId === activeSpace.id;
@@ -3391,19 +3394,22 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     : monitorPhaseLabel(scanIsActive ? effectiveScanStatus : monitor?.status, locale);
   const scanPhase = scanIsActive && activeScanJob?.currentSource ? `${baseScanPhase} · ${activeScanJob.currentSource}` : baseScanPhase;
   const reloadSavedMonitor = async () => {
-    if (reloadingMonitor) return;
     const spaceId = activeSpace.id;
+    if(savedMonitorReadRef.current?.spaceId===spaceId&&!savedMonitorReadRef.current.controller.signal.aborted)return;
+    savedMonitorReadRef.current?.controller.abort();
+    const controller=new AbortController(),request={spaceId,controller};savedMonitorReadRef.current=request;
     setReloadingMonitor(true);
     try {
-      const response = await fetch('/api/monitor?spaceId=' + encodeURIComponent(spaceId), { signal: AbortSignal.timeout(20_000) });
-      const data = await response.json() as { monitor?: MonitorState };
-      if (!response.ok || !data.monitor) throw Error('unavailable');
-      if (paperNetworkSpaceRef.current !== spaceId) return;
-      setMonitor(data.monitor); setMonitorLoadFailed(false);
+      const data = await readSavedJson('/api/monitor?spaceId=' + encodeURIComponent(spaceId),value=>{
+        if(!value||typeof value!=='object'||!('monitor' in value)||!value.monitor||typeof value.monitor!=='object')throw new SavedReadError('invalid');
+        return (value as {monitor:MonitorState}).monitor;
+      },controller.signal);
+      if (savedMonitorReadRef.current!==request||controller.signal.aborted||paperNetworkSpaceRef.current !== spaceId) return;
+      setMonitor(data); setMonitorLoadFailed(false);
     } catch {
-      if (paperNetworkSpaceRef.current === spaceId) setMonitorLoadFailed(true);
+      if (savedMonitorReadRef.current===request&&!controller.signal.aborted&&paperNetworkSpaceRef.current === spaceId) setMonitorLoadFailed(true);
     } finally {
-      if (paperNetworkSpaceRef.current === spaceId) setReloadingMonitor(false);
+      if (savedMonitorReadRef.current===request){savedMonitorReadRef.current=null;setReloadingMonitor(false)}
     }
   };
   const monitorReadNotice = workspaceLoadFailed ? <section className="pi-content-loading" role="alert"><strong>{locale === "zh" ? "研究空间暂时未能载入" : "Workspace could not be loaded"}</strong><button type="button" onClick={() => window.location.reload()}>{locale === "zh" ? "重新载入" : "Retry loading"}</button></section> : monitorLoadFailed ? <section className="pi-content-loading" role="alert"><strong>{locale === "zh" ? "论文暂时未能载入" : "Papers could not be loaded"}</strong><p>{locale === "zh" ? "这不代表空间为空。重新载入只读取已有内容。" : "This does not mean the workspace is empty. Reloading only retrieves saved content."}</p><button type="button" disabled={reloadingMonitor} onClick={() => void reloadSavedMonitor()}>{reloadingMonitor ? (locale === "zh" ? "正在载入…" : "Loading…") : (locale === "zh" ? "重新载入" : "Retry loading")}</button></section> : !monitor ? <section className="pi-content-loading" role="status"><strong>{locale === "zh" ? "正在读取已保存的论文…" : "Loading saved papers…"}</strong><p>{locale === "zh" ? "已有内容载入后即可阅读，无需等待后台扫描完成。" : "You can read saved content while discovery continues in the background."}</p></section> : null;
@@ -4526,6 +4532,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     // Fail closed at the workspace boundary. If the target workspace cannot be
     // loaded or initialized, no route, synthesis, or problem from the previous
     // workspace may remain visible.
+    savedMonitorReadRef.current?.controller.abort();
     setMonitor(null);
     setMonitorLoadFailed(false);
     setReloadingMonitor(false);
@@ -6478,7 +6485,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               </> : <p className="pi-memory-empty">{locale === "zh" ? "可以导入已有论文、项目或研究记录，确认后用于整理研究背景。" : "Import papers, projects or research notes and confirm the extracted context."}</p>}
             </section>}
             {memorySection === "preferences" && <div className="pi-memory-preferences">
-<ResearchPreferences key={activeSpace.id} signals={monitor?.preferenceSignals || []} locale={locale} demo={demo} loading={!monitor && !monitorLoadFailed} failed={monitorLoadFailed} retrying={reloadingMonitor} onRetry={() => void reloadSavedMonitor()} onToggle={updateMemorySignal} onRecords={() => setMemorySection("reading")} onPaper={id => void openRoutePaper(id, "memory")} />
+<ResearchPreferencesPanel key={activeSpace.id} spaceId={activeSpace.id} locale={locale} demo={demo} onToggle={updateMemorySignal} onRecords={() => setMemorySection("reading")} onPaper={id => void openRoutePaper(id, "memory")} />
               <p className="pi-memory-scope">{locale === "zh" ? "这些记录仅用于当前研究空间。" : "These records belong to this research space."}<button type="button" onClick={() => setSpaceDialog(true)}>{t.switchSpace} →</button></p>
             </div>}
             <footer className="v2-lab-attribution"><span>{locale === "zh" ? "研究团队" : "Research team"}</span><Image src="/pi-lab-logo.png" width={78} height={25} alt="P&amp;I Lab" /></footer>
