@@ -99,7 +99,7 @@ test("navigation uses named functional icons and keeps labels, counters and acti
   assert.deepEqual(navItems.map((item) => item.mark), ["today", "route", "reading", "library", "notes"]);
   const navStart = app.indexOf('<nav className="v2-nav"');
   const nav = app.slice(navStart, app.indexOf("</nav>", navStart) + 6);
-  const html = renderToStaticMarkup(evaluate(nav, { navItems, t, activeNav: "today", todayNavigationCount: 2, historyPapers: [{}, {}, {}], locale: "zh", compactNavCount: String, navigate: () => {} }));
+  const html = renderToStaticMarkup(evaluate(nav, { navItems, t, activeNav: "today", todayNavigationCount: 2, monitor:{knownCount:3}, historyPapers: [{}, {}, {}], locale: "zh", compactNavCount: String, navigate: () => {} }));
   assert.match(html, /aria-current="page"/);
   assert.match(html, /今日<b>2<\/b>/);
   assert.match(html, /3 篇已保存论文/);

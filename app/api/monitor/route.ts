@@ -1,3 +1,4 @@
+import {librarySearchWhere,librarySearchOrder,libraryUserStateSql} from '../../../lib/library-search.mjs';
 import { readingNoteHash } from "../../../lib/reading-note-consistency.mjs";
 import { currentReadingMemories } from "../../../lib/current-reading-memories";
 import { PROBLEM_QUERY_POLICY, parseProblemQueries, protectProblemQueries, problemSourceKey, type ProblemQueries } from "../../../lib/problem-query-plan";
@@ -4922,20 +4923,7 @@ function toPaper(paper: PaperRow, now: number) {
   };
 }
 
-async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}, focusPaperId: string | null = null) {
-  const preference = await ensurePreference(database, space);
-  const dailyReview = await readDailyReviewProgress(database, space.id, Date.now());
-  const abstractDetails = await database.prepare(qualityAbstractDetailsSql(activeResearchRouteSupplyPredicate("p")))
-    .bind(space.id, MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT)
-    .all<{ id: string; title: string; status: string; attempted_json: string; retry_at: number; updated_at: string | null }>();
-  const [qualityQueue, run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
-    database.prepare(qualityQueueCountsSql(activeResearchRouteSupplyPredicate("p")))
-      .bind(MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT, space.id)
-      .first<{ pendingCount: number; verificationCount: number; retryCount: number; awaitingAbstractCount: number; abstractRetryAt: number | null }>(),
-    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, active_job_id, lease_generation, lock_expires_at, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
-      .bind(space.id).first<RunRow>(),
-    database.prepare(
-      `SELECT p.id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.horizon,
+const LIBRARY_PAPER_SELECT = `SELECT p.id, p.canonical_id, p.doi, p.title, p.authors, p.venue, p.url, p.published_at, p.horizon,
        p.source AS discovery_provider,
        COALESCE((SELECT group_concat(DISTINCT candidate_source.channel) FROM monitor_candidate_sources candidate_source
         WHERE candidate_source.space_id = p.space_id AND candidate_source.paper_id = p.id), '') AS discovery_channels,
@@ -5058,9 +5046,9 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         ELSE 'discovered'
        END AS quality_stage,
        COALESCE(d.show_count, 0) AS show_count, d.first_shown_at, d.last_shown_at, d.opened_at, d.snoozed_until,
-       COALESCE(f.saved, 0) AS saved, f.feedback, COALESCE(r.status, 'unread') AS reading_status,
+       COALESCE(f.saved, 0) AS saved, f.feedback, f.reason_code AS feedback_reason_code, COALESCE(f.note,'') AS feedback_note, r.started_at AS reading_started_at,r.completed_at AS reading_completed_at,r.updated_at AS reading_updated_at, COALESCE(r.status, 'unread') AS reading_status,
        COALESCE(r.note, '') AS reading_note
-       FROM monitored_papers p JOIN paper_insights i ON i.paper_id = p.id
+       FROM monitored_papers p LEFT JOIN paper_insights i ON i.paper_id = p.id AND i.space_id=p.space_id
        LEFT JOIN paper_delivery_state d ON d.paper_id = p.id AND d.space_id = p.space_id
        LEFT JOIN paper_feedback f ON f.paper_id = p.id AND f.space_id = p.space_id
        LEFT JOIN paper_reading_progress r ON r.paper_id = p.id AND r.space_id = p.space_id
@@ -5070,7 +5058,39 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         ON fallback_route_origin.space_id = p.space_id AND fallback_route_origin.paper_id = p.id
        LEFT JOIN research_tracks route_track
         ON route_track.id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
-        AND route_track.space_id = p.space_id
+        AND route_track.space_id = p.space_id`;
+
+export async function readLibraryPage(database:D1Database,spaceId:string,options:ReturnType<typeof import('../../../lib/library-search.mjs').librarySearchOptions>) {
+ const where=librarySearchWhere(options,ABSTRACT_BLOCK_REASON);
+ const base=`WITH library AS (${LIBRARY_PAPER_SELECT} WHERE p.space_id=?), classified AS (SELECT *,${libraryUserStateSql} AS user_state FROM library)`;
+ const [count,rows,counts]=await Promise.all([
+  database.prepare(`${base} SELECT COUNT(*) AS total FROM classified WHERE ${where.sql}`).bind(spaceId,...where.values).first<{total:number}>(),
+  database.prepare(`${base} SELECT * FROM classified WHERE ${where.sql} ORDER BY ${librarySearchOrder(options.sort)} LIMIT 60 OFFSET ?`).bind(spaceId,...where.values,options.offset).all<PaperRow>(),
+  database.prepare(`${base} SELECT COUNT(*) AS total,SUM(CASE WHEN user_state='accepted' THEN 1 ELSE 0 END) AS accepted,SUM(CASE WHEN user_state='dismissed' THEN 1 ELSE 0 END) AS dismissed,SUM(CASE WHEN (quality_stage IN ('recommended','reviewing') OR saved=1 OR (feedback IS NOT NULL AND feedback<>'') OR reading_status<>'unread') AND user_state NOT IN ('accepted','dismissed') THEN 1 ELSE 0 END) AS inbox FROM classified`).bind(spaceId).first<{total:number;accepted:number;dismissed:number;inbox:number}>(),
+ ]);
+ const total=count?.total||0;
+ return {papers:rows.results.map(p=>toPaper(p,Date.now())),total,offset:options.offset,nextOffset:options.offset+rows.results.length<total?options.offset+rows.results.length:null,counts:{total:counts?.total||0,inbox:counts?.inbox||0,accepted:counts?.accepted||0,dismissed:counts?.dismissed||0}};
+}
+export async function libraryExportRows(database:D1Database,spaceId:string,after:string,cutoff:number,scope:string) {
+ const condition=scope==='accepted'?"AND (f.saved=1 OR f.feedback='relevant' OR r.status IN ('queued','reading','read','mastered','cited'))":'';
+ const rows=await database.prepare(`${LIBRARY_PAPER_SELECT} WHERE p.space_id=? AND p.id>? AND p.rowid<=? ${condition} ORDER BY p.id LIMIT 100`).bind(spaceId,after,cutoff).all<PaperRow & {feedback_reason_code:string|null;feedback_note:string;reading_started_at:string|null;reading_completed_at:string|null;reading_updated_at:string|null}>();
+ return rows.results.map(row=>({...toPaper(row,Date.now()),canonicalId:row.canonical_id,abstractText:row.abstract_text,feedbackReasonCode:row.feedback_reason_code,feedbackNote:row.feedback_note,readingStartedAt:row.reading_started_at,readingCompletedAt:row.reading_completed_at,readingUpdatedAt:row.reading_updated_at}));
+}
+
+async function readState(database: D1Database, space: SpaceRow, extra: Record<string, unknown> = {}, focusPaperId: string | null = null) {
+  const preference = await ensurePreference(database, space);
+  const dailyReview = await readDailyReviewProgress(database, space.id, Date.now());
+  const abstractDetails = await database.prepare(qualityAbstractDetailsSql(activeResearchRouteSupplyPredicate("p")))
+    .bind(space.id, MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT)
+    .all<{ id: string; title: string; status: string; attempted_json: string; retry_at: number; updated_at: string | null }>();
+  const [qualityQueue, run, papers, known, job, coverage, queryPlanRow, preferenceSignals, mapChanges, recentTrackActivity, inferredMapChanges, usageMetrics, scanMetrics, feedbackMetrics, sourcePerformance, trackPerformance, acceptedAuthorRows, readingCounts, dailyScanRows, dailyUsageRows, horizonRows, ledgerRows, readingMemoryRows, feedbackReasonRows, tierRows, dailyBriefRow, weeklyReviewRow, notificationRows, pilotJobMetrics, pilotWrongType, acceptedCostMetrics, reliabilityJobs, reliabilitySources, reliabilityCalibration, reliabilityStages] = await Promise.all([
+    database.prepare(qualityQueueCountsSql(activeResearchRouteSupplyPredicate("p")))
+      .bind(MONITOR_REVIEW_PIPELINE_RELEASED_AT, MONITOR_REVIEW_PIPELINE_RELEASED_AT, space.id)
+      .first<{ pendingCount: number; verificationCount: number; retryCount: number; awaitingAbstractCount: number; abstractRetryAt: number | null }>(),
+    database.prepare("SELECT status, last_run_at, next_run_at, new_count, scanned_count, discovery_round, active_job_id, lease_generation, lock_expires_at, last_trigger, last_user_activity_at, scheduled_runs_since_activity, automation_paused_at, automation_pause_reason, error FROM monitor_runs WHERE space_id = ? LIMIT 1")
+      .bind(space.id).first<RunRow>(),
+    database.prepare(
+      `${LIBRARY_PAPER_SELECT}
         WHERE p.space_id = ?
         ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.discovered_at DESC, i.quality_score DESC LIMIT 2000`,
     ).bind(space.id, focusPaperId).all<PaperRow>(),
@@ -5305,7 +5325,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
          WHERE p.space_id = ?
        )
        SELECT
-        SUM(CASE WHEN saved = 1 OR feedback IS NOT NULL OR reading_status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS labels,
+        SUM(CASE WHEN saved = 1 OR (feedback IS NOT NULL AND feedback<>'') OR reading_status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS labels,
         SUM(CASE WHEN saved = 1 OR feedback = 'relevant' OR reading_status IN ('read','mastered','cited') THEN 1 ELSE 0 END) AS accepted,
         SUM(CASE WHEN feedback = 'not_relevant' AND reason_code <> 'duplicate_known' THEN 1 ELSE 0 END) AS dismissed,
         SUM(CASE WHEN reason_code = 'duplicate_known' OR reading_status IN ('mastered','cited') THEN 1 ELSE 0 END) AS known,

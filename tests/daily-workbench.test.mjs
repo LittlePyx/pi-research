@@ -33,7 +33,7 @@ test("library keeps reading progress and exports citation-manager formats", asyn
   assert.match(client, /v2-daily-paper-queue/);
   assert.match(client, /pi-unread-recommendations/);
   assert.match(client, /v2-paper-analysis/);
-  assert.match(client, /RIS \/ Zotero/);
+  assert.match(await readFile(new URL("../app/components/library-export.tsx",import.meta.url),"utf8"), /RIS \/ Zotero/);
 });
 
 test("research direction intelligence identifies evidence gaps", async () => {

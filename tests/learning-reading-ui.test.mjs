@@ -127,7 +127,7 @@ function readingHarness(fetch) {
   const readingWriteRef = { current: null };
   const paperNetworkSpaceRef = { current: "space-a" };
   const dependencies = {
-    user: { userId: "qa-user" }, sessionDraftKey: (...parts) => parts.join(":"), clearSessionDraft: (...args) => state.clearedDrafts.push(args),
+    setLibraryRevision:()=>{}, user: { userId: "qa-user" }, sessionDraftKey: (...parts) => parts.join(":"), clearSessionDraft: (...args) => state.clearedDrafts.push(args),
     setNoteSaveError: value => { state.noteError = value; },
     setSavedReadingId: value => { state.savedReadingId = value; },
     demo:false, fetch, readingWriteRef, paperNetworkSpaceRef, activeSpace: { id: "space-a" }, locale: "en",

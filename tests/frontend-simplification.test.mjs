@@ -74,7 +74,8 @@ test("library and paper detail keep reading primary while management and audit s
   const paperDetail = app.slice(app.indexOf('{view === "paper-detail" &&'), app.indexOf('</main>', app.indexOf('{view === "paper-detail" &&')));
   const paperHead = paperDetail.slice(paperDetail.indexOf('<section className="v2-paper-head">'), paperDetail.indexOf('<div className="v2-paper-detail-grid">'));
 
-  assert.match(library, /<details className="v2-library-export">/);
+  assert.match(library, /<LibraryExport /);
+  assert.match(await readFile(new URL("../app/components/library-export.tsx",import.meta.url),"utf8"), /<details className="v2-library-export">/);
   assert.match(library, /<details className="v2-library-paper-actions">/);
   assert.match(paperHead, /v2-paper-primary-actions/);
   assert.match(paperHead, /<details className="v2-paper-more-actions">/);

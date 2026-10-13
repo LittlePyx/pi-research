@@ -214,3 +214,9 @@
 .v2-app.pi-workspace .pi-digest-finding button { padding:0; min-height:36px; background:transparent; border:0; text-align:left; color:#315d80; font-size:13px !important; line-height:1.6; text-decoration:underline; text-decoration-color:#bdcbd6; text-underline-offset:4px; cursor:pointer; }
 .v2-app.pi-workspace .pi-digest-finding button:hover { color:#174565; text-decoration-color:currentColor; }
 @media(max-width:700px) { .v2-app.pi-workspace .pi-digest-overview h3 { font-size:24px; }.v2-app.pi-workspace .pi-digest-overview .pi-digest-opening { font-size:16px !important; }.pi-digest-finding { gap:12px; } }
+
+.pi-library-pagination { display:flex; align-items:center; justify-content:center; gap:18px; padding:24px 0; }
+.pi-library-pagination span { font-size:14px; color:#6c7e8b; }
+.v2-app.pi-workspace :is(.pi-library-pagination,.v2-library-export) button { min-height:44px; padding:8px 14px; border:1px solid #c7d3df; border-radius:5px; background:#f8fafc; color:#315d80; font-size:14px !important; cursor:pointer; }
+.pi-library-pagination button:disabled,.v2-library-export button:disabled { opacity:.5; cursor:default; }
+@media(max-width:640px) { .pi-library-pagination { gap:10px; }.pi-library-pagination span { font-size:12px; } }

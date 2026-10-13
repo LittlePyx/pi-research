@@ -56,16 +56,16 @@ test("quick-screened and retryable degraded candidates remain queued instead of 
 
 test("library tabs use durable archive counts without a duplicate overview", () => {
   assert.match(app, /const historyPapers = useMemo/);
-  assert.match(app, /"全部发现" : "All discoveries"}<span>{historyPapers\.length}<\/span>/);
-  assert.match(app, /monitor\?\.historyCounts\?\.inbox \|\| 0/);
-  assert.match(app, /monitor\?\.historyCounts\?\.accepted \|\| 0/);
-  assert.match(app, /monitor\?\.historyCounts\?\.dismissed \|\| 0/);
+  assert.match(app, /"全部发现" : "All discoveries"}<span>{libraryCounts\?\.total \?\? "—"}<\/span>/);
+  assert.match(app, /libraryCounts\?\.inbox \?\? "—"/);
+  assert.match(app, /libraryCounts\?\.accepted \?\? "—"/);
+  assert.match(app, /libraryCounts\?\.dismissed \?\? "—"/);
   assert.doesNotMatch(app, /<section className="v2-library-overview"/);
   assert.doesNotMatch(app, /monitor\?\.historyCounts\?\.unseen \|\| 0}<\/strong><b>{t\.unseen/);
 });
 
 test("the sidebar and archive ranking cannot make retained papers look missing or over-scored", () => {
-  assert.match(app, /compactNavCount\(historyPapers\.length\)/);
+  assert.match(app, /compactNavCount\(monitor\?\.knownCount \?\? historyPapers\.length\)/);
   assert.match(app, /const todayNavigationCount = rankedMonitorPapers\.filter\(paper => !isReadReference\(paper\)\)\.length/);
   assert.match(app, /item\.id === "today" && Boolean\(todayNavigationCount\)/);
   assert.doesNotMatch(app, /item\.id === "today"[^\n]*monitor\?\.newCount/);
