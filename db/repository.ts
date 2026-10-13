@@ -1,6 +1,7 @@
 import { reviewRefreshSchema } from "../lib/paper-review-refresh";
 import { readingCalendarBootstrapSql } from "../lib/reading-calendar";
 import { env } from "cloudflare:workers";
+import {accountCookie, platformUser, anonymousWorkspaceId} from '../lib/workspace-identity';
 import { schemaInitializer } from "../lib/schema-initialization";
 import { researchWorkbookBootstrapSql, researchGapDiscoveryBootstrapSql, researchMapEvidenceProposalBootstrapSql, researchProblemBootstrapSql, researchRouteRevisionBootstrapSql, researchSynthesisBootstrapSql } from "./schema";
 
@@ -29,14 +30,10 @@ export function getDatabase(): D1Database {
 }
 
 export function getApiUser(request: Request): ApiUser | null {
-  const cookie = request.headers.get("cookie") ?? "";
-  const workspaceEntry = cookie
-    .split(";")
-    .map((entry) => entry.trim())
-    .find((entry) => entry.startsWith("pi_anonymous_workspace="));
-  const workspaceId = workspaceEntry?.slice("pi_anonymous_workspace=".length);
-
-  if (!workspaceId || !/^[a-zA-Z0-9-]{20,64}$/.test(workspaceId)) return null;
+  const boundAccount = accountCookie(request);
+  if (boundAccount && platformUser(request)?.id !== boundAccount) return null;
+  const workspaceId = anonymousWorkspaceId(request);
+  if (!workspaceId) return null;
 
   return {
     userId: "anonymous:" + workspaceId,

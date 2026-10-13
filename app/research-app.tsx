@@ -1,4 +1,9 @@
 "use client";
+import './workspace-access.css';
+import {WorkspaceWelcome} from './components/workspace-welcome';
+import {WorkspaceAccess} from './components/workspace-access';
+import {initializeWorkspaceSession} from '../lib/workspace-initialization';
+import type {WorkspaceSession} from '../lib/workspace-identity';
 import "./today-focus.css";
 import {useTaskBrief} from "./components/use-task-brief";
 import {taskBriefOverview} from "../lib/task-brief-presentation.mjs";
@@ -742,7 +747,7 @@ const copy = {
     preferenceMemory: "偏好记忆",
     isolationBoundary: "空间隔离边界",
     isolationBody: "当前空间的提问、反馈、论文和偏好只会用于当前方向。切换空间后，Pi 会加载另一套独立上下文。",
-    accountNote: "无需登录。数据通过此浏览器的匿名工作区保存；清除浏览器数据后会生成一个新的工作区。",
+    accountNote: "可以通过此浏览器使用。连接 ChatGPT 后，可在其他设备恢复工作区。",
     paperBack: "返回今日",
     recommendation: "推荐判断",
     coreContribution: "核心贡献",
@@ -964,7 +969,7 @@ const copy = {
     preferenceMemory: "Preference memory",
     isolationBoundary: "Space isolation boundary",
     isolationBody: "Questions, feedback, papers, and preferences in this space are used only for this direction. Switching spaces loads a separate context.",
-    accountNote: "No sign-in is required. Data is saved through this browser's anonymous workspace; clearing browser data creates a new workspace.",
+    accountNote: "Use this browser, or connect ChatGPT to recover your workspace on other devices.",
     paperBack: "Back to Today",
     recommendation: "Recommendation",
     coreContribution: "Core contribution",
@@ -1089,25 +1094,11 @@ const copy = {
 } as const;
 
 const fallbackSpaces: Space[] = [
-  { id: "space-info-theory", name: "Information Theory", memberName: "Yilin", description: "Gaussian extremality, rate-distortion theory, and transport converses", accent: "blue" },
-  { id: "space-applied-math", name: "Applied Mathematics", memberName: "Ming", description: "Functional inequalities, stochastic localization, and optimal transport", accent: "umber" },
-  { id: "space-ml-reading", name: "ML Reading", memberName: "Sarah", description: "Foundation models, efficient learning, and generative compression", accent: "sage" },
+  { id: "space-pending", name: "Research workspace", memberName: "", description: "", accent: "blue" },
 ];
 
 function initials(value: string) {
   return value.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
-}
-
-function ensureAnonymousWorkspace() {
-  if (window.location.pathname.replace(/\/$/, "") === "/demo") return;
-  const storageKey = "pi-anonymous-workspace";
-  let workspaceId = window.localStorage.getItem(storageKey) ?? "";
-  if (!/^[a-zA-Z0-9-]{20,64}$/.test(workspaceId)) {
-    workspaceId = window.crypto.randomUUID();
-    window.localStorage.setItem(storageKey, workspaceId);
-  }
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = `pi_anonymous_workspace=${workspaceId}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
 }
 
 function defaultSpaceName(name: string, locale: Locale) {
@@ -3094,6 +3085,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [memoryRouteRetry, setMemoryRouteRetry] = useState(0);
   const [memorySection, setMemorySection] = useState<"continue" | "reading" | "insights" | "preferences">("preferences");
   const [spaces, setSpaces] = useState<Space[]>(fallbackSpaces);
+  const [workspaceReady,setWorkspaceReady] = useState(false);
+  const [workspaceEmpty,setWorkspaceEmpty] = useState(false);
+  const [workspaceSession,setWorkspaceSession] = useState<WorkspaceSession|null>(null);
   const [activeSpaceId, setActiveSpaceId] = useState(fallbackSpaces[0].id);
   const [spaceDialog, setSpaceDialog] = useState(false);
   const [creatingSpace, setCreatingSpace] = useState(false);
@@ -3788,16 +3782,18 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   }, [effectiveNetworkOriginNodes, explicitNetworkOriginNodes, paperNetworkScope]);
 
   useEffect(() => {
-    ensureAnonymousWorkspace();
+    let cancelled=false;
+    const abort=new AbortController();
     const hydrationTimer = window.setTimeout(() => {
-      const savedLocale = window.localStorage.getItem(demo ? "pi-demo-locale" : "pi-locale");
+      let savedLocale:string|null=null;
+      try{savedLocale = window.localStorage.getItem(demo ? "pi-demo-locale" : "pi-locale")}catch{/* Server identity works without local storage. */}
       if (savedLocale === "en" || savedLocale === "zh") setLocale(savedLocale);
-      const savedSpace = window.localStorage.getItem(demo ? "pi-demo-active-space" : "pi-active-space");
-      if (savedSpace) setActiveSpaceId(savedSpace);
     }, 0);
 
-    fetch("/api/spaces", { signal: AbortSignal.timeout(20_000) })
+    initializeWorkspaceSession(demo,AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]))
+      .then(session=>{if(cancelled)return null;setWorkspaceSession(session);if(session?.mode==='locked'){setSpaces([]);setWorkspaceEmpty(true);setWorkspaceReady(true);return null}return fetch("/api/spaces", { signal: AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]) })})
       .then(async (response) => {
+        if(!response)return null;
         if (!response.ok) throw new Error("spaces unavailable");
         return response.json() as Promise<{
           spaces?: Space[];
@@ -3807,18 +3803,20 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         }>;
       })
       .then((data) => {
+        if(!data||cancelled)return;
+        if(!Array.isArray(data.spaces))throw Error('Invalid spaces response');
+        setSpaces(data.spaces);setWorkspaceEmpty(!data.spaces.length);setWorkspaceReady(true);
         if (data.spaces?.length) {
-          setSpaces(data.spaces);
-          const savedSpace = window.localStorage.getItem(demo ? "pi-demo-active-space" : "pi-active-space");
-          if (!savedSpace || !data.spaces.some((space) => space.id === savedSpace)) {
-            setActiveSpaceId(data.spaces[0].id);
-          }
+          let savedSpace:string|null=null;
+          try{savedSpace=window.localStorage.getItem(demo ? "pi-demo-active-space" : "pi-active-space")}catch{/* Keep owned server spaces accessible. */}
+          setActiveSpaceId(data.spaces.find(space=>space.id===savedSpace)?.id||data.spaces[0].id);
+          if(!demo&&new URLSearchParams(window.location.search).get('workspace-access')==='1'){setSpaceSection('identity');setSpaceDialog(true)}
         }
         const credentialPresent = Boolean(data.modelConfigured);
         setModelConnectionState(credentialPresent ? "checking" : "unconfigured");
         setConnectedModel(data.model || null);
         setModelCredentialSource(data.modelCredentialSource || null);
-        if (credentialPresent) {
+        if (credentialPresent&&data.spaces.length) {
           setCheckingModel(true);
           void fetch("/api/model-settings?verify=1", { cache: "no-store" })
             .then(async (response) => {
@@ -3835,17 +3833,18 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         }
       })
       .catch(() => {
+        if(cancelled)return;
         setSpaces(fallbackSpaces);
         setWorkspaceLoadFailed(true);
         setModelConnectionState("unavailable");
       });
 
-    return () => window.clearTimeout(hydrationTimer);
+    return () => {cancelled=true;abort.abort();window.clearTimeout(hydrationTimer)};
   }, [demo]);
 
   useEffect(() => {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
-    window.localStorage.setItem(demo ? "pi-demo-locale" : "pi-locale", locale);
+    try{window.localStorage.setItem(demo ? "pi-demo-locale" : "pi-locale", locale)}catch{/* Language remains usable when storage is blocked. */}
   }, [locale, demo]);
 
   useEffect(() => {
@@ -4545,7 +4544,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setLearningError("");
     setLearningLoading(false);
     setLearningAction(null);
-    window.localStorage.setItem(demo ? "pi-demo-active-space" : "pi-active-space", space.id);
+    try{window.localStorage.setItem(demo ? "pi-demo-active-space" : "pi-active-space", space.id)}catch{/* The active server space remains usable. */}
     setSpaceDialog(false);
     navigationScroll.current.clear();
     navigate("today", null, { space: space.id });
@@ -4576,6 +4575,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       const data = await response.json() as { space: Space };
       if (!data.space?.id) throw new Error("invalid space response");
       setSpaces((current) => [...current, data.space]);
+      setWorkspaceEmpty(false);
       setNewSpace({ name: "", memberName: "", description: "" });
       switchSpace(data.space);
     } catch {
@@ -5972,6 +5972,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     return activateModalFocus(dialog, () => closeActiveDialogRef.current(), document.querySelector<HTMLElement>(".v2-mobile-menu"));
   }, [activeDialogKind]);
 
+  if(!workspaceReady&&!workspaceLoadFailed)return <main className="pi-workspace-welcome"><header><strong>Pi Research</strong></header><section className="pi-welcome-layout" role="status"><div><h1>{locale==='zh'?'正在读取你的工作区':'Loading your workspace'}</h1><p>{locale==='zh'?'先核对访问身份与已有空间。':'Checking workspace access and saved spaces.'}</p></div></section></main>;
+  if(!demo&&workspaceReady&&workspaceEmpty)return <WorkspaceWelcome locale={locale} onLocale={setLocale} session={workspaceSession} onCreated={space=>{setSpaces(current=>[...current,space]);setWorkspaceEmpty(false);switchSpace(space)}}/>;
   return (
     <div className="v2-app pi-workspace">
       <a className="pi-skip-link" href="#workspace-content" onClick={event => { event.preventDefault(); document.getElementById("workspace-content")?.focus(); }}>{locale === "zh" ? "跳到主要内容" : "Skip to content"}</a>
@@ -6497,8 +6499,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         <div className="v2-modal pi-dialog-workspace" data-pi-dialog="space" tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.spaceDialogTitle}>
           <button className="v2-modal-backdrop" type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)} />
           <div className="v2-space-modal">
-            <div className="v2-modal-head"><div><p className="v2-kicker">{t.workspaceLabel}</p><h2>{t.spaceDialogTitle}</h2><p>{t.spaceDialogIntro}</p></div><button type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)}>×</button></div>
-            <nav className="pi-dialog-nav" aria-label={locale === "zh" ? "空间管理" : "Manage spaces"}>{[["existing", "切换空间", "Switch space"], ["new", "新建空间", "New space"]].map(([id, zh, en]) => <button type="button" key={id} aria-pressed={spaceSection === id} onClick={() => setSpaceSection(id)}>{locale === "zh" ? zh : en}</button>)}</nav>
+            <div className="v2-modal-head"><div><p className="v2-kicker">{workspaceSession?.mode==='account'?(locale==='zh'?'已连接 ChatGPT':'CONNECTED TO CHATGPT'):t.workspaceLabel}</p><h2>{t.spaceDialogTitle}</h2><p>{t.spaceDialogIntro}</p></div><button type="button" aria-label={t.close} onClick={() => setSpaceDialog(false)}>×</button></div>
+            <nav className="pi-dialog-nav" aria-label={locale === "zh" ? "空间管理" : "Manage spaces"}>{[["existing", "切换空间", "Switch space"], ["new", "新建空间", "New space"], ["identity", "访问与恢复", "Access & recovery"]].map(([id, zh, en]) => <button type="button" key={id} aria-pressed={spaceSection === id} onClick={() => setSpaceSection(id)}>{locale === "zh" ? zh : en}</button>)}</nav>
+            {spaceSection==='identity'&&<WorkspaceAccess session={workspaceSession} locale={locale} demo={demo}/>}
             <div className="v2-space-list" hidden={spaceSection !== "existing"}>
               {spaces.map((space) => (
                 <button type="button" key={space.id} className={space.id === activeSpace.id ? "active" : ""} onClick={() => switchSpace(space)}>

@@ -53,6 +53,7 @@ export function learningFixture(spaceId = spaces[0].id) {
 /** All API traffic terminates here; unsupported calls never reach the real backend. */
 export function fixtureResponse(url, method = 'GET', spaceId) {
   const path = new URL(url, 'http://localhost').pathname;
+  if (path === '/api/workspace-session' && method === 'POST') return {status:200,body:{mode:'browser',signedIn:false,accountLabel:null,linked:false,differentWorkspace:false,spaceCount:spaces.length,accountAvailable:false}};
   if (path === '/api/spaces' && method === 'GET') return { status: 200, body: { spaces, modelConfigured: false } };
   const data = learningFixture(spaceId);
   if (!data) return { status: 404, body: { error: 'Unknown fixture space' } };

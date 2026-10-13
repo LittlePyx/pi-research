@@ -11,27 +11,6 @@ type SpaceRow = {
   created_at: string;
 };
 
-const defaultSpaces = [
-  {
-    name: "Information Theory",
-    memberName: "Yilin",
-    description: "Gaussian extremality, rate-distortion theory, and transport converses",
-    accent: "blue",
-  },
-  {
-    name: "Applied Mathematics",
-    memberName: "Ming",
-    description: "Functional inequalities, stochastic localization, and optimal transport",
-    accent: "umber",
-  },
-  {
-    name: "ML Reading",
-    memberName: "Sarah",
-    description: "Foundation models, efficient learning, and generative compression",
-    accent: "sage",
-  },
-];
-
 function toSpace(row: SpaceRow) {
   return {
     id: row.id,
@@ -51,32 +30,22 @@ export async function GET(request: Request) {
   try {
     const database = getDatabase();
     await ensureSchema(database);
-    let result = await database
+    const result = await database
       .prepare("SELECT id, name, member_name, description, accent, preferred_locale, created_at FROM research_spaces WHERE owner_user_id = ? ORDER BY created_at ASC")
       .bind(user.userId)
       .all<SpaceRow>();
-
-    if (!result.results.length) {
-      await database.batch(defaultSpaces.map((space, index) => database
-        .prepare("INSERT INTO research_spaces (id, owner_user_id, name, member_name, description, accent, preferred_locale) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(crypto.randomUUID(), user.userId, space.name, space.memberName, space.description, space.accent, index === 0 ? "zh" : "en")));
-      result = await database
-        .prepare("SELECT id, name, member_name, description, accent, preferred_locale, created_at FROM research_spaces WHERE owner_user_id = ? ORDER BY created_at ASC")
-        .bind(user.userId)
-        .all<SpaceRow>();
-    }
 
     const credential = resolveDeepSeekCredential(request);
     const modelConfigured = Boolean(credential.apiKey);
     return Response.json({
       spaces: result.results.map(toSpace),
-      user,
+      user: {displayName:user.displayName},
       modelConfigured,
       modelConnectionState: modelConfigured ? "checking" : "unconfigured",
       provider: modelConfigured ? "deepseek" : null,
       model: modelConfigured ? "deepseek-flash" : null,
       modelCredentialSource: credential.source,
-    });
+    },{headers:{'Cache-Control':'private, no-store'}});
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to load research spaces";
     return Response.json({ error: message }, { status: 500 });

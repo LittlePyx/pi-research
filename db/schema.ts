@@ -20,6 +20,12 @@ export const researchSpaces = sqliteTable(
   ],
 );
 
+export const workspaceAccounts = sqliteTable('workspace_accounts', {
+  accountId: text('account_id').primaryKey().notNull(),
+  ownerUserId: text('owner_user_id').notNull(),
+  createdAt: text('created_at').notNull().default(sql.raw('CURRENT_TIMESTAMP')),
+}, table => [uniqueIndex('idx_workspace_accounts_owner').on(table.ownerUserId)]);
+
 export const researchThreads = sqliteTable(
   "research_threads",
   {

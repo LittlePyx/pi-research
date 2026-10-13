@@ -14,7 +14,7 @@ async function render() {
   );
 }
 
-test("server-renders the Pi Research application", async () => {
+test("server-renders a neutral Pi Research loading state before resolving workspace identity", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
@@ -22,12 +22,15 @@ test("server-renders the Pi Research application", async () => {
   const html = await response.text();
   assert.match(html, /<title>Pi Research — Your AI Research Agent<\/title>/i);
   assert.match(html, /Pi Research/);
-  assert.match(html, /发现进度/);
-  assert.match(html, /全部阅读/);
+  assert.match(html, /正在读取你的工作区/);
+  assert.match(html, /role="status"/);
+  assert.doesNotMatch(html, /Yilin|Ming|Sarah/);
   assert.doesNotMatch(html, /<h2>论文扫描<\/h2>/);
   assert.doesNotMatch(html, /设置重点来源/);
-  assert.match(html, /研究记录/);
-  assert.match(html, />今日</);
+  const client=await readFile(new URL('../app/research-app.tsx',import.meta.url),'utf8');
+  assert.match(client,/发现进度/);
+  assert.match(client,/全部阅读/);
+  assert.match(client,/研究记录/);
   assert.doesNotMatch(html, /class="v2-isolation"/);
 });
 

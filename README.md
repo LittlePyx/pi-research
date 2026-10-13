@@ -16,6 +16,16 @@ Pi Research is a bilingual AI research companion for continuous paper discovery,
 - Reports seven-day discovery yield, user acceptance, review volume, and AI token usage inside the scan details.
 - Imports only user-approved public research materials; raw uploaded text is not retained.
 
+## Workspace access and recovery
+
+New visitors create their own research space; sample spaces live in Demo. Existing spaces keep their original IDs and ownership namespace. Loading spaces never seeds or deletes research data.
+
+Under **Manage workspaces → Access & recovery**, sign in through the site's existing ChatGPT sign-in service and confirm connecting the current browser workspace. The account connection points to the existing workspace; it does not copy or merge spaces, papers, notes, routes or memories. A new device signed in with the same connected account can recover that workspace. A browser with different saved spaces requires an explicit switch, and its original workspace remains accessible through the return option while its browser identity is retained.
+
+Browser-only use and legacy browser identities remain compatible; connecting an account does not revoke other pre-existing browser access. Connected browser sessions use protected cookies and require the matching platform account after sign-out. Model keys and unsaved drafts do not transfer across devices. Library exports remain separate paper/note backups. If the original browser identity was already cleared before an account connection was made, a space link alone cannot recover access.
+
+Local identity tests use isolated Worker/D1 databases and fixture platform headers. The hosted sign-in redirect is owned by Sites; local previews do not provide that authentication service.
+
 ## Local development
 
 Requirements: Node.js `>=22.13.0`.

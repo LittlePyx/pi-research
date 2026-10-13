@@ -498,6 +498,13 @@
       "when": 1791876771127,
       "tag": "0070_task_brief_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "6",
+      "when": 1791880582466,
+      "tag": "0071_workspace_accounts",
+      "breakpoints": true
     }
   ]
 }
