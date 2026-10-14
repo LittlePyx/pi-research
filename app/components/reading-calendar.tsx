@@ -8,6 +8,13 @@ import "./reading-calendar.css";
 
 type Kind = "recommended" | "browsed" | "completed";
 type CalendarData = { counts: { day: string; kind: Kind; count: number }[]; papers: { id: string; title: string; authors: string; venue: string }[]; hasMore: boolean };
+function checkedCalendarData(value:unknown):CalendarData {
+  const data=value as CalendarData|null;
+  if(!data||!Array.isArray(data.counts)||!Array.isArray(data.papers)||typeof data.hasMore!=='boolean'
+    ||data.counts.some(item=>!item||typeof item.day!=='string'||!['recommended','browsed','completed'].includes(item.kind)||!Number.isSafeInteger(item.count)||item.count<0)
+    ||data.papers.some(item=>!item||['id','title','authors','venue'].some(key=>typeof item[key as keyof typeof item]!=='string')))throw Error('Invalid calendar response');
+  return data;
+}
 export function ReadingCalendar({ spaceId, locale, onPaper }: { spaceId: string; locale: "zh" | "en"; onPaper: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -44,7 +51,7 @@ export function ReadingCalendar({ spaceId, locale, onPaper }: { spaceId: string;
     const params = new URLSearchParams({ spaceId, ...query, page: String(query.page) });
     fetch(`/api/reading-calendar?${params}`, { signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error("calendar unavailable");
-      const result = await response.json();
+      const result = checkedCalendarData(await response.json());
       if (!controller.signal.aborted) setData({ ...result, requestKey });
     }).catch(() => { if (!controller.signal.aborted) setErrorKey(requestKey); });
     return () => controller.abort();

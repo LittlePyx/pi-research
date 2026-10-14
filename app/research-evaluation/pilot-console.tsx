@@ -1,10 +1,10 @@
 'use client';
 import {useRef,useState} from 'react';
 import {continuePilot} from '../../lib/pilot-continuation.mjs';
+import type {PilotRunRecord as RecordRow} from '../../lib/pilot-record';
 import './pilot.css';
 
 type Case={id:string;goal:string;order:string[]};
-type RecordRow={caseId:string;variant:string;sourceCommit:string;executionSourceCommit?:string;experimentHash:string;status:string;inputTokens:number|null;outputTokens:number|null;durationMs:number|null;errorCode?:string;recommendations?:{id:string;reason:string;quote:string}[]};
 const labels:Record<string,string>={none:'无记忆',explicit:'仅明确反馈',all:'全部研究记忆'};
 export default function PilotConsole({cases,experimentHash,enabled,sourceCommit,endpoint='/api/personalization-pilot',secondVersion=false}:{cases:Case[];experimentHash:string;enabled:boolean;sourceCommit:string;endpoint?:string;secondVersion?:boolean}) {
  const token=useRef('');
@@ -32,7 +32,7 @@ export default function PilotConsole({cases,experimentHash,enabled,sourceCommit,
   try {
    const preflight=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(15_000)});
    if(preflight.status!==401||!(preflight.headers.get('content-type')||'').includes('application/json'))throw new Error(preflight.status===410?'实验入口尚未启用或已经关闭。':'实验入口不可用（HTTP '+preflight.status+'），未发送执行凭据。');
-   const check=await preflight.json();if(check.error!=='unauthorized')throw new Error('实验预检响应不符合预期。');
+   const check=await preflight.json();if(!check||typeof check!=='object'||!('error' in check)||check.error!=='unauthorized')throw new Error('实验预检响应不符合预期。');
    const collected=await continuePilot({cases,experimentHash,sourceCommit:sourceCommit||commit,executionSourceCommit:commit,token:token.current,endpoint,
     onProgress:(task:Case,variant:string,index:number)=>setMessage('核对已有记录，仅执行未运行项：'+task.goal+' · '+labels[variant]+'（'+index+'/12）'),
     onRecord:(row:RecordRow,cached:boolean,all:RecordRow[])=>{setRecords(all);if(!cached){fresh.push(row);setNewRecords([...fresh]);}}

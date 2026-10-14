@@ -2,6 +2,12 @@
 import {useEffect,useRef,useState} from 'react';
 import {workspaceFetch} from '../../lib/workspace-request';
 type Figure={url:string;caption:string;sourceUrl:string};
+function checkedFigure(value:unknown):Figure|null {
+ if(!value||typeof value!=='object'||!('figure' in value))return null;
+ const figure=value.figure;
+ if(!figure||typeof figure!=='object'||!('url' in figure)||typeof figure.url!=='string'||!figure.url||!('caption' in figure)||typeof figure.caption!=='string'||!('sourceUrl' in figure)||typeof figure.sourceUrl!=='string')return null;
+ return {url:figure.url,caption:figure.caption,sourceUrl:figure.sourceUrl};
+}
 export function PaperFigure({spaceId,paperId,demo,locale}:{spaceId:string;paperId:string;demo:boolean;locale:'zh'|'en'}) {
  const [figure,setFigure]=useState<Figure|null>(null),[failed,setFailed]=useState(false);
  const dialog=useRef<HTMLDialogElement>(null),closeButton=useRef<HTMLButtonElement>(null);
@@ -9,7 +15,7 @@ export function PaperFigure({spaceId,paperId,demo,locale}:{spaceId:string;paperI
   if(demo)return;
   const abort=new AbortController();
   workspaceFetch('/api/paper-figure?'+new URLSearchParams({spaceId,paperId}),{signal:abort.signal})
-   .then(async r=>r.ok?r.json():null).then(data=>{if(!abort.signal.aborted)setFigure(data?.figure||null)}).catch(()=>{});
+   .then(async r=>r.ok?r.json():null).then(data=>{if(!abort.signal.aborted)setFigure(checkedFigure(data))}).catch(()=>{});
   return()=>abort.abort();
  },[spaceId,paperId,demo]);
  useEffect(()=>{

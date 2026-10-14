@@ -168,7 +168,7 @@ function candidateResource(item: CandidateRow, stageEvidence?: LearningStageEvid
   };
 }
 
-async function ownedSpace(request: Request, spaceId: string) {
+async function ownedSpace(request: Request, spaceId: string): Promise<{error:Response}|{database:D1Database;space:SpaceRow;user:NonNullable<ReturnType<typeof getApiUser>>}> {
   const user = getApiUser(request);
   if (!user) return { error: Response.json({ error: "Anonymous workspace is not initialized" }, { status: 401 }) };
   const database = getDatabase();
@@ -770,9 +770,10 @@ async function advanceLearningPath(database: D1Database, space: SpaceRow, contex
   path = await readPath(database, space.id);
   if (!path) return null;
   const progress = learningPathProgressState(path.steps);
+  const currentPathId = path.id;
   const statusStatements = path.steps.filter((step) => step.status !== "completed").map((step) => database.prepare(
     "UPDATE learning_path_steps SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND path_id = ?",
-  ).bind(step.position === progress.activeIndex ? "active" : "pending", step.id, path.id));
+  ).bind(step.position === progress.activeIndex ? "active" : "pending", step.id, currentPathId));
   statusStatements.push(database.prepare("UPDATE learning_paths SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND status != 'superseded'")
     .bind(progress.pathStatus, path.id, space.id));
   await database.batch(statusStatements);

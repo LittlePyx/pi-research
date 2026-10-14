@@ -7,7 +7,7 @@ export default function PilotReportBrowser(){
  const [version,setVersion]=useState('v2');
  const [scenario,setScenario]=useState(report.cases[0].id);
  const [variant,setVariant]=useState('explicit');
- const rows=report.runs.filter(r=>r.scenarioId===scenario&&r.variant===variant);
+ const rows:(Omit<typeof report.runs[number],'references'> & {references:{id:string;sourceUrl:string;title:string;reason:string;quote:string}[]})[]=report.runs.filter(r=>r.scenarioId===scenario&&r.variant===variant);
  return <>
   <div className="pi-pilot-controls"><label>运行记录<select value={version} onChange={e=>setVersion(e.target.value)}><option value="v2">第二版 · 编号引用与已读参考</option><option value="v1">第一版 · 原始对比记录</option></select></label></div>
   {version==='v1'?<PilotResults/>:<section aria-label="第二版真实验证">

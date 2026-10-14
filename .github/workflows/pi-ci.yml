@@ -35,6 +35,8 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint
+      - name: Check TypeScript
+        run: npm run typecheck
       # npm test builds once before exercising the product and local Worker/D1.
       # Never run another build concurrently against the same dist directory.
       - name: Build and run deterministic product tests

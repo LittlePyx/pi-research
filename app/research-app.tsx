@@ -1809,7 +1809,7 @@ async function followMonitorPipeline(
   initialMonitor: MonitorState,
   onUpdate: (monitor: MonitorState) => void,
   isCancelled: () => boolean = () => false,
-) {
+): Promise<MonitorState> {
   let current = initialMonitor;
   let lastReclaimAttemptAt = 0;
   for (let step = 0; step < 400 && !isCancelled() && !["ready", "error"].includes(current.status); step += 1) {
@@ -1858,7 +1858,7 @@ async function advanceMonitorPipeline(
   initialMonitor: MonitorState,
   onUpdate: (monitor: MonitorState) => void,
   isCancelled: () => boolean = () => false,
-) {
+): Promise<MonitorState> {
   let current = initialMonitor;
   for (let step = 0; step < 64 && !isCancelled(); step += 1) {
     if (["ready", "error"].includes(current.status)||current.automation?.paused) break;
@@ -2930,7 +2930,7 @@ function ResearchSynthesisWorkbench({
   onExplain: () => void;
   onPaper: (id: string) => void;
   onMaterials: () => void;
-  reviewStages: Record<string, string>;
+  reviewStages: Record<string, string|null|undefined>;
 }) {
   const ready = Boolean(synthesis && ["ready", "partial"].includes(synthesis.status) && synthesis.statements.length);
   const availablePapers = synthesis?.availablePaperCount || 0;

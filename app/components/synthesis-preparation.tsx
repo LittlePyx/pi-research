@@ -4,7 +4,7 @@ import { MathText } from "./math-text";
 export function SynthesisPreparation({ papers, available, locale, onPaper, onMaterials, reviewStages = {} }: {
   papers: ReturnType<typeof synthesisPreparation>; available: number; locale: "zh" | "en";
   onPaper: (id: string) => void; onMaterials: () => void;
-  reviewStages?: Record<string, string>;
+  reviewStages?: Record<string, string|null|undefined>;
 }) {
   const zh = locale === "zh";
   return <section className="pi-synthesis-preparation"><h3>{zh ? "哪些材料可以用于综合" : "Which papers can support synthesis"}</h3>

@@ -2596,7 +2596,7 @@ function recommendationVerificationFields(review: PaperReview) {
 }
 
 function recommendationVerificationRequiredFields(review: PaperReview) {
-  const populated = new Set(recommendationVerificationFields(review));
+  const populated = new Set<string>(recommendationVerificationFields(review));
   // Abstract evidence is authoritative for the paper's problem, method,
   // contribution, and factual summary. Personalized fit, reading focus, and
   // research decisions are grounded in the research-space context instead and
@@ -2647,7 +2647,9 @@ function pendingRecommendationReview(review: PaperReview, reason = "Waiting for 
   };
 }
 
-function degradedRecommendationReview(review: PaperReview, report: ReturnType<typeof evidenceVerificationReport>): PaperReview {
+function degradedRecommendationReview(review: PaperReview, report: ReturnType<typeof evidenceVerificationReport> & {
+  preflight?: ReturnType<typeof recommendationEvidencePreflight>; evidenceSource?: RecommendationVerificationEvidence['source'];
+}): PaperReview {
   return {
     ...review,
     recommended: false,
@@ -4329,7 +4331,7 @@ async function persistCandidatePool(database: D1Database, spaceId: string, candi
   await enqueueMonitorCandidates(database, spaceId, candidates);
 }
 
-async function pendingCandidateQueue(database: D1Database, spaceId: string, canonicalIds?: string[]) {
+async function pendingCandidateQueue(database: D1Database, spaceId: string, canonicalIds?: string[]): Promise<Candidate[]> {
   const restrictedIds = Array.from(new Set(canonicalIds || [])).slice(0, CANDIDATE_WORK_QUEUE_LIMIT);
   const explicitlyRestricted = canonicalIds !== undefined;
   const candidateCondition = explicitlyRestricted
@@ -4457,7 +4459,7 @@ async function pendingCandidateQueue(database: D1Database, spaceId: string, cano
       provenanceByPaper.set(source.paper_id, current);
     }
   }
-  const candidates = rows.results.map((row) => ({
+  const candidates = rows.results.map<Candidate>((row) => ({
     canonicalId: row.canonical_id,
     doi: row.doi,
     title: row.title,
@@ -6675,6 +6677,7 @@ export async function POST(request: Request) {
   let advanceLockJobId = "";
   let advanceLockToken = "";
   let leaseHeartbeat: MonitorLeaseHeartbeat | null = null;
+  const assertLeaseOwned = async () => { await leaseHeartbeat?.assertOwned(); };
   const enforceAnalysisBudget = async (
     minimumCalls: number,
     existingBudget?: Awaited<ReturnType<typeof readMonitorAnalysisBudget>>,
@@ -6856,7 +6859,7 @@ export async function POST(request: Request) {
           });
           if (modelResponse) return modelResponse;
         }
-        await leaseHeartbeat?.assertOwned();
+        await assertLeaseOwned();
         return Response.json(await readState(database, space, {
           cached: true, resumed: true, leaseOwner: true, leaseToken: resumedLock,
           leaseGeneration: resumedGeneration,
@@ -7091,7 +7094,7 @@ export async function POST(request: Request) {
         }, { lockToken, jobId, leaseGeneration });
         if (modelResponse) return modelResponse;
       }
-      await leaseHeartbeat?.assertOwned();
+      await assertLeaseOwned();
       await recordReliabilityEvent(database, {
         spaceId: space.id,
         scanJobId: jobId,

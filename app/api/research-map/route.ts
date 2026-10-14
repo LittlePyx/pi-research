@@ -655,7 +655,7 @@ async function normalizeItem(item: CrossrefItem, directionKey: string, proposedR
   };
 }
 
-async function ownedSpace(request: Request, spaceId: string) {
+async function ownedSpace(request: Request, spaceId: string): Promise<{error:Response}|{database:D1Database;space:SpaceRow;user:NonNullable<ReturnType<typeof getApiUser>>}> {
   const user = getApiUser(request);
   if (!user) return { error: Response.json({ error: "Anonymous workspace is not initialized" }, { status: 401 }) };
   const database = getDatabase();
@@ -2921,7 +2921,7 @@ export async function POST(request: Request) {
         if (!candidate || inserted.has(selection.canonicalId)) continue;
         inserted.add(selection.canonicalId);
         const precision = precisionByCandidate.get(`${selection.directionKey}:${selection.canonicalId}`);
-        if (!routePrecisionAcceptedForActiveNode(precision)) continue;
+        if (!precision || !routePrecisionAcceptedForActiveNode(precision)) continue;
         const trackPaperId = crypto.randomUUID();
         const insertion = await database.prepare(
           `INSERT OR IGNORE INTO research_track_papers

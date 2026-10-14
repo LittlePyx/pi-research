@@ -12,7 +12,7 @@ export function synthesisPreparation(papers: SynthesisPreparationPaper[], eligib
   }));
 }
 
-export function preparationReviewState(state: string, reviewStage?: string) {
+export function preparationReviewState(state: string, reviewStage?: string|null) {
   if (state === "ready") return state;
   if (reviewStage === "awaiting_evidence") return "awaiting_abstract";
   if (reviewStage === "reviewed") return "not_selected";

@@ -5,18 +5,34 @@ import {useEffect,useId,useRef,useState} from 'react';
 import type {ResearchStartSource} from '../../lib/research-start';
 import type {GraphTaskContext} from '../../lib/graph-task';
 type Suggestion=ResearchStartSource&{revision:string};
+function checkedSuggestions(value:unknown):Suggestion[] {
+ const data=value as {suggestions?:unknown}|null;
+ if(!data||!Array.isArray(data.suggestions))throw Error('Invalid suggestions');
+ return data.suggestions.map(item=>{
+  if(!item||typeof item!=='object'||['id','canonicalId','title','revision','problemZh','problemEn','reasonZh','reasonEn','taskZh','taskEn','limitationZh','limitationEn','abstractText','updatedAt'].some(key=>typeof item[key]!=='string')||!item.id||!item.revision)throw Error('Invalid suggestion');
+  return item as Suggestion;
+ });
+}
+function checkedResearchStart(value:unknown,spaceId:string):{track:{id:string;titleZh:string;titleEn:string};task:GraphTaskContext} {
+ const data=value as {track?:{id:string;titleZh:string;titleEn:string};task?:GraphTaskContext}|null;
+ const track=data?.track,task=data?.task;
+ if(!track||['id','titleZh','titleEn'].some(key=>typeof track[key as keyof typeof track]!=='string')||!track.id||!task||task.spaceId!==spaceId||typeof task.question!=='string'||!task.question.trim()
+  ||!Array.isArray(task.papers)||!task.papers.length||task.papers.some(p=>!p||typeof p.canonicalId!=='string'||typeof p.title!=='string')
+  ||(task.readingTask!=null&&['paperId','focusZh','focusEn'].some(key=>typeof task.readingTask![key as keyof typeof task.readingTask]!=='string')))throw Error('Invalid confirmed research goal');
+ return {track,task};
+}
 export function ResearchStart({spaceId,paperId,locale,onRead,onStart}:{spaceId:string;paperId?:string;locale:'zh'|'en';onRead:(id:string)=>void;onStart:(track:{id:string;titleZh:string;titleEn:string},task:GraphTaskContext)=>void}) {
  const zh=locale==='zh', [items,setItems]=useState<Suggestion[]>([]),[selected,setSelected]=useState<Suggestion|null>(null),[target,setTarget]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0);
  const [expanded,setExpanded]=useState(false),[loading,setLoading]=useState(false);const panelId=useId();
  const lifetime=useRef<AbortController|null>(null);
  useEffect(()=>{if(!expanded)return;const controller=new AbortController();lifetime.current=controller;
-  fetch('/api/research-start?'+new URLSearchParams({spaceId,...(paperId?{paperId}:{})}),{signal:controller.signal}).then(async r=>{if(!r.ok)throw new Error();return r.json();}).then(d=>{if(!controller.signal.aborted){setItems(d.suggestions||[]);setError('');}}).catch(()=>{if(!controller.signal.aborted)setError(zh?'方向建议暂未加载，可重试。':'Suggestions could not load. Retry.');}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
+  fetch('/api/research-start?'+new URLSearchParams({spaceId,...(paperId?{paperId}:{})}),{signal:controller.signal}).then(async r=>{if(!r.ok)throw new Error();return r.json();}).then(d=>{if(!controller.signal.aborted){setItems(checkedSuggestions(d));setError('');}}).catch(()=>{if(!controller.signal.aborted)setError(zh?'方向建议暂未加载，可重试。':'Suggestions could not load. Retry.');}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
   return ()=>controller.abort();
  },[spaceId,paperId,retry,zh,expanded]);
  const choose=(s:Suggestion)=>{setSelected(s);setTarget(((zh?s.problemZh:s.problemEn)||s.title).slice(0,240));setError('');};
  const confirm=async()=>{if(!selected||busy)return;const signal=lifetime.current?.signal;setBusy(true);setError('');
   try {const r=await fetch('/api/research-start',{method:'POST',signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'confirm',spaceId,paperId:selected.id,revision:selected.revision,target})});
-   const d=await r.json();if(!r.ok)throw new Error(String(r.status));if(!signal?.aborted)onStart(d.track,d.task);
+   const value=await r.json();if(!r.ok)throw new Error(String(r.status));if(!signal?.aborted){const d=checkedResearchStart(value,spaceId);onStart(d.track,d.task);}
   }catch(e){if(!signal?.aborted)setError(zh?(e instanceof Error&&e.message==='409'?'材料或路线状态已变化，请刷新建议后再确认。':'未能保存目标，请重试。'):'Could not save this goal. Refresh the suggestions and retry.');}finally{if(!signal?.aborted)setBusy(false);}
  };
 

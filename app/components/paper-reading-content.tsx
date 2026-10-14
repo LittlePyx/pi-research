@@ -10,7 +10,7 @@ type ReadingSummary = { zh: string; en: string; sourceUrl: string; kind: "overvi
 type ReadingResponse = { paper?: { abstractText?: string; analysisSource?: string; readingSummary?: ReadingSummary }; recovery?: { status: string; attempted_json?: string; source_url: string; retry_at: number; related?: { abstractText: string; sourceUrl: string; doi: string } | null } | null };
 
 export function PaperReadingContent({ spaceId, paperId, locale, stage, reason, onReviewStage, onReviewUpdated, showReview=true }: {
-  spaceId: string; paperId: string; locale: "zh" | "en"; stage: string; reason: string; onReviewStage?: (paperId: string, stage: "queued") => void; onReviewUpdated?: () => Promise<void>; showReview?:boolean;
+  spaceId: string; paperId: string; locale: "zh" | "en"; stage?: string|null; reason: string; onReviewStage?: (paperId: string, stage: "queued") => void; onReviewUpdated?: () => Promise<void>; showReview?:boolean;
 }) {
   const [abstract, setAbstract] = useState<string | null>(null);
   const [summary, setSummary] = useState<ReadingSummary | null>(null);

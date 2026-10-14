@@ -73,3 +73,11 @@ test('removing a question returns immediately to the field cover rather than for
  h.nodes().find(n=>n.type==='button'&&n.props.children==='Confirm removal').props.onClick();h.requests.shift().resolve({removed:true,goal:null,papers:[]});await settle();h.render();
  assert.match(h.text(),/Published field reading|FIELD BRIEF/);assert.equal(h.nodes().some(n=>n.type==='form'),false);assert.deepEqual(h.counts(),{saved:1,discovered:0});
 });
+
+test('demo reset validates its response and preserves the current question if the response is malformed',async()=>{
+ const h=harness();h.props.demo=true;h.requests.shift().resolve({goal:{...goal,trackId:''},papers:[]});await settle();h.render();
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Restore sample question').props.onClick();h.requests.shift().resolve({papers:'not-an-array'});await settle();h.render();
+ assert.match(h.text(),/What assumptions govern/);assert.equal(h.nodes().some(n=>n.props?.role==='alert'),true);assert.deepEqual(h.counts(),{saved:0,discovered:0});
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Restore sample question').props.onClick();h.requests.shift().resolve({goal,papers:[]});await settle();h.render();
+ assert.match(h.text(),/Open research route/);assert.deepEqual(h.counts(),{saved:0,discovered:0});
+});
