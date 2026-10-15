@@ -67,6 +67,8 @@ Only `@langchain/langgraph` and its required `@langchain/core` dependency are ad
 
 Comparison protocol failures distinguish malformed JSON, empty content, abnormal completion and invalid provider envelopes using fixed diagnostic codes, never raw model responses. A complete outer JSON code fence can be removed; malformed escapes and arbitrary surrounding prose are rejected. Protocol retries request correct JSON escaping while preserving decoded evidence verbatim.
 
+Generated fields exceeding their declared character limits are rejected with targeted rewrite feedback. Validation never clips a generated sentence or quote to fit, since clipping can remove a mathematical qualification or make bilingual content incomplete. Historical saved text is not reconstructed from missing original model output.
+
 `tests/workbook-graph.test.mjs` compares call budgets on identical deterministic content and covers evidence gaps, correction limits, invalid evidence and retry recovery. The built Worker API test also restarts Miniflare with persisted D1 between review batches. These checks establish runtime/recovery behavior, **not** improved academic content quality. Broader adoption requires paired real-model results on the same sources, independently assessed quality, token/latency measurements and an acceptable deployment-size cost.
 
 ## Validation

@@ -37,6 +37,7 @@ test('recovery feedback accepts only known validation codes and never arbitrary 
  assert.equal(workbookRecoveryHint('private prompt or key'), '');
  assert.match(workbookRecoveryHint('invalid_response'), /JSON-escape/);
  assert.match(workbookRecoveryHint('invalid_json_response'), /preserve the original source/);
+ assert.match(workbookRecoveryHint('overlong_workbook_field'), /never truncate/);
 });
 
 test('complete JSON fences are harmless wrappers but malformed math escapes and surrounding prose remain invalid',async()=>{

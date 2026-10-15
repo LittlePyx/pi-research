@@ -41,3 +41,17 @@ test("user artifacts retain notes on missing conditions but reject unknown targe
   assert.deepEqual(validateWorkbookArtifact({ observations: { "conditions:sample-klartag": "Need to locate assumptions" }, decision: "Insufficient", unresolved: "Definitions" }, content).observations, { "conditions:sample-klartag": "Need to locate assumptions" });
   assert.throws(() => validateWorkbookArtifact({ observations: { "other-space:paper": "bad" } }, content), /unknown_observation/);
 });
+
+test('generated prose at its limit is preserved but overlong prose is rejected rather than silently cut',()=>{
+  const sample=workbookSample();sample.comparison.textEn='A'.repeat(899)+'.';
+  assert.equal(validateWorkbook(sample,workbookSources).comparison.textEn,sample.comparison.textEn);
+  sample.comparison.textEn+=' A necessary mathematical qualification must not disappear.';
+  assert.throws(()=>validateWorkbook(sample,workbookSources),/overlong_workbook_field/);
+});
+
+test('an overlong source quotation is rejected without dropping its final conditions',()=>{
+  const sample=workbookSample(),quote='A source passage whose final conditions must be preserved. '.repeat(24);
+  const sources=workbookSources.map((s,i)=>i?s:{...s,abstractText:s.abstractText+'\n'+quote});
+  sample.dimensions[0].cells[0].quote=quote;
+  assert.ok(quote.length>1200);assert.throws(()=>validateWorkbook(sample,sources),/overlong_workbook_field/);
+});
