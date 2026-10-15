@@ -23,6 +23,13 @@ function harness(extra={}){
 }
 const ready=id=>({workbook:{id,revision:'rev',status:'ready',stale:false,sources:workbookSources,candidates:workbookSources,content:workbookSample(),artifact:{revision:1,value:{observations:{},decision:'Saved decision',unresolved:'Check assumptions'}},retryAt:0},versions:[{id:'old',status:'ready',created_at:'yesterday'},{id:'new',status:'ready',created_at:'today'}]});
 
+test('only field-patch checkpoints claim that approved fields were preserved',async()=>{
+ const h=harness(),data=ready('patched');data.workbook.revisionFlow={engine:'langgraph-v1',repairs:1,limit:1,next:'stopped',revisedFields:1,preservedFields:18};
+ h.requests.shift().resolve(data);await settle();h.render();assert.match(h.text(),/Changed only 1 failed fields; preserved 18 fields/);
+ const legacy=harness();delete data.workbook.revisionFlow.revisedFields;delete data.workbook.revisionFlow.preservedFields;
+ legacy.requests.shift().resolve(data);await settle();legacy.render();assert.doesNotMatch(legacy.text(),/Changed only/);
+});
+
 test('a graph comparison resumes reviewed content and saved notes instead of erasing them',async()=>{
  const taskContext={spaceId:'s',question:'My precise question',papers:workbookSources.map(s=>({canonicalId:s.canonicalId,title:s.title}))};
  const h=harness({taskContext});assert.match(h.requests[0].url,/selection=1/);

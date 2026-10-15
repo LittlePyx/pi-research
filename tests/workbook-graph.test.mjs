@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { advanceWorkbookGraph, initialWorkbookGraphReview, restoreWorkbookGraphReview, workbookGraphNext } from '../lib/workbook-graph.ts';
 import { workbookReviewFields, validateWorkbook, WORKBOOK_REVIEW_BATCH_SIZE } from '../lib/research-workbook.ts';
-import { workbookSample, workbookSources } from './fixtures/research-workbook.mjs';
+import { workbookSample, workbookSources, anchoredSample, resolvedSample } from './fixtures/research-workbook.mjs';
 
 function fixture(mode='repairable') {
   const calls=[];
   const model=async(prompt,reviewer)=>{
     const input=JSON.parse(prompt);calls.push({input,reviewer});
-    if(!reviewer)return workbookSample();
+    if(!reviewer)return input.correction ? {patches:[{id:'f1',value:{...anchoredSample().comparison,textEn:'The supplied excerpts do not provide definitions or assumptions needed for a direct result comparison.'}}]} : anchoredSample();
     const checks=input.requiredCheckIds.map(id=>({id,verdict:id==='comparison'&&mode!=='supported'?'unsupported':'supported',paperIds:workbookSources.map(s=>s.id),reason:'Isolated review fixture, not an academic judgment.',...(id==='comparison'&&mode!=='supported'?{issueType:mode}: {})}));
     return {verdict:checks.some(c=>c.verdict==='unsupported')?'unsupported':'supported',checks};
   };
@@ -43,7 +43,7 @@ test('evidence gaps stop without a correction or publication',async()=>{
 
 test('all-supported fixtures use the same model-call budget as the baseline and validate identical content',async()=>{
   const {model,calls}=fixture('supported'),started=performance.now();const s=await finish(empty(),model);
-  assert.equal(s.status,'ready');assert.deepEqual(s.content,validateWorkbook(workbookSample(),workbookSources));
+  assert.equal(s.status,'ready');assert.deepEqual(s.content,resolvedSample());
   assert.equal(calls.length,1+Math.ceil(workbookReviewFields(s.content).length/WORKBOOK_REVIEW_BATCH_SIZE));
   assert.ok(performance.now()-started<3000,'isolated graph overhead should not consume a model-sized latency budget');
 });
@@ -60,8 +60,8 @@ test('a transient model failure preserves earlier review batches for a fresh gra
 
 test('invalid correction evidence cannot advance or consume the persisted repair allowance',async()=>{
   const {model}=fixture();let s=empty();while(workbookGraphNext(s.content,s.review)!=='repair')s=await advanceWorkbookGraph('question',workbookSources,reload(s),model);
-  const before=JSON.stringify(s),invalid=workbookSample();invalid.dimensions[0].cells[0].quote='Invented evidence that is absent from all excerpts.';
-  await assert.rejects(advanceWorkbookGraph('question',workbookSources,reload(s),async()=>invalid),/unlocated_workbook_evidence/);
+  const before=JSON.stringify(s),invalid={patches:[{id:'f1',value:{...anchoredSample().comparison,evidenceIds:['invented:p1']}}]};
+  await assert.rejects(advanceWorkbookGraph('question',workbookSources,reload(s),async()=>invalid),/untraceable_workbook_instruction/);
   assert.equal(JSON.stringify(s),before);assert.equal(s.review.workflow.repairs,0);
 });
 

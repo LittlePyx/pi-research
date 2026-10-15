@@ -1,4 +1,5 @@
 // Content-design sample, NOT a live recommendation, model review, or full abstract.
+import { workbookEvidenceCatalog, resolveAnchoredWorkbook } from '../../lib/workbook-evidence.ts';
 // Short source excerpts retrieved 2026-09-10. Missing means missing in these excerpts.
 const metricQuote = String.raw`We analyze the Poincaré and Log-Sobolev constants of logconcave densities in $\mathbb{R}^{n}$.`;
 const methodQuote = "Our proof technique is a development of stochastic localization";
@@ -9,6 +10,18 @@ export const workbookSources = [
 ];
 const missing = paperId => ({ paperId, status: "missing", quote: "", textZh: "", textEn: "" });
 const cell = (paperId, textZh, textEn, quote) => ({ paperId, status: "supported", textZh, textEn, quote });
+export function anchoredSample(sources = workbookSources) {
+  const content = workbookSample(), catalog = workbookEvidenceCatalog(sources);
+  const ref = id => { const split = id.indexOf(':'); return `${id.slice(0,split)}:${catalog.find(s=>s.paperId===id.slice(split+1)).key}`; };
+  for (const dimension of content.dimensions) for (const cell of dimension.cells) {
+    const source = catalog.find(s=>s.paperId===cell.paperId);
+    cell.paperId=source.key; cell.quoteId=cell.status==='supported'?source.quotes.find(q=>q.text.includes(cell.quote)).id:'';delete cell.quote;
+  }
+  content.comparison.evidenceIds=content.comparison.evidenceIds.map(ref);
+  for(const step of content.task.steps)step.evidenceIds=step.evidenceIds.map(ref);
+  return content;
+}
+export function resolvedSample() { return resolveAnchoredWorkbook(anchoredSample(),workbookSources); }
 export function workbookSample() {
   return {
     questionZh: "随机局部化与改进的 Lichnerowicz 不等式，在这些片段中承担什么作用？是否足以比较结果？",

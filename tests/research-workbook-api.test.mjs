@@ -5,7 +5,7 @@ import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Miniflare } from "miniflare";
-import { workbookSample, workbookSources } from "./fixtures/research-workbook.mjs";
+import { workbookSample, workbookSources, anchoredSample } from "./fixtures/research-workbook.mjs";
 import { workbookReviewFields, WORKBOOK_REVIEW_BATCH_SIZE } from "../lib/research-workbook.ts";
 
 test("built workbook API checkpoints review, isolates owners and versions artifacts without research-state writes", { timeout: 60000 }, async t => {
@@ -35,13 +35,13 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       if(failureMode==='rate')return Response.json({error:{message:'sensitive provider fixture text'}},{status:429});
       if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
       if(failureMode==='bad-json')return Response.json({choices:[{finish_reason:'stop',message:{content:'private invalid output'}}]});
-      if(failureMode==='invalid-evidence'){const invalid=workbookSample();invalid.dimensions[0].cells[0].quote='A paraphrase that is not present in the supplied abstract.';return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
+      if(failureMode==='invalid-evidence'){const invalid=anchoredSample();invalid.dimensions[0].cells[0].quoteId='p1.fabricated';return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
       if(failureMode==='recover-evidence')assert.match(input.recovery,/unlocated_workbook_evidence/);
       if(failureMode==='recover-json')assert.match(input.recovery,/JSON-escape/);
       if(input.correction){graphCorrections++;assert.ok(input.correction.issues.some(i=>i.id==='comparison'));}
       const output = input.requiredCheckIds ? { verdict: "supported", checks: input.requiredCheckIds.map(id => ({ id,
         verdict: (invalidReview || input.issuePolicy && graphMode!=='supported' && (!graphCorrections || graphMode==='evidence_gap')) && id === "comparison" ? "unsupported" : "supported", paperIds: workbookSources.map(s => s.id), reason: "Isolated deterministic review; not a live academic judgment.",
-        ...(input.issuePolicy && id==='comparison'?{issueType:graphMode==='evidence_gap'?'evidence_gap':'repairable'}:{}) })) } : workbookSample();
+        ...(input.issuePolicy && id==='comparison'?{issueType:graphMode==='evidence_gap'?'evidence_gap':'repairable'}:{}) })) } : input.correction ? {patches:[{id:'f1',value:{...anchoredSample().comparison,textEn:'The excerpts lack definitions and assumptions needed for direct comparison.'}}]} : anchoredSample();
       return Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(output) } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
     },
   };
@@ -228,7 +228,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
     await t.test('opt-in graph versions recover across a Worker restart and recheck every repaired field',async()=>{
       graphMode='repairable';graphCorrections=0;
       let pilot=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Graph persistence acceptance',allowRepair:true})).workbook;
-      assert.match(pilot.id,/:revision-v1$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
+      assert.match(pilot.id,/:revision-v2$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
       pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       const count=calls,checkpoint=pilot.reviewProgress;
       await mf.dispose();mf=new Miniflare(options);
@@ -241,6 +241,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[pilot.id]}]);failureMode='';
       pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       assert.equal(pilot.revisionFlow.repairs,1);assert.equal(pilot.reviewProgress.completed,0);assert.equal(pilot.content,null);
+      assert.equal(pilot.revisionFlow.revisedFields,1);assert.equal(pilot.revisionFlow.preservedFields,workbookReviewFields(workbookSample()).length-1);
       pilot=await finishReview(pilot);assert.equal(pilot.status,'ready');assert.equal(graphCorrections,1);
       assert.equal(pilot.reviewProgress.completed,workbookReviewFields(workbookSample()).length);
       const before=calls;await post({action:'advance',workbookId:pilot.id});assert.equal(calls,before);

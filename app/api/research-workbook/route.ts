@@ -3,8 +3,9 @@ import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { requestWorkbookModel } from "../../../lib/workbook-model";
 import { WorkbookModelError, workbookFailure, workbookRetryDelay, workbookValidationCode, workbookRecoveryHint, workbookResponseDetail } from "../../../lib/workbook-recovery";
-import { WORKBOOK_POLICY, WORKBOOK_REVIEW_BATCH_SIZE, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, validateWorkbookReviewPart, workbookDraftPrompt, workbookReviewFields, workbookReviewIssues, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
+import { WORKBOOK_POLICY, WORKBOOK_REVIEW_BATCH_SIZE, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, validateWorkbookReviewPart, workbookReviewFields, workbookReviewIssues, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
 import type { WorkbookGraphReview } from '../../../lib/workbook-graph';
+import { anchoredWorkbookPrompt, resolveAnchoredWorkbook } from '../../../lib/workbook-evidence';
 
 type Row = { id: string; question: string; source_revision: string; source_ids_json: string; draft_json: string; content_json: string; review_json: string; status: WorkbookState["status"]; retry_at: number; lease_until: number };
 type SourceRow = { id: string; canonical_id: string; title: string; authors: string; url: string; abstract_text: string; reading_focus_zh: string; reading_focus_en: string; route_member: number };
@@ -84,6 +85,7 @@ async function projection(original: Context, row: Row | null, preferred: string[
     const { workbookGraphNext } = await import('../../../lib/workbook-graph');
     // Historical checkpoints remain readable after evidence is withdrawn; only POST validates against current sources.
     revisionFlow = { engine: 'langgraph-v1', repairs: savedReview.workflow.repairs, limit: 1,
+      ...(savedReview.workflow.repairMode === 'fields-v1' ? { revisedFields: savedReview.workflow.previousIssues.length, preservedFields: workbookReviewFields(parse(row!.draft_json)).length - savedReview.workflow.previousIssues.length } : {}),
       next: stale || row?.status === 'ready' || row?.status === 'rejected' ? 'stopped' : workbookGraphNext(parse(row?.draft_json || ''), savedReview) };
   }
   const state: WorkbookState = { id: row?.id || null, revision: row?.source_revision || revision, status: row?.status || "empty",
@@ -111,7 +113,7 @@ export async function GET(request: Request) {
     // A graph task must resume only its own question and exact source set.
     const revision = await workbookRevision(scoped.question, selected);
     const id = `${ctx.spaceId}:${ctx.trackId}:${revision}`;
-    row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${id}:revision-v1`) || await rowFor(ctx, id) : null;
+    row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${id}:revision-v2`) || await rowFor(ctx, `${id}:evidence-v2`) || await rowFor(ctx, `${id}:revision-v1`) || await rowFor(ctx, id) : null;
   } else row = await rowFor(ctx, id);
   if (id && !row) return Response.json({ error: "Workbook not found" }, { status: 404 });
   return projection(ctx, row, preferred, focus);
@@ -153,8 +155,9 @@ export async function POST(request: Request) {
       const selected = ids.map(id => candidates.find(s => s.id === id)).filter((s): s is WorkbookSource => Boolean(s));
       if (ids.length < 2 || ids.length > 3 || selected.length !== ids.length) return Response.json({ error: "Select two or three currently approved papers" }, { status: 422 });
       const revision = await workbookRevision(ctx.question, selected);
-      const baselineId = `${ctx.spaceId}:${ctx.trackId}:${revision}`;
-      const id = body.allowRepair === true ? `${baselineId}:revision-v1` : baselineId;
+      const rootId = `${ctx.spaceId}:${ctx.trackId}:${revision}`;
+      const baselineId = `${rootId}:evidence-v2`;
+      const id = body.allowRepair === true ? `${rootId}:revision-v2` : baselineId;
       const baseline = body.allowRepair === true ? await rowFor(ctx, baselineId) : null;
       const seedDraft = baseline?.status === 'rejected' && baseline.draft_json ? validateWorkbook(parse(baseline.draft_json), selected) : null;
       const initialReview = body.allowRepair === true ? (await import('../../../lib/workbook-graph')).initialWorkbookGraphReview() : null;
@@ -204,9 +207,9 @@ export async function POST(request: Request) {
       rules: "Check BOTH languages of each field, including every missing cell (is the information genuinely absent?), all mathematical conditions/quantifiers/bounds, comparability, and the specificity and feasibility of every task and learning field. No full proofs can be taught from abstracts. Quote existence does not establish entailment. Reject invented prerequisites stated as facts, contradiction/novelty claims, and interchangeable generic advice. Only supported if all checks pass.",
       output: { verdict: "supported|unsupported", checks: [{ id: "exact requiredCheckId", verdict: "supported|unsupported", paperIds: ["exact source ID"], reason: "specific support or failure reason" }] },
       batchRule: 'Return checks for ONLY the supplied requiredCheckIds. Keep each reason to one short sentence. Other fields are reviewed in separate saved batches.',
-    }) : workbookDraftPrompt(ctx.question, selected);
+    }) : anchoredWorkbookPrompt(ctx.question, selected);
     const raw = await model(prompt, Boolean(draft));
-    content = draft || validateWorkbook(raw, selected);
+    content = draft || resolveAnchoredWorkbook(raw, selected);
     const part = draft ? validateWorkbookReviewPart(raw, draft, selected, pending) : null;
     review = part ? { supported: (earlier?.supported ?? true) && part.supported, checks: [...(earlier?.checks || []), ...part.checks] } : null;
     const complete = Boolean(draft && review && review.checks.length === workbookReviewFields(draft).length);

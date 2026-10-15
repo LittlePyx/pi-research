@@ -1,9 +1,10 @@
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
-import { WORKBOOK_REVIEW_BATCH_SIZE, validateWorkbook, validateWorkbookReview, validateWorkbookReviewPart, workbookDraftPrompt, workbookReviewFields, workbookReviewIssues, type WorkbookContent, type WorkbookSource } from './research-workbook.ts';
+import { anchoredWorkbookPrompt, resolveAnchoredWorkbook, workbookPatchPrompt, applyWorkbookPatches } from './workbook-evidence.ts';
+import { WORKBOOK_REVIEW_BATCH_SIZE, validateWorkbookReview, validateWorkbookReviewPart, workbookReviewFields, workbookReviewIssues, type WorkbookContent, type WorkbookSource } from './research-workbook.ts';
 
 export const WORKBOOK_GRAPH_ENGINE = 'langgraph-v1';
 type Review = ReturnType<typeof validateWorkbookReview>;
-export type WorkbookGraphReview = { supported: boolean; checks: Review['checks']; workflow: { engine: typeof WORKBOOK_GRAPH_ENGINE; repairs: number; previousIssues: ReturnType<typeof workbookReviewIssues> } };
+export type WorkbookGraphReview = { supported: boolean; checks: Review['checks']; workflow: { engine: typeof WORKBOOK_GRAPH_ENGINE; repairs: number; previousIssues: ReturnType<typeof workbookReviewIssues>; repairMode?: 'fields-v1' } };
 type Snapshot = { content: WorkbookContent | null; review: WorkbookGraphReview; status: 'verifying' | 'rejected' | 'ready' };
 type Model = (prompt: string, reviewer: boolean) => Promise<unknown>;
 
@@ -18,7 +19,7 @@ export function restoreWorkbookGraphReview(raw: unknown, content: WorkbookConten
   const validated = saved.checks.length && content ? validateWorkbookReviewPart({ verdict: saved.supported ? 'supported' : 'unsupported', checks: saved.checks }, content, sources, saved.checks.map(c => c.id)) : null;
   if (saved.checks.length && !validated) throw new Error('invalid_workbook_review');
   return { supported: validated?.supported ?? true, checks: validated?.checks || [], workflow: { engine: WORKBOOK_GRAPH_ENGINE, repairs: saved.workflow.repairs,
-    previousIssues: Array.isArray(saved.workflow.previousIssues) ? saved.workflow.previousIssues : [] } };
+    previousIssues: Array.isArray(saved.workflow.previousIssues) ? saved.workflow.previousIssues : [], ...(saved.workflow.repairMode === 'fields-v1' ? { repairMode: 'fields-v1' as const } : {}) } };
 }
 
 export function workbookGraphNext(content: WorkbookContent | null, review: WorkbookGraphReview): 'draft' | 'review' | 'repair' | 'stopped' {
@@ -42,7 +43,7 @@ export function workbookReviewPrompt(question: string, sources: WorkbookSource[]
 export async function advanceWorkbookGraph(question: string, sources: WorkbookSource[], snapshot: Snapshot, model: Model): Promise<Snapshot> {
   const State = Annotation.Root({ checkpoint: Annotation<Snapshot>() });
   const graph = new StateGraph(State)
-    .addNode('draft', async () => ({ checkpoint: { ...snapshot, content: validateWorkbook(await model(workbookDraftPrompt(question, sources), false), sources) } }))
+    .addNode('draft', async () => ({ checkpoint: { ...snapshot, content: resolveAnchoredWorkbook(await model(anchoredWorkbookPrompt(question, sources), false), sources) } }))
     .addNode('review', async ({ checkpoint: s }) => {
       const pending = workbookReviewFields(s.content!).filter(id => !s.review.checks.some(c => c.id === id)).slice(0, WORKBOOK_REVIEW_BATCH_SIZE);
       const raw = await model(workbookReviewPrompt(question, sources, s.content!, pending, true), true);
@@ -52,10 +53,9 @@ export async function advanceWorkbookGraph(question: string, sources: WorkbookSo
     })
     .addNode('repair', async ({ checkpoint: s }) => {
       const issues = workbookReviewIssues(s.review);
-      const prompt = JSON.stringify({ ...JSON.parse(workbookDraftPrompt(question, sources)), previousWorkbook: s.content,
-        correction: { issues, instruction: 'Correct these specific failures using only the supplied abstracts. Return the COMPLETE workbook JSON contract. Preserve supported content where possible, but recheck dependent references. Remove or narrow unsupported assertions. Never invent definitions, conditions, evidence or solutions. Both languages must preserve the same qualifications. All fields will be independently reviewed again.' } });
-      return { checkpoint: { ...s, content: validateWorkbook(await model(prompt, false), sources), review: { ...initialWorkbookGraphReview(),
-        workflow: { engine: WORKBOOK_GRAPH_ENGINE, repairs: s.review.workflow.repairs + 1, previousIssues: issues } } } };
+      const prompt = workbookPatchPrompt(question, sources, s.content!, issues);
+      return { checkpoint: { ...s, content: applyWorkbookPatches(await model(prompt, false), s.content!, sources, issues), review: { ...initialWorkbookGraphReview(),
+        workflow: { engine: WORKBOOK_GRAPH_ENGINE, repairs: s.review.workflow.repairs + 1, previousIssues: issues, repairMode: 'fields-v1' } } } };
     })
     .addNode('settle', ({ checkpoint: s }) => {
       const complete = Boolean(s.content && s.review.checks.length === workbookReviewFields(s.content).length);
