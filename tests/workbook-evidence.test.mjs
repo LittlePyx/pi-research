@@ -1,11 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { workbookEvidenceCatalog, anchoredWorkbookPrompt, resolveAnchoredWorkbook, workbookPatchPrompt, applyWorkbookPatches } from '../lib/workbook-evidence.ts';
+import { workbookEvidenceCatalog, anchoredWorkbookPrompt, resolveAnchoredWorkbook, workbookPatchPrompt, applyWorkbookPatches, validateWorkbookLayout } from '../lib/workbook-evidence.ts';
 import { workbookReviewFields, workbookRevision, validateWorkbook, workbookPaperLabel } from '../lib/research-workbook.ts';
 import { workbookReviewPrompt } from '../lib/workbook-graph.ts';
 import { workbookSources, anchoredSample, resolvedSample } from './fixtures/research-workbook.mjs';
 
 const issue = id => ({id,paperIds:workbookSources.map(s=>s.id),reason:'Isolated correction fixture',issueType:'repairable'});
+test('generated task layout must agree with dimension rows and paper columns',()=>{
+ const wire=anchoredSample();wire.task.steps[0].textEn='Make one column per dimension with the two papers as rows.';
+ assert.throws(()=>resolveAnchoredWorkbook(wire,workbookSources),/inconsistent_workbook_layout/);
+ const content=resolvedSample();content.task.steps[0].textZh='为每个维度建一列，两篇论文各占一行。';assert.throws(()=>validateWorkbookLayout(content),/inconsistent_workbook_layout/);
+ const p=JSON.parse(anchoredWorkbookPrompt('q',workbookSources));assert.deepEqual(p.tableLayout,{rows:'comparison dimensions',columns:'selected papers'});
+});
 test('separate passages are preserved individually and every passage must belong to the same source',()=>{
  const sources=structuredClone(workbookSources);sources[0].abstractText='The object is a model with twelve configurations. '+ 'Intervening context is retained in the source. '.repeat(40)+'The evaluation reports context gain under matched conditions.';
  const wire=anchoredSample(sources.map((s,i)=>i?s:{...s,abstractText:workbookSources[0].abstractText+' '+s.abstractText}));

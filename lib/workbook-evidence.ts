@@ -80,6 +80,14 @@ function resolver(sources: WorkbookSource[]) {
   return { catalog, cell, refs };
 }
 
+/** The displayed workbook has dimension rows and paper columns; generated instructions must agree. */
+export function validateWorkbookLayout(content: WorkbookContent) {
+  const instructions = [content.task.titleZh,content.task.titleEn,content.task.criterionZh,content.task.criterionEn,
+    ...content.task.steps.flatMap(s=>[s.textZh,s.textEn]),content.learning.exerciseZh,content.learning.exerciseEn].join('\n');
+  if (/papers?\s+(?:as|are|in)\s+(?:the\s+)?rows?|(?:one|a)\s+row\s+(?:per|for each)\s+paper|one\s+column\s+per\s+dimension|论文各占一行|每篇(?:论文)?(?:占|为)?一行|每个维度(?:建|设|占|为)一列/iu.test(instructions)) throw new Error('inconsistent_workbook_layout');
+  return content;
+}
+
 export function anchoredWorkbookPrompt(question: string, sources: WorkbookSource[]) {
   const base = JSON.parse(workbookDraftPrompt(question, sources));
   base.sources = workbookEvidenceCatalog(sources).map(({ paperId: _id, ...s }) => s);
@@ -89,6 +97,8 @@ export function anchoredWorkbookPrompt(question: string, sources: WorkbookSource
   base.contract.task.steps[0].evidenceIds = ['dimension-id:p1'];
   base.rules.push('Use quoteIds to select 1-4 supplied catalog IDs from the SAME paper; NEVER copy or generate quote text. Use [] for missing. paperId uses source key p1/p2/p3. Each evidenceIds entry uses dimension.id + colon + source key and MUST point to a supported cell. The selected passages must collectively support the ENTIRE bilingual observation. Use missing only when the whole abstract lacks the dimension. Prefer exactly 3 dimensions and 2 task steps. Aim for under 350 characters per prose field. The research question is motivation, not evidence.');
   base.rules.push('Every number, model name, auxiliary method and qualification in a supported cell must be entailed by its SELECTED passages. ADD another catalog ID when a clause needs another sentence, or narrow the observation. Unselected abstract sentences do not validate a citation. Use contiguous windows (.w) only when useful; do not stitch or paraphrase quotes. In reader-facing prose use P1/P2/P3 or distinctive short titles. Never mention quoteId, quoteIds, evidenceIds, supported cells or raw dimension IDs; ask readers to cite the displayed source passages.');
+  base.tableLayout = { rows: 'comparison dimensions', columns: 'selected papers' };
+  base.rules.push('All tasks and exercises use the EXISTING displayed comparison table: dimensions are ROWS and papers are COLUMNS. Never transpose it. Prefer saying "the displayed comparison table" rather than re-specifying row/column counts. Task steps, title, criterion and exercise must agree.');
   return JSON.stringify(base);
 }
 
@@ -99,8 +109,8 @@ export function resolveAnchoredWorkbook(raw: unknown, sources: WorkbookSource[])
     const d = object(item);
     return { ...d, cells: Array.isArray(d.cells) ? d.cells.map(c => r.cell(c)) : [] };
   }) : [];
-  return validateWorkbook({ ...v, dimensions, comparison: { ...comparison, evidenceIds: r.refs(comparison.evidenceIds) },
-    task: { ...task, steps: Array.isArray(task.steps) ? task.steps.map(item => { const s = object(item); return { ...s, evidenceIds: r.refs(s.evidenceIds) }; }) : [] } }, sources);
+  return validateWorkbookLayout(validateWorkbook({ ...v, dimensions, comparison: { ...comparison, evidenceIds: r.refs(comparison.evidenceIds) },
+    task: { ...task, steps: Array.isArray(task.steps) ? task.steps.map(item => { const s = object(item); return { ...s, evidenceIds: r.refs(s.evidenceIds) }; }) : [] } }, sources));
 }
 
 function target(content: WorkbookContent, id: string) {
@@ -160,5 +170,5 @@ export function applyWorkbookPatches(raw: unknown, content: WorkbookContent, sou
     if (t.paperId) Object.assign(t.parent, r.cell(value, t.paperId));
     else for (const key of t.keys) t.parent[key] = key === 'evidenceIds' ? r.refs(value[key]) : value[key];
   }
-  return validateWorkbook(next, sources);
+  return validateWorkbookLayout(validateWorkbook(next, sources));
 }
