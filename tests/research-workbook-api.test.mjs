@@ -12,7 +12,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
   const serverDir = fileURLToPath(new URL("../dist/server/", import.meta.url));
   const modules = [];
   for await (const path of glob("**/*.js", { cwd: serverDir })) modules.push({ type: "ESModule", path: `${serverDir}${path}` });
-  let abstractCalls = 0;
+  let abstractCalls = 0; const modelQuestions=[];
   let calls = 0; let beforeReply = async () => {}; let invalidReview = false; let failureMode=''; const reviewFlags=[];
   let graphMode='supported',graphCorrections=0;
   const persist=await mkdtemp(join(tmpdir(),'pi-workbook-graph-'));
@@ -31,6 +31,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       }
       if (new URL(request.url).hostname !== "api.deepseek.com") return new Response("No external access in fixture", { status: 503 });
       calls++; const input = JSON.parse((await request.json()).messages[1].content); await beforeReply();
+      modelQuestions.push(input.question);assert.doesNotMatch(input.question,/Researcher's comparison question:/,'explicit focus must not be concatenated with unrelated route background');
       reviewFlags.push(Boolean(input.requiredCheckIds));
       if(failureMode==='rate')return Response.json({error:{message:'sensitive provider fixture text'}},{status:429});
       if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
@@ -230,7 +231,8 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
     await t.test('opt-in graph versions recover across a Worker restart and recheck every repaired field',async()=>{
       graphMode='repairable';graphCorrections=0;
       let pilot=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Graph persistence acceptance',allowRepair:true})).workbook;
-      assert.match(pilot.id,/:revision-v4$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
+      assert.equal(modelQuestions.at(-1),'Graph persistence acceptance');
+      assert.match(pilot.id,/:revision-v5$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
       pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       const count=calls,checkpoint=pilot.reviewProgress;
       await mf.dispose();mf=new Miniflare(options);
