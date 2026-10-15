@@ -12,6 +12,11 @@ import { workbookFailureText } from "../../lib/workbook-recovery";
 import "./research-workbook.css";
 
 const emptyArtifact = (): WorkbookArtifact => ({ observations: {}, decision: "", unresolved: "" });
+function reviewIssueLabel(id: string, zh: boolean) {
+  const names: Record<string, [string, string]> = { question: ['比较问题', 'Comparison question'], dimension: ['比较维度', 'Comparison dimension'], cell: ['摘要内容与出处', 'Abstract claim and evidence'], comparison: ['比较结论', 'Comparison conclusion'], 'task:title': ['研究任务', 'Research task'], 'task:criterion': ['任务完成标准', 'Task completion criteria'], 'learning:goal': ['学习目标', 'Learning goal'], 'learning:prerequisite': ['学习基础', 'Learning prerequisites'], 'learning:exercise': ['学习练习', 'Learning exercise'], 'learning:checkpoint': ['学习检查标准', 'Learning checkpoint'] };
+  if (id.startsWith('task:step:')) return `${zh ? '任务步骤' : 'Task step'} ${Number(id.split(':')[2]) + 1}`;
+  return (names[id] || names[id.split(':')[0]] || ['内容核对', 'Content review'])[zh ? 0 : 1];
+}
 type WorkbookResponse = { workbook: WorkbookState; versions: Array<{ id: string; status: string; created_at: string }>; error?: string };
 type WorkbookPanel="evidence"|"relations"|"task";
 export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper, onBack, taskContext, initialWorkbookId="", onWorkbookChange, initialPanel="evidence", initialFocus="", onViewChange }: {
@@ -25,6 +30,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const [versions, setVersions] = useState<Array<{ id: string; status: string; created_at: string }>>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
+  const [allowRepair, setAllowRepair] = useState(false);
   const [panel, setPanel] = useState<WorkbookPanel>(initialPanel);
   const [focus, setFocus] = useState(initialFocus);
   const [restoredView, setRestoredView] = useState({spaceId,trackId,panel:initialPanel,focus:initialFocus});
@@ -95,14 +101,16 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     } catch (e) { if (generation.current === epoch) setError(e instanceof Error ? e.message : "Save failed"); }
     finally { if (generation.current === epoch) setBusy(""); }
   };
-  const prepare = async (resume: boolean) => {
+  const prepare = async (resume: boolean, revise = false) => {
     if (busy || dirty) return;
     const epoch = generation.current; setBusy(resume ? "verify" : "draft"); setError(""); setNotice("");
     try {
-      let data = await request(resume ? { action: "advance", workbookId: state?.id } : { action: "prepare", paperIds: selected, focusQuestion: taskContext?.question || "" });
+      let data = await request(resume ? { action: "advance", workbookId: state?.id } : { action: "prepare", paperIds: revise ? state?.sources.map(s => s.id) : selected,
+        focusQuestion: revise ? state?.focusQuestion || '' : taskContext?.question || "", allowRepair: revise || allowRepair });
       if (generation.current !== epoch) return;
       setState(data.workbook); setVersions(data.versions);
       if (data.workbook.id) onWorkbookChange?.(data.workbook.id);
+      if (revise) setSelected(data.workbook.sources.map(s => s.id));
       for (let pass=0; pass<12 && data.workbook.status === "verifying" && !data.workbook.stale && !(data.workbook.busyUntil && data.workbook.busyUntil > Date.now()); pass++) {
         setBusy("verify"); data = await request({ action: "advance", workbookId: data.workbook.id });
         if (generation.current !== epoch) return;
@@ -139,20 +147,25 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       <summary>{zh ? "调整比较材料" : "Change comparison sources"}</summary>
       <p>{zh ? "选择 2–3 篇已审核论文。原始成果与补充阅读的身份不会因此改变。" : "Select 2–3 reviewed papers. This does not change their original or supplementary evidence roles."}</p>
       <div>{state?.candidates.map(s => <label key={s.id} aria-label={s.title}><input type="checkbox" checked={selected.includes(s.id)} disabled={Boolean(busy) || (!selected.includes(s.id) && selected.length >= 3)} onChange={() => setSelected(ids => ids.includes(s.id) ? ids.filter(id => id !== s.id) : [...ids, s.id])} /><span><MathText inline>{s.title}</MathText><small>{s.routeMember ? zh ? "当前路线材料" : "Current route material" : zh ? "本空间候选材料，需判断适配性" : "Workspace candidate; check its fit"}</small></span></label>)}</div>
+      <label className="pi-workbook-repair-option"><input type="checkbox" checked={allowRepair} disabled={Boolean(busy)} onChange={e => setAllowRepair(e.target.checked)} /><span>{zh ? '允许根据评审反馈修订一次' : 'Allow one correction using review feedback'}<small>{zh ? '试用：会增加模型调用。材料不足时停止；修订后全部重新核对。' : 'Pilot: adds model calls. Stops for missing evidence; all corrected content is reviewed again.'}</small></span></label>
       {state && state.candidates.length < 2 && <p>{zh ? "当前不足两篇已审核且有摘要的材料。已有发现流程继续补证；这里不会用未审核论文凑数。" : "Fewer than two reviewed papers have abstracts. Existing discovery continues; unreviewed papers cannot fill the comparison."}</p>}
       <button type="button" disabled={Boolean(busy) || dirty || selected.length < 2 || missing.length > 0} onClick={() => void prepare(false)}>{zh ? "准备有据的比较与任务" : "Prepare comparison and tasks"}</button>
       {versions.length > 1 && <label>{zh ? "历史版本" : "History"}<select value={state?.id || ""} disabled={Boolean(busy) || dirty} onChange={e => void openVersion(e.target.value)}>{versions.map((v, i) => <option key={v.id} value={v.id}>{versions.length - i} · {v.created_at} · {v.status}</option>)}</select></label>}
     </details>
     {state && ["draft", "verifying", "retryable"].includes(state.status) && !busy && <div role="status">
       <p>{state.failure ? workbookFailureText(state.failure.code, zh) : zh ? "内容尚未完成，已保存的部分可继续处理。" : "Content is unfinished; saved progress can be continued."}</p>
-      <p>{state.stage === 'review' ? (zh ? "比较草稿已保存，继续时只进行独立核对。" : "The draft is saved. Continuing resumes independent review only.") : (zh ? "尚未保存完整草稿，继续时会重新生成当前步骤。" : "A complete draft is not saved yet. Continuing regenerates this step.")}</p>
+      <p>{state.revisionFlow?.next === 'repair' ? (zh ? '评审反馈已保存，下一步按反馈修订一次，再全部重新核对。' : 'Review feedback is saved. Next: one correction, followed by a full independent review.') : state.stage === 'review' ? (zh ? "比较草稿已保存，继续时只进行独立核对。" : "The draft is saved. Continuing resumes independent review only.") : (zh ? "尚未保存完整草稿，继续时会重新生成当前步骤。" : "A complete draft is not saved yet. Continuing regenerates this step.")}</p>
       {Boolean(state.reviewProgress?.total) && <p>{zh ? "已核对比较项：" : "Reviewed fields: "}{state.reviewProgress!.completed} / {state.reviewProgress!.total}</p>}
-      <button type="button" disabled={state.stale || dirty || state.retryAt > now || (state.busyUntil || 0) > now} onClick={() => void prepare(true)}>{state.stage === 'draft' ? (zh ? "继续生成" : "Continue generation") : (zh ? "继续核对" : "Continue review")}</button>
+      <button type="button" disabled={state.stale || dirty || state.retryAt > now || (state.busyUntil || 0) > now} onClick={() => void prepare(true)}>{state.revisionFlow?.next === 'repair' ? (zh ? '修订并重新核对' : 'Correct and review again') : state.stage === 'draft' ? (zh ? "继续生成" : "Continue generation") : (zh ? "继续核对" : "Continue review")}</button>
       <button type="button" disabled={dirty} onClick={() => void openVersion(state.id!)}>{zh ? "刷新进度" : "Refresh progress"}</button>
       {(state.busyUntil || 0) > now && <small>{zh ? "已有请求正在处理，可以刷新进度；超时后可继续。" : "A request is in progress. Refresh its progress; continue if it expires."}</small>}
       {state.retryAt > now && <small>{zh ? "稍后重试：" : "Retry after: "}{new Date(state.retryAt).toLocaleTimeString()}</small>}
     </div>}
-    {state?.status === "rejected" && <p>{zh ? "这组材料生成的比较未通过内容核对。请调整材料；未审核稿不会展示成研究结论。" : "The comparison failed content review. Adjust the sources; an unreviewed draft is not presented as a research finding."}</p>}
+    {state?.revisionFlow && <p role="status">{zh ? '反馈修订：' : 'Feedback corrections: '}{state.revisionFlow.repairs} / {state.revisionFlow.limit}{state.status === 'rejected' ? (zh ? ' · 本次流程已停止，请按下方原因补充材料或调整问题。' : ' · This run has stopped. Use the reasons below to revise the question or sources.') : ''}</p>}
+    {state?.status === "rejected" && <section className="pi-workbook-review-issues"><h2>{zh ? '比较未通过的原因' : 'Why the comparison did not pass'}</h2><p>{zh ? "请按具体原因核查材料。未通过的内容尚未发布为研究结论。" : "Check the sources against these specific reasons. Rejected content has not been published as a research finding."}</p>
+      {!!state.reviewIssues?.length && <ul>{state.reviewIssues.map(issue => <li key={issue.id}><strong>{reviewIssueLabel(issue.id, zh)}</strong><p><MathText>{issue.reason}</MathText></p>{issue.issueType === 'evidence_gap' && <small>{zh ? '需要补充证据，自动修订已停止。' : 'Additional evidence is needed; automatic correction has stopped.'}</small>}<div>{issue.paperIds.map(id => { const paper = state.sources.find(s => s.id === id); return paper && <button type="button" key={id} onClick={() => onOpenPaper(paper, issue.reason)}>{zh ? '核查材料：' : 'Inspect source: '}{paper.title}</button>; })}</div></li>)}</ul>}
+      {!state.revisionFlow && <button type="button" disabled={Boolean(busy) || state.stale || dirty} onClick={() => void prepare(false, true)}>{zh ? '试用按反馈修订一次' : 'Try one feedback correction'}</button>}
+    </section>}
     {content && <>
       <div className="pi-comparison-sources">{state.sources.map((source,index) => <div key={source.id}><span>{String(index+1).padStart(2,"0")}</span><p><MathText inline>{source.title}</MathText></p></div>)}</div>
       <nav className="pi-workbook-tabs" aria-label={zh ? "比较工作视角" : "Workbook view"}>{(["evidence", "relations", "task"] as const).map(p => <button type="button" key={p} aria-pressed={panel === p} onClick={() => {setPanel(p);onViewChange?.(p,focus);}}>{p === "evidence" ? zh ? "条件与证据" : "Conditions & evidence" : p === "relations" ? zh ? "关系与可比性" : "Relationships & comparability" : zh ? "研究练习" : "Research exercise"}</button>)}</nav>

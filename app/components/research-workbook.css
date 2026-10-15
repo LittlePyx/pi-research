@@ -37,6 +37,12 @@
 .pi-workbook-lesson { border-block: 1px solid #d4ddd5; padding: 16px 0; margin: 28px 0; }
 .pi-workbook dt { font-weight: 600; margin-top: 14px; }
 .pi-workbook dd { margin: 4px 0 12px; }
+.pi-workbook-repair-option { display: flex; align-items: flex-start; gap: 10px; margin-block: 16px; }
+.pi-workbook-repair-option small { display: block; margin-top: 4px; }
+.pi-workbook-review-issues { border: 1px solid #ccd7ce; padding: 18px; margin-block: 20px; overflow-wrap: anywhere; }
+.pi-workbook-review-issues li { padding-block: 12px; }
+.pi-workbook-review-issues li p { margin-block: 6px; }
+.pi-workbook-review-issues li button { display: block; text-align: start; margin-block: 6px; max-width: 100%; white-space: normal; }
 .pi-workbook-relation { display: grid; gap: 12px; margin: 20px 0; }
 .pi-workbook-relation > div { padding: 14px; border: 1px solid #ccd7ce; display: flex; gap: 12px; align-items: baseline; }
 .pi-workbook-relation > strong { border-left: 2px dashed #718776; margin-left: 22px; padding: 12px 18px; }

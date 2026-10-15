@@ -69,3 +69,14 @@ test('an in-flight comparison can refresh its checkpoint without starting anothe
  assert.equal(h.requests.length,1);assert.equal(h.requests[0].init?.method,undefined);assert.match(h.requests[0].url,/workbookId=in-flight/);
  h.requests.shift().resolve(ready('in-flight'));await settle();h.render();
 });
+
+test('a feedback correction preserves the original selected sources and focused question',async()=>{
+ const h=harness(),data=ready('rejected-baseline');
+ Object.assign(data.workbook,{content:null,artifact:null,status:'rejected',focusQuestion:'Keep this exact focused question',reviewIssues:[{id:'comparison',paperIds:[workbookSources[0].id],reason:'The claimed bound is not entailed by the quote.',issueType:'unclassified'}]});
+ h.requests.shift().resolve(data);await settle();h.render();
+ assert.match(h.text(),/claimed bound is not entailed/);assert.match(h.text(),/Comparison conclusion/);
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Try one feedback correction').props.onClick();
+ const input=JSON.parse(h.requests[0].init.body);assert.equal(input.allowRepair,true);assert.equal(input.focusQuestion,data.workbook.focusQuestion);assert.deepEqual(input.paperIds,workbookSources.map(s=>s.id));
+ h.requests.shift().resolve({...data,workbook:{...data.workbook,id:'pilot',revisionFlow:{engine:'langgraph-v1',repairs:1,limit:1,next:'stopped'}}});await settle();h.render();
+ assert.equal(h.nodes().some(n=>n.type==='button'&&n.props.children==='Try one feedback correction'),false,'stopped trials cannot start another correction');
+});

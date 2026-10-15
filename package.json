@@ -21,6 +21,8 @@
     "eval:personalization": "node scripts/run-personalization-pilot.mjs"
   },
   "dependencies": {
+    "@langchain/core": "1.2.17",
+    "@langchain/langgraph": "1.5.0",
     "drizzle-orm": "0.45.2",
     "katex": "0.18.1",
     "react": "19.2.6",

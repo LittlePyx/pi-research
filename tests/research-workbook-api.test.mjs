@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { glob } from "node:fs/promises";
+import { glob, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from 'node:os';
+import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Miniflare } from "miniflare";
@@ -12,7 +14,9 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
   for await (const path of glob("**/*.js", { cwd: serverDir })) modules.push({ type: "ESModule", path: `${serverDir}${path}` });
   let abstractCalls = 0;
   let calls = 0; let beforeReply = async () => {}; let invalidReview = false; let failureMode=''; const reviewFlags=[];
-  const mf = new Miniflare({ host: "127.0.0.1", cf: false, d1Databases: ["DB"], compatibilityDate: "2026-05-15", compatibilityFlags: ["nodejs_compat"],
+  let graphMode='supported',graphCorrections=0;
+  const persist=await mkdtemp(join(tmpdir(),'pi-workbook-graph-'));
+  const options = { host: "127.0.0.1", cf: false, d1Databases: ["DB"], d1Persist:persist, compatibilityDate: "2026-05-15", compatibilityFlags: ["nodejs_compat"],
     bindings: { DEEPSEEK_API_KEY: "sk-isolated-fixture-not-a-real-key" }, modulesRoot: serverDir,
     modules: [{ type: "ESModule", path: `${serverDir}workbook-test-entry.js`, contents: `import app from './index.js'; export default { async fetch(request, env, ctx) {
       if (new URL(request.url).pathname === '/fixture') return Response.json(await env.DB.batch((await request.json()).map(({sql,values=[]}) => env.DB.prepare(sql).bind(...values))));
@@ -32,11 +36,14 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
       if(failureMode==='invalid-evidence'){const invalid=workbookSample();invalid.dimensions[0].cells[0].quote='A paraphrase that is not present in the supplied abstract.';return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
       if(failureMode==='recover-evidence')assert.match(input.recovery,/unlocated_workbook_evidence/);
+      if(input.correction){graphCorrections++;assert.ok(input.correction.issues.some(i=>i.id==='comparison'));}
       const output = input.requiredCheckIds ? { verdict: "supported", checks: input.requiredCheckIds.map(id => ({ id,
-        verdict: invalidReview && id === "comparison" ? "unsupported" : "supported", paperIds: workbookSources.map(s => s.id), reason: "Isolated deterministic review; not a live academic judgment." })) } : workbookSample();
+        verdict: (invalidReview || input.issuePolicy && graphMode!=='supported' && (!graphCorrections || graphMode==='evidence_gap')) && id === "comparison" ? "unsupported" : "supported", paperIds: workbookSources.map(s => s.id), reason: "Isolated deterministic review; not a live academic judgment.",
+        ...(input.issuePolicy && id==='comparison'?{issueType:graphMode==='evidence_gap'?'evidence_gap':'repairable'}:{}) })) } : workbookSample();
       return Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(output) } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
     },
-  });
+  };
+  let mf = new Miniflare(options);
   let cookie = "pi_anonymous_workspace=workbook-fixture-owner-00001";
   const request = async (path, body, expected = 200) => {
     const response = await mf.dispatchFetch(`http://localhost${path}`, { method: body ? "POST" : "GET", headers: { cookie, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -209,6 +216,42 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       const repaired=(await post({action:'advance',workbookId:failed.id})).workbook;assert.equal(repaired.status,'verifying');assert.equal(repaired.content,null);
       failureMode='';assert.equal((await finishReview(repaired)).status,'ready');
     });
+    await t.test('opt-in graph versions recover across a Worker restart and recheck every repaired field',async()=>{
+      graphMode='repairable';graphCorrections=0;
+      let pilot=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Graph persistence acceptance',allowRepair:true})).workbook;
+      assert.match(pilot.id,/:revision-v1$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
+      pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
+      const count=calls,checkpoint=pilot.reviewProgress;
+      await mf.dispose();mf=new Miniflare(options);
+      const restored=(await request(path+'&workbookId='+encodeURIComponent(pilot.id))).workbook;
+      assert.equal(calls,count);assert.deepEqual(restored.reviewProgress,checkpoint);assert.equal(restored.id,pilot.id);
+      for(let i=0;i<10&&pilot.revisionFlow.next!=='repair';i++)pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
+      assert.equal(pilot.revisionFlow.next,'repair');assert.equal(pilot.status,'verifying');assert.equal(pilot.reviewIssues[0].issueType,'repairable');
+      failureMode='rate';pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
+      assert.equal(pilot.status,'retryable');assert.equal(pilot.revisionFlow.repairs,0);assert.equal(pilot.revisionFlow.next,'repair');
+      await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[pilot.id]}]);failureMode='';
+      pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
+      assert.equal(pilot.revisionFlow.repairs,1);assert.equal(pilot.reviewProgress.completed,0);assert.equal(pilot.content,null);
+      pilot=await finishReview(pilot);assert.equal(pilot.status,'ready');assert.equal(graphCorrections,1);
+      assert.equal(pilot.reviewProgress.completed,workbookReviewFields(workbookSample()).length);
+      const before=calls;await post({action:'advance',workbookId:pilot.id});assert.equal(calls,before);
+      // An evidence withdrawal must remain readable and prevent further writes, including in a fresh isolate.
+      await sql([{sql:'UPDATE paper_insights SET ever_recommended=0 WHERE paper_id=?',values:[workbookSources[0].id]}]);
+      assert.equal((await request(path+'&workbookId='+encodeURIComponent(pilot.id))).workbook.stale,true);
+      await post({action:'save-artifact',workbookId:pilot.id,sourceRevision:pilot.revision,baseRevision:0,value:{}},409);
+      await sql([{sql:'UPDATE paper_insights SET ever_recommended=1 WHERE paper_id=?',values:[workbookSources[0].id]}]);
+      graphMode='supported';
+    });
+    await t.test('an evidence-gap graph stops, exposes reasons, and preserves the baseline comparison',async()=>{
+      graphMode='evidence_gap';graphCorrections=0;
+      const baseline=state.id;
+      let pilot=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Missing evidence acceptance',allowRepair:true})).workbook;
+      pilot=await finishReview(pilot);assert.equal(pilot.status,'rejected');assert.equal(pilot.content,null);assert.equal(graphCorrections,0);
+      assert.equal(pilot.reviewIssues[0].issueType,'evidence_gap');assert.equal(pilot.revisionFlow.next,'stopped');
+      const before=calls;await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Missing evidence acceptance',allowRepair:true});assert.equal(calls,before);
+      assert.equal((await request(path+'&workbookId='+encodeURIComponent(baseline))).workbook.status,'ready');
+      graphMode='supported';
+    });
     await t.test("source changes invalidate saved content and guard artifacts", async () => {
       await sql([{ sql: "UPDATE paper_insights SET abstract_text = abstract_text || ' Revised.' WHERE paper_id = ?", values: [workbookSources[0].id] }]);
       assert.equal((await request(path)).workbook.stale, true);
@@ -225,5 +268,5 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       state = (await post({ action: "prepare", paperIds: workbookSources.map(s => s.id) })).workbook;
       assert.equal(state.stale, true); assert.equal(state.content, null);
     });
-  } finally { await mf.dispose(); }
+  } finally { await mf.dispose(); assert.ok(resolve(persist).startsWith(resolve(tmpdir())+sep+'pi-workbook-graph-')); await rm(persist,{recursive:true,force:true}); }
 });

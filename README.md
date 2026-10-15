@@ -55,6 +55,18 @@ Before enabling production mail, a site administrator must set `RESEND_API_KEY` 
 
 Mail contains that date's saved brief papers only when their recommendation evidence is verified; otherwise it honestly reports that the digest is not ready. It does not generate model content or substitute old daily papers. Durable daily delivery rows, leases, an immutable payload and provider idempotency keys protect concurrent/retry delivery. Retries stop before the provider's 24-hour idempotency expiry. “Sent” means accepted by the mail service, not proof of inbox delivery. Unsubscribe GET shows a confirmation page; POST (including one-click mail-client requests) disables sending.
 
+## Comparison workflow pilot
+
+Paper comparison offers an opt-in, one-correction workflow using LangGraph.js. Existing comparisons keep their original identities; trial versions append `:revision-v1`. Reopening a graph task finds its exact question/source version, and users can still select the baseline in history. Rejected comparisons show field-specific review reasons and links to the relevant source papers.
+
+The graph routes through draft, batched independent review, optional correction and a final publication gate. It collects a complete review before deciding whether a correction is justified. Only explicitly repairable issues enter the correction branch; an evidence gap stops it. One successful correction is allowed, followed by a new review of **every** field, including previously supported ones. A second rejection stops the run. Corrected text still needs exact source IDs, located quotes, bilingual fields and supported instructions; the graph never overrides these validators.
+
+Each HTTP advance performs at most one model call. The existing D1 workbook row is the authoritative domain checkpoint; a new graph invocation rehydrates its draft, checks and correction count. Saves retain the existing owner, source revision and lease-token guards. This pilot does **not** use a native LangGraph checkpointer, a background graph server or an in-memory saver for durability. A crashed invocation can require its unfinished model call again after lease expiry; previously committed batches are not repeated. Successful-response token usage remains recorded by the existing application accounting.
+
+Only `@langchain/langgraph` and its required `@langchain/core` dependency are added. Model calls continue through the existing direct DeepSeek adapter; the LangChain agent framework, generic ReAct tool loop, and external tracing services are not enabled. Monitoring and learning-path orchestration keep their existing implementations.
+
+`tests/workbook-graph.test.mjs` compares call budgets on identical deterministic content and covers evidence gaps, correction limits, invalid evidence and retry recovery. The built Worker API test also restarts Miniflare with persisted D1 between review batches. These checks establish runtime/recovery behavior, **not** improved academic content quality. Broader adoption requires paired real-model results on the same sources, independently assessed quality, token/latency measurements and an acceptable deployment-size cost.
+
 ## Validation
 
 ```bash
