@@ -104,10 +104,20 @@ function target(content: WorkbookContent, id: string) {
 
 export function workbookPatchPrompt(question: string, sources: WorkbookSource[], content: WorkbookContent, issues: WorkbookReviewIssue[]) {
   const base = JSON.parse(anchoredWorkbookPrompt(question, sources));
+  // Read-only context uses the same aliases as patch values, including originally missing cells.
+  const context = structuredClone(content), catalog = workbookEvidenceCatalog(sources);
+  const keys = new Map(catalog.map(s => [s.paperId, s.key]));
+  const refs = (ids: string[]) => ids.map(id => {
+    for (const d of content.dimensions) for (const c of d.cells) if (id === `${d.id}:${c.paperId}`) return `${d.id}:${keys.get(c.paperId)}`;
+    throw new Error('untraceable_workbook_instruction');
+  });
+  for (const d of context.dimensions) for (const c of d.cells) c.paperId = keys.get(c.paperId)!;
+  context.comparison.evidenceIds = refs(context.comparison.evidenceIds);
+  for (const step of context.task.steps) step.evidenceIds = refs(step.evidenceIds);
   const patches = issues.map((issue, i) => ({ id: `f${i + 1}`, field: issue.id, reason: issue.reason,
-    valueKeys: target(content, issue.id).keys }));
+    valueKeys: target(content, issue.id).keys, ...(target(content, issue.id).paperId ? { sourceKey: keys.get(target(content, issue.id).paperId!) } : {}) }));
   delete base.contract;
-  return JSON.stringify({ ...base, task: 'Correct only the failed fields listed in correction.targets. Return patches, not a complete workbook.', previousWorkbook: content,
+  return JSON.stringify({ ...base, task: 'Correct only the failed fields listed in correction.targets. Return patches, not a complete workbook.', previousWorkbook: context,
     correction: { issues, targets: patches, instruction: 'Each target must appear exactly once. Use ONLY its valueKeys. All other fields, dimension identities, paper identities and step order are immutable. Cell patches use quoteId from that paper’s catalog (empty for missing). evidenceIds use short source keys. Preserve supported content exactly. Correct both languages without adding claims. All fields will be independently reviewed again.' },
     output: { patches: [{ id: 'f1', value: 'object containing exactly this target’s valueKeys' }] } });
 }

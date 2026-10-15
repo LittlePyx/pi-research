@@ -40,6 +40,15 @@ test('field patches reject unreviewed targets, extra properties, omissions, dupl
  assert.throws(()=>applyWorkbookPatches({patches:[{id:'f1',value},{id:'f1',value}]},content,workbookSources,[issue('comparison'),issue('question')]),/invalid_workbook_patch/);
  assert.throws(()=>applyWorkbookPatches({patches:[{id:'f1',value}]},content,workbookSources,[{...issue('comparison'),issueType:'evidence_gap'}]),/invalid_workbook_patch/);
 });
+test('cell correction targets identify the correct paper even when the old cell was missing',()=>{
+ const content=resolvedSample(),missing=content.dimensions[2].cells[0];
+ const p=JSON.parse(workbookPatchPrompt('q',workbookSources,content,[issue(`cell:conditions:${missing.paperId}`)]));
+ const key=workbookEvidenceCatalog(workbookSources).find(s=>s.paperId===missing.paperId).key;
+ assert.equal(p.correction.targets[0].sourceKey,key);
+ assert.equal(p.previousWorkbook.dimensions[2].cells[0].paperId,key);
+ assert.ok(p.previousWorkbook.comparison.evidenceIds.every(id=>/:p[123]$/.test(id)));
+ assert.equal(content.dimensions[2].cells[0].paperId,missing.paperId);
+});
 test('each bilingual field group and cell can be corrected without changing identities or order',()=>{
  const content=resolvedSample(),wire=anchoredSample(),cell=content.dimensions[1].cells[0];
  const ids=['question','dimension:metric',`cell:method:${cell.paperId}`,'task:title','task:step:0','task:criterion','learning:goal','learning:prerequisite','learning:exercise','learning:checkpoint'];

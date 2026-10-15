@@ -35,6 +35,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       if(failureMode==='rate')return Response.json({error:{message:'sensitive provider fixture text'}},{status:429});
       if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
       if(failureMode==='bad-json')return Response.json({choices:[{finish_reason:'stop',message:{content:'private invalid output'}}]});
+      if(failureMode==='unauthorized-patch')return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({patches:[{id:'f1',value:{...anchoredSample().comparison,questionZh:'Unapproved question rewrite'}}]})}}]});
       if(failureMode==='invalid-evidence'){const invalid=anchoredSample();invalid.dimensions[0].cells[0].quoteId='p1.fabricated';return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
       if(failureMode==='recover-evidence')assert.match(input.recovery,/unlocated_workbook_evidence/);
       if(failureMode==='recover-json')assert.match(input.recovery,/JSON-escape/);
@@ -236,12 +237,20 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       assert.equal(calls,count);assert.deepEqual(restored.reviewProgress,checkpoint);assert.equal(restored.id,pilot.id);
       for(let i=0;i<10&&pilot.revisionFlow.next!=='repair';i++)pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       assert.equal(pilot.revisionFlow.next,'repair');assert.equal(pilot.status,'verifying');assert.equal(pilot.reviewIssues[0].issueType,'repairable');
+      const savedDraft=(await sql([{sql:'SELECT draft_json FROM research_comparison_workbooks WHERE id=?',values:[pilot.id]}]))[0].results[0].draft_json;
+      failureMode='unauthorized-patch';pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
+      assert.equal(pilot.failure.detail,'invalid_workbook_patch');assert.equal(pilot.revisionFlow.repairs,0);
+      assert.equal((await sql([{sql:'SELECT draft_json FROM research_comparison_workbooks WHERE id=?',values:[pilot.id]}]))[0].results[0].draft_json,savedDraft);
+      await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[pilot.id]}]);
       failureMode='rate';pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       assert.equal(pilot.status,'retryable');assert.equal(pilot.revisionFlow.repairs,0);assert.equal(pilot.revisionFlow.next,'repair');
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[pilot.id]}]);failureMode='';
       pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       assert.equal(pilot.revisionFlow.repairs,1);assert.equal(pilot.reviewProgress.completed,0);assert.equal(pilot.content,null);
       assert.equal(pilot.revisionFlow.revisedFields,1);assert.equal(pilot.revisionFlow.preservedFields,workbookReviewFields(workbookSample()).length-1);
+      const corrected=JSON.parse((await sql([{sql:'SELECT draft_json FROM research_comparison_workbooks WHERE id=?',values:[pilot.id]}]))[0].results[0].draft_json);
+      const {comparison:beforeComparison,...beforeApproved}=JSON.parse(savedDraft),{comparison:afterComparison,...afterApproved}=corrected;
+      assert.deepEqual(afterApproved,beforeApproved);assert.notDeepEqual(afterComparison,beforeComparison);
       pilot=await finishReview(pilot);assert.equal(pilot.status,'ready');assert.equal(graphCorrections,1);
       assert.equal(pilot.reviewProgress.completed,workbookReviewFields(workbookSample()).length);
       const before=calls;await post({action:'advance',workbookId:pilot.id});assert.equal(calls,before);
