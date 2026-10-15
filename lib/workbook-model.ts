@@ -14,13 +14,18 @@ export async function requestWorkbookModel(apiKey: string, prompt: string, revie
     let data: { choices?: Array<{ finish_reason?: string; message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     try { data = await response.json(); } catch (error) {
       if (error instanceof Error && ['AbortError','TimeoutError'].includes(error.name)) throw error;
-      throw new WorkbookModelError('invalid_response');
+      throw new WorkbookModelError('invalid_response', response.status, '', 'invalid_provider_response');
     }
     const choice = data?.choices?.[0];
     if (choice?.finish_reason === 'length') throw new WorkbookModelError('output_truncated', 200, 'length');
-    if (choice?.finish_reason !== 'stop' || !choice.message?.content) throw new WorkbookModelError('invalid_response');
-    try { return { raw: JSON.parse(choice.message.content), usage: data.usage }; }
-    catch { throw new WorkbookModelError('invalid_response', 200, 'stop'); }
+    if (!choice?.message?.content || typeof choice.message.content === 'string' && !choice.message.content.trim()) throw new WorkbookModelError('invalid_response', 200, '', 'empty_model_response');
+    if (typeof choice.message.content !== 'string') throw new WorkbookModelError('invalid_response', 200, '', 'invalid_provider_response');
+    if (choice.finish_reason !== 'stop') throw new WorkbookModelError('invalid_response', 200, '', 'unexpected_finish_reason');
+    // Strip only a complete outer JSON fence. Never repair malformed escaping, change quotes, or extract arbitrary embedded objects.
+    const text = choice.message.content.trim();
+    const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
+    try { return { raw: JSON.parse(fenced ? fenced[1] : text), usage: data.usage }; }
+    catch { throw new WorkbookModelError('invalid_response', 200, 'stop', 'invalid_json_response'); }
   } catch (error) {
     if (error instanceof WorkbookModelError || error instanceof Error && ['AbortError','TimeoutError'].includes(error.name)) throw error;
     throw new WorkbookModelError('model_unavailable');

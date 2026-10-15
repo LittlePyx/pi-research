@@ -2,7 +2,7 @@ import { focusedWorkbookQuestion, storedWorkbookQuestion, workbookFocus, graphSe
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { requestWorkbookModel } from "../../../lib/workbook-model";
-import { WorkbookModelError, workbookFailure, workbookRetryDelay, workbookValidationCode, workbookRecoveryHint } from "../../../lib/workbook-recovery";
+import { WorkbookModelError, workbookFailure, workbookRetryDelay, workbookValidationCode, workbookRecoveryHint, workbookResponseDetail } from "../../../lib/workbook-recovery";
 import { WORKBOOK_POLICY, WORKBOOK_REVIEW_BATCH_SIZE, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, validateWorkbookReviewPart, workbookDraftPrompt, workbookReviewFields, workbookReviewIssues, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
 import type { WorkbookGraphReview } from '../../../lib/workbook-graph';
 
@@ -75,7 +75,8 @@ async function projection(original: Context, row: Row | null, preferred: string[
   const failureRow = row?.status === 'retryable' ? await ctx.database.prepare(`SELECT code, stage FROM research_workbook_attempts
     WHERE workbook_id = ? AND space_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`).bind(row.id, ctx.spaceId).first<NonNullable<WorkbookState['failure']>>() : null;
   const detail = workbookValidationCode(failureRow?.code);
-  const failure = failureRow && detail ? { code: 'invalid_evidence' as const, stage: failureRow.stage, detail } : failureRow;
+  const responseDetail = workbookResponseDetail(failureRow?.code);
+  const failure = failureRow && detail ? { code: 'invalid_evidence' as const, stage: failureRow.stage, detail } : failureRow && responseDetail ? { code: 'invalid_response' as const, stage: failureRow.stage, detail: responseDetail } : failureRow;
   const savedReview = parse(row?.review_json || '');
   const reviewIssues = workbookReviewIssues(savedReview);
   let revisionFlow: WorkbookState['revisionFlow'];
@@ -230,7 +231,7 @@ export async function POST(request: Request) {
       await active.ctx.database.batch([
         active.ctx.database.prepare(`INSERT INTO research_workbook_attempts (id, workbook_id, space_id, stage, code, provider_status, finish_reason, elapsed_ms)
           SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM research_comparison_workbooks WHERE id = ? AND space_id = ? AND lock_token = ?)`)
-          .bind(crypto.randomUUID(), active.id, active.ctx.spaceId, active.stage, workbookValidationCode(error) || code, error instanceof WorkbookModelError ? error.providerStatus : 0,
+          .bind(crypto.randomUUID(), active.id, active.ctx.spaceId, active.stage, workbookValidationCode(error) || (error instanceof WorkbookModelError ? error.detail : null) || code, error instanceof WorkbookModelError ? error.providerStatus : 0,
             error instanceof WorkbookModelError ? error.finishReason : '', Date.now() - active.started, active.id, active.ctx.spaceId, active.token),
         active.ctx.database.prepare(`UPDATE research_comparison_workbooks SET status = 'retryable', retry_at = ?, lock_token = NULL, lease_until = 0,
           updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND lock_token = ?`)

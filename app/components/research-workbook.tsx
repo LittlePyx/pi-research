@@ -8,7 +8,7 @@ import { graphSelection, type GraphTaskContext } from "../../lib/graph-task";
 import { DraftRecovery } from "./draft-recovery";
 import { sessionDraftKey, writeSessionDraft, clearSessionDraft } from "../../lib/session-draft";
 import { MathText } from "./math-text";
-import { workbookFailureText } from "../../lib/workbook-recovery";
+import { workbookFailureText, workbookResponseDetailText } from "../../lib/workbook-recovery";
 import "./research-workbook.css";
 
 const emptyArtifact = (): WorkbookArtifact => ({ observations: {}, decision: "", unresolved: "" });
@@ -154,6 +154,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     </details>
     {state && ["draft", "verifying", "retryable"].includes(state.status) && !busy && <div role="status">
       <p>{state.failure ? workbookFailureText(state.failure.code, zh) : zh ? "内容尚未完成，已保存的部分可继续处理。" : "Content is unfinished; saved progress can be continued."}</p>
+      {state.failure?.code === 'invalid_response' && state.failure.detail && <p>{workbookResponseDetailText(state.failure.detail, zh)}</p>}
       <p>{state.revisionFlow?.next === 'repair' ? (zh ? '评审反馈已保存，下一步按反馈修订一次，再全部重新核对。' : 'Review feedback is saved. Next: one correction, followed by a full independent review.') : state.stage === 'review' ? (zh ? "比较草稿已保存，继续时只进行独立核对。" : "The draft is saved. Continuing resumes independent review only.") : (zh ? "尚未保存完整草稿，继续时会重新生成当前步骤。" : "A complete draft is not saved yet. Continuing regenerates this step.")}</p>
       {Boolean(state.reviewProgress?.total) && <p>{zh ? "已核对比较项：" : "Reviewed fields: "}{state.reviewProgress!.completed} / {state.reviewProgress!.total}</p>}
       <button type="button" disabled={state.stale || dirty || state.retryAt > now || (state.busyUntil || 0) > now} onClick={() => void prepare(true)}>{state.revisionFlow?.next === 'repair' ? (zh ? '修订并重新核对' : 'Correct and review again') : state.stage === 'draft' ? (zh ? "继续生成" : "Continue generation") : (zh ? "继续核对" : "Continue review")}</button>

@@ -65,6 +65,8 @@ Each HTTP advance performs at most one model call. The existing D1 workbook row 
 
 Only `@langchain/langgraph` and its required `@langchain/core` dependency are added. Model calls continue through the existing direct DeepSeek adapter; the LangChain agent framework, generic ReAct tool loop, and external tracing services are not enabled. Monitoring and learning-path orchestration keep their existing implementations.
 
+Comparison protocol failures distinguish malformed JSON, empty content, abnormal completion and invalid provider envelopes using fixed diagnostic codes, never raw model responses. A complete outer JSON code fence can be removed; malformed escapes and arbitrary surrounding prose are rejected. Protocol retries request correct JSON escaping while preserving decoded evidence verbatim.
+
 `tests/workbook-graph.test.mjs` compares call budgets on identical deterministic content and covers evidence gaps, correction limits, invalid evidence and retry recovery. The built Worker API test also restarts Miniflare with persisted D1 between review batches. These checks establish runtime/recovery behavior, **not** improved academic content quality. Broader adoption requires paired real-model results on the same sources, independently assessed quality, token/latency measurements and an acceptable deployment-size cost.
 
 ## Validation

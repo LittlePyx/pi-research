@@ -35,4 +35,22 @@ test('recovery feedback accepts only known validation codes and never arbitrary 
  assert.equal(workbookValidationCode(new Error('unlocated_workbook_evidence')),'unlocated_workbook_evidence');
  assert.match(workbookRecoveryHint('unlocated_workbook_evidence'),/without ellipses or paraphrase/);
  assert.equal(workbookRecoveryHint('private prompt or key'), '');
+ assert.match(workbookRecoveryHint('invalid_response'), /JSON-escape/);
+ assert.match(workbookRecoveryHint('invalid_json_response'), /preserve the original source/);
+});
+
+test('complete JSON fences are harmless wrappers but malformed math escapes and surrounding prose remain invalid',async()=>{
+ const reply=content=>async()=>Response.json({choices:[{finish_reason:'stop',message:{content}}]});
+ const json=JSON.stringify({quote:String.raw`A valid mathematical quote with \epsilon and "conditions".`});
+ assert.deepEqual((await requestWorkbookModel('fixture','source',false,reply('```json\n'+json+'\n```'))).raw,JSON.parse(json));
+ for(const content of [String.raw`{"quote":"invalid \epsilon escape"}`,'Here is the answer: '+json]){
+  await assert.rejects(requestWorkbookModel('fixture','source',false,reply(content)),e=>e.code==='invalid_response'&&e.detail==='invalid_json_response');
+ }
+});
+
+test('protocol diagnostics use fixed codes without retaining model content or unknown finish values',async()=>{
+ const cases=[[{},'empty_model_response'],[{choices:[{finish_reason:'private provider text',message:{content:'{}'}}]},'unexpected_finish_reason']];
+ for(const [body,detail]of cases)await assert.rejects(requestWorkbookModel('fixture','source',false,async()=>Response.json(body)),e=>{
+  assert.equal(e.detail,detail);assert.doesNotMatch(JSON.stringify(e),/private provider text/);return true;
+ });
 });

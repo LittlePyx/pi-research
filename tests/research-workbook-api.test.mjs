@@ -34,8 +34,10 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       reviewFlags.push(Boolean(input.requiredCheckIds));
       if(failureMode==='rate')return Response.json({error:{message:'sensitive provider fixture text'}},{status:429});
       if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
+      if(failureMode==='bad-json')return Response.json({choices:[{finish_reason:'stop',message:{content:'private invalid output'}}]});
       if(failureMode==='invalid-evidence'){const invalid=workbookSample();invalid.dimensions[0].cells[0].quote='A paraphrase that is not present in the supplied abstract.';return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
       if(failureMode==='recover-evidence')assert.match(input.recovery,/unlocated_workbook_evidence/);
+      if(failureMode==='recover-json')assert.match(input.recovery,/JSON-escape/);
       if(input.correction){graphCorrections++;assert.ok(input.correction.issues.some(i=>i.id==='comparison'));}
       const output = input.requiredCheckIds ? { verdict: "supported", checks: input.requiredCheckIds.map(id => ({ id,
         verdict: (invalidReview || input.issuePolicy && graphMode!=='supported' && (!graphCorrections || graphMode==='evidence_gap')) && id === "comparison" ? "unsupported" : "supported", paperIds: workbookSources.map(s => s.id), reason: "Isolated deterministic review; not a live academic judgment.",
@@ -215,6 +217,13 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[failed.id]}]);failureMode='recover-evidence';
       const repaired=(await post({action:'advance',workbookId:failed.id})).workbook;assert.equal(repaired.status,'verifying');assert.equal(repaired.content,null);
       failureMode='';assert.equal((await finishReview(repaired)).status,'ready');
+    });
+    await t.test('invalid JSON is persisted as a safe diagnostic and the same graph resumes with protocol feedback',async()=>{
+      failureMode='bad-json';
+      let pilot=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Graph JSON recovery acceptance',allowRepair:true})).workbook;
+      assert.equal(pilot.failure.code,'invalid_response');assert.equal(pilot.failure.detail,'invalid_json_response');assert.doesNotMatch(JSON.stringify(pilot),/private invalid output/);
+      await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[pilot.id]}]);failureMode='recover-json';
+      const id=pilot.id;pilot=(await post({action:'advance',workbookId:id})).workbook;assert.equal(pilot.id,id);assert.equal(pilot.failure,null);assert.equal((await finishReview(pilot)).status,'ready');failureMode='';
     });
     await t.test('opt-in graph versions recover across a Worker restart and recheck every repaired field',async()=>{
       graphMode='repairable';graphCorrections=0;
