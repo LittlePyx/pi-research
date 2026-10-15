@@ -1596,7 +1596,20 @@ export const researchComparisonArtifacts = sqliteTable("research_comparison_arti
   createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
 }, table => [uniqueIndex("idx_research_artifact_revision").on(table.workbookId, table.revision)]);
 
+export const researchWorkbookAttempts = sqliteTable("research_workbook_attempts", {
+  id: text("id").primaryKey(),
+  workbookId: text("workbook_id").notNull().references(() => researchComparisonWorkbooks.id, { onDelete: "cascade" }),
+  spaceId: text("space_id").notNull(),
+  stage: text("stage").notNull(), code: text("code").notNull(),
+  providerStatus: integer("provider_status").notNull().default(0),
+  finishReason: text("finish_reason").notNull().default(""),
+  elapsedMs: integer("elapsed_ms").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql.raw("CURRENT_TIMESTAMP")),
+}, table => [index("idx_workbook_attempts").on(table.workbookId, table.createdAt)]);
+
 export const researchWorkbookBootstrapSql = [
+  "CREATE TABLE IF NOT EXISTS research_workbook_attempts (id TEXT PRIMARY KEY NOT NULL, workbook_id TEXT NOT NULL REFERENCES research_comparison_workbooks(id) ON DELETE CASCADE, space_id TEXT NOT NULL, stage TEXT NOT NULL, code TEXT NOT NULL, provider_status INTEGER NOT NULL DEFAULT 0, finish_reason TEXT NOT NULL DEFAULT '', elapsed_ms INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE INDEX IF NOT EXISTS idx_workbook_attempts ON research_workbook_attempts(workbook_id, created_at)",
   "CREATE TABLE IF NOT EXISTS research_comparison_workbooks (id TEXT PRIMARY KEY NOT NULL, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, track_id TEXT NOT NULL REFERENCES research_tracks(id) ON DELETE CASCADE, question TEXT NOT NULL, source_revision TEXT NOT NULL, source_ids_json TEXT NOT NULL, policy TEXT NOT NULL, draft_json TEXT NOT NULL DEFAULT '', content_json TEXT NOT NULL DEFAULT '', review_json TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft', lock_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS idx_research_workbooks_track ON research_comparison_workbooks(space_id, track_id, created_at)",
   "CREATE TABLE IF NOT EXISTS research_comparison_artifacts (id TEXT PRIMARY KEY NOT NULL, workbook_id TEXT NOT NULL REFERENCES research_comparison_workbooks(id) ON DELETE CASCADE, space_id TEXT NOT NULL REFERENCES research_spaces(id) ON DELETE CASCADE, revision INTEGER NOT NULL, value_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",

@@ -11,7 +11,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
   const modules = [];
   for await (const path of glob("**/*.js", { cwd: serverDir })) modules.push({ type: "ESModule", path: `${serverDir}${path}` });
   let abstractCalls = 0;
-  let calls = 0; let beforeReply = async () => {}; let invalidReview = false;
+  let calls = 0; let beforeReply = async () => {}; let invalidReview = false; let failureMode=''; const reviewFlags=[];
   const mf = new Miniflare({ host: "127.0.0.1", cf: false, d1Databases: ["DB"], compatibilityDate: "2026-05-15", compatibilityFlags: ["nodejs_compat"],
     bindings: { DEEPSEEK_API_KEY: "sk-isolated-fixture-not-a-real-key" }, modulesRoot: serverDir,
     modules: [{ type: "ESModule", path: `${serverDir}workbook-test-entry.js`, contents: `import app from './index.js'; export default { async fetch(request, env, ctx) {
@@ -27,6 +27,9 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       }
       if (new URL(request.url).hostname !== "api.deepseek.com") return new Response("No external access in fixture", { status: 503 });
       calls++; const input = JSON.parse((await request.json()).messages[1].content); await beforeReply();
+      reviewFlags.push(Boolean(input.requiredCheckIds));
+      if(failureMode==='rate')return Response.json({error:{message:'sensitive provider fixture text'}},{status:429});
+      if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
       const output = input.requiredCheckIds ? { verdict: "supported", checks: workbookReviewFields(workbookSample()).map(id => ({ id,
         verdict: invalidReview && id === "comparison" ? "unsupported" : "supported", paperIds: workbookSources.map(s => s.id), reason: "Isolated deterministic review; not a live academic judgment." })) } : workbookSample();
       return Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(output) } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
@@ -155,6 +158,36 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await request(path+"&workbookId=missing-version",null,404);
       assert.equal(calls,callsBeforeRead);
       // Keep following the original route comparison in subsequent withdrawal checks.
+    });
+    await t.test('truncated generation and rate-limited review retain identity, checkpoint and safe failure codes',async()=>{
+      failureMode='truncated';
+      let recovery=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'A dedicated recovery task'})).workbook;
+      assert.equal(recovery.status,'retryable');assert.equal(recovery.failure.code,'output_truncated');assert.equal(recovery.stage,'draft');assert.equal(recovery.content,null);
+      const id=recovery.id,before=calls;
+      recovery=(await post({action:'advance',workbookId:id})).workbook;assert.equal(calls,before,'cooldown must not call model');
+      assert.equal((await request(path+'&workbookId='+encodeURIComponent(id))).workbook.failure.code,'output_truncated');
+      await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[id]}]);failureMode='';
+      recovery=(await post({action:'advance',workbookId:id})).workbook;assert.equal(recovery.status,'verifying');assert.equal(recovery.id,id);
+      failureMode='rate';recovery=(await post({action:'advance',workbookId:id})).workbook;
+      assert.equal(recovery.failure.code,'rate_limited');assert.equal(recovery.stage,'review');assert.equal(recovery.content,null);
+      assert.doesNotMatch(JSON.stringify(recovery),/sensitive provider/);
+      await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0,lock_token=?,lease_until=1 WHERE id=?',values:['expired-owner',id]}]);failureMode='';
+      const checkpoint=reviewFlags.length;recovery=(await post({action:'advance',workbookId:id})).workbook;
+      assert.equal(recovery.status,'ready');assert.equal(recovery.id,id);assert.equal(recovery.failure,null);assert.deepEqual(reviewFlags.slice(checkpoint),[true],'saved draft must not be generated again');
+      const attempts=await sql([{sql:'SELECT stage,code,provider_status,finish_reason FROM research_workbook_attempts WHERE workbook_id=? ORDER BY rowid',values:[id]}]);
+      assert.deepEqual(attempts[0].results.map(r=>[r.stage,r.code]),[['draft','output_truncated'],['review','rate_limited']]);
+    });
+    await t.test('a lost client can read an active checkpoint without launching duplicate model work',async()=>{
+      let entered,release;const started=new Promise(resolve=>{entered=resolve});const hold=new Promise(resolve=>{release=resolve});
+      beforeReply=async()=>{entered();await hold};
+      const pending=post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Concurrent checkpoint recovery'});
+      try {
+        await started;const checkpoint=(await request(path)).workbook;const count=calls;
+        assert.equal(checkpoint.stage,'draft');assert.ok(checkpoint.busyUntil>Date.now());
+        const duplicate=(await post({action:'advance',workbookId:checkpoint.id})).workbook;
+        assert.equal(duplicate.id,checkpoint.id);assert.equal(calls,count);
+      } finally {release();beforeReply=async()=>{}}
+      assert.equal((await pending).workbook.status,'verifying');
     });
     await t.test("source changes invalidate saved content and guard artifacts", async () => {
       await sql([{ sql: "UPDATE paper_insights SET abstract_text = abstract_text || ' Revised.' WHERE paper_id = ?", values: [workbookSources[0].id] }]);

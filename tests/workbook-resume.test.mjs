@@ -45,3 +45,27 @@ test('choosing a history version pins its identity and clears the previous evide
  h.requests.shift().resolve(ready('old'));await pending;await settle();h.render();
  assert.deepEqual(h.versions,['new','old']);assert.deepEqual(h.views.at(-1),['evidence','']);
 });
+
+test('retry cooldown expires and continues the saved review using the same comparison ID',async(t)=>{
+ t.mock.timers.enable({apis:['Date','setTimeout'],now:1000});
+ const h=harness({initialWorkbookId:'recovery'}),data=ready('recovery');
+ Object.assign(data.workbook,{content:null,artifact:null,status:'retryable',stage:'review',retryAt:2000,failure:{code:'rate_limited',stage:'review'}});
+ h.requests.shift().resolve(data);await settle();h.render();
+ const retry=()=>h.nodes().find(n=>n.type==='button'&&n.props.children==='Continue review');
+ assert.equal(retry().props.disabled,true);assert.match(h.text(),/resumes independent review only/);
+ t.mock.timers.tick(1100);h.render();assert.equal(retry().props.disabled,false);
+ retry().props.onClick();assert.equal(h.requests.length,1);
+ assert.deepEqual(JSON.parse(h.requests[0].init.body),{spaceId:'s',trackId:'t',action:'advance',workbookId:'recovery'});
+ h.requests.shift().resolve(ready('recovery'));await settle();h.render();assert.match(h.text(),/Saved decision/);
+});
+
+test('an in-flight comparison can refresh its checkpoint without starting another model action',async(t)=>{
+ t.mock.timers.enable({apis:['Date','setTimeout'],now:1000});
+ const h=harness({initialWorkbookId:'in-flight'}),data=ready('in-flight');
+ Object.assign(data.workbook,{content:null,artifact:null,status:'draft',stage:'draft',busyUntil:2000});
+ h.requests.shift().resolve(data);await settle();h.render();
+ assert.equal(h.nodes().find(n=>n.type==='button'&&n.props.children==='Continue generation').props.disabled,true);
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Refresh progress').props.onClick();h.render();
+ assert.equal(h.requests.length,1);assert.equal(h.requests[0].init.method,undefined);assert.match(h.requests[0].url,/workbookId=in-flight/);
+ h.requests.shift().resolve(ready('in-flight'));await settle();h.render();
+});
