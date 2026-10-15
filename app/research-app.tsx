@@ -3840,8 +3840,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     }
   };
 
-  const runManualMonitor = async () => {
-    if (demo || monitoring || manualCooldownBlocked) return;
+  const runManualMonitor = async (reviewPending = false) => {
+    if (demo || monitoring || (!reviewPending && manualCooldownBlocked)) return;
     if (activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) {
       setToast(locale === "zh" ? "研究空间尚未连接，请刷新页面后再试" : "The research space is not connected yet. Refresh the page and try again.");
       return;
@@ -3876,7 +3876,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       const response = await fetch("/api/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spaceId: activeSpace.id, force: true, trigger: "manual", action: "start" }),
+        body: JSON.stringify({ spaceId: activeSpace.id, force: true, trigger: "manual", action: "start", ...(reviewPending ? { reviewPending: true } : {}) }),
       });
       const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
       if (data.monitor) setMonitor(data.monitor);
@@ -5293,7 +5293,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             {todaySurface==="records" && !workspaceLoadFailed && activeSpaceSupportsLearning && <DeferredWorkspacePanel locale={locale}><ReadingCalendar key={`calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "today")} /></DeferredWorkspacePanel>}
             {todaySurface==="reading" && historyPapers.length > 0 && !activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-") && <DeferredWorkspacePanel locale={locale}><ResearchStart key={activeSpace.id} spaceId={activeSpace.id} locale={locale} onRead={id => void openRoutePaper(id, "today")} onStart={startRecommendedResearch} /></DeferredWorkspacePanel>}
 
-            {todaySurface==="discovery"&&<QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} />}
+            {todaySurface==="discovery"&&<QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} onContinueReview={() => void runManualMonitor(true)} reviewDisabled={demo || !monitor || scanIsActive || monitoring || analysisBudgetBlocked} />}
             {todaySurface==="settings" && !workspaceLoadFailed && activeSpaceSupportsLearning && <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />}
             {todaySurface==="settings" && !workspaceLoadFailed && activeSpaceSupportsLearning && <EmailSubscription key={`email:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />}
 
@@ -5309,7 +5309,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                 <div className="v2-monitor-actions">
                   <span className={"v2-monitor-status " + (scanIsActive ? "scanning" : monitor?.status || "idle")}><i />{!monitor ? (locale === "zh" ? "正在读取已有内容" : "Loading saved content") : scanIsActive ? scanPhase : monitor?.status === "error" ? t.scanError : monitor?.status === "ready" ? monitorReadyLabel : t.neverScanned}</span>
                   <button className="secondary" type="button" onClick={openSourceSettings} disabled={!monitor?.preferences || scanIsActive}>{t.editSources}</button>
-<button type="button" onClick={runManualMonitor} title={demo ? "演示不执行扫描" : undefined} disabled={demo || !monitor || scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgressLabel}` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
+<button type="button" onClick={() => void runManualMonitor()} title={demo ? "演示不执行扫描" : undefined} disabled={demo || !monitor || scanIsActive || analysisBudgetBlocked || manualCooldownBlocked}>{scanIsActive ? `${t.scanningButton} ${scanProgressLabel}` : analysisBudgetBlocked ? (locale === "zh" ? "明日额度刷新后继续" : "Resume after tomorrow's reset") : manualCooldownBlocked ? (locale === "zh" ? `约 ${monitor?.retryAfterMinutes || 1} 分钟后可再扫描` : `Scan again in about ${monitor?.retryAfterMinutes || 1} min`) : resumeAvailable ? (locale === "zh" ? "从断点继续" : "Resume") : compactScanAvailable ? (locale === "zh" ? "扫描近 14 天" : "Scan latest 14 days") : monitor?.scanJob?.needsRefresh ? (locale === "zh" ? "用新版重新扫描" : "Rescan with new method") : t.scanNow}</button>
                 </div>
               </div>
               {analysisBudgetBlocked && !scanIsActive && <div className="v2-scan-budget-note"><InterfaceIcon name="clock" /><p>{locale === "zh" ? "今天的完整扫描额度已用完；Pi 会在刷新后继续，现有论文、偏好与断点均已保留。" : "Today's full-scan budget is exhausted. Pi will continue after the reset; papers, preferences, and checkpoints are preserved."}</p></div>}

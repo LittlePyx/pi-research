@@ -6658,7 +6658,7 @@ async function runLegacyMonitor(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let payload: { spaceId?: string; force?: boolean; trigger?: ScanTrigger; action?: "start" | "advance" | "enhance" | "legacy"; jobId?: string; idempotencyKey?: string; leaseToken?: string; leaseGeneration?: number };
+  let payload: { spaceId?: string; force?: boolean; reviewPending?: boolean; trigger?: ScanTrigger; action?: "start" | "advance" | "enhance" | "legacy"; jobId?: string; idempotencyKey?: string; leaseToken?: string; leaseGeneration?: number };
   try {
     payload = await request.json();
   } catch {
@@ -6674,6 +6674,8 @@ export async function POST(request: Request) {
   const action = payload.action || "start";
   const trigger: ScanTrigger = payload.trigger === "scheduled" || payload.trigger === "manual" || payload.trigger === "visit"
     ? payload.trigger : payload.force ? "manual" : "visit";
+  const reviewPending = payload.reviewPending === true;
+  if (reviewPending && (action !== "start" || trigger !== "manual")) return Response.json({ error: "Manual start required for candidate review" }, { status: 400 });
   let advanceLockJobId = "";
   let advanceLockToken = "";
   let leaseHeartbeat: MonitorLeaseHeartbeat | null = null;
@@ -6912,16 +6914,22 @@ export async function POST(request: Request) {
       const incompleteDraftCarryover = Boolean(incompleteDraftCarryoverIds.length);
       const qualityCarryover = verificationCarryover || incompleteDraftCarryover;
       const previousTime = previous?.last_run_at ? Date.parse(previous.last_run_at) : 0;
-      const pendingQualityCandidates = !pipelineOutdated && previousJob?.status === "ready"
+      const pendingQualityCandidates = reviewPending || (!pipelineOutdated && previousJob?.status === "ready")
         ? await pendingCandidateQueue(database, space.id)
         : [];
+      // Explicit review reuses interrupted checkpoints first; a deleted-space
+      // job is terminal and its remaining candidates enter a new bounded pass.
+      const explicitQualityQueue = reviewPending && !(previousJob?.status === "error"
+        && previousJob.failure_kind !== "space_deleted" && !pipelineOutdated
+        && inferResumeCheckpoint(previousJob, previousWork) !== "planning");
+      if (explicitQualityQueue && !pendingQualityCandidates.length) return Response.json(await readState(database, space, { cached: true, qualityQueueEmpty: true }));
       const carryoverQueueHandoff = shouldYieldVerificationCarryover({
         trigger, previousJobStatus: previousJob?.status || "", pipelineOutdated,
         verificationCarryover, incompleteDraftCarryover, previousAttempt: previousJob?.attempt || 0,
         previousCandidateIds: [...previousWork.candidateIds, ...previousWork.deepIds],
         pendingCandidates: pendingQualityCandidates, now: now.getTime(),
       });
-      const qualityQueueContinuation = carryoverQueueHandoff || shouldStartMonitorQualityQueueContinuation({
+      const qualityQueueContinuation = explicitQualityQueue || carryoverQueueHandoff || shouldStartMonitorQualityQueueContinuation({
         trigger,
         previousJobStatus: previousJob?.status || "",
         pipelineOutdated,
@@ -6954,7 +6962,7 @@ export async function POST(request: Request) {
         ? inferResumeCheckpoint(previousJob, previousWork)
         : incompleteDraftCarryover ? "deep_reviewing"
           : verificationCarryover ? "verifying_recommendations" : "planning";
-      const resumable = Boolean(!carryoverQueueHandoff && !pipelineOutdated && resumeCheckpoint !== "planning"
+      const resumable = Boolean(!explicitQualityQueue && !carryoverQueueHandoff && !pipelineOutdated && resumeCheckpoint !== "planning"
         && (previousJob?.status === "error" || qualityCarryover));
       const retryLineageJobId = previousJob?.status === "error" && !pipelineOutdated
         ? previousJob.id : resumable ? previousJob?.id || "" : "";

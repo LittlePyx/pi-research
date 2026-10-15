@@ -8,10 +8,12 @@ type ReviewMonitor = {
   scanJob?: { nextRetryAt?: string | null } | null;
 };
 
-export function QualityReviewStatus({ monitor, locale, failureMessage, phase, formatTime, onOpenPaper }: {
+export function QualityReviewStatus({ monitor, locale, failureMessage, phase, formatTime, onOpenPaper, onContinueReview, reviewDisabled }: {
   monitor: ReviewMonitor | null; locale: "zh" | "en"; failureMessage: string; phase: string;
   formatTime: (value: string, locale: "zh" | "en") => string;
   onOpenPaper?: (id: string) => void;
+  onContinueReview?: () => void;
+  reviewDisabled?: boolean;
 }) {
   const status = monitorQualityReviewStatus(monitor);
   if (!status) return null;
@@ -35,6 +37,7 @@ export function QualityReviewStatus({ monitor, locale, failureMessage, phase, fo
   return <details className="pi-processing-details"><summary>{zh ? "材料处理详情" : "Material processing details"}<span>{status.state === "paused" ? (zh ? "自动处理已暂停" : "Automatic processing paused") : (zh ? "不影响已保存内容" : "Saved content is preserved")}</span></summary><section className={`v2-background-review-status ${status.state}`} aria-label={zh ? "候选评审进度" : "Candidate review progress"}>
     <header><h2>{labels[status.state]}</h2><span>{status.pendingCount || status.awaitingAbstractCount} {status.pendingCount ? (zh ? "篇待评审" : "awaiting review") : (zh ? "篇待补摘要" : "awaiting abstracts")}</span></header>
     <p>{reason || (zh ? "自动评审暂未运行，已有进度保留。" : "Automatic review is not running; progress is preserved.")}</p>
+    {status.pendingCount > 0 && status.state !== "active" && onContinueReview && <button type="button" disabled={reviewDisabled} onClick={onContinueReview}>{zh ? "继续评审候选" : "Continue candidate review"}</button>}
     <div className="v2-review-stages">
       {status.pendingCount > 0 && <span>{zh ? "待筛选／深评" : "Screen / review"} <b>{status.firstReviewCount}</b></span>}
       {status.pendingCount > 0 && <span>{zh ? "待独立核对" : "Independent check"} <b>{status.verificationCount}</b></span>}
