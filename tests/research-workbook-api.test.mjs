@@ -38,7 +38,8 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       if(failureMode==='unauthorized-patch')return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({patches:[{id:'f1',value:{...anchoredSample().comparison,questionZh:'Unapproved question rewrite'}}]})}}]});
       if(failureMode==='invalid-evidence'){const invalid=anchoredSample();invalid.dimensions[0].cells[0].quoteId='p1.fabricated';return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
       if(failureMode==='recover-evidence')assert.match(input.recovery,/unlocated_workbook_evidence/);
-      if(failureMode==='recover-json')assert.match(input.recovery,/JSON-escape/);
+      if(failureMode==='recover-json'&&!input.requiredCheckIds)assert.match(input.recovery,/JSON-escape/);
+      if(input.requiredCheckIds)assert.doesNotMatch(input.recovery||'',/Return only the patches array|previous response could not be used/i,'draft recovery instructions cannot leak into independent review');
       if(input.correction){graphCorrections++;assert.ok(input.correction.issues.some(i=>i.id==='comparison'));}
       const output = input.requiredCheckIds ? { verdict: "supported", checks: input.requiredCheckIds.map(id => ({ id,
         verdict: (invalidReview || input.issuePolicy && graphMode!=='supported' && (!graphCorrections || graphMode==='evidence_gap')) && id === "comparison" ? "unsupported" : "supported", paperIds: workbookSources.map(s => s.id), reason: "Isolated deterministic review; not a live academic judgment.",
@@ -229,7 +230,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
     await t.test('opt-in graph versions recover across a Worker restart and recheck every repaired field',async()=>{
       graphMode='repairable';graphCorrections=0;
       let pilot=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Graph persistence acceptance',allowRepair:true})).workbook;
-      assert.match(pilot.id,/:revision-v2$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
+      assert.match(pilot.id,/:revision-v3$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
       pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       const count=calls,checkpoint=pilot.reviewProgress;
       await mf.dispose();mf=new Miniflare(options);
@@ -244,6 +245,9 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[pilot.id]}]);
       failureMode='rate';pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       assert.equal(pilot.status,'retryable');assert.equal(pilot.revisionFlow.repairs,0);assert.equal(pilot.revisionFlow.next,'repair');
+      await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[pilot.id]}]);failureMode='';
+      failureMode='unauthorized-patch';pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
+      assert.equal(pilot.failure.detail,'invalid_workbook_patch');assert.equal(pilot.revisionFlow.repairs,0);
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[pilot.id]}]);failureMode='';
       pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       assert.equal(pilot.revisionFlow.repairs,1);assert.equal(pilot.reviewProgress.completed,0);assert.equal(pilot.content,null);

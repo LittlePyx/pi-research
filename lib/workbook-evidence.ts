@@ -33,6 +33,18 @@ export function workbookEvidenceCatalog(sources: WorkbookSource[]) {
       }
       add(end);
     }
+    // Offer contiguous context, not stitched quotations: a claim may require qualifiers in adjacent sentences.
+    const singles = [...quotes]; let window = 0;
+    for (let first = 0; first < singles.length; first++) for (let count = 2; count <= 3; count++) {
+      const last = singles[first + count - 1];
+      if (!last || last.end - singles[first].start > 1200) continue;
+      const start = singles[first].start, end = last.end;
+      quotes.push({ id: `${key}.w${++window}`, start, end, text: text.slice(start, end) });
+    }
+    if (singles.length) {
+      const start = singles[0].start, end = singles.at(-1)!.end;
+      if (end - start <= 1200 && !quotes.some(q => q.start === start && q.end === end)) quotes.push({ id: `${key}.w${++window}`, start, end, text: text.slice(start, end) });
+    }
     return { key, paperId: source.id, title: source.title, abstractText: text, quotes };
   });
 }
@@ -75,6 +87,7 @@ export function anchoredWorkbookPrompt(question: string, sources: WorkbookSource
   base.contract.comparison.evidenceIds = ['dimension-id:p1'];
   base.contract.task.steps[0].evidenceIds = ['dimension-id:p1'];
   base.rules.push('Cite only supplied quoteId values; NEVER copy or generate quote text. paperId uses source key p1/p2/p3. Each evidenceIds entry uses dimension.id + colon + source key and MUST point to a supported cell in your table. A quote must support the entire bilingual observation; include no fact outside that quote. Use missing only when the whole abstract lacks the dimension. Prefer exactly 3 dimensions and 2 task steps. Aim for under 350 characters per prose field. Do not restate the route background as a finding or introduce objects not present in these abstracts.');
+  base.rules.push('Every number, model name, auxiliary method and qualification in a supported cell must occur in or be entailed by its selected quote. Select a contiguous context window (.w) when several adjacent sentences are needed, or narrow the observation to one sentence. Facts elsewhere in the abstract DO NOT validate an unrelated quotation. In reader-facing prose use P1/P2/P3 or distinctive short paper titles. Never mention implementation keys such as quoteId, evidenceIds, supported cells or raw dimension IDs; ask the reader to cite the displayed source passage.');
   return JSON.stringify(base);
 }
 
@@ -116,10 +129,17 @@ export function workbookPatchPrompt(question: string, sources: WorkbookSource[],
   for (const step of context.task.steps) step.evidenceIds = refs(step.evidenceIds);
   const patches = issues.map((issue, i) => ({ id: `f${i + 1}`, field: issue.id, reason: issue.reason,
     valueKeys: target(content, issue.id).keys, ...(target(content, issue.id).paperId ? { sourceKey: keys.get(target(content, issue.id).paperId!) } : {}) }));
+  const output = { patches: issues.map((issue, i) => {
+    const t = target(content, issue.id);
+    const value = Object.fromEntries(t.keys.map(key => [key, key === 'evidenceIds' ? refs(t.parent[key] as string[])
+      : key === 'quoteId' ? catalog.find(s => s.paperId === t.paperId)!.quotes[0]?.id || ''
+        : key === 'status' ? t.parent.status : key.endsWith('Zh') ? '修订后的简洁中文，只依据材料' : 'Equivalent corrected English, using only the supplied material']));
+    return { id: `f${i + 1}`, value };
+  }) };
   delete base.contract;
   return JSON.stringify({ ...base, task: 'Correct only the failed fields listed in correction.targets. Return patches, not a complete workbook.', previousWorkbook: context,
     correction: { issues, targets: patches, instruction: 'Each target must appear exactly once. Use ONLY its valueKeys. All other fields, dimension identities, paper identities and step order are immutable. Cell patches use quoteId from that paper’s catalog (empty for missing). evidenceIds use short source keys. Preserve supported content exactly. Correct both languages without adding claims. All fields will be independently reviewed again.' },
-    output: { patches: [{ id: 'f1', value: 'object containing exactly this target’s valueKeys' }] } });
+    output, outputRule: 'Return ONLY this patches envelope, with value as an OBJECT containing the exact illustrated keys. The values illustrate shape, not approved claims or mandatory evidence choices. Choose valid status, quoteId and evidenceIds for the actual correction; missing cells require empty quoteId. Do not add explanations, field names, reasons or a full workbook to the output.' });
 }
 
 /** Apply only failed review fields to a clone. A model cannot overwrite any approved field. */

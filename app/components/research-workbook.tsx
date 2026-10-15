@@ -4,6 +4,7 @@ import { workspaceFetch as fetch } from "../../lib/workspace-request";
 
 import { useEffect, useRef, useState } from "react";
 import type { WorkbookArtifact, WorkbookSource, WorkbookState } from "../../lib/research-workbook";
+import { workbookPaperLabel } from '../../lib/research-workbook';
 import { graphSelection, type GraphTaskContext } from "../../lib/graph-task";
 import { DraftRecovery } from "./draft-recovery";
 import { sessionDraftKey, writeSessionDraft, clearSessionDraft } from "../../lib/session-draft";
@@ -168,7 +169,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       {!state.revisionFlow && <button type="button" disabled={Boolean(busy) || state.stale || dirty} onClick={() => void prepare(false, true)}>{zh ? '试用按反馈修订一次' : 'Try one feedback correction'}</button>}
     </section>}
     {content && <>
-      <div className="pi-comparison-sources">{state.sources.map((source,index) => <div key={source.id}><span>{String(index+1).padStart(2,"0")}</span><p><MathText inline>{source.title}</MathText></p></div>)}</div>
+      <div className="pi-comparison-sources">{state.sources.map(source => <div key={source.id}><span>{workbookPaperLabel(source.id,state.sources)}</span><p><MathText inline>{source.title}</MathText></p></div>)}</div>
       <nav className="pi-workbook-tabs" aria-label={zh ? "比较工作视角" : "Workbook view"}>{(["evidence", "relations", "task"] as const).map(p => <button type="button" key={p} aria-pressed={panel === p} onClick={() => {setPanel(p);onViewChange?.(p,focus);}}>{p === "evidence" ? zh ? "条件与证据" : "Conditions & evidence" : p === "relations" ? zh ? "关系与可比性" : "Relationships & comparability" : zh ? "研究练习" : "Research exercise"}</button>)}</nav>
 
       <div className={`pi-workbook-layout${focused ? " inspecting" : ""}`}><div>

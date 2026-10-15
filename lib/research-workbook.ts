@@ -39,6 +39,9 @@ const required = (v: unknown, max = 900) => {
 };
 const bilingual = (v: Record<string, unknown>, key: string, max = 900) => ({ [`${key}Zh`]: required(v[`${key}Zh`], max), [`${key}En`]: required(v[`${key}En`], max) });
 
+/** The reader-facing labels match the generation aliases regardless of selection order. */
+export const workbookPaperLabel = (id: string, sources: WorkbookSource[]) => `P${[...sources].sort((a,b)=>a.id.localeCompare(b.id)).findIndex(s=>s.id===id)+1}`;
+
 export function workbookEvidenceIds(content: WorkbookContent) {
   return content.dimensions.flatMap(d => d.cells.filter(c => c.status === "supported").map(c => `${d.id}:${c.paperId}`));
 }

@@ -1,10 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { workbookEvidenceCatalog, anchoredWorkbookPrompt, resolveAnchoredWorkbook, workbookPatchPrompt, applyWorkbookPatches } from '../lib/workbook-evidence.ts';
-import { workbookReviewFields, workbookRevision, validateWorkbook } from '../lib/research-workbook.ts';
+import { workbookReviewFields, workbookRevision, validateWorkbook, workbookPaperLabel } from '../lib/research-workbook.ts';
+import { workbookReviewPrompt } from '../lib/workbook-graph.ts';
 import { workbookSources, anchoredSample, resolvedSample } from './fixtures/research-workbook.mjs';
 
 const issue = id => ({id,paperIds:workbookSources.map(s=>s.id),reason:'Isolated correction fixture',issueType:'repairable'});
+test('adjacent-sentence windows preserve a continuous source passage and enforce cell-specific review',()=>{
+ const sources=structuredClone(workbookSources);sources[0].abstractText='The first sentence names the study object. The second sentence reports a value of 0.248. The third sentence states an explicit qualification.';
+ const bank=workbookEvidenceCatalog(sources),source=bank.find(s=>s.paperId===sources[0].id);
+ const window=source.quotes.find(q=>q.text===sources[0].abstractText);assert.ok(window);assert.match(window.id,/\.w/);
+ assert.equal(workbookPaperLabel(sources[0].id,[...sources].reverse()).toLowerCase(),source.key);
+ const prompt=JSON.parse(workbookReviewPrompt('q',workbookSources,resolvedSample(),['comparison'],true));
+ assert.match(prompt.rules,/THAT CELL'S SELECTED quote/);assert.match(prompt.rules,/elsewhere in the full abstract does not validate/);
+});
 test('catalog spans preserve original math and whitespace and remain stable across source order',async()=>{
  const sources=structuredClone(workbookSources);sources[0].abstractText='  '+String.raw`A mathematical statement about $\alpha$ and "quoted text".  `+'x'.repeat(1300)+' final words.';
  const bank=workbookEvidenceCatalog(sources);
@@ -28,6 +37,8 @@ test('a comparison patch preserves the independently approved question and every
  const before=resolvedSample(), issues=[issue('comparison')];
  const prompt=JSON.parse(workbookPatchPrompt('question',workbookSources,before,issues));
  assert.equal(prompt.correction.targets[0].id,'f1');assert.equal(prompt.contract,undefined);
+ assert.deepEqual(Object.keys(prompt.output.patches[0].value),prompt.correction.targets[0].valueKeys);
+ assert.equal(prompt.output.patches[0].id,'f1');
  const comparison={...anchoredSample().comparison,textZh:'摘要信息不足，不能直接比较结果。',textEn:'The abstracts are insufficient for direct comparison.'};
  const after=applyWorkbookPatches({patches:[{id:'f1',value:comparison}]},before,workbookSources,issues);
  assert.notEqual(after.comparison.textZh,before.comparison.textZh);
@@ -45,6 +56,7 @@ test('cell correction targets identify the correct paper even when the old cell 
  const p=JSON.parse(workbookPatchPrompt('q',workbookSources,content,[issue(`cell:conditions:${missing.paperId}`)]));
  const key=workbookEvidenceCatalog(workbookSources).find(s=>s.paperId===missing.paperId).key;
  assert.equal(p.correction.targets[0].sourceKey,key);
+ assert.match(p.output.patches[0].value.quoteId,new RegExp(`^${key}\\.q`));
  assert.equal(p.previousWorkbook.dimensions[2].cells[0].paperId,key);
  assert.ok(p.previousWorkbook.comparison.evidenceIds.every(id=>/:p[123]$/.test(id)));
  assert.equal(content.dimensions[2].cells[0].paperId,missing.paperId);
