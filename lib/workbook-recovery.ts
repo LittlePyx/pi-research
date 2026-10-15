@@ -1,4 +1,13 @@
 export type WorkbookFailureCode = 'timeout' | 'rate_limited' | 'model_auth' | 'model_unavailable' | 'output_truncated' | 'invalid_response' | 'invalid_evidence' | 'evidence_changed' | 'storage_unavailable';
+const validationCodes = new Set(['incomplete_workbook','invalid_dimension_identity','unknown_workbook_source','unlocated_workbook_evidence','incomplete_comparison_coverage','invalid_comparison_dimensions','paper_without_evidence','untraceable_workbook_instruction','invalid_comparability','incomplete_workbook_task','incomplete_workbook_review','invalid_workbook_review','untraceable_workbook_review']);
+export function workbookValidationCode(value: unknown): string | null {
+  const code = value instanceof Error ? value.message : value;
+  return typeof code === 'string' && validationCodes.has(code) ? code : null;
+}
+export function workbookRecoveryHint(code: string): string {
+  if (!workbookValidationCode(code) && code !== 'invalid_evidence') return '';
+  return `Previous output failed ${code}. Use only the exact JSON contract keys. paperId must equal source.id (never canonicalId). Every evidenceIds entry must be dimension.id + ':' + cell.paperId and point to a supported cell. Copy quotes verbatim from that source's abstractText, without ellipses or paraphrase. Mark unavailable facts missing. Preserve every bilingual required field and all required review check IDs. Do not bypass evidence checks.`;
+}
 export class WorkbookModelError extends Error {
   code: WorkbookFailureCode; providerStatus: number; finishReason: string;
   constructor(code: WorkbookFailureCode, providerStatus = 0, finishReason = '') { super(code); this.code=code; this.providerStatus=providerStatus; this.finishReason=finishReason; }
@@ -9,7 +18,7 @@ export function workbookFailure(error: unknown): WorkbookFailureCode {
   if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) return 'timeout';
   const message = error instanceof Error ? error.message : '';
   if (['workbook_evidence_changed', 'workbook_context_changed'].includes(message)) return 'evidence_changed';
-  if (/^(incomplete_workbook|invalid_dimension_identity|unknown_workbook_source|unlocated_workbook_evidence|incomplete_comparison_coverage|invalid_comparison_dimensions|paper_without_evidence|untraceable_workbook_instruction|invalid_comparability|invalid_workbook_review|untraceable_workbook_review)/.test(message)) return 'invalid_evidence';
+  if (workbookValidationCode(message)) return 'invalid_evidence';
   return 'storage_unavailable';
 }
 export function workbookRetryDelay(code: WorkbookFailureCode) {

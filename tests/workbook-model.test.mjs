@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {requestWorkbookModel} from '../lib/workbook-model.ts';
-import {workbookFailure, workbookRetryDelay, workbookFailureText} from '../lib/workbook-recovery.ts';
+import {workbookFailure, workbookRetryDelay, workbookFailureText, workbookValidationCode, workbookRecoveryHint} from '../lib/workbook-recovery.ts';
 test('comparison calls classify provider and response failures without forwarding error bodies',async()=>{
  const cases=[
   [()=>Response.json({error:'secret-key-and-prompt'}, {status:401}),'model_auth'],
@@ -30,4 +30,9 @@ test('draft extraction reserves its token budget for structured output, followed
   const body=JSON.parse(init.body);assert.equal(body.thinking.type,'disabled');assert.equal(body.reasoning_effort,undefined);
   assert.equal(body.max_tokens,12000);return Response.json({choices:[{finish_reason:'stop',message:{content:'{}'}}]});
  });
+});
+test('recovery feedback accepts only known validation codes and never arbitrary error text',()=>{
+ assert.equal(workbookValidationCode(new Error('unlocated_workbook_evidence')),'unlocated_workbook_evidence');
+ assert.match(workbookRecoveryHint('unlocated_workbook_evidence'),/without ellipses or paraphrase/);
+ assert.equal(workbookRecoveryHint('private prompt or key'), '');
 });

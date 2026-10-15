@@ -30,6 +30,8 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       reviewFlags.push(Boolean(input.requiredCheckIds));
       if(failureMode==='rate')return Response.json({error:{message:'sensitive provider fixture text'}},{status:429});
       if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
+      if(failureMode==='invalid-evidence'){const invalid=workbookSample();invalid.dimensions[0].cells[0].quote='A paraphrase that is not present in the supplied abstract.';return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
+      if(failureMode==='recover-evidence')assert.match(input.recovery,/unlocated_workbook_evidence/);
       const output = input.requiredCheckIds ? { verdict: "supported", checks: workbookReviewFields(workbookSample()).map(id => ({ id,
         verdict: invalidReview && id === "comparison" ? "unsupported" : "supported", paperIds: workbookSources.map(s => s.id), reason: "Isolated deterministic review; not a live academic judgment." })) } : workbookSample();
       return Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(output) } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
@@ -188,6 +190,14 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
         assert.equal(duplicate.id,checkpoint.id);assert.equal(calls,count);
       } finally {release();beforeReply=async()=>{}}
       assert.equal((await pending).workbook.status,'verifying');
+    });
+    await t.test('an evidence retry receives the exact safe validation failure without relaxing publication checks',async()=>{
+      failureMode='invalid-evidence';
+      const failed=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Evidence repair task'})).workbook;
+      assert.equal(failed.failure.code,'invalid_evidence');assert.equal(failed.failure.detail,'unlocated_workbook_evidence');assert.equal(failed.content,null);
+      await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[failed.id]}]);failureMode='recover-evidence';
+      const repaired=(await post({action:'advance',workbookId:failed.id})).workbook;assert.equal(repaired.status,'verifying');assert.equal(repaired.content,null);
+      failureMode='';assert.equal((await post({action:'advance',workbookId:failed.id})).workbook.status,'ready');
     });
     await t.test("source changes invalidate saved content and guard artifacts", async () => {
       await sql([{ sql: "UPDATE paper_insights SET abstract_text = abstract_text || ' Revised.' WHERE paper_id = ?", values: [workbookSources[0].id] }]);

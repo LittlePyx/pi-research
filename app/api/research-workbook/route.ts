@@ -2,7 +2,7 @@ import { focusedWorkbookQuestion, storedWorkbookQuestion, workbookFocus, graphSe
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { requestWorkbookModel } from "../../../lib/workbook-model";
-import { WorkbookModelError, workbookFailure, workbookRetryDelay } from "../../../lib/workbook-recovery";
+import { WorkbookModelError, workbookFailure, workbookRetryDelay, workbookValidationCode, workbookRecoveryHint } from "../../../lib/workbook-recovery";
 import { WORKBOOK_POLICY, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, workbookDraftPrompt, workbookReviewFields, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
 
 type Row = { id: string; question: string; source_revision: string; source_ids_json: string; draft_json: string; content_json: string; status: WorkbookState["status"]; retry_at: number; lease_until: number };
@@ -71,8 +71,10 @@ async function projection(original: Context, row: Row | null, preferred: string[
     WHERE workbook_id = ? AND space_id = ? ORDER BY revision DESC LIMIT 1`).bind(row.id, ctx.spaceId).first<{ revision: number; value_json: string }>() : null;
   const versions = await ctx.database.prepare(`SELECT id, status, created_at FROM research_comparison_workbooks
     WHERE space_id = ? AND track_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 20`).bind(ctx.spaceId, ctx.trackId).all();
-  const failure = row?.status === 'retryable' ? await ctx.database.prepare(`SELECT code, stage FROM research_workbook_attempts
+  const failureRow = row?.status === 'retryable' ? await ctx.database.prepare(`SELECT code, stage FROM research_workbook_attempts
     WHERE workbook_id = ? AND space_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`).bind(row.id, ctx.spaceId).first<NonNullable<WorkbookState['failure']>>() : null;
+  const detail = workbookValidationCode(failureRow?.code);
+  const failure = failureRow && detail ? { code: 'invalid_evidence' as const, stage: failureRow.stage, detail } : failureRow;
   const state: WorkbookState = { id: row?.id || null, revision: row?.source_revision || revision, status: row?.status || "empty",
     stale, sources: selected, candidates: [...candidates.filter(c=>preferred.includes(c.canonicalId.toLowerCase())), ...candidates.filter(c=>!preferred.includes(c.canonicalId.toLowerCase()))].slice(0, 15), content: row?.status === "ready" ? parse(row.content_json) : null,
     artifact: artifact ? { revision: artifact.revision, value: parse(artifact.value_json) } : null, retryAt: row?.retry_at || 0,
@@ -155,12 +157,14 @@ export async function POST(request: Request) {
     if (!lease.meta.changes) return projection(baseContext, row);
     active = { ctx, id: row.id, token, stage: row.draft_json ? 'review' : 'draft', started: now };
     const draft = row.draft_json ? validateWorkbook(parse(row.draft_json), selected) : null;
+    const previous = await ctx.database.prepare(`SELECT code FROM research_workbook_attempts WHERE workbook_id = ? AND space_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`).bind(row.id, ctx.spaceId).first<{code:string}>();
+    const hint = workbookRecoveryHint(previous?.code || '');
     const prompt = draft ? JSON.stringify({ question: ctx.question, sources: selected, workbook: draft,
       requiredCheckIds: workbookReviewFields(draft),
       rules: "Check BOTH languages of each field, including every missing cell (is the information genuinely absent?), all mathematical conditions/quantifiers/bounds, comparability, and the specificity and feasibility of every task and learning field. No full proofs can be taught from abstracts. Quote existence does not establish entailment. Reject invented prerequisites stated as facts, contradiction/novelty claims, and interchangeable generic advice. Only supported if all checks pass.",
       output: { verdict: "supported|unsupported", checks: [{ id: "exact requiredCheckId", verdict: "supported|unsupported", paperIds: ["exact source ID"], reason: "specific support or failure reason" }] },
     }) : workbookDraftPrompt(ctx.question, selected);
-    const response = await requestWorkbookModel(credential.apiKey, prompt, Boolean(draft));
+    const response = await requestWorkbookModel(credential.apiKey, hint ? JSON.stringify({...JSON.parse(prompt), recovery: hint}) : prompt, Boolean(draft));
     await ctx.database.prepare(`INSERT INTO ai_usage_daily (id, scope, usage_date, request_count, input_tokens, output_tokens)
       VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT(scope, usage_date) DO UPDATE SET request_count = request_count + 1,
       input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens, updated_at = CURRENT_TIMESTAMP`)
@@ -184,7 +188,7 @@ export async function POST(request: Request) {
       await active.ctx.database.batch([
         active.ctx.database.prepare(`INSERT INTO research_workbook_attempts (id, workbook_id, space_id, stage, code, provider_status, finish_reason, elapsed_ms)
           SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM research_comparison_workbooks WHERE id = ? AND space_id = ? AND lock_token = ?)`)
-          .bind(crypto.randomUUID(), active.id, active.ctx.spaceId, active.stage, code, error instanceof WorkbookModelError ? error.providerStatus : 0,
+          .bind(crypto.randomUUID(), active.id, active.ctx.spaceId, active.stage, workbookValidationCode(error) || code, error instanceof WorkbookModelError ? error.providerStatus : 0,
             error instanceof WorkbookModelError ? error.finishReason : '', Date.now() - active.started, active.id, active.ctx.spaceId, active.token),
         active.ctx.database.prepare(`UPDATE research_comparison_workbooks SET status = 'retryable', retry_at = ?, lock_token = NULL, lease_until = 0,
           updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND lock_token = ?`)

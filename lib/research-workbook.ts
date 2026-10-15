@@ -20,7 +20,7 @@ export type WorkbookState = {
   stale: boolean; sources: WorkbookSource[]; candidates: WorkbookSource[]; content: WorkbookContent | null;
   artifact: { revision: number; value: WorkbookArtifact } | null; retryAt: number;
   stage?: 'draft' | 'review'; busyUntil?: number;
-  failure?: { code: import('./workbook-recovery').WorkbookFailureCode; stage: 'draft' | 'review' } | null;
+  failure?: { code: import('./workbook-recovery').WorkbookFailureCode; stage: 'draft' | 'review'; detail?: string } | null;
 };
 
 const clean = (v: unknown, max: number) => typeof v === "string" ? v.trim().slice(0, max) : "";
