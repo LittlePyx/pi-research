@@ -61,12 +61,13 @@ function resolver(sources: WorkbookSource[]) {
     const source = expectedPaper ? catalog.find(s => s.paperId === expectedPaper)! : sourceFor(v.paperId);
     if (!source) throw new Error('unknown_workbook_source');
     if (v.status === 'missing') {
-      if (v.quoteId !== '' || v.quote !== undefined) throw new Error('unlocated_workbook_evidence');
+      if (!Array.isArray(v.quoteIds) || v.quoteIds.length || v.quote !== undefined || v.quoteId !== undefined) throw new Error('unlocated_workbook_evidence');
       return { paperId: source.paperId, status: 'missing', textZh: '', textEn: '', quote: '' };
     }
-    const quote = source.quotes.find(q => q.id === v.quoteId);
-    if (!quote || v.quote !== undefined) throw new Error('unlocated_workbook_evidence');
-    return { paperId: source.paperId, status: v.status, textZh: v.textZh, textEn: v.textEn, quote: quote.text };
+    if (!Array.isArray(v.quoteIds) || !v.quoteIds.length || v.quoteIds.length > 4 || new Set(v.quoteIds).size !== v.quoteIds.length || v.quote !== undefined || v.quoteId !== undefined) throw new Error('unlocated_workbook_evidence');
+    const quotes = v.quoteIds.map(id => source.quotes.find(q => q.id === id)?.text);
+    if (quotes.some(q=>!q)) throw new Error('unlocated_workbook_evidence');
+    return { paperId: source.paperId, status: v.status, textZh: v.textZh, textEn: v.textEn, quote: quotes[0], quotes };
   };
   const refs = (v: unknown) => {
     if (!Array.isArray(v)) throw new Error('untraceable_workbook_instruction');
@@ -82,12 +83,12 @@ function resolver(sources: WorkbookSource[]) {
 export function anchoredWorkbookPrompt(question: string, sources: WorkbookSource[]) {
   const base = JSON.parse(workbookDraftPrompt(question, sources));
   base.sources = workbookEvidenceCatalog(sources).map(({ paperId: _id, ...s }) => s);
-  base.evidenceProtocol = 'anchors-v1';
-  base.contract.dimensions[0].cells = [{ paperId: 'p1 (source key)', status: 'supported|missing', textZh: 'one concise observation entailed by the selected quote', textEn: 'same qualifications', quoteId: 'p1.q1 (exact catalog ID), or empty for missing' }];
+  base.evidenceProtocol = 'anchors-v2';
+  base.contract.dimensions[0].cells = [{ paperId: 'p1 (source key)', status: 'supported|missing', textZh: 'one concise observation collectively entailed by the selected passages', textEn: 'same qualifications', quoteIds: ['p1.q1 (1-4 exact catalog IDs from this paper; [] for missing)'] }];
   base.contract.comparison.evidenceIds = ['dimension-id:p1'];
   base.contract.task.steps[0].evidenceIds = ['dimension-id:p1'];
-  base.rules.push('Cite only supplied quoteId values; NEVER copy or generate quote text. paperId uses source key p1/p2/p3. Each evidenceIds entry uses dimension.id + colon + source key and MUST point to a supported cell in your table. A quote must support the entire bilingual observation; include no fact outside that quote. Use missing only when the whole abstract lacks the dimension. Prefer exactly 3 dimensions and 2 task steps. Aim for under 350 characters per prose field. Do not restate the route background as a finding or introduce objects not present in these abstracts.');
-  base.rules.push('Every number, model name, auxiliary method and qualification in a supported cell must occur in or be entailed by its selected quote. Select a contiguous context window (.w) when several adjacent sentences are needed, or narrow the observation to one sentence. Facts elsewhere in the abstract DO NOT validate an unrelated quotation. In reader-facing prose use P1/P2/P3 or distinctive short paper titles. Never mention implementation keys such as quoteId, evidenceIds, supported cells or raw dimension IDs; ask the reader to cite the displayed source passage.');
+  base.rules.push('Use quoteIds to select 1-4 supplied catalog IDs from the SAME paper; NEVER copy or generate quote text. Use [] for missing. paperId uses source key p1/p2/p3. Each evidenceIds entry uses dimension.id + colon + source key and MUST point to a supported cell. The selected passages must collectively support the ENTIRE bilingual observation. Use missing only when the whole abstract lacks the dimension. Prefer exactly 3 dimensions and 2 task steps. Aim for under 350 characters per prose field. The research question is motivation, not evidence.');
+  base.rules.push('Every number, model name, auxiliary method and qualification in a supported cell must be entailed by its SELECTED passages. ADD another catalog ID when a clause needs another sentence, or narrow the observation. Unselected abstract sentences do not validate a citation. Use contiguous windows (.w) only when useful; do not stitch or paraphrase quotes. In reader-facing prose use P1/P2/P3 or distinctive short titles. Never mention quoteId, quoteIds, evidenceIds, supported cells or raw dimension IDs; ask readers to cite the displayed source passages.');
   return JSON.stringify(base);
 }
 
@@ -107,7 +108,7 @@ function target(content: WorkbookContent, id: string) {
   if (id === 'comparison') return { parent: content.comparison as unknown as Value, keys: ['status', 'textZh', 'textEn', 'evidenceIds'] };
   const dimension = content.dimensions.find(d => id === `dimension:${d.id}`);
   if (dimension) return { parent: dimension as unknown as Value, keys: ['labelZh', 'labelEn', 'purposeZh', 'purposeEn'] };
-  for (const d of content.dimensions) for (const c of d.cells) if (id === `cell:${d.id}:${c.paperId}`) return { parent: c as unknown as Value, keys: ['status', 'textZh', 'textEn', 'quoteId'], paperId: c.paperId };
+  for (const d of content.dimensions) for (const c of d.cells) if (id === `cell:${d.id}:${c.paperId}`) return { parent: c as unknown as Value, keys: ['status', 'textZh', 'textEn', 'quoteIds'], paperId: c.paperId };
   const step = /^task:step:(\d+)$/.exec(id);
   if (step && content.task.steps[Number(step[1])]) return { parent: content.task.steps[Number(step[1])] as unknown as Value, keys: ['textZh', 'textEn', 'evidenceIds'] };
   const field = /^(task|learning):(title|criterion|goal|prerequisite|exercise|checkpoint)$/.exec(id);
@@ -128,18 +129,21 @@ export function workbookPatchPrompt(question: string, sources: WorkbookSource[],
   context.comparison.evidenceIds = refs(context.comparison.evidenceIds);
   for (const step of context.task.steps) step.evidenceIds = refs(step.evidenceIds);
   const patches = issues.map((issue, i) => ({ id: `f${i + 1}`, field: issue.id, reason: issue.reason,
-    valueKeys: target(content, issue.id).keys, ...(target(content, issue.id).paperId ? { sourceKey: keys.get(target(content, issue.id).paperId!) } : {}) }));
+    valueKeys: target(content, issue.id).keys, ...(target(content, issue.id).paperId ? { sourceKey: keys.get(target(content, issue.id).paperId!),
+      currentQuoteIds: ((target(content,issue.id).parent.quotes || [target(content,issue.id).parent.quote]) as string[]).flatMap(text=>{
+        const quote=catalog.find(s=>s.paperId===target(content,issue.id).paperId)!.quotes.find(q=>q.text===text);return quote?[quote.id]:[];
+      }) } : {}) }));
   const output = { patches: issues.map((issue, i) => {
     const t = target(content, issue.id);
     const value = Object.fromEntries(t.keys.map(key => [key, key === 'evidenceIds' ? refs(t.parent[key] as string[])
-      : key === 'quoteId' ? catalog.find(s => s.paperId === t.paperId)!.quotes[0]?.id || ''
+      : key === 'quoteIds' ? patches[i].currentQuoteIds?.length ? patches[i].currentQuoteIds : [catalog.find(s => s.paperId === t.paperId)!.quotes[0]?.id].filter(Boolean)
         : key === 'status' ? t.parent.status : key.endsWith('Zh') ? '修订后的简洁中文，只依据材料' : 'Equivalent corrected English, using only the supplied material']));
     return { id: `f${i + 1}`, value };
   }) };
   delete base.contract;
   return JSON.stringify({ ...base, task: 'Correct only the failed fields listed in correction.targets. Return patches, not a complete workbook.', previousWorkbook: context,
-    correction: { issues, targets: patches, instruction: 'Each target must appear exactly once. Use ONLY its valueKeys. All other fields, dimension identities, paper identities and step order are immutable. Cell patches use quoteId from that paper’s catalog (empty for missing). evidenceIds use short source keys. Preserve supported content exactly. Correct both languages without adding claims. All fields will be independently reviewed again.' },
-    output, outputRule: 'Return ONLY this patches envelope, with value as an OBJECT containing the exact illustrated keys. The values illustrate shape, not approved claims or mandatory evidence choices. Choose valid status, quoteId and evidenceIds for the actual correction; missing cells require empty quoteId. Do not add explanations, field names, reasons or a full workbook to the output.' });
+    correction: { issues, targets: patches, instruction: 'Each target must appear exactly once. Use ONLY its valueKeys. All other fields, dimension identities, paper identities and step order are immutable. For a failed cell, retain useful source passages and ADD IDs covering the omitted clauses, or narrow the bilingual observation; use quoteIds with 1-4 IDs from that paper, [] for missing. Do not replace one incomplete quotation with another incomplete one. evidenceIds use short source keys. Preserve approved fields exactly. All fields will be reviewed again.' },
+    output, outputRule: 'Return ONLY this patches envelope, with value as an OBJECT containing the exact illustrated keys. Values illustrate shape, not approved claims or mandatory evidence choices. Choose actual status, quoteIds and evidenceIds; missing cells require []. Do not add explanations, reasons or a full workbook.' });
 }
 
 /** Apply only failed review fields to a clone. A model cannot overwrite any approved field. */

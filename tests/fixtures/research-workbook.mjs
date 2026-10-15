@@ -15,7 +15,7 @@ export function anchoredSample(sources = workbookSources) {
   const ref = id => { const split = id.indexOf(':'); return `${id.slice(0,split)}:${catalog.find(s=>s.paperId===id.slice(split+1)).key}`; };
   for (const dimension of content.dimensions) for (const cell of dimension.cells) {
     const source = catalog.find(s=>s.paperId===cell.paperId);
-    cell.paperId=source.key; cell.quoteId=cell.status==='supported'?source.quotes.find(q=>q.text.includes(cell.quote)).id:'';delete cell.quote;
+    cell.paperId=source.key; cell.quoteIds=cell.status==='supported'?[source.quotes.find(q=>q.text.includes(cell.quote)).id]:[];delete cell.quote;
   }
   content.comparison.evidenceIds=content.comparison.evidenceIds.map(ref);
   for(const step of content.task.steps)step.evidenceIds=step.evidenceIds.map(ref);

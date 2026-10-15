@@ -6,13 +6,24 @@ import { workbookReviewPrompt } from '../lib/workbook-graph.ts';
 import { workbookSources, anchoredSample, resolvedSample } from './fixtures/research-workbook.mjs';
 
 const issue = id => ({id,paperIds:workbookSources.map(s=>s.id),reason:'Isolated correction fixture',issueType:'repairable'});
+test('separate passages are preserved individually and every passage must belong to the same source',()=>{
+ const sources=structuredClone(workbookSources);sources[0].abstractText='The object is a model with twelve configurations. '+ 'Intervening context is retained in the source. '.repeat(40)+'The evaluation reports context gain under matched conditions.';
+ const wire=anchoredSample(sources.map((s,i)=>i?s:{...s,abstractText:workbookSources[0].abstractText+' '+s.abstractText}));
+ const augmented=sources.map((s,i)=>i?s:{...s,abstractText:workbookSources[0].abstractText+' '+s.abstractText}),bank=workbookEvidenceCatalog(augmented),paper=bank.find(s=>s.paperId===sources[0].id);
+ const first=paper.quotes.find(q=>q.text.includes('twelve configurations')),last=paper.quotes.find(q=>q.text==='The evaluation reports context gain under matched conditions.');
+ wire.dimensions[0].cells[0].quoteIds=[first.id,last.id];
+ const resolved=resolveAnchoredWorkbook(wire,augmented),cell=resolved.dimensions[0].cells[0];assert.deepEqual(cell.quotes,[first.text,last.text]);assert.equal(cell.quote,first.text);assert.equal(cell.quotes.some(q=>q.includes('…')),false);
+ const forged=structuredClone(resolved);forged.dimensions[0].cells[0].quotes[1]='Invented second passage that is absent from the abstract.';assert.throws(()=>validateWorkbook(forged,augmented),/unlocated_workbook_evidence/);
+ wire.dimensions[0].cells[0].quoteIds=[first.id,bank.find(s=>s.paperId!==sources[0].id).quotes[0].id];assert.throws(()=>resolveAnchoredWorkbook(wire,augmented),/unlocated_workbook_evidence/);
+ wire.dimensions[0].cells[0].quoteIds=[first.id,first.id];assert.throws(()=>resolveAnchoredWorkbook(wire,augmented),/unlocated_workbook_evidence/);
+});
 test('adjacent-sentence windows preserve a continuous source passage and enforce cell-specific review',()=>{
  const sources=structuredClone(workbookSources);sources[0].abstractText='The first sentence names the study object. The second sentence reports a value of 0.248. The third sentence states an explicit qualification.';
  const bank=workbookEvidenceCatalog(sources),source=bank.find(s=>s.paperId===sources[0].id);
  const window=source.quotes.find(q=>q.text===sources[0].abstractText);assert.ok(window);assert.match(window.id,/\.w/);
  assert.equal(workbookPaperLabel(sources[0].id,[...sources].reverse()).toLowerCase(),source.key);
  const prompt=JSON.parse(workbookReviewPrompt('q',workbookSources,resolvedSample(),['comparison'],true));
- assert.match(prompt.rules,/THAT CELL'S SELECTED quote/);assert.match(prompt.rules,/elsewhere in the full abstract does not validate/);
+ assert.match(prompt.rules,/THAT CELL'S SELECTED passages/);assert.match(prompt.rules,/elsewhere in the full abstract does not validate/);
 });
 test('catalog spans preserve original math and whitespace and remain stable across source order',async()=>{
  const sources=structuredClone(workbookSources);sources[0].abstractText='  '+String.raw`A mathematical statement about $\alpha$ and "quoted text".  `+'x'.repeat(1300)+' final words.';
@@ -24,12 +35,12 @@ test('catalog spans preserve original math and whitespace and remain stable acro
 });
 test('anchored generation restores only server-owned quotes and canonical source references',()=>{
  const prompt=JSON.parse(anchoredWorkbookPrompt('question',workbookSources));
- assert.equal(prompt.evidenceProtocol,'anchors-v1');assert.ok(prompt.sources.every(s=>!('paperId'in s)));
+ assert.equal(prompt.evidenceProtocol,'anchors-v2');assert.ok(prompt.sources.every(s=>!('paperId'in s)));
  const content=resolveAnchoredWorkbook(anchoredSample(),workbookSources);
  assert.deepEqual(content,validateWorkbook(content,workbookSources));
  for(const d of content.dimensions)for(const c of d.cells)if(c.status==='supported')assert.ok(workbookSources.find(s=>s.id===c.paperId).abstractText.includes(c.quote));
- const unknown=anchoredSample();unknown.dimensions[0].cells[0].quoteId='p3.q999';assert.throws(()=>resolveAnchoredWorkbook(unknown,workbookSources),/unlocated_workbook_evidence/);
- const cross=anchoredSample();cross.dimensions[0].cells[0].quoteId='p1.q1';assert.throws(()=>resolveAnchoredWorkbook(cross,workbookSources),/unlocated_workbook_evidence/);
+ const unknown=anchoredSample();unknown.dimensions[0].cells[0].quoteIds=['p3.q999'];assert.throws(()=>resolveAnchoredWorkbook(unknown,workbookSources),/unlocated_workbook_evidence/);
+ const cross=anchoredSample();cross.dimensions[0].cells[0].quoteIds=['p1.q1'];assert.throws(()=>resolveAnchoredWorkbook(cross,workbookSources),/unlocated_workbook_evidence/);
  const copied=anchoredSample();copied.dimensions[0].cells[0].quote='Do not accept arbitrary quote text';assert.throws(()=>resolveAnchoredWorkbook(copied,workbookSources),/unlocated_workbook_evidence/);
  const badref=anchoredSample();badref.comparison.evidenceIds=['conditions:p1'];assert.throws(()=>resolveAnchoredWorkbook(badref,workbookSources),/untraceable_workbook_instruction/);
 });
@@ -56,7 +67,7 @@ test('cell correction targets identify the correct paper even when the old cell 
  const p=JSON.parse(workbookPatchPrompt('q',workbookSources,content,[issue(`cell:conditions:${missing.paperId}`)]));
  const key=workbookEvidenceCatalog(workbookSources).find(s=>s.paperId===missing.paperId).key;
  assert.equal(p.correction.targets[0].sourceKey,key);
- assert.match(p.output.patches[0].value.quoteId,new RegExp(`^${key}\\.q`));
+ assert.match(p.output.patches[0].value.quoteIds[0],new RegExp(`^${key}\\.q`));
  assert.equal(p.previousWorkbook.dimensions[2].cells[0].paperId,key);
  assert.ok(p.previousWorkbook.comparison.evidenceIds.every(id=>/:p[123]$/.test(id)));
  assert.equal(content.dimensions[2].cells[0].paperId,missing.paperId);
@@ -64,10 +75,10 @@ test('cell correction targets identify the correct paper even when the old cell 
 test('each bilingual field group and cell can be corrected without changing identities or order',()=>{
  const content=resolvedSample(),wire=anchoredSample(),cell=content.dimensions[1].cells[0];
  const ids=['question','dimension:metric',`cell:method:${cell.paperId}`,'task:title','task:step:0','task:criterion','learning:goal','learning:prerequisite','learning:exercise','learning:checkpoint'];
- const values=[{questionZh:'仅核对摘要中的工具。',questionEn:'Check only the tools named in the abstracts.'},{labelZh:'指标',labelEn:'Quantities',purposeZh:'核对名称。',purposeEn:'Check the names.'},{status:'supported',textZh:'核对原文。',textEn:'Check the source.',quoteId:wire.dimensions[1].cells[0].quoteId},{titleZh:'核对表',titleEn:'Audit table'},wire.task.steps[0],{criterionZh:'保留缺失项。',criterionEn:'Retain missing items.'},...['goal','prerequisite','exercise','checkpoint'].map(k=>({[`${k}Zh`]:'核对摘要。',[`${k}En`]:'Audit the abstracts.'}))];
+ const values=[{questionZh:'仅核对摘要中的工具。',questionEn:'Check only the tools named in the abstracts.'},{labelZh:'指标',labelEn:'Quantities',purposeZh:'核对名称。',purposeEn:'Check the names.'},{status:'supported',textZh:'核对原文。',textEn:'Check the source.',quoteIds:wire.dimensions[1].cells[0].quoteIds},{titleZh:'核对表',titleEn:'Audit table'},wire.task.steps[0],{criterionZh:'保留缺失项。',criterionEn:'Retain missing items.'},...['goal','prerequisite','exercise','checkpoint'].map(k=>({[`${k}Zh`]:'核对摘要。',[`${k}En`]:'Audit the abstracts.'}))];
  const after=applyWorkbookPatches({patches:values.map((value,i)=>({id:`f${i+1}`,value}))},content,workbookSources,ids.map(issue));
  assert.deepEqual(after.dimensions.map(d=>[d.id,d.cells.map(c=>c.paperId)]),content.dimensions.map(d=>[d.id,d.cells.map(c=>c.paperId)]));assert.deepEqual(after.comparison,content.comparison);assert.equal(after.task.steps.length,content.task.steps.length);
- const patch={patches:[{id:'f1',value:{status:'missing',textZh:'',textEn:'',quoteId:''}}]};
+ const patch={patches:[{id:'f1',value:{status:'missing',textZh:'',textEn:'',quoteIds:[]}}]};
  assert.throws(()=>applyWorkbookPatches(patch,content,workbookSources,[issue(`cell:method:${cell.paperId}`)]),/untraceable_workbook_instruction/,'a cell correction cannot leave approved instructions with dangling references');
  const independent=structuredClone(content);independent.dimensions[2].cells[0]={...cell};
  const missing=applyWorkbookPatches(patch,independent,workbookSources,[issue(`cell:conditions:${cell.paperId}`)]);

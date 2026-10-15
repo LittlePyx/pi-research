@@ -5,7 +5,7 @@ export type WorkbookSource = {
   abstractText: string; readingFocusZh: string; readingFocusEn: string;
   routeMember: boolean;
 };
-export type WorkbookCell = { paperId: string; textZh: string; textEn: string; quote: string; status: "supported" | "missing" };
+export type WorkbookCell = { paperId: string; textZh: string; textEn: string; quote: string; quotes?: string[]; status: "supported" | "missing" };
 export type WorkbookDimension = { id: string; labelZh: string; labelEn: string; purposeZh: string; purposeEn: string; cells: WorkbookCell[] };
 export type WorkbookContent = {
   questionZh: string; questionEn: string;
@@ -61,8 +61,10 @@ export function validateWorkbook(raw: unknown, sources: WorkbookSource[]): Workb
       if (!source) throw new Error("unknown_workbook_source");
       if (c.status === "missing") return { paperId, status: "missing" as const, textZh: "", textEn: "", quote: "" };
       const quote = required(c.quote, 1200);
-      if (c.status !== "supported" || quote.length < 20 || !normalize(source.abstractText).includes(normalize(quote))) throw new Error("unlocated_workbook_evidence");
-      return { paperId, status: "supported" as const, textZh: required(c.textZh), textEn: required(c.textEn), quote };
+      if (c.quotes !== undefined && (!Array.isArray(c.quotes) || !c.quotes.length || c.quotes.length > 4)) throw new Error('unlocated_workbook_evidence');
+      const quotes = Array.isArray(c.quotes) ? c.quotes.map(q=>required(q,1200)) : [quote];
+      if (c.status !== "supported" || quotes[0] !== quote || new Set(quotes.map(normalize)).size !== quotes.length || quotes.some(q=>q.length < 20 || !normalize(source.abstractText).includes(normalize(q)))) throw new Error("unlocated_workbook_evidence");
+      return { paperId, status: "supported" as const, textZh: required(c.textZh), textEn: required(c.textEn), quote, ...(Array.isArray(c.quotes) ? {quotes} : {}) };
     });
     if (cells.length !== sources.length || new Set(cells.map(c => c.paperId)).size !== sources.length) throw new Error("incomplete_comparison_coverage");
     return { id, ...bilingual(d, "label", 140), ...bilingual(d, "purpose", 500), cells } as WorkbookDimension;

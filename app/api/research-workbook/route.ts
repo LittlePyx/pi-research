@@ -113,7 +113,7 @@ export async function GET(request: Request) {
     // A graph task must resume only its own question and exact source set.
     const revision = await workbookRevision(scoped.question, selected);
     const id = `${ctx.spaceId}:${ctx.trackId}:${revision}`;
-    row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${id}:revision-v3`) || await rowFor(ctx, `${id}:evidence-v3`) || await rowFor(ctx, `${id}:revision-v2`) || await rowFor(ctx, `${id}:evidence-v2`) || await rowFor(ctx, `${id}:revision-v1`) || await rowFor(ctx, id) : null;
+    row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${id}:revision-v4`) || await rowFor(ctx, `${id}:evidence-v4`) || await rowFor(ctx, `${id}:revision-v3`) || await rowFor(ctx, `${id}:evidence-v3`) || await rowFor(ctx, `${id}:revision-v2`) || await rowFor(ctx, `${id}:evidence-v2`) || await rowFor(ctx, `${id}:revision-v1`) || await rowFor(ctx, id) : null;
   } else row = await rowFor(ctx, id);
   if (id && !row) return Response.json({ error: "Workbook not found" }, { status: 404 });
   return projection(ctx, row, preferred, focus);
@@ -156,8 +156,8 @@ export async function POST(request: Request) {
       if (ids.length < 2 || ids.length > 3 || selected.length !== ids.length) return Response.json({ error: "Select two or three currently approved papers" }, { status: 422 });
       const revision = await workbookRevision(ctx.question, selected);
       const rootId = `${ctx.spaceId}:${ctx.trackId}:${revision}`;
-      const baselineId = `${rootId}:evidence-v3`;
-      const id = body.allowRepair === true ? `${rootId}:revision-v3` : baselineId;
+      const baselineId = `${rootId}:evidence-v4`;
+      const id = body.allowRepair === true ? `${rootId}:revision-v4` : baselineId;
       const baseline = body.allowRepair === true ? await rowFor(ctx, baselineId) : null;
       const seedDraft = baseline?.status === 'rejected' && baseline.draft_json ? validateWorkbook(parse(baseline.draft_json), selected) : null;
       const initialReview = body.allowRepair === true ? (await import('../../../lib/workbook-graph')).initialWorkbookGraphReview() : null;
@@ -205,7 +205,7 @@ export async function POST(request: Request) {
     const pending = draft ? workbookReviewFields(draft).filter(id=>!earlier?.checks.some(c=>c.id===id)).slice(0, WORKBOOK_REVIEW_BATCH_SIZE) : [];
     const prompt = draft ? JSON.stringify({ question: ctx.question, sources: selected, workbook: draft,
       requiredCheckIds: pending,
-      rules: "Check BOTH languages of each field, including every missing cell (is the information genuinely absent?), all mathematical conditions/quantifiers/bounds, comparability, and the specificity and feasibility of every task and learning field. For each supported cell, EVERY clause, number, model name and qualification must be entailed by THAT CELL'S SELECTED quote. Information elsewhere in the full abstract does not validate its citation; reject such a cell. Use the full abstract to judge missing cells. No full proofs can be taught from abstracts. Reject invented prerequisites stated as facts, contradiction/novelty claims, interchangeable generic advice, and reader instructions requiring internal JSON keys such as quoteId or evidenceIds. Only supported if all checks pass.",
+      rules: "Check BOTH languages of each field, including every missing cell (is the information genuinely absent?), all mathematical conditions/quantifiers/bounds, comparability, and the specificity and feasibility of every task and learning field. For each supported cell, EVERY clause, number, model name and qualification must be entailed by THAT CELL'S SELECTED passages (quotes array, or legacy quote), taken collectively. Information elsewhere in the full abstract does not validate its citation; reject such a cell. Use the full abstract to judge missing cells. No full proofs can be taught from abstracts. Reject invented prerequisites stated as facts, contradiction/novelty claims, interchangeable generic advice, and reader instructions requiring internal JSON keys such as quoteId, quoteIds or evidenceIds. Only supported if all checks pass.",
       output: { verdict: "supported|unsupported", checks: [{ id: "exact requiredCheckId", verdict: "supported|unsupported", paperIds: ["exact source ID"], reason: "specific support or failure reason" }] },
       batchRule: 'Return checks for ONLY the supplied requiredCheckIds. Keep each reason to one short sentence. Other fields are reviewed in separate saved batches.',
     }) : anchoredWorkbookPrompt(ctx.question, selected);
