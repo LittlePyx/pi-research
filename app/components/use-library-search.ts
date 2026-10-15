@@ -2,11 +2,12 @@
 import {useEffect,useRef,useState} from 'react';
 import {workspaceFetch} from '../../lib/workspace-request';
 type Page<T>={papers:T[];total:number;offset:number;nextOffset:number|null;counts:{total:number;inbox:number;accepted:number;dismissed:number}};
-export function useLibrarySearch<T>({spaceId,enabled,q,filter,stage,inbox,sort,tag,refresh}:{spaceId:string;enabled:boolean;q:string;filter:string;stage:string;inbox:string;sort:string;tag:string;refresh:string}) {
+export function useLibrarySearch<T>({spaceId,enabled,q,filter,stage,inbox,sort,tag,refresh,page,onPage}:{spaceId:string;enabled:boolean;q:string;filter:string;stage:string;inbox:string;sort:string;tag:string;refresh:string;page?:number;onPage?:(page:number)=>void}) {
  const key=JSON.stringify([spaceId,q.trim(),filter,stage,inbox,sort,tag]);
  const [position,setPosition]=useState({key,offset:0}),[result,setResult]=useState<{key:string;data:Page<T>}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(false),[retry,setRetry]=useState(0);
  const sequence=useRef(0);
- const offset=position.key===key?position.offset:0;
+ const controlled=page!==undefined,onPageOffset=Math.max(0,((page||1)-1)*60);
+ const offset=controlled?onPageOffset:position.key===key?position.offset:0;
  useEffect(()=>{
   const version=++sequence.current;
   if(!enabled)return;
@@ -22,5 +23,5 @@ export function useLibrarySearch<T>({spaceId,enabled,q,filter,stage,inbox,sort,t
   return()=>{clearTimeout(timer);abort.abort()};
  },[enabled,spaceId,q,filter,stage,inbox,sort,tag,key,offset,refresh,retry]);
  const data=result?.key===key?result.data:null;
- return {data,busy:busy||enabled&&(!data||data.offset!==offset)&&!error,error,offset,setOffset:(offset:number)=>setPosition({key,offset}),retry:()=>setRetry(n=>n+1)};
+ return {data,busy:busy||enabled&&(!data||data.offset!==offset)&&!error,error,offset,setOffset:(offset:number)=>controlled?onPage?.(Math.floor(Math.max(0,offset)/60)+1):setPosition({key,offset}),retry:()=>setRetry(n=>n+1)};
 }

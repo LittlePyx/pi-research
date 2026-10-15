@@ -9,6 +9,7 @@ import {
 
 const monitor = readFileSync(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app/research-app.tsx", import.meta.url), "utf8");
+const primaryLibrary = readFileSync(new URL("../app/components/primary-library.tsx", import.meta.url), "utf8");
 
 test("the paper library keeps the discovery archive separate from the recommendation inbox", () => {
   assert.match(monitor, /WHERE p\.space_id = \?\s+ORDER BY CASE WHEN p\.id = \? THEN 0 ELSE 1 END, p\.discovered_at DESC, i\.quality_score DESC LIMIT 2000/);
@@ -20,7 +21,7 @@ test("the paper library keeps the discovery archive separate from the recommenda
 
 test("archived discoveries are visible without being mislabeled as recommendations", () => {
   assert.match(app, /useState<LibraryFilter>\("all"\)/);
-  assert.match(app, /"全部发现"/);
+  assert.match(primaryLibrary, /"全部发现"/);
   assert.match(app, /archiveQualityStagePresentation/);
   assert.match(app, /screeningReason/);
   assert.match(app, /isRecommendationQualityStage/);
@@ -56,10 +57,10 @@ test("quick-screened and retryable degraded candidates remain queued instead of 
 
 test("library tabs use durable archive counts without a duplicate overview", () => {
   assert.match(app, /const historyPapers = useMemo/);
-  assert.match(app, /"全部发现" : "All discoveries"}<span>{libraryCounts\?\.total \?\? "—"}<\/span>/);
-  assert.match(app, /libraryCounts\?\.inbox \?\? "—"/);
-  assert.match(app, /libraryCounts\?\.accepted \?\? "—"/);
-  assert.match(app, /libraryCounts\?\.dismissed \?\? "—"/);
+  assert.match(primaryLibrary, /"全部发现" : "All discoveries"}<span>{props\.counts\?\.total \?\? "—"}<\/span>/);
+  assert.match(primaryLibrary, /props\.counts\?\.inbox \?\? "—"/);
+  assert.match(primaryLibrary, /props\.counts\?\.accepted \?\? "—"/);
+  assert.match(primaryLibrary, /props\.counts\?\.dismissed \?\? "—"/);
   assert.doesNotMatch(app, /<section className="v2-library-overview"/);
   assert.doesNotMatch(app, /monitor\?\.historyCounts\?\.unseen \|\| 0}<\/strong><b>{t\.unseen/);
 });
@@ -71,7 +72,7 @@ test("the sidebar and archive ranking cannot make retained papers look missing o
   assert.doesNotMatch(app, /item\.id === "today"[^\n]*monitor\?\.newCount/);
   assert.match(app, /qualityStageRank/);
   assert.match(app, /second\.relevanceScore - first\.relevanceScore/);
-  const libraryList = app.slice(app.indexOf('<div className="v2-library-list">'), app.indexOf('{view === "memory"'));
+  const libraryList = primaryLibrary.slice(primaryLibrary.indexOf('<div className="v2-library-list">'));
   assert.doesNotMatch(libraryList, /t\.qualityScore|displayQualityScore/);
   assert.match(app, /displayQualityScore\(selectedMonitorPaper\.qualityScore\)/);
   assert.match(app, /Math\.min\(100, Math\.max\(0, Math\.round/);

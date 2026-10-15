@@ -1,4 +1,7 @@
 /* Library-wide exploration, separate from the curated route backbone. */
+.v2-app.pi-workspace .pi-deferred-surface { display:flex; align-items:center; justify-content:center; gap:10px; min-height:120px; color:#64748b; font-size:14px; }
+.v2-app.pi-workspace .pi-deferred-surface span { color:var(--pi-accent); font-size:20px; animation:pi-deferred-spin 900ms linear infinite; }
+@keyframes pi-deferred-spin { to { transform:rotate(360deg); } }
 .pi-workspace .pi-library-explorer { background:#fff; border:1px solid var(--pi-line); border-radius:10px; padding:24px; margin:24px 0; }
 .pi-workspace .pi-library-explorer h2 { font-family:inherit; font-size:22px; font-weight:600; line-height:1.5; margin:0 0 8px; }
 .pi-workspace .pi-citation-other { margin-top:18px; border-top:1px solid var(--pi-line); padding-top:14px; }
@@ -146,8 +149,8 @@
   .v2-app.pi-workspace .v2-breadcrumb > span { max-width: 160px; }
 }
 @media(max-width:800px) {
-  .v2-app.pi-workspace .v2-sidebar { width: 260px; transform: translateX(-100%); }
-  .v2-app.pi-workspace .v2-sidebar.open { transform: translateX(0); }
+  .v2-app.pi-workspace .v2-sidebar { width: 260px; transform: translateX(-100%); visibility: hidden; pointer-events: none; }
+  .v2-app.pi-workspace .v2-sidebar.open { transform: translateX(0); visibility: visible; pointer-events: auto; }
   .v2-app.pi-workspace .v2-main { margin-left: 0; }
   .v2-app.pi-workspace .v2-mobile-menu { display: block; }
   .v2-app.pi-workspace .v2-topbar { min-height: 62px; padding: 10px 16px; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; }

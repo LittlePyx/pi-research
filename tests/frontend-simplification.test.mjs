@@ -69,13 +69,17 @@ test("Today leads with selected reading while scan detail and secondary lists st
 });
 
 test("library and paper detail keep reading primary while management and audit stay on demand", async () => {
-  const [app, css] = await Promise.all([readFile(appUrl, "utf8"), readFile(cssUrl, "utf8")]);
-  const library = app.slice(app.indexOf('{(view === "library"'), app.indexOf('{view === "memory"'));
+  const [app, css, library] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(cssUrl, "utf8"),
+    readFile(new URL("../app/components/primary-library.tsx", import.meta.url), "utf8"),
+  ]);
   const paperDetail = app.slice(app.indexOf('{view === "paper-detail" &&'), app.indexOf('</main>', app.indexOf('{view === "paper-detail" &&')));
   const paperHead = paperDetail.slice(paperDetail.indexOf('<section className="v2-paper-head">'), paperDetail.indexOf('<div className="v2-paper-detail-grid">'));
   const toolbar=paperDetail.slice(paperDetail.indexOf('<div className="pi-paper-toolbar">'),paperDetail.indexOf('<div className="v2-paper-detail-grid">'));
 
   assert.match(library, /<LibraryExport /);
+  assert.match(app, /<PrimaryLibrary/);
   assert.match(await readFile(new URL("../app/components/library-export.tsx",import.meta.url),"utf8"), /<details className="v2-library-export">/);
   assert.match(library, /<details className="v2-library-paper-actions">/);
   assert.match(toolbar, /PaperPanelNavigation[\s\S]*v2-paper-primary-actions/);

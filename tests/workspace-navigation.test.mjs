@@ -11,6 +11,16 @@ test('workspace links preserve paper identity, route subpage, scope and return d
   assert.equal(readWorkspaceLocation('#threads?graph=paper-1').graph, 'paper-1');
 });
 
+test('recovery and library graph origins survive only on their valid routes', () => {
+  const recovery = {view:'today', space:'space-1', panel:'discovery', focus:'recovery'};
+  assert.deepEqual(readWorkspaceLocation(workspaceHash(recovery)), {...recovery, id:undefined, tab:'start', from:undefined, track:undefined, graph:undefined, step:undefined, path:undefined});
+  const graph = {view:'threads', space:'space-1', graph:'paper-1', graphFrom:'library'};
+  assert.deepEqual(readWorkspaceLocation(workspaceHash(graph)), {...graph, id:undefined, tab:'start', from:undefined, track:undefined, step:undefined, path:undefined});
+  assert.equal(readWorkspaceLocation('#today?panel=home&focus=recovery').focus, undefined);
+  assert.equal(readWorkspaceLocation('#threads?graph=paper-1&graphFrom=unknown').graphFrom, undefined);
+  assert.equal(readWorkspaceLocation('#library?graph=paper-1&graphFrom=library').graphFrom, undefined);
+});
+
 test('invalid detail identities and unknown destinations fail closed', () => {
   for (const hash of ['#paper', '#thread/../../bad', '#workbook/%3Cscript%3E', '#unknown']) {
     assert.deepEqual(readWorkspaceLocation(hash), {view:'today'});
@@ -52,4 +62,42 @@ test('paper panels preserve reading origin and route context without leaking int
  assert.deepEqual(readWorkspaceLocation(workspaceHash(original)),{...original,graph:undefined,step:undefined,path:undefined});
  assert.equal(readWorkspaceLocation('#paper/p?paperPanel=unknown').paperPanel,undefined);
  assert.equal(readWorkspaceLocation('#today?paperPanel=notes').paperPanel,undefined);
+});
+
+test('library exploration survives refresh with search, scope, page and citation focus',()=>{
+ const location={view:'thread-detail',id:'route-2',space:'s',tab:'evidence',libraryQuery:'Gaussian concentration',libraryScope:'all',libraryPage:3,libraryFocus:'paper-9'};
+ assert.deepEqual(readWorkspaceLocation(workspaceHash(location)),{...location,from:undefined,track:undefined,graph:undefined,step:undefined,path:undefined});
+ const graphLibrary={view:'threads',space:'s',graph:'all',libraryQuery:'transport inequality',libraryPage:2};
+ assert.deepEqual(readWorkspaceLocation(workspaceHash(graphLibrary)),{...graphLibrary,id:undefined,tab:'start',from:undefined,track:undefined,step:undefined,path:undefined});
+ assert.equal(readWorkspaceLocation('#today?q=hidden&scope=all&page=4&libraryFocus=p').libraryQuery,undefined);
+});
+
+test('the primary library restores its filters, sort and service page',()=>{
+ const location={view:'library',space:'s',libraryQuery:'optimal transport',libraryFilter:'accepted',libraryStage:'evaluated',libraryInbox:'seen',librarySort:'newest',libraryTag:'notes',libraryPage:4};
+ assert.deepEqual(readWorkspaceLocation(workspaceHash(location)),{...location,id:undefined,tab:'start',from:undefined,track:undefined,graph:undefined,step:undefined,path:undefined});
+ const invalid=readWorkspaceLocation('#library?filter=unknown&stage=pending&inbox=removed&sort=random&tag=pdf&page=0');
+ assert.equal(invalid.libraryFilter,undefined);assert.equal(invalid.libraryStage,undefined);assert.equal(invalid.libraryPage,undefined);
+});
+
+test('research graph scope and focus survive only on an active graph route',()=>{
+ const location={view:'threads',space:'s',graph:'all',graphSurface:'routes',graphMode:'citations',graphScope:'one-hop',graphTrack:'route-2',graphFocus:'paper-9'};
+ assert.deepEqual(readWorkspaceLocation(workspaceHash(location)),{...location,id:undefined,tab:'start',from:undefined,track:undefined,step:undefined,path:undefined});
+ const inactive=readWorkspaceLocation('#threads?graphMode=citations&graphScope=one-hop&graphFocus=paper-9');
+ assert.equal(inactive.graphMode,undefined);assert.equal(inactive.graphScope,undefined);assert.equal(inactive.graphFocus,undefined);
+});
+
+test('workbook tab and evidence cell survive refresh without leaking to other pages',()=>{
+ const location={view:'workbook',id:'route-2',space:'s',from:'threads',workbookPanel:'relations',workbookFocus:'assumptions:paper-9'};
+ assert.deepEqual(readWorkspaceLocation(workspaceHash(location)),{...location,tab:'start',track:undefined,graph:undefined,step:undefined,path:undefined});
+ assert.equal(readWorkspaceLocation('#library?workbookPanel=task&workbookFocus=x').workbookPanel,undefined);
+ assert.equal(readWorkspaceLocation('#workbook/route-2?workbookPanel=unknown&workbookFocus=%00').workbookFocus,undefined);
+});
+
+test('URL text rejects control characters while preserving Unicode queries and evidence focus',()=>{
+ for(const character of ['\u0000','\u001f','\u007f']){
+  assert.equal(readWorkspaceLocation('#library?q='+encodeURIComponent('query'+character)).libraryQuery,undefined);
+  assert.equal(readWorkspaceLocation('#workbook/route-2?workbookFocus='+encodeURIComponent('cell:'+character)).workbookFocus,undefined);
+ }
+ assert.equal(readWorkspaceLocation('#library?q='+encodeURIComponent('协方差 α')).libraryQuery,'协方差 α');
+ assert.equal(readWorkspaceLocation('#workbook/route-2?workbookFocus='+encodeURIComponent('假设:论文')).workbookFocus,'假设:论文');
 });

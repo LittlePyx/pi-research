@@ -10,8 +10,8 @@ test("balance, authentication, provider limits and transport failures have disti
   }
   for (const error of ["deepseek_credential_invalid", "Invalid API key"]) assert.equal(modelConnectionFailureState(error), "invalid");
   for (const error of ["DeepSeek returned 429", "Rate limit reached", "Too many requests"]) assert.equal(modelConnectionFailureState(error), "rate_limited");
-  for (const error of ["fetch failed", "timeout", "502", "Unauthorized workspace", "Anonymous workspace is not initialized"]) assert.equal(modelConnectionFailureState(error), "unavailable");
-  for (const state of ["balance", "rate_limited", "unavailable"]) {
+  for (const [error, expected] of [["fetch failed", "network"], ["timeout", "timeout"], ["502", "unavailable"], ["Unauthorized workspace", "workspace"], ["Anonymous workspace is not initialized", "workspace"], ["workspace_session_required", "workspace"], ["deepseek_access_denied", "access_denied"], ["deepseek_invalid_response", "invalid_response"]]) assert.equal(modelConnectionFailureState(error), expected);
+  for (const state of ["balance", "rate_limited", "timeout", "network", "workspace", "access_denied", "invalid_response", "unavailable"]) {
     for (const locale of ["zh", "en"]) {
       const copy = modelConnectionProblemCopy(state, locale);
       assert.ok(copy.title && copy.detail && copy.modal);

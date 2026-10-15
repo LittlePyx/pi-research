@@ -12,17 +12,20 @@ import "./research-workbook.css";
 
 const emptyArtifact = (): WorkbookArtifact => ({ observations: {}, decision: "", unresolved: "" });
 type WorkbookResponse = { workbook: WorkbookState; versions: Array<{ id: string; status: string; created_at: string }>; error?: string };
-export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper, onBack, taskContext }: {
+type WorkbookPanel="evidence"|"relations"|"task";
+export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper, onBack, taskContext, initialPanel="evidence", initialFocus="", onViewChange }: {
   userId: string; spaceId: string; trackId: string; locale: "zh" | "en"; taskContext?: GraphTaskContext;
   onOpenPaper: (source: WorkbookSource, focus: string) => void;
   onBack: () => void;
+  initialPanel?:WorkbookPanel;initialFocus?:string;onViewChange?:(panel:WorkbookPanel,focus:string)=>void;
 }) {
   const [state, setState] = useState<WorkbookState | null>(null);
   const [versions, setVersions] = useState<Array<{ id: string; status: string; created_at: string }>>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
-  const [panel, setPanel] = useState<"evidence" | "relations" | "task">("evidence");
-  const [focus, setFocus] = useState("");
+  const [panel, setPanel] = useState<WorkbookPanel>(initialPanel);
+  const [focus, setFocus] = useState(initialFocus);
+  const [restoredView, setRestoredView] = useState({spaceId,trackId,panel:initialPanel,focus:initialFocus});
   const [artifact, setArtifact] = useState<WorkbookArtifact>(emptyArtifact);
   const [busy, setBusy] = useState("load"); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const generation = useRef(0);
@@ -36,6 +39,12 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     if (!writeSessionDraft(draftKey, JSON.stringify(state?.artifact?.value || emptyArtifact()), JSON.stringify(next))) setError(zh ? "无法暂存草稿，请保存后再离开。" : "Draft storage unavailable. Save before leaving.");
   };
   const dirty = JSON.stringify(artifact) !== JSON.stringify(state?.artifact?.value || emptyArtifact());
+
+  if(restoredView.spaceId!==spaceId||restoredView.trackId!==trackId||restoredView.panel!==initialPanel||restoredView.focus!==initialFocus){
+    setRestoredView({spaceId,trackId,panel:initialPanel,focus:initialFocus});
+    setPanel(initialPanel);
+    setFocus(initialFocus);
+  }
 
   useEffect(() => {
     const abort = new AbortController(); const epoch = ++generation.current;
@@ -57,6 +66,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const inspect = (id: string) => {
     inspectorTrigger.current = document.activeElement as HTMLElement;
     setFocus(id);
+    onViewChange?.(panel,id);
     requestAnimationFrame(() => {
       const inspector = document.getElementById("workbook-evidence-inspector");
       inspector?.focus({ preventScroll: true });
@@ -130,14 +140,14 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     {state?.status === "rejected" && <p>{zh ? "这组材料生成的比较未通过内容核对。请调整材料；未审核稿不会展示成研究结论。" : "The comparison failed content review. Adjust the sources; an unreviewed draft is not presented as a research finding."}</p>}
     {content && <>
       <div className="pi-comparison-sources">{state.sources.map((source,index) => <div key={source.id}><span>{String(index+1).padStart(2,"0")}</span><p><MathText inline>{source.title}</MathText></p></div>)}</div>
-      <nav className="pi-workbook-tabs" aria-label={zh ? "比较工作视角" : "Workbook view"}>{(["evidence", "relations", "task"] as const).map(p => <button type="button" key={p} aria-pressed={panel === p} onClick={() => setPanel(p)}>{p === "evidence" ? zh ? "条件与证据" : "Conditions & evidence" : p === "relations" ? zh ? "关系与可比性" : "Relationships & comparability" : zh ? "研究练习" : "Research exercise"}</button>)}</nav>
+      <nav className="pi-workbook-tabs" aria-label={zh ? "比较工作视角" : "Workbook view"}>{(["evidence", "relations", "task"] as const).map(p => <button type="button" key={p} aria-pressed={panel === p} onClick={() => {setPanel(p);onViewChange?.(p,focus);}}>{p === "evidence" ? zh ? "条件与证据" : "Conditions & evidence" : p === "relations" ? zh ? "关系与可比性" : "Relationships & comparability" : zh ? "研究练习" : "Research exercise"}</button>)}</nav>
 
       <div className={`pi-workbook-layout${focused ? " inspecting" : ""}`}><div>
         {panel === "evidence" && <section><h2>{zh ? "条件比较表" : "Condition comparison"}</h2><p>{zh ? "点选比较项，查看摘要出处并记录自己的核查。摘要缺少的信息会明确标注。" : "Select a cell to inspect its abstract evidence and record your check. Missing means not provided in the abstract."}</p><div className="pi-workbook-table-scroll"><table><thead><tr><th>{zh ? "比较维度" : "Dimension"}</th>{state.sources.map(s => <th key={s.id}><MathText inline>{s.title}</MathText></th>)}</tr></thead><tbody>{content.dimensions.map(d => <tr key={d.id}><th><strong>{text(d, "label")}</strong><small>{text(d, "purpose")}</small></th>{state.sources.map(s => { const c = d.cells.find(c => c.paperId === s.id)!; const id = `${d.id}:${s.id}`; return <td key={s.id}><button type="button" aria-pressed={focus === id} onClick={() => inspect(id)}><MathText>{c.status === "missing" ? zh ? "摘要未提供" : "Not provided in abstract" : text(c, "text")}</MathText>{artifact.observations[id] && <small>{zh ? "已有核查笔记" : "Check recorded"}</small>}</button></td>; })}</tr>)}</tbody></table></div></section>}
         {panel === "relations" && <section><h2>{zh ? "这些结果能否直接比较？" : "Can these results be compared directly?"}</h2><div className="pi-workbook-relation" role="group" aria-label={zh ? "材料与比较关系" : "Sources and comparison"}>{state.sources.map((s, i) => <div key={s.id}><span>{i + 1}</span><MathText inline>{s.title}</MathText></div>)}<strong>{content.comparison.status === "comparable" ? zh ? "当前证据支持比较" : "Comparable in current evidence" : content.comparison.status === "conditional" ? zh ? "需区分适用条件" : "Conditional comparison" : zh ? "信息不足，关系待核查" : "Insufficient evidence; relationship unresolved"}</strong></div><p><MathText>{text(content.comparison, "text")}</MathText></p><p>{zh ? "以下连结指向比较依据；不表示论文之间存在引用、支持或推广关系。" : "The links below identify comparison evidence; they do not assert citation, support or generalization relationships."}</p><div className="pi-workbook-evidence-links">{content.comparison.evidenceIds.map(id => <button type="button" key={id} onClick={() => inspect(id)}>{content.dimensions.find(d => id.startsWith(d.id + ":"))?.[zh ? "labelZh" : "labelEn"]} · {state.sources.find(s => id.endsWith(":" + s.id))?.title}</button>)}</div></section>}
         {panel === "task" && <section><h2>{text(content.task, "title")}</h2><ol>{content.task.steps.map((s, i) => <li key={i}><MathText>{text(s, "text")}</MathText><div className="pi-workbook-evidence-links">{s.evidenceIds.map(id => <button key={id} type="button" onClick={() => inspect(id)}>{zh ? "查看依据" : "Inspect evidence"} · {content.dimensions.find(d => id.startsWith(d.id + ":"))?.[zh ? "labelZh" : "labelEn"]}</button>)}</div></li>)}</ol><p><strong>{zh ? "完成标准：" : "Completion criteria: "}</strong><MathText>{text(content.task, "criterion")}</MathText></p><section className="pi-workbook-lesson"><h3>{zh ? "解决当前障碍的学习单元" : "Learning unit for the current obstacle"}</h3><h4>{text(content.learning, "goal")}</h4><dl><dt>{zh ? "需要的基础" : "Prerequisites"}</dt><dd><MathText>{text(content.learning, "prerequisite")}</MathText></dd><dt>{zh ? "用这些材料练习" : "Exercise using these sources"}</dt><dd><MathText>{text(content.learning, "exercise")}</MathText></dd><dt>{zh ? "检查自己的结果" : "Check your result"}</dt><dd><MathText>{text(content.learning, "checkpoint")}</MathText></dd></dl></section></section>}
 
-      </div><aside id="workbook-evidence-inspector" tabIndex={-1} className="pi-workbook-inspector" aria-label={zh ? "证据与核查笔记" : "Evidence and check notes"}>{focused && source ? <><div className="pi-inspector-heading"><h2>{text(focused.dimension, "label")}</h2><button type="button" onClick={() => { setFocus(""); requestAnimationFrame(() => inspectorTrigger.current?.focus()); }}>{zh ? "关闭依据" : "Close evidence"} ×</button></div><h3><MathText inline>{source.title}</MathText></h3>{focused.cell.quote ? <blockquote><MathText>{focused.cell.quote}</MathText><cite>{zh ? "来源：该论文摘要" : "Source: paper abstract"}</cite></blockquote> : <p>{zh ? "摘要未提供这项信息，不能用推测补全。" : "The abstract does not provide this information; do not fill it by inference."}</p>}<button type="button" onClick={() => onOpenPaper(source, text(focused.dimension, "purpose"))}>{zh ? "带着这项核查打开论文" : "Open paper for this check"} →</button><label>{zh ? "这一项的核查笔记" : "Check note for this cell"}<textarea value={artifact.observations[focus] || ""} maxLength={2500} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, observations: { ...a.observations, [focus]: e.target.value } }))} /></label><small>{zh ? "核查笔记与下方判断一并保存。" : "This note is saved with the comparison artifact."}</small></> : <><h2>{zh ? "证据侧栏" : "Evidence inspector"}</h2><p>{zh ? "选择表格中的比较项或任务中的依据，即可查看具体出处。" : "Select a comparison cell or task reference to inspect its source."}</p></>}</aside></div>
+      </div><aside id="workbook-evidence-inspector" tabIndex={-1} className="pi-workbook-inspector" aria-label={zh ? "证据与核查笔记" : "Evidence and check notes"}>{focused && source ? <><div className="pi-inspector-heading"><h2>{text(focused.dimension, "label")}</h2><button type="button" onClick={() => { setFocus("");onViewChange?.(panel,""); requestAnimationFrame(() => inspectorTrigger.current?.focus()); }}>{zh ? "关闭依据" : "Close evidence"} ×</button></div><h3><MathText inline>{source.title}</MathText></h3>{focused.cell.quote ? <blockquote><MathText>{focused.cell.quote}</MathText><cite>{zh ? "来源：该论文摘要" : "Source: paper abstract"}</cite></blockquote> : <p>{zh ? "摘要未提供这项信息，不能用推测补全。" : "The abstract does not provide this information; do not fill it by inference."}</p>}<button type="button" onClick={() => onOpenPaper(source, text(focused.dimension, "purpose"))}>{zh ? "带着这项核查打开论文" : "Open paper for this check"} →</button><label>{zh ? "这一项的核查笔记" : "Check note for this cell"}<textarea value={artifact.observations[focus] || ""} maxLength={2500} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, observations: { ...a.observations, [focus]: e.target.value } }))} /></label><small>{zh ? "核查笔记与下方判断一并保存。" : "This note is saved with the comparison artifact."}</small></> : <><h2>{zh ? "证据侧栏" : "Evidence inspector"}</h2><p>{zh ? "选择表格中的比较项或任务中的依据，即可查看具体出处。" : "Select a comparison cell or task reference to inspect its source."}</p></>}</aside></div>
         <section className="pi-workbook-artifact"><DraftRecovery key={draftKey} storageKey={draftKey} current={JSON.stringify(artifact)} base={JSON.stringify(state.artifact?.value || emptyArtifact())} locale={locale} onRestore={value => { try { const restored = JSON.parse(value); if (typeof restored.decision === "string" && typeof restored.unresolved === "string" && restored.observations && typeof restored.observations === "object") setArtifact(restored); } catch { setError(zh ? "草稿无法读取，已保存内容不受影响。" : "Draft unavailable; saved content is unchanged."); } }} /><h2>{zh ? "我的判断与记录" : "My judgment and notes"}</h2><p>{zh ? "记录自己的判断；这不会自动确认研究路线、已读或掌握。" : "Record your judgment. This does not confirm a research route, reading status or mastery."}</p><label>{zh ? "目前的判断及依据" : "Current judgment and evidence"}<textarea value={artifact.decision} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, decision: e.target.value }))} /></label><label>{zh ? "仍缺的条件或待解决问题" : "Missing conditions or unresolved questions"}<textarea value={artifact.unresolved} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, unresolved: e.target.value }))} /></label><button type="button" disabled={Boolean(busy) || !dirty || state.stale} onClick={() => void save()}>{zh ? "保存记录" : "Save notes"}</button><small>{dirty ? zh ? "有未保存修改，请先保存再切换版本。" : "Unsaved changes; save before switching versions." : state.artifact ? `${zh ? "已保存版本" : "Saved revision"} ${state.artifact.revision}` : zh ? "尚未保存" : "Not saved yet"}</small></section>
     </>}
   </main>;

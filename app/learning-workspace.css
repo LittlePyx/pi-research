@@ -3,6 +3,12 @@
 .v2-app.pi-workspace .v2-learn-page .v2-page-head { margin-bottom:18px; }
 .v2-app.pi-workspace .v2-learn-page .pi-study-path-links { display:flex; flex-wrap:wrap; gap:10px 24px; margin:0 0 20px; padding:0; }
 .v2-app.pi-workspace .v2-learn-page .pi-study-path-links button { border:0; padding:4px 0; background:none; font:inherit; font-size:13px; color:var(--pi-accent); }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 24px; align-items:center; margin:0 0 24px; padding:20px 24px; border:1px solid #d9e2eb; border-left:3px solid var(--pi-accent); border-radius:8px; background:#fff; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry .pi-session-stage { grid-column:1; margin:0; color:#65758a; font-size:12px; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry h2 { grid-column:1; margin:0; color:#233a50; font-size:20px; line-height:1.45; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry>p:not(.pi-session-stage) { grid-column:1; margin:0; color:#5c6d80; font-size:13px; line-height:1.65; }
+.v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry>a,
+.v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry>button { grid-column:2; grid-row:1 / span 3; min-height:44px; padding:10px 16px; border:0; border-radius:5px; background:var(--pi-accent); color:#fff; font-size:14px; font-weight:600; text-decoration:none; }
 .v2-app.pi-workspace .v2-learn-page .pi-goal-planner { box-sizing:border-box; width:100%; max-width:780px; margin:0 0 28px; padding:0 30px; border:1px solid #dce3eb; border-radius:10px; background:#fff; box-shadow:none; color:#2a3e56; }
 .v2-app.pi-workspace .v2-learn-page .pi-goal-planner.has-preview { max-width:1120px; }
 .v2-app.pi-workspace .v2-learn-page .pi-goal-planner :is(button,label,input,select,textarea,p,h2,h3,li) { font-family:var(--font-geist-sans,system-ui),"Microsoft YaHei",sans-serif!important; letter-spacing:normal; }
@@ -81,6 +87,11 @@
  .v2-app.pi-workspace .v2-learn-page .pi-goal-preview { margin-top:24px; }
 }
 @media(max-width:800px) {
+ .v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry { display:block; margin-bottom:18px; padding:18px 16px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry h2 { margin-top:6px; font-size:18px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry>p:not(.pi-session-stage) { margin-top:8px; }
+ .v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry>a,
+ .v2-app.pi-workspace .v2-learn-page .pi-learning-session-entry>button { display:inline-flex; align-items:center; margin-top:14px; }
  .v2-app.pi-workspace .v2-learn-page .pi-study-layout { display:block; }
  .v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav { display:flex; flex-direction:row; overflow-x:auto; padding-bottom:8px; margin-bottom:18px; }
  .v2-app.pi-workspace .v2-learn-page .pi-learning-stage-nav button { flex:0 0 154px; border-left:0; border-bottom:2px solid transparent; }

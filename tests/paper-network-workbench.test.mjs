@@ -3,10 +3,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const clientPath = new URL("../app/research-app.tsx", import.meta.url);
+const graphPath = new URL("../app/components/paper-network-graph.tsx", import.meta.url);
 const stylesPath = new URL("../app/globals.css", import.meta.url);
 
+async function readNetworkClient() {
+  const [client, graph, reading] = await Promise.all([
+    readFile(clientPath, "utf8"), readFile(graphPath, "utf8"),
+    readFile(new URL("../app/components/reading-order-workbench.tsx", import.meta.url), "utf8"),
+  ]);
+  return `${client}\n${graph}\n${reading}`;
+}
+
 test("paper network focus uses the verifiable one-hop evidence contract", async () => {
-  const client = await readFile(clientPath, "utf8");
+  const client = await readNetworkClient();
 
   assert.match(client, /const layoutFocusId = scope === "one-hop" \? selectedPaperId : null/);
   assert.match(client, /selectVerifiableOneHopEdges\(edges, layoutFocusId\)/);
@@ -18,7 +27,7 @@ test("paper network focus uses the verifiable one-hop evidence contract", async 
 });
 
 test("shared and bridge views reuse independently verifiable similarity relations", async () => {
-  const client = await readFile(clientPath, "utf8");
+  const client = await readNetworkClient();
   const uses = client.match(/filter\(isVerifiableSimilarityNeighborEdge\)/g) || [];
 
   assert.ok(uses.length >= 2);
@@ -38,7 +47,7 @@ test("focus and origin rings remain visually distinct on desktop and narrow scre
 
 test("suggested reading order uses the persisted learning path on desktop and narrow screens", async () => {
   const [client, styles] = await Promise.all([
-    readFile(clientPath, "utf8"),
+    readNetworkClient(),
     readFile(stylesPath, "utf8"),
   ]);
 

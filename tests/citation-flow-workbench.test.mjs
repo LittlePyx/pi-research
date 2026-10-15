@@ -3,32 +3,33 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const appPath = new URL("../app/research-app.tsx", import.meta.url);
+const workbenchPath = new URL("../app/components/citation-flow-workbench.tsx", import.meta.url);
 const routePath = new URL("../app/api/research-map/route.ts", import.meta.url);
 const stylesPath = new URL("../app/globals.css", import.meta.url);
 
 test("citation API and workbench share one fail-closed verification contract", async () => {
-  const [app, route] = await Promise.all([readFile(appPath, "utf8"), readFile(routePath, "utf8")]);
+  const [app, route, workbench] = await Promise.all([readFile(appPath, "utf8"), readFile(routePath, "utf8"), readFile(workbenchPath, "utf8")]);
 
   assert.match(route, /cachedEdges\.filter\(\(edge\) => edge\.kind === "similarity" \|\| isDatabaseVerifiedCitationEdge\(edge\)\)/);
   assert.match(route, /edge\.kind !== "citation" \|\| isDatabaseVerifiedCitationEdge\(edge\)/);
   assert.match(route, /paperEdges\.filter\(isDatabaseVerifiedCitationEdge\)\.length/);
-  assert.match(app, /map\.paperEdges\.filter\(\(edge\) => isDatabaseVerifiedCitationEdge\(edge\)/);
+  assert.match(workbench, /map\.paperEdges\.filter\(\(edge\) => isDatabaseVerifiedCitationEdge\(edge\)/);
   assert.match(app, /researchMap\.paperEdges\.filter\(isDatabaseVerifiedCitationEdge\)/);
 });
 
 test("citation flow keeps direction, provider, and quality-queue semantics explicit", async () => {
-  const app = await readFile(appPath, "utf8");
+  const [app, workbench] = await Promise.all([readFile(appPath, "utf8"), readFile(workbenchPath, "utf8")]);
 
-  assert.match(app, /被引用论文/);
-  assert.match(app, /引用它的论文/);
-  assert.match(app, /const prior = model\.nodeById\.get\(edge\.targetPaperId\)/);
-  assert.match(app, /const later = model\.nodeById\.get\(edge\.sourcePaperId\)/);
-  assert.match(app, /citationEvidenceProviderLabel\(edge\.evidenceSource\)/);
-  assert.match(app, /只包含数据库确认的直接引用/);
-  assert.match(app, /扩展候选会进入共享质量评估/);
-  assert.match(app, /只有评审通过才可能出现在今日/);
-  assert.match(app, /只有你收录确认后才进入正式路线与引用流/);
-  assert.match(app, /展开外部引用邻居/);
+  assert.match(workbench, /被引用论文/);
+  assert.match(workbench, /引用它的论文/);
+  assert.match(workbench, /const prior = model\.nodeById\.get\(edge\.targetPaperId\)/);
+  assert.match(workbench, /const later = model\.nodeById\.get\(edge\.sourcePaperId\)/);
+  assert.match(workbench, /citationEvidenceProviderLabel\(edge\.evidenceSource\)/);
+  assert.match(workbench, /只包含数据库确认的直接引用/);
+  assert.match(workbench, /扩展候选会进入共享质量评估/);
+  assert.match(workbench, /只有评审通过才可能出现在今日/);
+  assert.match(workbench, /只有你收录确认后才进入正式路线与引用流/);
+  assert.match(workbench, /展开外部引用邻居/);
   assert.match(app, /expandResearchNetwork\(\[node\.paper\.canonicalId\], true, true\)/);
 });
 

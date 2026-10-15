@@ -27,3 +27,9 @@ test('opening a paper and returning retains the page, while failed refresh prese
  h.props.enabled=false;h.render();assert.equal(h.state().data.offset,60);h.props.enabled=true;h.render();h.flush();assert.match(h.requests[0].url,/offset=60/);h.requests.shift().resolve({},false);await settle();h.render();assert.equal(h.state().error,true);assert.equal(h.state().data.papers[0].id,'second');
  h.state().retry();h.render();h.flush();h.requests.shift().resolve(page('restored',60));await settle();assert.equal(h.render().data.papers[0].id,'restored');assert.equal(h.state().error,false);
 });
+test('a URL-controlled page selects the matching server offset and reports pagination changes',()=>{
+ const h=harness();let selected=0;h.props.page=3;h.props.onPage=value=>{selected=value};h.render();h.flush();
+ assert.equal(h.state().offset,120);assert.match(h.requests.at(-1).url,/offset=120/);
+ h.state().setOffset(60);assert.equal(selected,2);
+ h.props.page=2;h.render();assert.equal(h.state().offset,60);
+});

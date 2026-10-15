@@ -95,10 +95,10 @@ test("0054 preserves learning history while adding revision and evidence state",
 });
 
 test("learning evidence reuses the shared quality queue and keeps one count source across layouts", async () => {
-  const [route, monitorPlanning, client, css] = await Promise.all([
+  const [route, monitorPlanning, reading, css] = await Promise.all([
     readFile(new URL("../app/api/learning-path/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/monitor-route-planning.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/reading-order-workbench.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
   assert.match(route, /enqueueMonitorCandidates\(database, spaceId, inputs, \{ recordDiscoveryCoverage: true \}\)/);
@@ -110,7 +110,7 @@ test("learning evidence reuses the shared quality queue and keeps one count sour
   assert.match(route, /sourceRevision: `\$\{path\.id\}:\$\{path\.revision\}:\$\{path\.sourceRevision\}:\$\{firstBlocked\.kind\}`/);
   assert.match(route, /continuation\.refined/);
   assert.match(monitorPlanning, /sourceKey === "research-route:learning"/);
-  assert.match(client, /path\.steps\.reduce\(\(sum, step\) => sum \+ step\.resources\.length, 0\)/);
+  assert.match(reading, /path\.steps\.reduce\(\(sum, step\) => sum \+ step\.resources\.length, 0\)/);
   const planner = await readFile(new URL("../app/components/learning-goal-planner.tsx", import.meta.url), "utf8");
   assert.match(planner, /new Set\(path\.steps\.flatMap/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.v2-learning-roadmap > article/);

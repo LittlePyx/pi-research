@@ -101,7 +101,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
 });
 
 test("continuously explores new discovery branches and grows a connected research map", async () => {
-  const [monitor, mapRoute, schema, repository, client, css, worker, viteConfig, scheduler] = await Promise.all([
+  const [monitor, mapRoute, schema, repository, clientSource, css, worker, viteConfig, scheduler, paperNetwork, citationWorkbench, readingWorkbench] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -111,7 +111,11 @@ test("continuously explores new discovery branches and grows a connected researc
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/monitor-scheduler.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/paper-network-graph.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/citation-flow-workbench.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/reading-order-workbench.tsx", import.meta.url), "utf8"),
   ]);
+  const client = `${clientSource}\n${paperNetwork}\n${citationWorkbench}\n${readingWorkbench}`;
 
   assert.match(monitor, /monitor_discovery_pages/);
   assert.match(monitor, /monitor_discovery_coverage/);
@@ -286,7 +290,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.doesNotMatch(client, /\{edge\.confidence\}%/);
   assert.doesNotMatch(client, /formatNetworkScore/);
   assert.doesNotMatch(client, /选择论文可聚焦当前论文库内的一跳直接关系/);
-  assert.match(client, /onSelect=\{\(paperId\) => setSelectedNetworkPaperId\(paperId\)\}/);
+  assert.match(client, /onSelect=\{changeNetworkFocus\}/);
   assert.match(css, /\.v2-paper-discovery-list/);
   assert.match(css, /\.v2-paper-network-node\.external-ghost/);
   assert.match(client, /paperNetworkStateLabel/);
@@ -468,7 +472,7 @@ test("builds persistent personalized learning paths from real research papers", 
   assert.match(client, /按全空间重新规划/);
   assert.match(client, /onGenerate=\{\(track\) => \{[^\n]*openRouteLearningPath\(route, currentGraphTask\)/);
   assert.match(client, /learningResourceSignals/);
-  assert.match(client, /质量已通过/);
+  assert.match(await readFile(new URL("../lib/research-workspace-presentation.ts", import.meta.url), "utf8"), /质量已通过/);
   assert.match(client, /<LearningStageWorkspace /);
   assert.match(await readFile(new URL("../app/components/learning-stage-guidance.tsx", import.meta.url), "utf8"), /如何决定/);
   assert.match(route, /purpose: "learning"/);
