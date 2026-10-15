@@ -7,17 +7,19 @@ import { Miniflare } from 'miniflare';
 test('learning preview preserves the saved path, enforces ownership and source freshness, and commits once', { timeout: 60000 }, async () => {
   const root = fileURLToPath(new URL('../dist/server/', import.meta.url)); const modules = [];
   for await (const path of glob('**/*.js', { cwd: root })) modules.push({ type: 'ESModule', path: root + path });
-  let modelCalls = 0; let failModel = false;
+  let modelCalls = 0; let failModel = false; let truncateModel = false;
   const mf = new Miniflare({ cf: false, d1Databases: ['DB'], compatibilityDate: '2026-05-15', compatibilityFlags: ['nodejs_compat'],
     bindings: { DEEPSEEK_API_KEY: 'sk-isolated-preview-not-real' }, modulesRoot: root, modules: [{ type: 'ESModule', path: root + 'preview-entry.js', contents: `import app from './index.js'; export default {async fetch(r,e,c){if(new URL(r.url).pathname==='/fixture')return Response.json(await e.DB.batch((await r.json()).map(x=>e.DB.prepare(x.sql).bind(...(x.values||[])))));return app.fetch(r,e,c)}}` }, ...modules],
     outboundService: async request => {
       modelCalls++; const payload = await request.json(); const input = JSON.parse(payload.messages[1].content);
+      assert.equal(payload.thinking.type,'disabled','planning reserves output for the structured draft; assigned prose is reviewed separately');
       assert.match(input.learningOutcome, /Understand methods and proof strategies/);
       assert.match(input.learningOutcome, /Existing prerequisite knowledge/);
       if (modelCalls === 1) {
         assert.deepEqual(input.preferredPapers, ['doi:10.9999/two']);
       }
       if (failModel) return Response.json({ error: { message: 'Isolated upstream failure' } }, { status: 503 });
+      if (truncateModel) return Response.json({choices:[{finish_reason:'length',message:{content:'{}'}}]});
       return Response.json({ choices:[{finish_reason:'stop',message:{content:JSON.stringify({titleZh:'UNSUPPORTED CLAIM',titleEn:'UNSUPPORTED CLAIM',steps:['foundation','method','milestone','frontier','project'].map(kind=>({kind,titleZh:'UNSUPPORTED CLAIM',titleEn:'UNSUPPORTED CLAIM',goalZh:'UNSUPPORTED CLAIM',goalEn:'UNSUPPORTED CLAIM',checkpointZh:'UNSUPPORTED CLAIM',checkpointEn:'UNSUPPORTED CLAIM',resourceIds:[]}))})}}],usage:{prompt_tokens:1,completion_tokens:1} });
     } });
   const owner = 'preview-fixture-owner-001';
@@ -69,5 +71,8 @@ test('learning preview preserves the saved path, enforces ownership and source f
     await request('/api/learning-path',{spaceId:'preview',action:'preview',target:'Gaussian rate distortion',goal:'methods',background:'Existing prerequisite knowledge.'},503);
     assert.equal((await request('/api/learning-path?spaceId=preview')).path.id,final.path.id,'model failure cannot replace the saved path');
     assert.equal(modelCalls,2);
+    failModel=false;truncateModel=true;
+    await request('/api/learning-path',{spaceId:'preview',action:'preview',target:'Gaussian rate distortion',goal:'methods',background:'Existing prerequisite knowledge.'},503);
+    assert.equal((await request('/api/learning-path?spaceId=preview')).path.id,final.path.id,'truncated structured output cannot create or replace a plan');
   } finally { await mf.dispose(); }
 });

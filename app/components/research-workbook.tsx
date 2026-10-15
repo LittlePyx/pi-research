@@ -32,7 +32,6 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const [busy, setBusy] = useState("load"); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const generation = useRef(0);
   const [now, setNow] = useState(() => Date.now());
-  const [reload, setReload] = useState(0);
   const zh = locale === "zh";
   const content = state?.content;
   const text = (value: { [key: string]: unknown }, key: string) => String(value[`${key}${zh ? "Zh" : "En"}`] || "");
@@ -58,7 +57,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       .catch(e => { if (!abort.signal.aborted && generation.current === epoch) setError(e.message); })
       .finally(() => { if (generation.current === epoch) setBusy(""); });
     return () => { abort.abort(); generation.current = epoch + 1; };
-  }, [spaceId, trackId, taskContext, initialWorkbookId, reload]);
+  }, [spaceId, trackId, taskContext, initialWorkbookId]);
 
   useEffect(() => {
     setNow(Date.now());
@@ -148,7 +147,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       <p>{state.failure ? workbookFailureText(state.failure.code, zh) : zh ? "内容尚未完成，已保存的部分可继续处理。" : "Content is unfinished; saved progress can be continued."}</p>
       <p>{state.stage === 'review' ? (zh ? "比较草稿已保存，继续时只进行独立核对。" : "The draft is saved. Continuing resumes independent review only.") : (zh ? "尚未保存完整草稿，继续时会重新生成当前步骤。" : "A complete draft is not saved yet. Continuing regenerates this step.")}</p>
       <button type="button" disabled={state.stale || dirty || state.retryAt > now || (state.busyUntil || 0) > now} onClick={() => void prepare(true)}>{state.stage === 'draft' ? (zh ? "继续生成" : "Continue generation") : (zh ? "继续核对" : "Continue review")}</button>
-      <button type="button" disabled={dirty} onClick={() => setReload(value=>value+1)}>{zh ? "刷新进度" : "Refresh progress"}</button>
+      <button type="button" disabled={dirty} onClick={() => void openVersion(state.id!)}>{zh ? "刷新进度" : "Refresh progress"}</button>
       {(state.busyUntil || 0) > now && <small>{zh ? "已有请求正在处理，可以刷新进度；超时后可继续。" : "A request is in progress. Refresh its progress; continue if it expires."}</small>}
       {state.retryAt > now && <small>{zh ? "稍后重试：" : "Retry after: "}{new Date(state.retryAt).toLocaleTimeString()}</small>}
     </div>}

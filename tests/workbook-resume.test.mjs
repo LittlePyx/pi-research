@@ -61,11 +61,11 @@ test('retry cooldown expires and continues the saved review using the same compa
 
 test('an in-flight comparison can refresh its checkpoint without starting another model action',async(t)=>{
  t.mock.timers.enable({apis:['Date','setTimeout'],now:1000});
- const h=harness({initialWorkbookId:'in-flight'}),data=ready('in-flight');
+ const h=harness(),data=ready('in-flight');
  Object.assign(data.workbook,{content:null,artifact:null,status:'draft',stage:'draft',busyUntil:2000});
  h.requests.shift().resolve(data);await settle();h.render();
  assert.equal(h.nodes().find(n=>n.type==='button'&&n.props.children==='Continue generation').props.disabled,true);
  h.nodes().find(n=>n.type==='button'&&n.props.children==='Refresh progress').props.onClick();h.render();
- assert.equal(h.requests.length,1);assert.equal(h.requests[0].init.method,undefined);assert.match(h.requests[0].url,/workbookId=in-flight/);
+ assert.equal(h.requests.length,1);assert.equal(h.requests[0].init?.method,undefined);assert.match(h.requests[0].url,/workbookId=in-flight/);
  h.requests.shift().resolve(ready('in-flight'));await settle();h.render();
 });
