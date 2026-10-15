@@ -2235,6 +2235,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [workbookTask, setWorkbookTask] = useState<GraphTaskContext | undefined>();
   const [learningTask, setLearningTask] = useState<GraphTaskContext | undefined>();
   const [graphDetailsOpen, setGraphDetailsOpen] = useState(false);
+  const [workbookVersionId, setWorkbookVersionId] = useState("");
   const [workbookTrackId, setWorkbookTrackId] = useState<string | null>(null);
   const [workbookReturnView, setWorkbookReturnView] = useState<View>("threads");
   const [workbookPaperFocus, setWorkbookPaperFocus] = useState("");
@@ -3007,6 +3008,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if(location.view==='library'){setLibrarySearch(location.libraryQuery||'');setLibraryFilter(location.libraryFilter||'all');setLibraryStageFilter(location.libraryStage||'all');setInboxFilter(location.libraryInbox||'all');setLibrarySort(location.librarySort||'priority');setLibraryTag(location.libraryTag||'all');setLibraryPageNumber(location.libraryPage||1);}
     if (location.graph) { setResearchMapMode("papers"); setLibraryGraphPaperId(location.graph === "all" ? "" : location.graph); setGraphReturnView(location.graphFrom === "library" ? "library" : "threads");restorePaperNetworkNavigation(location,new Set(researchMap.tracks.map(track=>track.id)));setGraphDetailsOpen(Boolean(location.graphFocus)); }
     else if (location.view === "threads") {setResearchMapMode("directions");setSelectedNetworkPaperId(null);}
+    const comparisonLocation = location.view === "workbook" ? location : location.view === "paper-detail" && location.from === "workbook" && location.returnTo ? readWorkspaceLocation(location.returnTo) : null;
+    if (comparisonLocation?.view === "workbook") setWorkbookVersionId(comparisonLocation.workbookId || "");
     if (location.view === "workbook") { setWorkbookTrackId(location.id!); setWorkbookReturnView(location.from || "threads");setWorkbookViewState({panel:location.workbookPanel||'evidence',focus:location.workbookFocus||''}); }
     const restoreScroll = () => requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top: navigationScroll.current.get(hash) || 0, behavior: "auto" })));
     if (location.view === "today" || location.from === "today") setTodaySurface(location.panel || "home");
@@ -4276,9 +4279,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
   const openWorkbook = (trackId: string, task?: GraphTaskContext) => {
     setWorkbookTask(task);
+    setWorkbookVersionId("");
+    setWorkbookViewState({panel:"evidence",focus:""});
     setWorkbookTrackId(trackId);
     setWorkbookReturnView(view);
-    navigate("workbook", trackId, { from: view });
+    navigate("workbook", trackId, { from: view, workbookId: undefined, workbookPanel: "evidence", workbookFocus: undefined });
   };
 
   const openWorkbookPaper = async (source: WorkbookSource, focus: string) => {
@@ -5684,7 +5689,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           </main>
         )}
 
-        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => navigate(workbookReturnView)} /></DeferredWorkspacePanel></div>}
+        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => navigate(workbookReturnView)} /></DeferredWorkspacePanel></div>}
 
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail pi-paper-workspace">

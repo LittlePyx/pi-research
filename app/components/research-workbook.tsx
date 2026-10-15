@@ -13,10 +13,11 @@ import "./research-workbook.css";
 const emptyArtifact = (): WorkbookArtifact => ({ observations: {}, decision: "", unresolved: "" });
 type WorkbookResponse = { workbook: WorkbookState; versions: Array<{ id: string; status: string; created_at: string }>; error?: string };
 type WorkbookPanel="evidence"|"relations"|"task";
-export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper, onBack, taskContext, initialPanel="evidence", initialFocus="", onViewChange }: {
+export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper, onBack, taskContext, initialWorkbookId="", onWorkbookChange, initialPanel="evidence", initialFocus="", onViewChange }: {
   userId: string; spaceId: string; trackId: string; locale: "zh" | "en"; taskContext?: GraphTaskContext;
   onOpenPaper: (source: WorkbookSource, focus: string) => void;
   onBack: () => void;
+  initialWorkbookId?: string; onWorkbookChange?: (id: string) => void;
   initialPanel?:WorkbookPanel;initialFocus?:string;onViewChange?:(panel:WorkbookPanel,focus:string)=>void;
 }) {
   const [state, setState] = useState<WorkbookState | null>(null);
@@ -48,13 +49,14 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
 
   useEffect(() => {
     const abort = new AbortController(); const epoch = ++generation.current;
-    fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&canonicalIds=${encodeURIComponent(taskContext?.papers.map(p=>p.canonicalId).join(",") || "")}&focus=${encodeURIComponent(taskContext?.question || "")}`, { signal: abort.signal })
+    setBusy("load"); setError(""); setState(null); setArtifact(emptyArtifact()); setMissing([]);
+    fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&workbookId=${encodeURIComponent(initialWorkbookId)}&selection=${taskContext ? "1" : "0"}&canonicalIds=${encodeURIComponent(taskContext?.papers.map(p=>p.canonicalId).join(",") || "")}&focus=${encodeURIComponent(taskContext?.question || "")}`, { signal: abort.signal })
       .then(async r => { const data = await r.json() as WorkbookResponse; if (!r.ok) throw new Error(data.error || "Unable to load workbook"); return data; })
-      .then(data => { if (generation.current !== epoch) return; setState(taskContext ? {...data.workbook,id:null,status:"empty",content:null,artifact:null} : data.workbook); setVersions(data.versions); setArtifact(taskContext ? emptyArtifact() : data.workbook.artifact?.value || emptyArtifact()); if (taskContext?.papers.length) { const selection = graphSelection(data.workbook.candidates, taskContext.papers.map(p=>p.canonicalId)); setSelected(selection.selected); setMissing(selection.missing); } else setSelected(data.workbook.sources.length ? data.workbook.sources.map((s: WorkbookSource) => s.id) : data.workbook.candidates.filter((s: WorkbookSource) => s.routeMember).slice(0, 3).map((s: WorkbookSource) => s.id)); })
+      .then(data => { if (generation.current !== epoch) return; setState(data.workbook); setVersions(data.versions); setArtifact(data.workbook.artifact?.value || emptyArtifact()); if (data.workbook.id) onWorkbookChange?.(data.workbook.id); if (taskContext?.papers.length && !data.workbook.id) { const selection = graphSelection(data.workbook.candidates, taskContext.papers.map(p=>p.canonicalId)); setSelected(selection.selected); setMissing(selection.missing); } else setSelected(data.workbook.sources.length ? data.workbook.sources.map((s: WorkbookSource) => s.id) : data.workbook.candidates.filter((s: WorkbookSource) => s.routeMember).slice(0, 3).map((s: WorkbookSource) => s.id)); })
       .catch(e => { if (!abort.signal.aborted && generation.current === epoch) setError(e.message); })
       .finally(() => { if (generation.current === epoch) setBusy(""); });
     return () => { abort.abort(); generation.current = epoch + 1; };
-  }, [spaceId, trackId, taskContext]);
+  }, [spaceId, trackId, taskContext, initialWorkbookId]);
 
   useEffect(() => {
     if (!state?.retryAt) return;
@@ -97,12 +99,13 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       let data = await request(resume ? { action: "advance", workbookId: state?.id } : { action: "prepare", paperIds: selected, focusQuestion: taskContext?.question || "" });
       if (generation.current !== epoch) return;
       setState(data.workbook); setVersions(data.versions);
+      if (data.workbook.id) onWorkbookChange?.(data.workbook.id);
       if (data.workbook.status === "verifying" && !data.workbook.stale) {
         setBusy("verify"); data = await request({ action: "advance", workbookId: data.workbook.id });
         if (generation.current !== epoch) return;
         setState(data.workbook); setVersions(data.versions);
       }
-      setArtifact(data.workbook.artifact?.value || emptyArtifact()); setFocus("");
+      setArtifact(data.workbook.artifact?.value || emptyArtifact()); setFocus(""); onViewChange?.(panel, "");
     } catch (e) { if (generation.current === epoch) setError(e instanceof Error ? e.message : "Preparation failed"); }
     finally { if (generation.current === epoch) setBusy(""); }
   };
@@ -114,6 +117,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       const data = await r.json() as WorkbookResponse; if (!r.ok) throw new Error(data.error);
       if (generation.current !== epoch) return;
       setState(data.workbook); setArtifact(data.workbook.artifact?.value || emptyArtifact()); setFocus("");
+      setMissing([]); onWorkbookChange?.(data.workbook.id!); onViewChange?.(panel, "");
       setSelected(data.workbook.sources.map((s: WorkbookSource) => s.id));
     } catch (e) { if (generation.current === epoch) setError(e instanceof Error ? e.message : "Load failed"); }
     finally { if (generation.current === epoch) setBusy(""); }

@@ -93,6 +93,15 @@ test('workbook tab and evidence cell survive refresh without leaking to other pa
  assert.equal(readWorkspaceLocation('#workbook/route-2?workbookPanel=unknown&workbookFocus=%00').workbookFocus,undefined);
 });
 
+test('comparison identity is pinned through paper return URLs and rejects invalid values',()=>{
+ const comparison=workspaceHash({view:'workbook',id:'r',space:'s',from:'threads',workbookId:'s:r:revision-1',workbookFocus:'conditions:p'});
+ const paper=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'workbook',track:'r',returnTo:comparison}));
+ assert.equal(readWorkspaceLocation(paper.returnTo).workbookId,'s:r:revision-1');
+ assert.equal(readWorkspaceLocation('#library?workbookId=hidden').workbookId,undefined);
+ assert.equal(readWorkspaceLocation('#workbook/r?workbookId='+encodeURIComponent('x'.repeat(241))).workbookId,undefined);
+ assert.equal(readWorkspaceLocation('#workbook/r?workbookId=bad%00').workbookId,undefined);
+});
+
 test('URL text rejects control characters while preserving Unicode queries and evidence focus',()=>{
  for(const character of ['\u0000','\u001f','\u007f']){
   assert.equal(readWorkspaceLocation('#library?q='+encodeURIComponent('query'+character)).libraryQuery,undefined);

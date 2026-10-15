@@ -147,6 +147,13 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       const saved=await sql([{sql:"SELECT question FROM research_comparison_workbooks WHERE id=?",values:[graphReady.id]}]);
       assert.ok(saved[0].results[0].question.includes(question));
       assert.equal((await request(path+"&workbookId="+encodeURIComponent(graphReady.id))).workbook.stale,false);
+      const selectedPath=path+"&selection=1&canonicalIds="+encodeURIComponent(workbookSources.map(s=>s.canonicalId).reverse().join(','))+"&focus="+encodeURIComponent(question);
+      const callsBeforeRead=calls;
+      assert.equal((await request(selectedPath)).workbook.id,graphReady.id);
+      assert.equal((await request(selectedPath+"%20different")).workbook.id,null);
+      assert.equal((await request(path+"&selection=1&canonicalIds=unavailable")).workbook.id,null);
+      await request(path+"&workbookId=missing-version",null,404);
+      assert.equal(calls,callsBeforeRead);
       // Keep following the original route comparison in subsequent withdrawal checks.
     });
     await t.test("source changes invalidate saved content and guard artifacts", async () => {

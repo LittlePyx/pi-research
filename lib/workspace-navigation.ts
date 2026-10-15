@@ -5,7 +5,7 @@ export type LibraryScope='related'|'all';
 export type GraphMode='similarity'|'citations'|'path';
 export type GraphScope='all'|'one-hop'|'multi-seed';
 export type WorkbookPanel='evidence'|'relations'|'task';
-export type WorkspaceLocation = { returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string };
+export type WorkspaceLocation = { workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string };
 const views = new Set<WorkspaceView>(["today", "threads", "thread-detail", "learn", "library", "memory", "paper-detail", "workbook"]);
 const tabs = new Set(["start", "evidence", "problem", "agenda"]);
 const identifier = (value: string | null | undefined) => value && /^[a-zA-Z0-9_-]{1,120}$/.test(value) ? value : undefined;
@@ -46,6 +46,7 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     ...(graphRoute&&['all','one-hop','multi-seed'].includes(params.get('graphScope')||'')?{graphScope:params.get('graphScope') as GraphScope}:{}),
     ...(graphRoute&&identifier(params.get('graphTrack'))?{graphTrack:identifier(params.get('graphTrack'))}:{}),
     ...(graphRoute&&identifier(params.get('graphFocus'))?{graphFocus:identifier(params.get('graphFocus'))}:{}),
+    ...(workbookRoute&&text(params.get('workbookId'),240)?{workbookId:text(params.get('workbookId'),240)}:{}),
     ...(workbookRoute&&['evidence','relations','task'].includes(params.get('workbookPanel')||'')?{workbookPanel:params.get('workbookPanel') as WorkbookPanel}:{}),
     ...(workbookRoute&&text(params.get('workbookFocus'),260)?{workbookFocus:text(params.get('workbookFocus'),260)}:{}) };
   const returnTo = validatedReturnHash({ ...location, returnTo: params.get('returnTo') || undefined }, depth);
@@ -96,6 +97,7 @@ export function workspaceHash(location: WorkspaceLocation): string {
     if(location.graphFocus)params.set('graphFocus',location.graphFocus);
   }
   if(location.view==='workbook'){
+    if(text(location.workbookId||null,240))params.set('workbookId',location.workbookId!);
     if(location.workbookPanel&&location.workbookPanel!=='evidence')params.set('workbookPanel',location.workbookPanel);
     if(location.workbookFocus)params.set('workbookFocus',location.workbookFocus);
   }

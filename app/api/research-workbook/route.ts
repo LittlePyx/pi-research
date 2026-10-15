@@ -1,4 +1,4 @@
-import { focusedWorkbookQuestion, storedWorkbookQuestion, workbookFocus } from "../../../lib/graph-task";
+import { focusedWorkbookQuestion, storedWorkbookQuestion, workbookFocus, graphSelection } from "../../../lib/graph-task";
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { WORKBOOK_POLICY, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, workbookDraftPrompt, workbookReviewFields, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
@@ -80,9 +80,21 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const ctx = await context(request, safeId(url.searchParams.get("spaceId")), safeId(url.searchParams.get("trackId")));
   if ("error" in ctx) return ctx.error;
-  const id = safeId(url.searchParams.get("workbookId")); const row = await rowFor(ctx, id);
+  const id = safeId(url.searchParams.get("workbookId"));
+  const preferred = (url.searchParams.get("canonicalIds") || "").split(",").filter(Boolean).map(v=>v.toLowerCase()).slice(0,3);
+  const focus = (url.searchParams.get("focus") || "").slice(0,1000);
+  let row: Row | null;
+  if (!id && url.searchParams.get("selection") === "1") {
+    const scoped = { ...ctx, question: focusedWorkbookQuestion(ctx.question, focus) };
+    const candidates = await sources(scoped);
+    const selection = graphSelection(candidates, preferred);
+    const selected = selection.selected.map(id => candidates.find(s=>s.id===id)!);
+    // A graph task must resume only its own question and exact source set.
+    const revision = await workbookRevision(scoped.question, selected);
+    row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${ctx.spaceId}:${ctx.trackId}:${revision}`) : null;
+  } else row = await rowFor(ctx, id);
   if (id && !row) return Response.json({ error: "Workbook not found" }, { status: 404 });
-  return projection(ctx, row, (url.searchParams.get("canonicalIds") || "").split(",").map(v=>v.toLowerCase()).slice(0,3), (url.searchParams.get("focus") || "").slice(0,1000));
+  return projection(ctx, row, preferred, focus);
 }
 
 async function modelCall(apiKey: string, prompt: string, reviewer: boolean) {
