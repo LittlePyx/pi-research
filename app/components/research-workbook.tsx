@@ -103,7 +103,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       if (generation.current !== epoch) return;
       setState(data.workbook); setVersions(data.versions);
       if (data.workbook.id) onWorkbookChange?.(data.workbook.id);
-      if (data.workbook.status === "verifying" && !data.workbook.stale) {
+      for (let pass=0; pass<12 && data.workbook.status === "verifying" && !data.workbook.stale && !(data.workbook.busyUntil && data.workbook.busyUntil > Date.now()); pass++) {
         setBusy("verify"); data = await request({ action: "advance", workbookId: data.workbook.id });
         if (generation.current !== epoch) return;
         setState(data.workbook); setVersions(data.versions);
@@ -146,6 +146,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     {state && ["draft", "verifying", "retryable"].includes(state.status) && !busy && <div role="status">
       <p>{state.failure ? workbookFailureText(state.failure.code, zh) : zh ? "内容尚未完成，已保存的部分可继续处理。" : "Content is unfinished; saved progress can be continued."}</p>
       <p>{state.stage === 'review' ? (zh ? "比较草稿已保存，继续时只进行独立核对。" : "The draft is saved. Continuing resumes independent review only.") : (zh ? "尚未保存完整草稿，继续时会重新生成当前步骤。" : "A complete draft is not saved yet. Continuing regenerates this step.")}</p>
+      {Boolean(state.reviewProgress?.total) && <p>{zh ? "已核对比较项：" : "Reviewed fields: "}{state.reviewProgress!.completed} / {state.reviewProgress!.total}</p>}
       <button type="button" disabled={state.stale || dirty || state.retryAt > now || (state.busyUntil || 0) > now} onClick={() => void prepare(true)}>{state.stage === 'draft' ? (zh ? "继续生成" : "Continue generation") : (zh ? "继续核对" : "Continue review")}</button>
       <button type="button" disabled={dirty} onClick={() => void openVersion(state.id!)}>{zh ? "刷新进度" : "Refresh progress"}</button>
       {(state.busyUntil || 0) > now && <small>{zh ? "已有请求正在处理，可以刷新进度；超时后可继续。" : "A request is in progress. Refresh its progress; continue if it expires."}</small>}

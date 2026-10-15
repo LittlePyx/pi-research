@@ -3,9 +3,9 @@ import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
 import { requestWorkbookModel } from "../../../lib/workbook-model";
 import { WorkbookModelError, workbookFailure, workbookRetryDelay, workbookValidationCode, workbookRecoveryHint } from "../../../lib/workbook-recovery";
-import { WORKBOOK_POLICY, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, workbookDraftPrompt, workbookReviewFields, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
+import { WORKBOOK_POLICY, WORKBOOK_REVIEW_BATCH_SIZE, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, validateWorkbookReviewPart, workbookDraftPrompt, workbookReviewFields, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
 
-type Row = { id: string; question: string; source_revision: string; source_ids_json: string; draft_json: string; content_json: string; status: WorkbookState["status"]; retry_at: number; lease_until: number };
+type Row = { id: string; question: string; source_revision: string; source_ids_json: string; draft_json: string; content_json: string; review_json: string; status: WorkbookState["status"]; retry_at: number; lease_until: number };
 type SourceRow = { id: string; canonical_id: string; title: string; authors: string; url: string; abstract_text: string; reading_focus_zh: string; reading_focus_en: string; route_member: number };
 const parse = (v: string) => { try { return JSON.parse(v); } catch { return null; } };
 const safeId = (v: unknown) => typeof v === "string" ? v.trim().slice(0, 240) : "";
@@ -55,7 +55,7 @@ async function sources(ctx: Context) {
 }
 
 async function rowFor(ctx: Context, id = "") {
-  return ctx.database.prepare(`SELECT id, question, source_revision, source_ids_json, draft_json, content_json, status, retry_at, lease_until
+  return ctx.database.prepare(`SELECT id, question, source_revision, source_ids_json, draft_json, content_json, review_json, status, retry_at, lease_until
     FROM research_comparison_workbooks WHERE space_id = ? AND track_id = ? ${id ? "AND id = ?" : ""} ORDER BY created_at DESC, rowid DESC LIMIT 1`)
     .bind(ctx.spaceId, ctx.trackId, ...(id ? [id] : [])).first<Row>();
 }
@@ -78,7 +78,8 @@ async function projection(original: Context, row: Row | null, preferred: string[
   const state: WorkbookState = { id: row?.id || null, revision: row?.source_revision || revision, status: row?.status || "empty",
     stale, sources: selected, candidates: [...candidates.filter(c=>preferred.includes(c.canonicalId.toLowerCase())), ...candidates.filter(c=>!preferred.includes(c.canonicalId.toLowerCase()))].slice(0, 15), content: row?.status === "ready" ? parse(row.content_json) : null,
     artifact: artifact ? { revision: artifact.revision, value: parse(artifact.value_json) } : null, retryAt: row?.retry_at || 0,
-    stage: row?.draft_json ? 'review' : 'draft', busyUntil: row && row.lease_until > Date.now() ? row.lease_until : 0, failure };
+    stage: row?.draft_json ? 'review' : 'draft', busyUntil: row && row.lease_until > Date.now() ? row.lease_until : 0, failure,
+    reviewProgress: { completed: parse(row?.review_json || '')?.checks?.length || 0, total: row?.draft_json ? workbookReviewFields(parse(row.draft_json)).length : 0 } };
   return Response.json({ workbook: state, versions: versions.results }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -157,12 +158,16 @@ export async function POST(request: Request) {
     if (!lease.meta.changes) return projection(baseContext, row);
     active = { ctx, id: row.id, token, stage: row.draft_json ? 'review' : 'draft', started: now };
     const draft = row.draft_json ? validateWorkbook(parse(row.draft_json), selected) : null;
+    const savedReview = parse(row.review_json);
+    const earlier = draft && savedReview?.checks?.length ? validateWorkbookReviewPart({ verdict: savedReview.supported ? 'supported' : 'unsupported', checks: savedReview.checks }, draft, selected, savedReview.checks.map((c:{id:string})=>c.id)) : null;
+    const pending = draft ? workbookReviewFields(draft).filter(id=>!earlier?.checks.some(c=>c.id===id)).slice(0, WORKBOOK_REVIEW_BATCH_SIZE) : [];
     const previous = await ctx.database.prepare(`SELECT code FROM research_workbook_attempts WHERE workbook_id = ? AND space_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`).bind(row.id, ctx.spaceId).first<{code:string}>();
     const hint = workbookRecoveryHint(previous?.code || '');
     const prompt = draft ? JSON.stringify({ question: ctx.question, sources: selected, workbook: draft,
-      requiredCheckIds: workbookReviewFields(draft),
+      requiredCheckIds: pending,
       rules: "Check BOTH languages of each field, including every missing cell (is the information genuinely absent?), all mathematical conditions/quantifiers/bounds, comparability, and the specificity and feasibility of every task and learning field. No full proofs can be taught from abstracts. Quote existence does not establish entailment. Reject invented prerequisites stated as facts, contradiction/novelty claims, and interchangeable generic advice. Only supported if all checks pass.",
       output: { verdict: "supported|unsupported", checks: [{ id: "exact requiredCheckId", verdict: "supported|unsupported", paperIds: ["exact source ID"], reason: "specific support or failure reason" }] },
+      batchRule: 'Return checks for ONLY the supplied requiredCheckIds. Keep each reason to one short sentence. Other fields are reviewed in separate saved batches.',
     }) : workbookDraftPrompt(ctx.question, selected);
     const response = await requestWorkbookModel(credential.apiKey, hint ? JSON.stringify({...JSON.parse(prompt), recovery: hint}) : prompt, Boolean(draft));
     await ctx.database.prepare(`INSERT INTO ai_usage_daily (id, scope, usage_date, request_count, input_tokens, output_tokens)
@@ -170,7 +175,11 @@ export async function POST(request: Request) {
       input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens, updated_at = CURRENT_TIMESTAMP`)
       .bind(crypto.randomUUID(), `research-workbook:${ctx.spaceId}`, new Date().toISOString().slice(0, 10), response.usage?.prompt_tokens || 0, response.usage?.completion_tokens || 0).run();
     const content = draft || validateWorkbook(response.raw, selected);
-    const review = draft ? validateWorkbookReview(response.raw, draft, selected) : null;
+    const part = draft ? validateWorkbookReviewPart(response.raw, draft, selected, pending) : null;
+    const review = part ? { supported: (earlier?.supported ?? true) && part.supported, checks: [...(earlier?.checks || []), ...part.checks] } : null;
+    const complete = Boolean(draft && review && review.checks.length === workbookReviewFields(draft).length);
+    if (draft && review && complete) validateWorkbookReview({verdict:review.supported?'supported':'unsupported',checks:review.checks},draft,selected);
+    const published = Boolean(review?.supported && complete);
     const freshCtx = await context(request, ctx.spaceId, ctx.trackId);
     if ("error" in freshCtx) throw new Error("workbook_context_changed");
     const freshSources = (await sources(freshCtx)).filter(s => ids.includes(s.id));
@@ -178,8 +187,8 @@ export async function POST(request: Request) {
     const guard = evidenceGuard(freshCtx, freshSources);
     const saved = await ctx.database.prepare(`UPDATE research_comparison_workbooks SET draft_json = ?, content_json = ?, review_json = ?, status = ?,
       lock_token = NULL, lease_until = 0, retry_at = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ? AND lock_token = ? ${guard.sql}`)
-      .bind(JSON.stringify(content), review?.supported ? JSON.stringify(content) : "", review ? JSON.stringify(review) : "",
-        review ? review.supported ? "ready" : "rejected" : "verifying", row.id, ctx.spaceId, token, ...guard.values).run();
+      .bind(JSON.stringify(content), published ? JSON.stringify(content) : "", review ? JSON.stringify(review) : "",
+        review && !review.supported ? "rejected" : published ? "ready" : "verifying", row.id, ctx.spaceId, token, ...guard.values).run();
     if (!saved.meta.changes) throw new Error("workbook_context_changed");
     return projection(ctx, await rowFor(ctx, row.id));
   } catch (error) {

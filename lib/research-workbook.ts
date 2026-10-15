@@ -20,6 +20,7 @@ export type WorkbookState = {
   stale: boolean; sources: WorkbookSource[]; candidates: WorkbookSource[]; content: WorkbookContent | null;
   artifact: { revision: number; value: WorkbookArtifact } | null; retryAt: number;
   stage?: 'draft' | 'review'; busyUntil?: number;
+  reviewProgress?: { completed: number; total: number };
   failure?: { code: import('./workbook-recovery').WorkbookFailureCode; stage: 'draft' | 'review'; detail?: string } | null;
 };
 
@@ -83,9 +84,16 @@ export function workbookReviewFields(content: WorkbookContent) {
 }
 
 export function validateWorkbookReview(raw: unknown, content: WorkbookContent, sources: WorkbookSource[]) {
+  return validateWorkbookReviewPart(raw, content, sources, workbookReviewFields(content));
+}
+
+export const WORKBOOK_REVIEW_BATCH_SIZE = 6;
+export function validateWorkbookReviewPart(raw: unknown, content: WorkbookContent, sources: WorkbookSource[], fields: string[]) {
+  const allowed = workbookReviewFields(content);
+  if (!fields.length || new Set(fields).size !== fields.length || fields.some(id=>!allowed.includes(id))) throw new Error('invalid_workbook_review');
   const review = object(raw);
   if (!["supported", "unsupported"].includes(String(review.verdict)) || !Array.isArray(review.checks)) throw new Error("incomplete_workbook_review");
-  const fields = workbookReviewFields(content); const seen = new Set<string>();
+  const seen = new Set<string>();
   let supported = review.verdict === "supported";
   for (const item of review.checks) {
     const check = object(item); const id = clean(check.id, 240);

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Miniflare } from "miniflare";
 import { workbookSample, workbookSources } from "./fixtures/research-workbook.mjs";
-import { workbookReviewFields } from "../lib/research-workbook.ts";
+import { workbookReviewFields, WORKBOOK_REVIEW_BATCH_SIZE } from "../lib/research-workbook.ts";
 
 test("built workbook API checkpoints review, isolates owners and versions artifacts without research-state writes", { timeout: 60000 }, async t => {
   const serverDir = fileURLToPath(new URL("../dist/server/", import.meta.url));
@@ -32,7 +32,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
       if(failureMode==='invalid-evidence'){const invalid=workbookSample();invalid.dimensions[0].cells[0].quote='A paraphrase that is not present in the supplied abstract.';return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
       if(failureMode==='recover-evidence')assert.match(input.recovery,/unlocated_workbook_evidence/);
-      const output = input.requiredCheckIds ? { verdict: "supported", checks: workbookReviewFields(workbookSample()).map(id => ({ id,
+      const output = input.requiredCheckIds ? { verdict: "supported", checks: input.requiredCheckIds.map(id => ({ id,
         verdict: invalidReview && id === "comparison" ? "unsupported" : "supported", paperIds: workbookSources.map(s => s.id), reason: "Isolated deterministic review; not a live academic judgment." })) } : workbookSample();
       return Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(output) } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
     },
@@ -47,6 +47,8 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
   const base = { spaceId: "math", trackId: "kls" };
   const path = "/api/research-workbook?spaceId=math&trackId=kls";
   const post = (body, status) => request("/api/research-workbook", { ...base, ...body }, status);
+  const reviewCalls=Math.ceil(workbookReviewFields(workbookSample()).length/WORKBOOK_REVIEW_BATCH_SIZE);
+  const finishReview=async state=>{for(let i=0;i<10&&state.status==='verifying';i++)state=(await post({action:'advance',workbookId:state.id})).workbook;return state;};
   try {
     await request(path, null, 404);
     await sql([
@@ -124,9 +126,14 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       assert.equal((await request(path)).workbook.status, "verifying"); assert.equal(calls, 1);
     });
     await t.test("independent review publishes one shared table, task and learning unit", async () => {
-      state = (await post({ action: "advance", workbookId: state.id })).workbook;
-      assert.equal(state.status, "ready"); assert.equal(state.content.comparison.status, "insufficient"); assert.equal(calls, 2);
-      await post({ action: "prepare", paperIds: workbookSources.map(s => s.id) }); assert.equal(calls, 2);
+      const checkpoint=(await post({action:'advance',workbookId:state.id})).workbook;
+      assert.equal(checkpoint.status,'verifying');assert.equal(checkpoint.content,null);
+      assert.equal(checkpoint.reviewProgress.completed,WORKBOOK_REVIEW_BATCH_SIZE);
+      const reloaded=(await request(path+'&workbookId='+encodeURIComponent(state.id))).workbook;
+      assert.deepEqual(reloaded.reviewProgress,checkpoint.reviewProgress);
+      state = await finishReview(state);
+      assert.equal(state.status, "ready"); assert.equal(state.content.comparison.status, "insufficient"); assert.equal(calls, 1+reviewCalls);
+      await post({ action: "prepare", paperIds: workbookSources.map(s => s.id) }); assert.equal(calls, 1+reviewCalls);
     });
     await t.test("artifact saves use optimistic revisions and preserve reading/route states", async () => {
       const artifact = { observations: { "conditions:sample-klartag": "Need the stated assumptions" }, decision: "These excerpts are insufficient for direct comparison", unresolved: "Constant definitions" };
@@ -147,7 +154,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       const graphDraft = (await post({action:"prepare",paperIds:workbookSources.map(s=>s.id),focusQuestion:question})).workbook;
       assert.notEqual(graphDraft.id,state.id);
       assert.equal(graphDraft.status,"verifying"); assert.equal(graphDraft.stale,false);
-      const graphReady = (await post({action:"advance",workbookId:graphDraft.id})).workbook;
+      const graphReady = await finishReview(graphDraft);
       assert.equal(graphReady.status,"ready"); assert.equal(graphReady.stale,false);
       const saved=await sql([{sql:"SELECT question FROM research_comparison_workbooks WHERE id=?",values:[graphReady.id]}]);
       assert.ok(saved[0].results[0].question.includes(question));
@@ -170,12 +177,15 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       assert.equal((await request(path+'&workbookId='+encodeURIComponent(id))).workbook.failure.code,'output_truncated');
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[id]}]);failureMode='';
       recovery=(await post({action:'advance',workbookId:id})).workbook;assert.equal(recovery.status,'verifying');assert.equal(recovery.id,id);
+      recovery=(await post({action:'advance',workbookId:id})).workbook;
+      assert.equal(recovery.reviewProgress.completed,WORKBOOK_REVIEW_BATCH_SIZE);
       failureMode='rate';recovery=(await post({action:'advance',workbookId:id})).workbook;
       assert.equal(recovery.failure.code,'rate_limited');assert.equal(recovery.stage,'review');assert.equal(recovery.content,null);
+      assert.equal(recovery.reviewProgress.completed,WORKBOOK_REVIEW_BATCH_SIZE,'a failed batch preserves earlier reviewed fields');
       assert.doesNotMatch(JSON.stringify(recovery),/sensitive provider/);
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0,lock_token=?,lease_until=1 WHERE id=?',values:['expired-owner',id]}]);failureMode='';
-      const checkpoint=reviewFlags.length;recovery=(await post({action:'advance',workbookId:id})).workbook;
-      assert.equal(recovery.status,'ready');assert.equal(recovery.id,id);assert.equal(recovery.failure,null);assert.deepEqual(reviewFlags.slice(checkpoint),[true],'saved draft must not be generated again');
+      const checkpoint=reviewFlags.length;recovery=await finishReview({...recovery,status:"verifying"});
+      assert.equal(recovery.status,'ready');assert.equal(recovery.id,id);assert.equal(recovery.failure,null);assert.deepEqual(reviewFlags.slice(checkpoint),Array(reviewCalls-1).fill(true),'saved draft and completed review batches must not be generated again');
       const attempts=await sql([{sql:'SELECT stage,code,provider_status,finish_reason FROM research_workbook_attempts WHERE workbook_id=? ORDER BY rowid',values:[id]}]);
       assert.deepEqual(attempts[0].results.map(r=>[r.stage,r.code]),[['draft','output_truncated'],['review','rate_limited']]);
     });
@@ -197,7 +207,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       assert.equal(failed.failure.code,'invalid_evidence');assert.equal(failed.failure.detail,'unlocated_workbook_evidence');assert.equal(failed.content,null);
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[failed.id]}]);failureMode='recover-evidence';
       const repaired=(await post({action:'advance',workbookId:failed.id})).workbook;assert.equal(repaired.status,'verifying');assert.equal(repaired.content,null);
-      failureMode='';assert.equal((await post({action:'advance',workbookId:failed.id})).workbook.status,'ready');
+      failureMode='';assert.equal((await finishReview(repaired)).status,'ready');
     });
     await t.test("source changes invalidate saved content and guard artifacts", async () => {
       await sql([{ sql: "UPDATE paper_insights SET abstract_text = abstract_text || ' Revised.' WHERE paper_id = ?", values: [workbookSources[0].id] }]);
@@ -205,7 +215,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await post({ action: "save-artifact", workbookId: state.id, sourceRevision: state.revision, baseRevision: 1, value: {} }, 409);
       state = (await post({ action: "prepare", paperIds: workbookSources.map(s => s.id) })).workbook;
       invalidReview = true;
-      state = (await post({ action: "advance", workbookId: state.id })).workbook;
+      state = await finishReview(state);
       assert.equal(state.status, "rejected"); assert.equal(state.content, null);
       invalidReview = false;
     });
