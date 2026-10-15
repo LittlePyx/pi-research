@@ -159,7 +159,24 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
     await t.test("same IDs cannot be read or written by another owner", async () => {
       cookie = "pi_anonymous_workspace=workbook-other-owner-0000001";
       await request(path, null, 404); await post({ action: "advance", workbookId: state.id }, 404);
+      await post({action:'save-practice',workbookId:state.id,baseRevision:1,value:{activeId:'learning',entries:{}}},404);
       cookie = "pi_anonymous_workspace=workbook-fixture-owner-00001";
+    });
+    await t.test('practice results persist independently, reject stale writes and leave reading and learning-path progress unchanged',async()=>{
+      const beforeCalls=calls,original=structuredClone(state.artifact.value),baseRevision=state.artifact.revision;
+      const practice={activeId:'task-0',entries:{learning:{result:'Compared the assumptions and recorded the cited evidence.',unresolved:'Check definitions in the full papers.',completed:true}}};
+      const save={action:'save-practice',workbookId:state.id,sourceRevision:state.revision,baseRevision,value:practice};
+      state=(await post(save)).workbook;assert.deepEqual(state.artifact.value,{...original,practice});assert.equal(state.artifact.revision,baseRevision+1);
+      await post(save,409);
+      await post({...save,baseRevision:state.artifact.revision,value:{activeId:'learning',entries:{learning:{result:'',unresolved:'',completed:true}}}},422);
+      await post({...save,baseRevision:state.artifact.revision,value:{activeId:'invented',entries:{}}},422);
+      const today=await request('/api/workspace-continuation?spaceId=math&location='+encodeURIComponent('#workbook/kls?space=math&workbookId='+encodeURIComponent(state.id)));
+      assert.equal(today.continuation.practice.completed,1);assert.match(today.continuation.hash,/#learn\?/);assert.match(today.continuation.hash,/practice=task-0/);
+      const notes={...original,decision:'Updated comparison judgment'};
+      state=(await post({action:'save-artifact',workbookId:state.id,sourceRevision:state.revision,baseRevision:state.artifact.revision,value:notes})).workbook;
+      assert.deepEqual(state.artifact.value.practice,practice);assert.equal(state.artifact.value.decision,notes.decision);
+      const reload=(await request(path+'&workbookId='+encodeURIComponent(state.id))).workbook;assert.deepEqual(reload.artifact,state.artifact);
+      const rows=await sql([{sql:'SELECT COUNT(*) n FROM paper_reading_progress'},{sql:'SELECT COUNT(*) n FROM learning_paths'}]);assert.deepEqual(rows.map(row=>row.results[0].n),[0,0]);assert.equal(calls,beforeCalls,'practice saves never call the model');
     });
     await t.test("graph question is carried into a separate comparison and survives independent review", async () => {
       const question = "Which assumptions differ for my selected Gaussian research task?";

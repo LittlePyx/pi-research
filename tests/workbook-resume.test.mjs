@@ -38,6 +38,14 @@ test('a graph comparison resumes reviewed content and saved notes instead of era
  assert.deepEqual(h.versions,['s:t:exact']);
 });
 
+test('returning practice results refreshes the exact mounted workbook and preserves unsaved comparison edits',async()=>{
+ const h=harness();h.requests.shift().resolve(ready('s:t:exact'));await settle();h.render();
+ h.props.refreshKey=1;h.render();assert.match(h.requests[0].url,/workbookId=s%3At%3Aexact/);
+ h.requests.shift().resolve(ready('s:t:exact'));await settle();h.render();
+ const note=h.nodes().find(n=>n.type==='textarea'&&n.props.value==='Saved decision');note.props.onChange({target:{value:'Unsaved comparison judgment'}});h.render();
+ h.props.refreshKey=2;h.render();assert.equal(h.requests.length,0);assert.match(h.text(),/Unsaved comparison judgment/);
+});
+
 test('refresh loads the pinned historical version and a missing version never falls back to latest',async()=>{
  const h=harness({initialWorkbookId:'s:t:old'});assert.match(h.requests[0].url,/workbookId=s%3At%3Aold/);
  h.requests.shift().resolve(ready('s:t:old'));await settle();h.render();assert.deepEqual(h.versions,['s:t:old']);

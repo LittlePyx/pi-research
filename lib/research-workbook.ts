@@ -1,3 +1,4 @@
+import { validateWorkbookPractice, type WorkbookPractice } from './workbook-practice.ts';
 /** Shared evidence contract for research comparison and its learning exercise. */
 export const WORKBOOK_POLICY = "evidence-workbook-v1";
 export type WorkbookSource = {
@@ -14,7 +15,7 @@ export type WorkbookContent = {
   task: { titleZh: string; titleEn: string; steps: Array<{ textZh: string; textEn: string; evidenceIds: string[] }>; criterionZh: string; criterionEn: string };
   learning: { goalZh: string; goalEn: string; prerequisiteZh: string; prerequisiteEn: string; exerciseZh: string; exerciseEn: string; checkpointZh: string; checkpointEn: string };
 };
-export type WorkbookArtifact = { observations: Record<string, string>; decision: string; unresolved: string };
+export type WorkbookArtifact = { observations: Record<string, string>; decision: string; unresolved: string; practice?: WorkbookPractice };
 export type WorkbookReviewIssue = { id: string; paperIds: string[]; reason: string; issueType: 'repairable' | 'evidence_gap' | 'unclassified' };
 export type WorkbookState = {
   id: string | null; revision: string; status: "empty" | "draft" | "verifying" | "ready" | "rejected" | "retryable";
@@ -149,7 +150,7 @@ export function validateWorkbookArtifact(raw: unknown, content: WorkbookContent)
   // Missing cells are legitimate research gaps and can receive user observations too.
   for (const d of content.dimensions) for (const c of d.cells) allowed.add(`${d.id}:${c.paperId}`);
   if (Object.keys(notes).some(key => !allowed.has(key))) throw new Error("unknown_observation_target");
-  return { observations: Object.fromEntries(Object.entries(notes).map(([key, note]) => [key, clean(note, 2500)])), decision: clean(v.decision, 4000), unresolved: clean(v.unresolved, 4000) };
+  return { observations: Object.fromEntries(Object.entries(notes).map(([key, note]) => [key, clean(note, 2500)])), decision: clean(v.decision, 4000), unresolved: clean(v.unresolved, 4000), ...(v.practice === undefined ? {} : { practice: validateWorkbookPractice(v.practice, content) }) };
 }
 
 export function workbookDraftPrompt(question: string, sources: WorkbookSource[]) {

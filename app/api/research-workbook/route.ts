@@ -126,19 +126,23 @@ export async function POST(request: Request) {
     let ctx = await context(request, safeId(body.spaceId), safeId(body.trackId));
     if ("error" in ctx) return ctx.error;
     const action = safeId(body.action);
-    if (!["prepare", "advance", "save-artifact"].includes(action)) return Response.json({ error: "Invalid action" }, { status: 400 });
+    if (!["prepare", "advance", "save-artifact", "save-practice"].includes(action)) return Response.json({ error: "Invalid action" }, { status: 400 });
     const baseContext = ctx;
     let row = await rowFor(ctx, safeId(body.workbookId));
     const focusQuestion = action === "prepare" ? (typeof body.focusQuestion === "string" ? body.focusQuestion.trim().slice(0,1000) : "") : workbookFocus(row?.question || "");
     ctx = { ...ctx, question: focusedWorkbookQuestion(ctx.question, focusQuestion) };
     if (action !== "prepare" && (!body.workbookId || !row)) return Response.json({ error: "Workbook not found" }, { status: 404 });
-    if (action === "save-artifact") {
+    if (action === "save-artifact" || action === "save-practice") {
       if (!row || row.status !== "ready") return Response.json({ error: "Reviewed workbook required" }, { status: 422 });
       const live = await sources(ctx); const ids = parse(row.source_ids_json) as string[];
       const selected = live.filter(s => ids.includes(s.id));
       if (body.sourceRevision !== row.source_revision || selected.length !== ids.length || await workbookRevision(ctx.question, selected) !== row.source_revision) return Response.json({ error: "Evidence changed; open the current workbook before saving" }, { status: 409 });
       if (!Number.isInteger(body.baseRevision) || Number(body.baseRevision) < 0) return Response.json({ error: "Artifact revision required" }, { status: 400 });
-      const value = validateWorkbookArtifact(body.value, validateWorkbook(parse(row.content_json), selected));
+      const previous = await ctx.database.prepare('SELECT value_json FROM research_comparison_artifacts WHERE workbook_id=? AND space_id=? ORDER BY revision DESC LIMIT 1').bind(row.id, ctx.spaceId).first<{value_json:string}>();
+      const savedValue = parse(previous?.value_json || '') || { observations: {}, decision: '', unresolved: '' };
+      if (action === 'save-practice' && body.value === undefined) return Response.json({ error: 'Practice result required' }, { status: 400 });
+      // Each editor changes only its own fields; the shared revision still guards concurrent edits.
+      const value = validateWorkbookArtifact(action === 'save-practice' ? { ...savedValue, practice: body.value } : { ...(body.value as object), practice: savedValue.practice }, validateWorkbook(parse(row.content_json), selected));
       const next = Number(body.baseRevision) + 1;
       const guard = evidenceGuard(ctx, selected);
       const saved = await ctx.database.prepare(`INSERT OR IGNORE INTO research_comparison_artifacts (id, workbook_id, space_id, revision, value_json)

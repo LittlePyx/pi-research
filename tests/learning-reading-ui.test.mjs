@@ -54,7 +54,7 @@ test("the production learning continuation effect respects visibility, path swit
   const end = app.indexOf("\n  }, [activeSpace.id, learningAction,", marker);
   assert.ok(start > 0 && end > marker);
   const effect = app.slice(start, app.indexOf("]);", end) + 3);
-  function mount({ visible = true, action = null, fetcher, monitoring = false, monitor = null } = {}) {
+  function mount({ visible = true, action = null, fetcher, monitoring = false, monitor = null, comparisonPractice = null } = {}) {
     let cleanup, wake = 0, reload = 0;
     const timers = new Map(), states = [], calls = [];
     let sequence = 0;
@@ -63,7 +63,7 @@ test("the production learning continuation effect respects visibility, path swit
       useEffect: (callback) => { cleanup = callback(); }, view: "learn", researchMapMode: "papers", paperNetworkMode: "path",
       learningLoadedSpaceId: "space-a", activeSpace: { id: "space-a" }, learningLoading: false, learningAction: action,
       learningState: { path }, learningDiscoveryDelay: learningHelpers.learningDiscoveryDelay,
-      monitor, monitoring, shouldWakeLearningQualityQueue,
+      monitor, monitoring, shouldWakeLearningQualityQueue, comparisonPractice,
       document: { visibilityState: visible ? "visible" : "hidden" },
       window: { setTimeout: (callback, delay) => { timers.set(++sequence, { callback, delay }); return sequence; }, clearTimeout: (id) => timers.delete(id) },
       fetch: async (_url, request) => { calls.push(JSON.parse(request.body)); return fetcher ? fetcher() : Response.json({ path, discoveryAdvance: { queuedCount: 2 } }); },
@@ -92,6 +92,7 @@ test("the production learning continuation effect respects visibility, path swit
   await hidden.tick(); assert.equal(hidden.calls.length, 0); assert.equal(hidden.timers.size, 1);
   hidden.stop(); assert.equal(hidden.timers.size, 0);
   assert.equal(mount({ action: "generate" }).timers.size, 0);
+  assert.equal(mount({ comparisonPractice: {workbookId:'v1'} }).timers.size, 0, 'comparison exercises cannot launch the normal learning evidence pipeline');
   let finish;
   const switched = mount({ fetcher: () => new Promise((resolve) => { finish = resolve; }) });
   const pending = switched.tick(); switched.stop();

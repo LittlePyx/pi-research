@@ -5,7 +5,7 @@ export type LibraryScope='related'|'all';
 export type GraphMode='similarity'|'citations'|'path';
 export type GraphScope='all'|'one-hop'|'multi-seed';
 export type WorkbookPanel='evidence'|'relations'|'task';
-export type WorkspaceLocation = { workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string };
+export type WorkspaceLocation = { practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string };
 const views = new Set<WorkspaceView>(["today", "threads", "thread-detail", "learn", "library", "memory", "paper-detail", "workbook"]);
 const tabs = new Set(["start", "evidence", "problem", "agenda"]);
 const identifier = (value: string | null | undefined) => value && /^[a-zA-Z0-9_-]{1,120}$/.test(value) ? value : undefined;
@@ -27,6 +27,7 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
   const libraryRoute=view==='library'||view==='thread-detail'||view==='threads'&&Boolean(identifier(params.get('graph')));
   const graphRoute=view==='threads'&&Boolean(identifier(params.get('graph')));
   const workbookRoute=view==='workbook';
+  const practiceRoute=view==='learn'&&Boolean(identifier(params.get('track')))&&Boolean(text(params.get('workbookId'),240));
   const location: WorkspaceLocation = { view, id,
     ...(view === 'today' && params.get('panel') === 'discovery' && params.get('focus') === 'recovery' ? {focus: 'recovery' as const} : {}),
     ...((view === 'threads' || view === 'paper-detail' && from === 'threads') && identifier(params.get('graph')) && params.get('graphFrom') === 'library' ? {graphFrom: 'library' as const} : {}),
@@ -46,17 +47,19 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     ...(graphRoute&&['all','one-hop','multi-seed'].includes(params.get('graphScope')||'')?{graphScope:params.get('graphScope') as GraphScope}:{}),
     ...(graphRoute&&identifier(params.get('graphTrack'))?{graphTrack:identifier(params.get('graphTrack'))}:{}),
     ...(graphRoute&&identifier(params.get('graphFocus'))?{graphFocus:identifier(params.get('graphFocus'))}:{}),
-    ...(workbookRoute&&text(params.get('workbookId'),240)?{workbookId:text(params.get('workbookId'),240)}:{}),
+    ...((workbookRoute||practiceRoute)&&text(params.get('workbookId'),240)?{workbookId:text(params.get('workbookId'),240)}:{}),
     ...(workbookRoute&&['evidence','relations','task'].includes(params.get('workbookPanel')||'')?{workbookPanel:params.get('workbookPanel') as WorkbookPanel}:{}),
     ...(workbookRoute&&text(params.get('workbookFocus'),260)?{workbookFocus:text(params.get('workbookFocus'),260)}:{}) };
+  if(practiceRoute&&/^(learning|task-[0-9]{1,2})$/.test(params.get('practice')||''))location.practiceId=params.get('practice')!;
   const returnTo = validatedReturnHash({ ...location, returnTo: params.get('returnTo') || undefined }, depth);
+  if(returnTo&&view==='paper-detail'&&from==='learn'){const origin=parseWorkspaceLocation(returnTo,depth+1);if(origin.workbookId&&origin.track&&text(params.get('readingFocus'),600))location.readingFocus=text(params.get('readingFocus'),600);}
   return returnTo ? { ...location, returnTo } : location;
 }
 
 /** A bounded, same-workspace return chain preserves a reading task across refresh. */
 function validatedReturnHash(location: WorkspaceLocation, depth = 0): string | undefined {
   const hash = location.returnTo;
-  if (!hash || !['paper-detail', 'workbook'].includes(location.view) || !location.space || depth >= 3 || !hash.startsWith('#') || hash.length > 8000) return;
+  if (!hash || !(['paper-detail', 'workbook'].includes(location.view)||location.view==='learn'&&location.workbookId&&location.track) || !location.space || depth >= 3 || !hash.startsWith('#') || hash.length > 8000) return;
   try { if (!text(decodeURIComponent(hash), 8000)) return; } catch { return; }
   const segment = hash.slice(1).split(/[/?]/)[0];
   const view = segment === 'thread' ? 'thread-detail' : segment;
@@ -73,7 +76,7 @@ export function workspaceHash(location: WorkspaceLocation): string {
   for (const key of ["space", "from", "track", "graph", "step", "path", "panel"] as const) if (location[key]) params.set(key, location[key]);
   if (location.tab && location.view !== "thread-detail") params.set("tab", location.tab);
   if(location.view==='paper-detail'&&location.paperPanel)params.set('paperPanel',location.paperPanel);
-  if(location.view==='paper-detail'&&location.from==='workbook'&&text(location.readingFocus||null,600))params.set('readingFocus',location.readingFocus!);
+  if(location.view==='paper-detail'&&(location.from==='workbook'||location.from==='learn'&&Boolean(readWorkspaceLocation(location.returnTo||'').workbookId))&&text(location.readingFocus||null,600))params.set('readingFocus',location.readingFocus!);
   if(location.view==='today'&&location.panel==='discovery'&&location.focus==='recovery')params.set('focus','recovery');
   if(location.graph&&(location.view==='threads'||location.view==='paper-detail'&&location.from==='threads')&&location.graphFrom==='library')params.set('graphFrom','library');
   if(location.view==='library'||location.view==='thread-detail'||location.view==='threads'&&Boolean(location.graph)){
@@ -96,6 +99,7 @@ export function workspaceHash(location: WorkspaceLocation): string {
     if(location.graphTrack&&location.graphTrack!=='all')params.set('graphTrack',location.graphTrack);
     if(location.graphFocus)params.set('graphFocus',location.graphFocus);
   }
+  if(location.view==='learn'&&location.workbookId&&location.track){params.set('workbookId',location.workbookId);if(location.practiceId&&/^(learning|task-[0-9]{1,2})$/.test(location.practiceId))params.set('practice',location.practiceId);}
   if(location.view==='workbook'){
     if(text(location.workbookId||null,240))params.set('workbookId',location.workbookId!);
     if(location.workbookPanel&&location.workbookPanel!=='evidence')params.set('workbookPanel',location.workbookPanel);

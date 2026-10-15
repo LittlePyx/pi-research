@@ -77,6 +77,7 @@ import { modelSettingsRequest } from "../lib/model-settings-request";
 import { activateModalFocus } from "../lib/modal-focus";
 import { briefPaperEntries, remainingBriefEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, isReadReference, readingReferences, resumeReading, readingQueueExclusions, nextReadingPaperId } from "../lib/today-presentation.mjs";
 import { TodayContinuation } from './components/today-continuation';
+import { WorkbookPractice } from './components/workbook-practice';
 import { useWorkspaceNavigation } from "./components/use-workspace-navigation";
 import { usePaperNetworkNavigation } from "./components/use-paper-network-navigation";
 import { PrimaryLibrary } from "./components/primary-library";
@@ -2239,6 +2240,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [workbookTrackId, setWorkbookTrackId] = useState<string | null>(null);
   const [workbookReturnView, setWorkbookReturnView] = useState<View>("threads");
   const [workbookPaperFocus, setWorkbookPaperFocus] = useState("");
+  const [comparisonPractice, setComparisonPractice] = useState<WorkspaceLocation | null>(null);
+  const [workbookRefreshKey, setWorkbookRefreshKey] = useState(0);
   const [libraryViewState,setLibraryViewState]=useState({query:"",scope:"related" as "related"|"all",page:1,focusId:""});
   const [workbookViewState,setWorkbookViewState]=useState({panel:"evidence" as "evidence"|"relations"|"task",focus:""});
   const loadedWorkbookRef = useRef('');
@@ -2997,6 +3000,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     const track = researchMap.tracks.find(item => item.id === (location.view === "thread-detail" ? location.id : location.track));
     if (location.view === "thread-detail" && !track) { setView("threads"); if (!mapLoading) { setRequestedLocation(location); setNavigationIssue("missing"); } return; }
     setNavigationIssue(null);
+    if (location.view === 'learn') setComparisonPractice(location.workbookId && location.track ? location : null);
     if (!location.space) { hash = workspaceHash({ ...location, space: activeSpace.id }); window.history.replaceState(null, "", hash); }
     restoredLocationRef.current = activeSpace.id + hash;
     if (track) setSelectedThread(track);
@@ -3399,7 +3403,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   }, [activeSpace.id, locale, researchRouteTab, selectedThread, view]);
 
   useEffect(() => {
-    const needsLearningPath = view === "learn" || (view === "threads" && researchMapMode === "papers" && paperNetworkMode === "path");
+    const needsLearningPath = view === "learn" && !comparisonPractice || (view === "threads" && researchMapMode === "papers" && paperNetworkMode === "path");
     if (!needsLearningPath || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -3443,10 +3447,10 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         .finally(() => { if (!cancelled) setLearningLoading(false); });
     }, 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [activeSpace.id, learningReloadNonce, locale, paperNetworkMode, researchMapMode, view]);
+  }, [activeSpace.id, learningReloadNonce, locale, paperNetworkMode, researchMapMode, view, comparisonPractice]);
 
   useEffect(() => {
-    const needsLearningPath = view === "learn" || (view === "threads" && researchMapMode === "papers" && paperNetworkMode === "path");
+    const needsLearningPath = view === "learn" && !comparisonPractice || (view === "threads" && researchMapMode === "papers" && paperNetworkMode === "path");
     if (!needsLearningPath || learningLoadedSpaceId !== activeSpace.id || learningLoading || learningAction) return;
     const path = learningState.path;
     const delay = learningDiscoveryDelay(path);
@@ -3478,7 +3482,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     };
     timer = window.setTimeout(run, delay);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [activeSpace.id, learningAction, learningLoadedSpaceId, learningLoading, learningState.path, monitor?.status, monitor?.nextRunAt, monitoring, paperNetworkMode, researchMapMode, view]);
+  }, [activeSpace.id, learningAction, learningLoadedSpaceId, learningLoading, learningState.path, monitor?.status, monitor?.nextRunAt, monitoring, paperNetworkMode, researchMapMode, view, comparisonPractice]);
 
   useEffect(() => {
     if (view !== "today" || !monitor?.papers.length || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
@@ -3668,6 +3672,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       ...target,
     };
     const hash = returnLocation && Object.keys(target).length === 0 ? currentLocation.returnTo! : workspaceHash(location);
+    if (next === 'learn') setComparisonPractice(location.workbookId && location.track ? location : null);
     rememberCurrentLocation(hash);
     if (window.location.hash !== hash) window.history.pushState({ piView: next }, "", hash);
     restoredLocationRef.current = returnLocation ? "" : activeSpace.id + hash;
@@ -3751,6 +3756,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setQuestion("");
     setSelectedMonitorPaper(null);
     setWorkbookTrackId(null);
+    setComparisonPractice(null);
     loadedWorkbookRef.current = '';
     setWorkbookPaperFocus("");
   };
@@ -4299,7 +4305,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     navigate("workbook", trackId, { from: view, workbookId: undefined, workbookPanel: "evidence", workbookFocus: undefined });
   };
 
-  const openWorkbookPaper = async (source: WorkbookSource, focus: string) => {
+  const openWorkbookPaper = async (source: WorkbookSource, focus: string, returnView: 'workbook' | 'learn' = 'workbook') => {
     const spaceId = activeSpace.id;
     const requestId = ++learningPaperRequestRef.current;
     try {
@@ -4313,9 +4319,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       if (paperNetworkSpaceRef.current !== spaceId || learningPaperRequestRef.current !== requestId) return;
       if (!paper) throw new Error("paper unavailable");
       workbookScrollRef.current = window.scrollY;
-      setWorkbookPaperFocus(focus); openMonitorPaper(paper, "workbook", focus);
+      setWorkbookPaperFocus(focus); openMonitorPaper(paper, returnView, focus);
     } catch {
-      if (paperNetworkSpaceRef.current === spaceId && learningPaperRequestRef.current === requestId) showPaperLoadError(source.id, "workbook");
+      if (paperNetworkSpaceRef.current === spaceId && learningPaperRequestRef.current === requestId) showPaperLoadError(source.id, returnView);
     }
   };
 
@@ -5575,7 +5581,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         )}
 
         {(view === "learn" || view === "paper-detail" && paperReturnView === "learn" || view === "workbook" && workbookReturnView === "learn" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "learn") && (
-          <main hidden={view !== "learn"} className="v2-page v2-learn-page">
+          <main hidden={view !== "learn" || Boolean(comparisonPractice)} className="v2-page v2-learn-page">
             <header className="v2-page-head"><div><h1>{t.learnTitle}</h1><p className="pi-page-purpose">{locale === "zh" ? "确定学习目标，按阶段阅读与练习，完成后再推进下一步。" : "Set your goal, work through reading and exercises, then move to the next stage."}</p></div></header>
             {activeLearningState.path?.targetTrackId && <div className="pi-study-path-links"><button type="button" onClick={() => { const track = researchMap.tracks.find(t => t.id === activeLearningState.path?.targetTrackId); if (track) openThread(track); }} disabled={!researchMap.tracks.some(t => t.id === activeLearningState.path?.targetTrackId)}>{locale === "zh" ? "返回所属研究路线" : "Back to research route"}</button><button type="button" onClick={() => openWorkbook(activeLearningState.path!.targetTrackId!)}>{locale === "zh" ? "比较论文与学习练习" : "Paper comparison & exercise"}</button></div>}
             {activeLearningStep && <LearningSessionEntry step={activeLearningStep} locale={locale} openingId={openingLearningResourceId} onOpen={resource => void openLearningResource(resource)} />}
@@ -5702,12 +5708,13 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           </main>
         )}
 
-        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{loadedWorkbookRef.current=`${activeSpace.id}:${workbookTrackId}:${id}`;const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => navigate(workbookReturnView)} /></DeferredWorkspacePanel></div>}
+        {comparisonPractice?.workbookId&&comparisonPractice.track&&<div hidden={view!=="learn"}><WorkbookPractice key={`${activeSpace.id}:${comparisonPractice.workbookId}`} userId={user.userId} spaceId={activeSpace.id} trackId={comparisonPractice.track} workbookId={comparisonPractice.workbookId} practiceId={comparisonPractice.practiceId} locale={locale} onSaved={()=>setWorkbookRefreshKey(n=>n+1)} onSelect={practiceId=>{setComparisonPractice(current=>current?{...current,practiceId}:current);if(readWorkspaceLocation(window.location.hash).view==="learn")updateWorkspaceHash({practiceId},"replace");}} onOpenPaper={(source,focus)=>void openWorkbookPaper(source,focus,"learn")} onBack={()=>{rememberCurrentLocation();const origin=comparisonPractice.returnTo?readWorkspaceLocation(comparisonPractice.returnTo):null;window.location.hash=origin?.view==="workbook"?comparisonPractice.returnTo!:workspaceHash({view:"workbook",id:comparisonPractice.track,space:activeSpace.id,workbookId:comparisonPractice.workbookId,workbookPanel:"task",from:"today",returnTo:workspaceHash({view:"today",space:activeSpace.id})});}}/></div>}
+        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook refreshKey={workbookRefreshKey} onStartPractice={practiceId=>{const current=readWorkspaceLocation(window.location.hash);if(current.workbookId)navigate("learn",undefined,{workbookId:current.workbookId,track:workbookTrackId||undefined,practiceId,from:"workbook",returnTo:window.location.hash});}} initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{loadedWorkbookRef.current=`${activeSpace.id}:${workbookTrackId}:${id}`;const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => navigate(workbookReturnView)} /></DeferredWorkspacePanel></div>}
 
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail pi-paper-workspace">
             <button className="v2-back" type="button" onClick={() => navigate(paperReturnView)}>← {paperReturnView === "thread-detail" ? (locale === "zh" ? "返回原路线研判" : "Return to route synthesis") : paperReturnView === "workbook" ? (locale === "zh" ? "返回原比较项与学习任务" : "Return to comparison and learning task") : paperReturnView === "memory" ? t.memory : paperReturnView === "threads" ? t.threads : paperReturnView === "learn" ? t.learn : paperReturnView === "library" ? t.library : t.paperBack}</button>
-            {paperReturnView === "workbook" && <p className="pi-workbook-error"><strong>{locale === "zh" ? "当前核查：" : "Current check: "}</strong><MathText>{workbookPaperFocus}</MathText></p>}
+            {(paperReturnView === "workbook"||paperReturnView==="learn"&&Boolean(comparisonPractice)) && <p className="pi-workbook-error"><strong>{locale === "zh" ? "当前核查：" : "Current check: "}</strong><MathText>{workbookPaperFocus}</MathText></p>}
             <section className="v2-paper-head"><div className="v2-paper-top"><span className={`v2-tier-badge ${selectedMonitorPaper.qualityStage === "recommended" ? selectedMonitorPaper.recommendationTier || "browse" : selectedMonitorPaper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{selectedMonitorPaper.qualityStage === "recommended" ? recommendationTierLabel(selectedMonitorPaper.recommendationTier || "browse", locale) : selectedMonitorPaper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(selectedMonitorPaper, locale) : archiveQualityStagePresentation(selectedMonitorPaper.qualityStage, locale).label}</span>{isRecommendationQualityStage(selectedMonitorPaper.qualityStage) && <span>{readDepthLabel(selectedMonitorPaper.readDepth || "focused", locale)} · {selectedMonitorPaper.readMinutes || 15} min</span>}</div><h1><MathText inline>{selectedMonitorPaper.title}</MathText></h1><p>{selectedMonitorPaper.authors}</p><small>{selectedMonitorPaper.venue} · {formatPaperDate(selectedMonitorPaper.publishedAt, locale)}</small></section>
             {paperReturnView === "learn" && activeLearningState.path && (() => {
               const steps = activeLearningState.path.steps;
