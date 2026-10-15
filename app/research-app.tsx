@@ -3881,6 +3881,10 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       const data = await response.json().catch(() => ({})) as { monitor?: MonitorState; error?: string };
       if (data.monitor) setMonitor(data.monitor);
       if (!response.ok || !data.monitor) throw new Error(data.error || data.monitor?.error || data.monitor?.scanJob?.error || "scan unavailable");
+      if (data.monitor.status === "idle") {
+        setToast(locale === "zh" ? "当前没有可接续的候选评审。" : "No candidate review is waiting to continue.");
+        return;
+      }
       if (data.monitor.throttled) setToast(t.manualCooling);
       else if (data.monitor.leaseOwner !== false && !data.monitor.alreadyRunning
         && !["ready", "error"].includes(data.monitor.status)) {

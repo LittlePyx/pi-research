@@ -12,6 +12,20 @@ test('generated task layout must agree with dimension rows and paper columns',()
  const content=resolvedSample();content.task.steps[0].textZh='为每个维度建一列，两篇论文各占一行。';assert.throws(()=>validateWorkbookLayout(content),/inconsistent_workbook_layout/);
  const p=JSON.parse(anchoredWorkbookPrompt('q',workbookSources));assert.deepEqual(p.tableLayout,{rows:'comparison dimensions',columns:'selected papers'});
 });
+
+test('new drafts and field corrections cannot assign hidden catalog identifiers to readers',()=>{
+ for(const [key,text] of [['exerciseEn','For each claim cite the displayed source-passage identifiers.'],['checkpointEn','Attach source-passage IDs to every cell.'],['goalEn','List p1.q3 and quoteIds.'],['prerequisiteZh','填写原文片段ID。']]){
+  const wire=anchoredSample();wire.learning[key]=text;
+  assert.throws(()=>resolveAnchoredWorkbook(wire,workbookSources),/internal_workbook_instruction/);
+ }
+ const before=resolvedSample(),value={criterionZh:'填写证据ID。',criterionEn:'Attach evidence IDs.'};
+ assert.throws(()=>applyWorkbookPatches({patches:[{id:'f1',value}]},before,workbookSources,[issue('task:criterion')]),/internal_workbook_instruction/);
+ assert.deepEqual(before,resolvedSample(),'invalid instructions cannot mutate approved content');
+ const visible=resolvedSample();visible.learning.exerciseEn='Name P1 and P2 and quote the exact words from their displayed passages.';
+ assert.doesNotThrow(()=>validateWorkbookLayout(visible));
+ const legacy=structuredClone(visible);legacy.learning.exerciseEn='Cite source-passage IDs.';
+ assert.doesNotThrow(()=>validateWorkbook(legacy,workbookSources),'historical canonical records remain readable');
+});
 test('separate passages are preserved individually and every passage must belong to the same source',()=>{
  const sources=structuredClone(workbookSources);sources[0].abstractText='The object is a model with twelve configurations. '+ 'Intervening context is retained in the source. '.repeat(40)+'The evaluation reports context gain under matched conditions.';
  const wire=anchoredSample(sources.map((s,i)=>i?s:{...s,abstractText:workbookSources[0].abstractText+' '+s.abstractText}));

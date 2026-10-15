@@ -85,6 +85,10 @@ export function validateWorkbookLayout(content: WorkbookContent) {
   const instructions = [content.task.titleZh,content.task.titleEn,content.task.criterionZh,content.task.criterionEn,
     ...content.task.steps.flatMap(s=>[s.textZh,s.textEn]),content.learning.exerciseZh,content.learning.exerciseEn].join('\n');
   if (/papers?\s+(?:as|are|in)\s+(?:the\s+)?rows?|(?:one|a)\s+row\s+(?:per|for each)\s+paper|one\s+column\s+per\s+dimension|论文各占一行|每篇(?:论文)?(?:占|为)?一行|每个维度(?:建|设|占|为)一列/iu.test(instructions)) throw new Error('inconsistent_workbook_layout');
+  const prose = [instructions, content.learning.goalZh, content.learning.goalEn, content.learning.prerequisiteZh,
+    content.learning.prerequisiteEn, content.learning.checkpointZh, content.learning.checkpointEn].join('\n');
+  // Source keys belong to the wire contract; the reader sees passages, not their catalog IDs.
+  if (/\b(?:quoteIds?|evidenceIds?|p[1-3]\.[qw]\d+)\b|\b(?:source[- ]passage|evidence|quote|excerpt)[- ](?:ids?|identifiers?)\b|(?:原文|引文|证据)(?:片段)?\s*(?:ID|标识符)/iu.test(prose)) throw new Error('internal_workbook_instruction');
   return content;
 }
 
@@ -99,6 +103,7 @@ export function anchoredWorkbookPrompt(question: string, sources: WorkbookSource
   base.rules.push('Every number, model name, auxiliary method and qualification in a supported cell must be entailed by its SELECTED passages. ADD another catalog ID when a clause needs another sentence, or narrow the observation. Unselected abstract sentences do not validate a citation. Use contiguous windows (.w) only when useful; do not stitch or paraphrase quotes. In reader-facing prose use P1/P2/P3 or distinctive short titles. Never mention quoteId, quoteIds, evidenceIds, supported cells or raw dimension IDs; ask readers to cite the displayed source passages.');
   base.tableLayout = { rows: 'comparison dimensions', columns: 'selected papers' };
   base.rules.push('All tasks and exercises use the EXISTING displayed comparison table: dimensions are ROWS and papers are COLUMNS. Never transpose it. Prefer saying "the displayed comparison table" rather than re-specifying row/column counts. Task steps, title, criterion and exercise must agree.');
+  base.rules.push('Reader tasks, criteria and ALL learning fields must work with visible prose alone: quote a short displayed passage and name P1/P2. Never request source-passage IDs, passage identifiers, quote IDs or evidence IDs: catalog identifiers are not displayed. A citation is the paper label plus verbatim words, not a machine identifier.');
   return JSON.stringify(base);
 }
 
