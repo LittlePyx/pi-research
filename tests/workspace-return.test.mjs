@@ -16,7 +16,7 @@ function harness(hash,overrides={}){
   librarySearch:'',libraryViewState:{query:'',scope:'related',page:1,focusId:''},libraryPageNumber:1,libraryFilter:'all',libraryStageFilter:'all',inboxFilter:'all',librarySort:'priority',libraryTag:'all',
   workbookReturnView:'threads',workbookViewState:{panel:'evidence',focus:''},learningBrowseSelection:null,
   navigationScroll:{current:new Map()},workbookScrollRef:{current:0},restoredLocationRef:{current:''},
-  setPaperPanel(){},setNavigationIssue(){},setTodaySurface(value){state.todaySurface=value},setRecoveryFocusRequested(){},setView(value){state.view=value},setMobileNav(){},...overrides};
+  rememberCurrentLocation(){},setPaperPanel(){},setNavigationIssue(){},setTodaySurface(value){state.todaySurface=value},setRecoveryFocusRequested(){},setView(value){state.view=value},setMobileNav(){},...overrides};
  browser.scrollTo=options=>scrolls.push(options.top);
  const navigate=new Function('state','window','requestAnimationFrame','readWorkspaceLocation','workspaceHash',`with(state){${code};return navigate;}`)(state,browser,fn=>frames.push(fn),readWorkspaceLocation,workspaceHash);
  return{navigate,state,browser,scrolls,flush(){while(frames.length)frames.shift()()}};
@@ -58,4 +58,24 @@ test('an explicit main Today action opens the home panel instead of restoring Al
  paper.navigate('today',undefined,{panel:'home'});
  assert.equal(readWorkspaceLocation(paper.browser.location.hash).panel,'home');
  assert.equal(readWorkspaceLocation(paper.browser.location.hash).returnTo,undefined);
+});
+
+test('leaving a comparison for Today remembers the precise location without replacing it with the home page',()=>{
+ const comparison=workspaceHash({view:'workbook',space:'s',id:'r',workbookId:'v1',workbookPanel:'task',workbookFocus:'cell:p'});
+ const remembered=[];
+ const current=harness(comparison,{rememberCurrentLocation(hash){remembered.push(hash||current.browser.location.hash)}});
+ current.navigate('today',undefined,{panel:'home'});
+ assert.equal(remembered[0],comparison);assert.equal(readWorkspaceLocation(remembered[1]).view,'today');
+});
+
+test('restoring the already mounted comparison keeps unsaved inputs; cold or different versions load the pinned record',()=>{
+ const start=source.indexOf('    const comparisonLocation =');
+ const end=source.indexOf('    if (location.view === "workbook")',start);
+ const restore=ts.transpileModule(source.slice(start,end),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ const location=readWorkspaceLocation(workspaceHash({view:'workbook',space:'s',id:'r',workbookId:'v1'}));
+ for(const loaded of ['s:r:v1','s:r:v2','other:r:v1','']){
+  const versions=[],tasks=[];
+  new Function('location','activeSpace','loadedWorkbookRef','setWorkbookVersionId','setWorkbookTask','readWorkspaceLocation',restore)(location,{id:'s'},{current:loaded},v=>versions.push(v),v=>tasks.push(v),readWorkspaceLocation);
+  assert.deepEqual(versions,loaded==='s:r:v1'?[]:['v1']);assert.equal(tasks.length,loaded==='s:r:v1'?0:1);
+ }
 });

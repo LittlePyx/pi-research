@@ -76,7 +76,7 @@ import { modelConnectionFailureState, modelConnectionProblemCopy } from "../lib/
 import { modelSettingsRequest } from "../lib/model-settings-request";
 import { activateModalFocus } from "../lib/modal-focus";
 import { briefPaperEntries, remainingBriefEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, isReadReference, readingReferences, resumeReading, readingQueueExclusions, nextReadingPaperId } from "../lib/today-presentation.mjs";
-import { TodayEntry } from "./components/today-entry";
+import { TodayContinuation } from './components/today-continuation';
 import { useWorkspaceNavigation } from "./components/use-workspace-navigation";
 import { usePaperNetworkNavigation } from "./components/use-paper-network-navigation";
 import { PrimaryLibrary } from "./components/primary-library";
@@ -2241,7 +2241,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [workbookPaperFocus, setWorkbookPaperFocus] = useState("");
   const [libraryViewState,setLibraryViewState]=useState({query:"",scope:"related" as "related"|"all",page:1,focusId:""});
   const [workbookViewState,setWorkbookViewState]=useState({panel:"evidence" as "evidence"|"relations"|"task",focus:""});
-  const { workbookScrollRef, navigationScroll, restoredLocation: restoredLocationRef, navigationRevision, requestLocationRestore, updateWorkspaceHash } = useWorkspaceNavigation(activeSpaceId);
+  const loadedWorkbookRef = useRef('');
+  const { workbookScrollRef, navigationScroll, restoredLocation: restoredLocationRef, navigationRevision, requestLocationRestore, updateWorkspaceHash, rememberCurrentLocation } = useWorkspaceNavigation(activeSpaceId, user.userId);
   const [navigationIssue, setNavigationIssue] = useState<"space" | "missing" | "paper" | null>(null);
   const [requestedLocation, setRequestedLocation] = useState<WorkspaceLocation | null>(null);
   useEffect(() => {
@@ -3009,7 +3010,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if (location.graph) { setResearchMapMode("papers"); setLibraryGraphPaperId(location.graph === "all" ? "" : location.graph); setGraphReturnView(location.graphFrom === "library" ? "library" : "threads");restorePaperNetworkNavigation(location,new Set(researchMap.tracks.map(track=>track.id)));setGraphDetailsOpen(Boolean(location.graphFocus)); }
     else if (location.view === "threads") {setResearchMapMode("directions");setSelectedNetworkPaperId(null);}
     const comparisonLocation = location.view === "workbook" ? location : location.view === "paper-detail" && location.from === "workbook" && location.returnTo ? readWorkspaceLocation(location.returnTo) : null;
-    if (comparisonLocation?.view === "workbook") setWorkbookVersionId(comparisonLocation.workbookId || "");
+    if (comparisonLocation?.view === "workbook" && loadedWorkbookRef.current !== `${activeSpace.id}:${comparisonLocation.id}:${comparisonLocation.workbookId || ''}`) {
+      loadedWorkbookRef.current = '';
+      setWorkbookVersionId(comparisonLocation.workbookId || "");
+      if (comparisonLocation.workbookId) setWorkbookTask(undefined);
+    }
     if (location.view === "workbook") { setWorkbookTrackId(location.id!); setWorkbookReturnView(location.from || "threads");setWorkbookViewState({panel:location.workbookPanel||'evidence',focus:location.workbookFocus||''}); }
     const restoreScroll = () => requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top: navigationScroll.current.get(hash) || 0, behavior: "auto" })));
     if (location.view === "today" || location.from === "today") setTodaySurface(location.panel || "home");
@@ -3622,6 +3627,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   }, [view, selectedMonitorPaper, selectedThread, workbookTrackId, question]);
 
   const navigate = (next: View, workbookTarget = workbookTrackId, target: Partial<WorkspaceLocation> = {}, preserveScroll = false) => {
+    rememberCurrentLocation();
     if(next==='paper-detail')setPaperPanel(target.paperPanel||'reading');
     setNavigationIssue(null);
     navigationScroll.current.set(window.location.hash, window.scrollY);
@@ -3662,6 +3668,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       ...target,
     };
     const hash = returnLocation && Object.keys(target).length === 0 ? currentLocation.returnTo! : workspaceHash(location);
+    rememberCurrentLocation(hash);
     if (window.location.hash !== hash) window.history.pushState({ piView: next }, "", hash);
     restoredLocationRef.current = returnLocation ? "" : activeSpace.id + hash;
     if(next === "today") setTodaySurface(location.panel || "home");
@@ -3744,6 +3751,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setQuestion("");
     setSelectedMonitorPaper(null);
     setWorkbookTrackId(null);
+    loadedWorkbookRef.current = '';
     setWorkbookPaperFocus("");
   };
 
@@ -4282,6 +4290,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   };
 
   const openWorkbook = (trackId: string, task?: GraphTaskContext) => {
+    loadedWorkbookRef.current = '';
     setWorkbookTask(task);
     setWorkbookVersionId("");
     setWorkbookViewState({panel:"evidence",focus:""});
@@ -5239,10 +5248,10 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             </section>
             <nav className="pi-today-navigation" aria-label={locale==="zh"?"今日页面导航":"Today navigation"}><div className="pi-today-tabs">{(["home","reading","discovery","records"] as const).map(surface=><a href={workspaceHash({view:"today",space:activeSpace.id,panel:surface})} key={surface} aria-current={todaySurface===surface?"page":undefined} className={todaySurface===surface?"is-active":""}>{locale==="zh"?({home:"今日精选",reading:"全部阅读",discovery:"发现进度",records:"研究记录"}[surface]):({home:"For you",reading:"All reading",discovery:"Discovery",records:"Records"}[surface])}</a>)}</div><a href={workspaceHash({view:"today",space:activeSpace.id,panel:"settings"})} className="pi-today-settings" aria-current={todaySurface==="settings"?"page":undefined} aria-label={locale==="zh"?"今日设置":"Today settings"}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>{locale==="zh"?"设置":"Settings"}</span></a></nav>
 
+            {todaySurface==="home"&&!demo&&!workspaceLoadFailed&&<TodayContinuation key={`${user.userId}:${activeSpace.id}`} userId={user.userId} spaceId={activeSpace.id} locale={locale} onResume={hash=>{navigationScroll.current.set(window.location.hash,window.scrollY);window.location.hash=hash;setMobileNav(false);}}/>}
             {todaySurface==="home"&&!demo&&<TodayDiscoveryStatus state={scanIsActive?"running":monitor?.status==="error"?"error":"idle"} hasReading={Boolean(resumePaper || currentQuestionReadingIds.length || dailyBriefPapers.length || additionalTodayPapers.length)} phase={baseScanPhase} discovered={activeScanJob?.discoveredCount} screened={activeScanJob?.reviewedCount} locale={locale} href={workspaceHash({view:"today",space:activeSpace.id,panel:"discovery",focus:monitor?.status==="error"?"recovery":undefined})}/>}
 
 
-            {todaySurface==="home" && monitor && !monitorLoadFailed && !activeSpaceSupportsLearning && <TodayEntry locale={locale} resume={resumePaper} empty={false} hasLibrary={historyPapers.length > 0} discovering={scanIsActive} onRead={id => void openRoutePaper(id, "today")} onGoal={() => { setLearningTarget(activeSpace.description || ""); setLearningTargetTrackId(null); setLearningPlannerOpen(true); navigate("learn"); }} onContext={openResearchImport} onLibrary={() => navigate("library")} onDiscovery={() => openTodaySurface("discovery")} />}
             {["home","reading","discovery"].includes(todaySurface) && !workspaceLoadFailed && (activeSpaceSupportsLearning||todaySurface==="home") && <DeferredWorkspacePanel locale={locale}><ResearchEntry fieldDescription={activeSpace.description} bibliography={historyPapers} taskBrief={taskBriefState.brief} taskBriefError={taskBriefState.error} overview={monitorLoadFailed?null:taskBriefState.brief?taskBriefOverview(taskBriefState.brief,locale):digestOverview(monitor?.dailyBrief,historyPapers,locale)} searchPapers={monitorLoadFailed?[]:historyPapers} briefDate={monitor?.dailyBrief?.date} onLibrary={()=>{setLibraryFilter("all");setLibraryStageFilter("all");setLibrarySearch("");setLibraryPageNumber(1);navigate("library",undefined,{libraryQuery:undefined,libraryFilter:undefined,libraryStage:undefined,libraryInbox:undefined,librarySort:undefined,libraryTag:undefined,libraryPage:undefined});}} mode={todaySurface as "home"|"reading"|"discovery"} onAll={()=>openTodaySurface("reading")} fallbackPapers={fieldBriefReading([...dailyBriefPapers,...rankedMonitorPapers,...historyPapers],excludedReadingIds,8).map(p=>({id:p.id,title:p.title,whyZh:p.whyReadZh||"",whyEn:p.whyReadEn||"",focusZh:"",focusEn:"",checkZh:"",checkEn:""}))} key={`entry:${activeSpace.id}`} spaceId={activeSpace.id} spaceName={activeSpace.name} locale={locale} demo={demo} resume={monitor && !monitorLoadFailed ? resumePaper : null} onProgress={() => openTodaySurface("discovery")} excludedReadingIds={excludedReadingIds} refreshKey={`${monitor?.status}:${monitor?.lastRunAt}:${monitor?.newCount}:${readingQueueKey}`} scanStatus={scanIsActive ? scanPhase : monitor?.status === "error" ? monitorFailureMessage(failedScanError, locale) : ""} blocked={!monitor || monitorLoadFailed ? (locale === "zh" ? "先载入空间内容，再开始检索。" : "Load workspace content before searching.") : scanIsActive ? (locale === "zh" ? "当前扫描进行中，新问题用于后续新扫描。" : "A scan is running; the new question applies to a future new scan.") : analysisBudgetBlocked ? (locale === "zh" ? "今日额度已用完，问题已保留。" : "Today's budget is exhausted; your question is saved.") : manualCooldownBlocked ? (locale === "zh" ? "扫描暂在冷却期，稍后可继续。" : "Discovery is cooling down; continue later.") : resumeAvailable ? (locale === "zh" ? "当前有待恢复的扫描，请先在下方从断点继续；新问题用于之后的新扫描。" : "Resume the saved scan below first. The new question applies to a subsequent new scan.") : ""} onDiscover={() => void runManualMonitor()} onRead={id => void openRoutePaper(id, "today")} onReadingList={ids=>setQuestionReadingIds(current=>current.spaceId===activeSpace.id && current.ids.join("|")===ids.join("|") ? current : {spaceId:activeSpace.id,ids})} onSaved={() => { setLibraryRevision(n=>n+1); void readResearchMapState(activeSpace.id).then(data => { if(paperNetworkSpaceRef.current === activeSpace.id)setResearchMap(data); }).catch(() => {}); }} onRoute={id => { const track=researchMap.tracks.find(t=>t.id===id); if(track)openThread(track); else navigate("threads"); }} /></DeferredWorkspacePanel>}
             {todaySurface==="reading"&&<>
             {monitor?.dailyBrief && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
@@ -5693,7 +5702,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           </main>
         )}
 
-        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => navigate(workbookReturnView)} /></DeferredWorkspacePanel></div>}
+        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{loadedWorkbookRef.current=`${activeSpace.id}:${workbookTrackId}:${id}`;const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => navigate(workbookReturnView)} /></DeferredWorkspacePanel></div>}
 
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail pi-paper-workspace">
