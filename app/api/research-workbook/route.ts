@@ -113,7 +113,7 @@ export async function GET(request: Request) {
     // A graph task must resume only its own question and exact source set.
     const revision = await workbookRevision(scoped.question, selected);
     const id = `${ctx.spaceId}:${ctx.trackId}:${revision}`;
-    row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${id}:revision-v6`) || await rowFor(ctx, `${id}:evidence-v6`) || await rowFor(ctx, `${id}:revision-v5`) || await rowFor(ctx, `${id}:evidence-v5`) || await rowFor(ctx, `${id}:revision-v4`) || await rowFor(ctx, `${id}:evidence-v4`) || await rowFor(ctx, `${id}:revision-v3`) || await rowFor(ctx, `${id}:evidence-v3`) || await rowFor(ctx, `${id}:revision-v2`) || await rowFor(ctx, `${id}:evidence-v2`) || await rowFor(ctx, `${id}:revision-v1`) || await rowFor(ctx, id) : null;
+    row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${id}:revision-v7`) || await rowFor(ctx, `${id}:evidence-v7`) || await rowFor(ctx, `${id}:revision-v6`) || await rowFor(ctx, `${id}:evidence-v6`) || await rowFor(ctx, `${id}:revision-v5`) || await rowFor(ctx, `${id}:evidence-v5`) || await rowFor(ctx, `${id}:revision-v4`) || await rowFor(ctx, `${id}:evidence-v4`) || await rowFor(ctx, `${id}:revision-v3`) || await rowFor(ctx, `${id}:evidence-v3`) || await rowFor(ctx, `${id}:revision-v2`) || await rowFor(ctx, `${id}:evidence-v2`) || await rowFor(ctx, `${id}:revision-v1`) || await rowFor(ctx, id) : null;
   } else row = await rowFor(ctx, id);
   if (id && !row) return Response.json({ error: "Workbook not found" }, { status: 404 });
   return projection(ctx, row, preferred, focus);
@@ -156,8 +156,8 @@ export async function POST(request: Request) {
       if (ids.length < 2 || ids.length > 3 || selected.length !== ids.length) return Response.json({ error: "Select two or three currently approved papers" }, { status: 422 });
       const revision = await workbookRevision(ctx.question, selected);
       const rootId = `${ctx.spaceId}:${ctx.trackId}:${revision}`;
-      const baselineId = `${rootId}:evidence-v6`;
-      const id = body.allowRepair === true ? `${rootId}:revision-v6` : baselineId;
+      const baselineId = `${rootId}:evidence-v7`;
+      const id = body.allowRepair === true ? `${rootId}:revision-v7` : baselineId;
       const baseline = body.allowRepair === true ? await rowFor(ctx, baselineId) : null;
       const seedDraft = baseline?.status === 'rejected' && baseline.draft_json ? validateWorkbook(parse(baseline.draft_json), selected) : null;
       const initialReview = body.allowRepair === true ? (await import('../../../lib/workbook-graph')).initialWorkbookGraphReview() : null;

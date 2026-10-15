@@ -89,6 +89,17 @@ export function validateWorkbookLayout(content: WorkbookContent) {
     content.learning.prerequisiteEn, content.learning.checkpointZh, content.learning.checkpointEn].join('\n');
   // Source keys belong to the wire contract; the reader sees passages, not their catalog IDs.
   if (/\b(?:quoteIds?|evidenceIds?|p[1-3]\.[qw]\d+)\b|\b(?:source[- ]passage|evidence|quote|excerpt)[- ](?:ids?|identifiers?)\b|(?:原文|引文|证据)(?:片段)?\s*(?:ID|标识符)/iu.test(prose)) throw new Error('internal_workbook_instruction');
+  const counts: Record<string, [string, string]> = { two: ['2','二两'], three: ['3','三'], four: ['4','四'], five: ['5','五'], six: ['6','六'], seven: ['7','七'], eight: ['8','八'], nine: ['9','九'], ten: ['10','十'] };
+  for (const dimension of content.dimensions) for (const cell of dimension.cells) {
+    const evidence = (cell.quotes || [cell.quote]).join(' ');
+    const uses = /\b(two|three|four|five|six|seven|eight|nine|ten|[2-9]|10) uses of the qubit erasure channel\b/iu.exec(evidence);
+    if (!uses) continue;
+    const entry = counts[uses[1].toLowerCase()] || Object.values(counts).find(v=>v[0]===uses[1])!;
+    const word = Object.keys(counts).find(k=>counts[k]===entry)!;
+    const qubits = new RegExp(`(?:${word}|${entry[0]})[- ]qubits?`, 'iu');
+    const mistranslation = new RegExp(`(?:[${entry[1]}]|${entry[0]})\\s*(?:个)?(?:量子)?比特`, 'u');
+    if (!qubits.test(evidence) && (qubits.test(cell.textEn) || mistranslation.test(cell.textZh))) throw new Error('workbook_channel_uses_translation');
+  }
   return content;
 }
 
@@ -104,6 +115,8 @@ export function anchoredWorkbookPrompt(question: string, sources: WorkbookSource
   base.tableLayout = { rows: 'comparison dimensions', columns: 'selected papers' };
   base.rules.push('All tasks and exercises use the EXISTING displayed comparison table: dimensions are ROWS and papers are COLUMNS. Never transpose it. Prefer saying "the displayed comparison table" rather than re-specifying row/column counts. Task steps, title, criterion and exercise must agree.');
   base.rules.push('Reader tasks, criteria and ALL learning fields must work with visible prose alone: quote a short displayed passage and name P1/P2. Never request source-passage IDs, passage identifiers, quote IDs or evidence IDs: catalog identifiers are not displayed. A citation is the paper label plus verbatim words, not a machine identifier.');
+  base.rules.push('Preserve the unit of every count in BOTH languages. Channel uses are repetitions, not numbers of qubits: "four uses of the qubit erasure channel" means "量子比特擦除信道使用四次", never "四比特擦除信道" or "four-qubit erasure channel". Do not change model dimension, messages, repetitions or feedback qualifications during translation or correction.');
+  base.rules.push('Each task step must reference supported cells covering EVERY table row it asks the reader to fill or check. A step covering the whole table must reference all supported cells, including conclusion and comparability rows when present. Prefer short steps that name the displayed table instead of listing extra unreferenced facts or rows.');
   return JSON.stringify(base);
 }
 

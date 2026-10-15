@@ -26,6 +26,18 @@ test('new drafts and field corrections cannot assign hidden catalog identifiers 
  const legacy=structuredClone(visible);legacy.learning.exerciseEn='Cite source-passage IDs.';
  assert.doesNotThrow(()=>validateWorkbook(legacy,workbookSources),'historical canonical records remain readable');
 });
+
+test('channel repetitions cannot be translated into qubit dimension in a supported observation',()=>{
+ const content=resolvedSample(),cell=content.dimensions[0].cells[0];
+ cell.quote='Four uses of the qubit erasure channel and four messages give a strict gap.';cell.quotes=[cell.quote];
+ cell.textZh='四比特擦除信道与四条消息存在严格差距。';cell.textEn='Four uses of the qubit erasure channel give a gap.';
+ assert.throws(()=>validateWorkbookLayout(content),/workbook_channel_uses_translation/);
+ cell.textZh='量子比特擦除信道使用四次、发送四条消息时存在严格差距。';assert.doesNotThrow(()=>validateWorkbookLayout(content));
+ cell.textEn='A four-qubit erasure channel gives a gap.';assert.throws(()=>validateWorkbookLayout(content),/workbook_channel_uses_translation/);
+ cell.quote='Ten uses of the qubit erasure channel give a gap.';cell.quotes=[cell.quote];cell.textZh='量子比特信道使用十次。';cell.textEn='Ten channel uses.';assert.doesNotThrow(()=>validateWorkbookLayout(content));
+ cell.textZh='十比特擦除信道。';assert.throws(()=>validateWorkbookLayout(content),/workbook_channel_uses_translation/);
+ cell.textZh='1比特擦除信道使用十次。';assert.doesNotThrow(()=>validateWorkbookLayout(content),'ten repetitions do not contradict a single-qubit dimension');
+});
 test('separate passages are preserved individually and every passage must belong to the same source',()=>{
  const sources=structuredClone(workbookSources);sources[0].abstractText='The object is a model with twelve configurations. '+ 'Intervening context is retained in the source. '.repeat(40)+'The evaluation reports context gain under matched conditions.';
  const wire=anchoredSample(sources.map((s,i)=>i?s:{...s,abstractText:workbookSources[0].abstractText+' '+s.abstractText}));
