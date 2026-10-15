@@ -20,8 +20,14 @@ test('comparison calls classify provider and response failures without forwardin
 test('a successful comparison retains independent review and uses a finite deadline',async()=>{
  const result=await requestWorkbookModel('fixture','source',true,async(url,init)=>{
   const body=JSON.parse(init.body);assert.equal(body.model,'deepseek-flash');assert.equal(body.thinking.type,'enabled');
-  assert.equal(body.reasoning_effort,'medium');assert.ok(init.signal instanceof AbortSignal);
+  assert.equal(body.reasoning_effort,'low');assert.ok(init.signal instanceof AbortSignal);
   assert.match(body.messages[0].content,/Independently audit/);
   return Response.json({choices:[{finish_reason:'stop',message:{content:'{"valid":true}'}}]});
  });assert.deepEqual(result.raw,{valid:true});
+});
+test('draft extraction reserves its token budget for structured output, followed by separate review',async()=>{
+ await requestWorkbookModel('fixture','source',false,async(_url,init)=>{
+  const body=JSON.parse(init.body);assert.equal(body.thinking.type,'disabled');assert.equal(body.reasoning_effort,undefined);
+  assert.equal(body.max_tokens,12000);return Response.json({choices:[{finish_reason:'stop',message:{content:'{}'}}]});
+ });
 });
