@@ -44,10 +44,21 @@ test('separate passages are preserved individually and every passage must belong
  const augmented=sources.map((s,i)=>i?s:{...s,abstractText:workbookSources[0].abstractText+' '+s.abstractText}),bank=workbookEvidenceCatalog(augmented),paper=bank.find(s=>s.paperId===sources[0].id);
  const first=paper.quotes.find(q=>q.text.includes('twelve configurations')),last=paper.quotes.find(q=>q.text==='The evaluation reports context gain under matched conditions.');
  wire.dimensions[0].cells[0].quoteIds=[first.id,last.id];
- const resolved=resolveAnchoredWorkbook(wire,augmented),cell=resolved.dimensions[0].cells[0];assert.deepEqual(cell.quotes,[first.text,last.text]);assert.equal(cell.quote,first.text);assert.equal(cell.quotes.some(q=>q.includes('…')),false);
+ const resolved=resolveAnchoredWorkbook(wire,augmented),cell=resolved.dimensions[0].cells[0];assert.equal(cell.quotes.length,2);assert.ok(cell.quotes[0].includes(first.text));assert.ok(cell.quotes[1].includes(last.text));assert.equal(cell.quote,cell.quotes[0]);assert.ok(cell.quotes.every(q=>augmented[0].abstractText.includes(q)));assert.equal(cell.quotes.some(q=>q.includes('…')),false);
  const forged=structuredClone(resolved);forged.dimensions[0].cells[0].quotes[1]='Invented second passage that is absent from the abstract.';assert.throws(()=>validateWorkbook(forged,augmented),/unlocated_workbook_evidence/);
  wire.dimensions[0].cells[0].quoteIds=[first.id,bank.find(s=>s.paperId!==sources[0].id).quotes[0].id];assert.throws(()=>resolveAnchoredWorkbook(wire,augmented),/unlocated_workbook_evidence/);
  wire.dimensions[0].cells[0].quoteIds=[first.id,first.id];assert.throws(()=>resolveAnchoredWorkbook(wire,augmented),/unlocated_workbook_evidence/);
+});
+
+test('a short exponent citation retains its exact antecedent in both the prompt and materialized evidence',()=>{
+ const sources=structuredClone(workbookSources),context='Reliability is measured using an error exponent. A universal reliability bound matches the converse at high rates. Specifically, these exponents depend on the stated divergences.';sources[0].abstractText+='. '+context;
+ const catalog=workbookEvidenceCatalog(sources).find(s=>s.paperId===sources[0].id),anchor=catalog.quotes.filter(q=>q.id.includes('.q')).at(-1);
+ const prompt=JSON.parse(anchoredWorkbookPrompt('q',sources)),shown=prompt.sources.find(s=>s.key===catalog.key).quotes.find(q=>q.id===anchor.id);
+ assert.equal(shown.text,context);assert.equal(shown.text,sources[0].abstractText.slice(shown.start,shown.end));assert.ok(prompt.sources.every(s=>s.quotes.every(q=>q.id.includes('.q'))));
+ const wire=anchoredSample(sources);wire.dimensions[0].cells[0].quoteIds=[anchor.id,catalog.quotes.find(q=>q.text===context).id];
+ const content=resolveAnchoredWorkbook(wire,sources),cell=content.dimensions[0].cells[0];assert.deepEqual(cell.quotes,[shown.text],'contained selections collapse to one contiguous original passage');
+ const patch=JSON.parse(workbookPatchPrompt('q',sources,content,[issue(`cell:${content.dimensions[0].id}:${cell.paperId}`)]));
+ assert.ok(patch.correction.targets[0].currentQuoteIds.length,'correction can retain the contextual source span');
 });
 test('adjacent-sentence windows preserve a continuous source passage and enforce cell-specific review',()=>{
  const sources=structuredClone(workbookSources);sources[0].abstractText='The first sentence names the study object. The second sentence reports a value of 0.248. The third sentence states an explicit qualification.';

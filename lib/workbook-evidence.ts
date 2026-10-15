@@ -49,6 +49,18 @@ export function workbookEvidenceCatalog(sources: WorkbookSource[]) {
   });
 }
 
+type CatalogQuote = { id: string; start: number; end: number; text: string };
+function contextQuote(quotes: CatalogQuote[], quote: CatalogQuote) {
+  const singles = quotes.filter(q=>q.id.includes('.q'));
+  const index = singles.findIndex(q=>q.id===quote.id);
+  if (index < 1) return quote;
+  for (let count=Math.min(3,index+1);count>=2;count--) {
+    const context=quotes.find(q=>q.start===singles[index-count+1].start&&q.end===quote.end);
+    if(context)return context;
+  }
+  return quote;
+}
+
 function resolver(sources: WorkbookSource[]) {
   const catalog = workbookEvidenceCatalog(sources);
   const sourceFor = (key: unknown) => {
@@ -65,8 +77,13 @@ function resolver(sources: WorkbookSource[]) {
       return { paperId: source.paperId, status: 'missing', textZh: '', textEn: '', quote: '' };
     }
     if (!Array.isArray(v.quoteIds) || !v.quoteIds.length || v.quoteIds.length > 4 || new Set(v.quoteIds).size !== v.quoteIds.length || v.quote !== undefined || v.quoteId !== undefined) throw new Error('unlocated_workbook_evidence');
-    const quotes = v.quoteIds.map(id => source.quotes.find(q => q.id === id)?.text);
-    if (quotes.some(q=>!q)) throw new Error('unlocated_workbook_evidence');
+    const selected = v.quoteIds.map(id => source.quotes.find(q => q.id === id));
+    if (selected.some(q=>!q)) throw new Error('unlocated_workbook_evidence');
+    // A short extract such as "these exponents" needs its antecedent. Keep
+    // original contiguous text, with at most two preceding catalog sentences.
+    const contextual = selected.map(q => contextQuote(source.quotes,q!));
+    const unique = [...new Map(contextual.map(q=>[q.id,q])).values()];
+    const quotes = unique.filter(q=>!unique.some(other=>other!==q&&other.start<=q.start&&other.end>=q.end)).map(q=>q.text);
     return { paperId: source.paperId, status: v.status, textZh: v.textZh, textEn: v.textEn, quote: quotes[0], quotes };
   };
   const refs = (v: unknown) => {
@@ -105,13 +122,16 @@ export function validateWorkbookLayout(content: WorkbookContent) {
 
 export function anchoredWorkbookPrompt(question: string, sources: WorkbookSource[]) {
   const base = JSON.parse(workbookDraftPrompt(question, sources));
-  base.sources = workbookEvidenceCatalog(sources).map(({ paperId: _id, ...s }) => s);
+  base.sources = workbookEvidenceCatalog(sources).map(({ paperId: _id, ...s }) => ({...s,
+    quotes:s.quotes.filter(q=>q.id.includes('.q')).map(q=>({...contextQuote(s.quotes,q),id:q.id})),
+  }));
   base.evidenceProtocol = 'anchors-v2';
+  base.quoteContext = 'Each supplied quote already includes up to two preceding sentences when the contiguous span fits 1200 characters. Its text and offsets are exactly what the server materializes. Select these supplied .q IDs, not invented windows. In correction, existing currentQuoteIds may also be retained. Never infer unsupported claims from context.';
   base.contract.dimensions[0].cells = [{ paperId: 'p1 (source key)', status: 'supported|missing', textZh: 'one concise observation collectively entailed by the selected passages', textEn: 'same qualifications', quoteIds: ['p1.q1 (1-4 exact catalog IDs from this paper; [] for missing)'] }];
   base.contract.comparison.evidenceIds = ['dimension-id:p1'];
   base.contract.task.steps[0].evidenceIds = ['dimension-id:p1'];
   base.rules.push('Use quoteIds to select 1-4 supplied catalog IDs from the SAME paper; NEVER copy or generate quote text. Use [] for missing. paperId uses source key p1/p2/p3. Each evidenceIds entry uses dimension.id + colon + source key and MUST point to a supported cell. The selected passages must collectively support the ENTIRE bilingual observation. Use missing only when the whole abstract lacks the dimension. Prefer exactly 3 dimensions and 2 task steps. Aim for under 350 characters per prose field. The research question is motivation, not evidence.');
-  base.rules.push('Every number, model name, auxiliary method and qualification in a supported cell must be entailed by its SELECTED passages. ADD another catalog ID when a clause needs another sentence, or narrow the observation. Unselected abstract sentences do not validate a citation. Use contiguous windows (.w) only when useful; do not stitch or paraphrase quotes. In reader-facing prose use P1/P2/P3 or distinctive short titles. Never mention quoteId, quoteIds, evidenceIds, supported cells or raw dimension IDs; ask readers to cite the displayed source passages.');
+  base.rules.push('Every number, model name, auxiliary method and qualification in a supported cell must be entailed by its SELECTED passages. ADD another catalog ID when a clause needs another sentence, or narrow the observation. Unselected abstract sentences do not validate a citation. Select the supplied context-bearing .q IDs; do not invent window IDs or stitch or paraphrase quotes. In reader-facing prose use P1/P2/P3 or distinctive short titles. Never mention quoteId, quoteIds, evidenceIds, supported cells or raw dimension IDs; ask readers to cite the displayed source passages.');
   base.tableLayout = { rows: 'comparison dimensions', columns: 'selected papers' };
   base.rules.push('All tasks and exercises use the EXISTING displayed comparison table: dimensions are ROWS and papers are COLUMNS. Never transpose it. Prefer saying "the displayed comparison table" rather than re-specifying row/column counts. Task steps, title, criterion and exercise must agree.');
   base.rules.push('Reader tasks, criteria and ALL learning fields must work with visible prose alone: quote a short displayed passage and name P1/P2. Never request source-passage IDs, passage identifiers, quote IDs or evidence IDs: catalog identifiers are not displayed. A citation is the paper label plus verbatim words, not a machine identifier.');

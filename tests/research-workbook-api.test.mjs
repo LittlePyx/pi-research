@@ -232,7 +232,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       graphMode='repairable';graphCorrections=0;
       let pilot=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Graph persistence acceptance',allowRepair:true})).workbook;
       assert.equal(modelQuestions.at(-1),'Graph persistence acceptance');
-      assert.match(pilot.id,/:revision-v7$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
+      assert.match(pilot.id,/:revision-v8$/);assert.equal(pilot.revisionFlow.engine,'langgraph-v1');assert.equal(pilot.content,null);
       pilot=(await post({action:'advance',workbookId:pilot.id})).workbook;
       const count=calls,checkpoint=pilot.reviewProgress;
       await mf.dispose();mf=new Miniflare(options);
