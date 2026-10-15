@@ -187,7 +187,7 @@ export async function POST(request: Request) {
     const model = async (prompt: string, reviewer: boolean) => {
       active!.stage = reviewer ? 'review' : 'draft';
       // A correction retry contract must never instruct the independent reviewer to return patches.
-      const hint = previous?.stage === active!.stage ? workbookRecoveryHint(previous.code) : '';
+      const hint = previous?.stage === active!.stage ? workbookRecoveryHint(previous.code, reviewer) : '';
       const response = await requestWorkbookModel(credential.apiKey, hint ? JSON.stringify({...JSON.parse(prompt), recovery: hint}) : prompt, reviewer);
       await ctx.database.prepare(`INSERT INTO ai_usage_daily (id, scope, usage_date, request_count, input_tokens, output_tokens)
         VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT(scope, usage_date) DO UPDATE SET request_count = request_count + 1,

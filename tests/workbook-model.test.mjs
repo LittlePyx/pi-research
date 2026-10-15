@@ -39,6 +39,12 @@ test('recovery feedback accepts only known validation codes and never arbitrary 
  assert.match(workbookRecoveryHint('invalid_json_response'), /preserve the original source/);
  assert.match(workbookRecoveryHint('overlong_workbook_field'), /never truncate/);
 });
+test('review recovery requires a complete audit and cannot request draft or patch output',()=>{
+ const hint=workbookRecoveryHint('incomplete_workbook_review',true);
+ assert.match(hint,/EVERY supplied requiredCheckId exactly once/);assert.match(hint,/exact sources\[\]\.id/);assert.match(hint,/REVIEW ONLY/);
+ assert.doesNotMatch(hint,/paperId uses the source key|Preserve every required bilingual field/);
+ assert.equal(workbookRecoveryHint('private provider body',true),'');
+});
 
 test('complete JSON fences are harmless wrappers but malformed math escapes and surrounding prose remain invalid',async()=>{
  const reply=content=>async()=>Response.json({choices:[{finish_reason:'stop',message:{content}}]});
