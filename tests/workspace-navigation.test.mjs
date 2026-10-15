@@ -101,3 +101,48 @@ test('URL text rejects control characters while preserving Unicode queries and e
  assert.equal(readWorkspaceLocation('#library?q='+encodeURIComponent('协方差 α')).libraryQuery,'协方差 α');
  assert.equal(readWorkspaceLocation('#workbook/route-2?workbookFocus='+encodeURIComponent('假设:论文')).workbookFocus,'假设:论文');
 });
+
+test('a paper retains the exact library, graph or learning location to return to after refresh',()=>{
+ for(const origin of [
+  {view:'library',space:'s',libraryQuery:'协方差',libraryFilter:'accepted',libraryTag:'notes',librarySort:'newest',libraryPage:3},
+  {view:'threads',space:'s',graph:'all',graphSurface:'routes',graphMode:'citations',graphScope:'one-hop',graphFocus:'p2'},
+  {view:'learn',space:'s',step:'stage-2',path:'path-1'},
+  {view:'today',space:'s',panel:'reading'},
+ ]){
+  const returnTo=workspaceHash(origin);
+  const detail=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p1',space:'s',from:origin.view,returnTo,paperPanel:'notes'}));
+  assert.equal(detail.returnTo,returnTo);
+  assert.deepEqual(readWorkspaceLocation(detail.returnTo),readWorkspaceLocation(returnTo));
+ }
+});
+
+test('comparison context survives paper reading and still returns to the original research route',()=>{
+ const route=workspaceHash({view:'thread-detail',id:'r1',space:'s',tab:'evidence',libraryQuery:'Gaussian',libraryPage:2});
+ const workbook=workspaceHash({view:'workbook',id:'r1',space:'s',from:'thread-detail',returnTo:route,workbookPanel:'relations',workbookFocus:'assumptions:p1'});
+ const paper=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p1',space:'s',from:'workbook',returnTo:workbook}));
+ assert.equal(paper.returnTo,workbook);
+ const restored=readWorkspaceLocation(paper.returnTo);
+ assert.equal(restored.workbookFocus,'assumptions:p1');
+ assert.equal(restored.returnTo,route);
+});
+
+test('return locations reject external links, another workspace, mismatched origins and nested cycles',()=>{
+ const detail={view:'paper-detail',id:'p',space:'s',from:'library'};
+ for(const returnTo of ['https://example.com','#unknown?space=s','#paper/p?space=s','#library?space=other','#today?space=s','#library?space=s&q=%00']){
+  assert.equal(readWorkspaceLocation(workspaceHash({...detail,returnTo})).returnTo,undefined);
+ }
+ assert.equal(readWorkspaceLocation('#today?space=s&returnTo='+encodeURIComponent('#library?space=s')).returnTo,undefined);
+ let nested=workspaceHash({view:'library',space:'s'});
+ for(let i=0;i<8;i++)nested=workspaceHash({view:'workbook',id:'r'+i,space:'s',from:i?'workbook':'library',returnTo:nested});
+ assert.ok(nested.length<5000);
+});
+
+test('a comparison reading retains its specific check across refresh without leaking into unrelated pages',()=>{
+ const paper=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'workbook',readingFocus:'核对协方差的假设条件'}));
+ assert.equal(paper.readingFocus,'核对协方差的假设条件');
+ assert.equal(readWorkspaceLocation('#library?readingFocus=hidden').readingFocus,undefined);
+ assert.equal(readWorkspaceLocation('#paper/p?from=workbook&readingFocus=%00').readingFocus,undefined);
+ const library=workspaceHash({view:'library',space:'s',libraryQuery:'协方差'.repeat(80),libraryPage:4});
+ const workbook=workspaceHash({view:'workbook',id:'r',space:'s',from:'library',returnTo:library});
+ assert.equal(readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'workbook',returnTo:workbook})).returnTo,workbook);
+});

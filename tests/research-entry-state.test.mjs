@@ -81,3 +81,18 @@ test('demo reset validates its response and preserves the current question if th
  h.nodes().find(n=>n.type==='button'&&n.props.children==='Restore sample question').props.onClick();h.requests.shift().resolve({goal,papers:[]});await settle();h.render();
  assert.match(h.text(),/Open research route/);assert.deepEqual(h.counts(),{saved:0,discovered:0});
 });
+
+test('a fresh empty home opens a question draft without starting a scan',async()=>{
+ const h=harness();h.props.mode='home';h.props.blocked='';h.props.scanStatus='';h.requests.shift().resolve({goal:null,papers:[]});await settle();h.render();
+ h.nodes().find(n=>n.type==='button'&&JSON.stringify(n.props.children).includes('Define a research question')).props.onClick();h.render();
+ assert.equal(h.nodes().filter(n=>n.type==='textarea').length,1);
+ assert.equal(h.requests.length,0);
+ assert.equal(h.counts().discovered,0);
+});
+
+test('the empty waiting home opens progress instead of launching a duplicate scan',async()=>{
+ const h=harness();let progress=0;h.props.mode='home';h.props.scanStatus='Reviewing';h.props.onProgress=()=>{progress++};
+ h.requests.shift().resolve({goal,papers:[]});await settle();h.render();
+ h.nodes().find(n=>n.type==='button'&&JSON.stringify(n.props.children).includes('View progress & recovery')).props.onClick();
+ assert.equal(progress,1);assert.equal(h.counts().discovered,0);assert.equal(h.requests.length,0);
+});

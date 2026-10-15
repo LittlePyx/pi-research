@@ -15,7 +15,7 @@ function render(result,resume,excludedReadingIds=[],demo=true,mode="reading",fal
  const mod={exports:{}};
  const hookReact={...React,useState:initial=>[stateIndex++===0?result:initial,()=>{}],useEffect:()=>{},useRef:value=>({current:value})};
  new Function('require','exports',code)(name=>name==='../../lib/research-digest.mjs'?require('../lib/research-digest.mjs'):name==='./digest-overview'?{DigestOverview:()=>null}:name==='./task-brief-evidence'?{TaskBriefEvidence:()=>null}:name==='../../lib/task-brief-presentation.mjs'?require('../lib/task-brief-presentation.mjs'):name==='react'?hookReact:name==='./paper-figure'?{PaperFigure:()=>null}:name==='./problem-discovery'?{ProblemDiscovery:()=>null}:name==='./math-text'?{MathText:({children})=>children}:name.endsWith('.css')?{}:name.includes('workspace-request')?{workspaceFetch:()=>{throw Error('Rendering must not fetch')}}:require(name),mod.exports);
- return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{...extra,mode,fallbackPapers,spaceId:'test',locale:'en',demo,refreshKey:'',scanStatus:'',blocked:'',resume,excludedReadingIds,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{}}));
+ return renderToStaticMarkup(React.createElement(mod.exports.ResearchEntry,{mode,fallbackPapers,spaceId:'test',locale:'en',demo,refreshKey:'',scanStatus:'',blocked:'',resume,excludedReadingIds,onRead:()=>{},onDiscover:()=>{},onRoute:()=>{},onSaved:()=>{},onReadingList:()=>{},onProgress:()=>{},...extra}));
 }
 const paper=id=>({id,title:id,whyEn:'Saved reason',focusEn:'Saved focus',checkEn:'Saved check'});
 const goal={id:'g',trackId:'t',question:'Current question',status:'active',monitoringStatus:'active'};
@@ -93,4 +93,35 @@ test('discovery leads retain provenance and status without becoming recommendati
  assert.match(html,/Search candidate/);assert.match(html,/Awaiting review/);assert.match(html,/Crossref · Found 2026-10-01/);assert.match(html,/Different assumptions/);assert.match(html,/Reviewed · not selected/);assert.doesNotMatch(html,/Hidden feedback/);
  assert.ok(html.indexOf('Search candidate')>html.indexOf('Discovery leads'));
  assert.match(html,/not necessarily new this run or recommended for this question/);
+});
+
+test('returning readers can resume before the brief without duplicate titles or notes',()=>{
+ const html=render({goal,papers:[paper('Reading now'),paper('Next reading')]},{id:'Reading now',title:'Reading now',readingNote:'Saved note'},[],false,'home');
+ assert.ok(html.indexOf('pi-field-resume')<html.indexOf('pi-research-digest'));
+ assert.equal(html.split('Reading now').length-1,1);
+ assert.equal(html.split('Saved note').length-1,1);
+ assert.match(html,/Next reading/);
+});
+
+test('unselected leads are closed by default while preserving sources and honest review status',()=>{
+ const html=render({goal,papers:[paper('Selected')]},null,[],false,'home',[],{searchPapers:[{id:'candidate',title:'Candidate lead',qualityStage:'queued',discoveredAt:'2026-10-01',discoverySources:[{key:'crossref',labelEn:'Crossref',labelZh:'Crossref'}]}]});
+ const summary=html.match(/<details class="pi-digest-leads"([^>]*)><summary>([\s\S]*?)<\/summary>/);
+ assert.ok(summary);
+ assert.doesNotMatch(summary[1],/\bopen\b/);
+ assert.match(summary[2],/Discovery leads/);
+ assert.match(summary[2],/1/);
+ assert.match(html,/Candidate lead|Awaiting review/);
+});
+
+test('an empty home offers a concrete next action and waiting never starts another scan',()=>{
+ const fresh=render({goal:null,papers:[]},null,[],false,'home');
+ assert.match(fresh,/pi-home-next-action/);
+ assert.match(fresh,/Define a research question/);
+ const saved=render({goal,papers:[]},null,[],false,'home');
+ assert.match(saved,/Find related papers/);
+ const waiting=render({goal,papers:[]},null,[],false,'home',[],{scanStatus:'Reviewing candidates',blocked:'Scan already running'});
+ assert.match(waiting,/View progress &amp; recovery/);
+ assert.doesNotMatch(waiting,/>Find related papers</);
+ const loading=render(null,null,[],false,'home');
+ assert.doesNotMatch(loading,/pi-home-next-action/);
 });

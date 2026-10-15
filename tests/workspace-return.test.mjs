@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+import {readWorkspaceLocation,workspaceHash} from '../lib/workspace-navigation.ts';
+
+const source=readFileSync(new URL('../app/research-app.tsx',import.meta.url),'utf8');
+const navigation=source.slice(source.indexOf('  const navigate = ('),source.indexOf('  const navigatePrimary ='));
+const code=ts.transpileModule(navigation,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+function harness(hash,overrides={}){
+ const scrolls=[],frames=[];
+ const browser={location:{hash},scrollY:320,history:{pushState(_state,_title,next){browser.location.hash=next}}};
+ const state={view:readWorkspaceLocation(hash).view,workbookTrackId:'r',activeSpace:{id:'s'},selectedThread:{id:'r'},selectedMonitorPaper:{id:'p'},
+  graphReturnView:'threads',todaySurface:'home',researchRouteTab:'start',researchMapMode:'directions',libraryGraphPaperId:'',
+  paperNetworkMode:'similarity',graphSurface:'library',paperNetworkScope:'all',paperNetworkTrackId:'all',selectedNetworkPaperId:null,
+  librarySearch:'',libraryViewState:{query:'',scope:'related',page:1,focusId:''},libraryPageNumber:1,libraryFilter:'all',libraryStageFilter:'all',inboxFilter:'all',librarySort:'priority',libraryTag:'all',
+  workbookReturnView:'threads',workbookViewState:{panel:'evidence',focus:''},learningBrowseSelection:null,
+  navigationScroll:{current:new Map()},workbookScrollRef:{current:0},restoredLocationRef:{current:''},
+  setPaperPanel(){},setNavigationIssue(){},setTodaySurface(value){state.todaySurface=value},setRecoveryFocusRequested(){},setView(value){state.view=value},setMobileNav(){},...overrides};
+ browser.scrollTo=options=>scrolls.push(options.top);
+ const navigate=new Function('state','window','requestAnimationFrame','readWorkspaceLocation','workspaceHash',`with(state){${code};return navigate;}`)(state,browser,fn=>frames.push(fn),readWorkspaceLocation,workspaceHash);
+ return{navigate,state,browser,scrolls,flush(){while(frames.length)frames.shift()()}};
+}
+
+test('the real navigation handler restores the filtered library URL and scroll after a refreshed paper',()=>{
+ const original=workspaceHash({view:'library',space:'s',libraryQuery:'Gaussian',libraryPage:3,libraryFilter:'accepted',libraryTag:'notes'});
+ const opening=harness(original,{librarySearch:'Gaussian',libraryPageNumber:3,libraryFilter:'accepted',libraryTag:'notes'});
+ opening.navigate('paper-detail',undefined,{id:'p',from:'library'});
+ assert.equal(readWorkspaceLocation(opening.browser.location.hash).returnTo,original);
+ const refreshed=harness(opening.browser.location.hash);
+ refreshed.state.navigationScroll.current.set(original,320);
+ refreshed.navigate('library');refreshed.flush();
+ assert.equal(refreshed.browser.location.hash,original);
+ assert.equal(refreshed.scrolls.at(-1),320);
+ assert.equal(refreshed.state.restoredLocationRef.current,'');
+});
+
+test('paper reading returns to the exact comparison cell, then to its original graph task',()=>{
+ const graph=workspaceHash({view:'threads',space:'s',graph:'all',graphSurface:'routes',graphMode:'citations',graphFocus:'p'});
+ const opening=harness(graph,{researchMapMode:'papers',graphSurface:'routes',paperNetworkMode:'citations',selectedNetworkPaperId:'p'});
+ opening.navigate('workbook','r',{from:'threads'});
+ const workbook=harness(opening.browser.location.hash,{workbookViewState:{panel:'relations',focus:'assumptions:p'}});
+ // The comparison UI updates its selected cell in the URL before opening a source.
+ workbook.browser.location.hash=workspaceHash({...readWorkspaceLocation(workbook.browser.location.hash),workbookPanel:'relations',workbookFocus:'assumptions:p'});
+ const comparison=workbook.browser.location.hash;
+ workbook.navigate('paper-detail','r',{id:'p',from:'workbook'});
+ const paper=harness(workbook.browser.location.hash);
+ paper.navigate('workbook');
+ assert.equal(paper.browser.location.hash,comparison);
+ const returned=harness(paper.browser.location.hash);
+ returned.navigate('threads');
+ assert.equal(returned.browser.location.hash,graph);
+});
+
+test('an explicit main Today action opens the home panel instead of restoring All reading',()=>{
+ const origin=workspaceHash({view:'today',space:'s',panel:'reading'});
+ const paper=harness(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'today',returnTo:origin}));
+ paper.navigate('today',undefined,{panel:'home'});
+ assert.equal(readWorkspaceLocation(paper.browser.location.hash).panel,'home');
+ assert.equal(readWorkspaceLocation(paper.browser.location.hash).returnTo,undefined);
+});
