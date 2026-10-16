@@ -34,9 +34,9 @@ export async function prepareTaskBriefCapture(db:D1Database,spaceId:string,jobId
  return db.prepare(`INSERT INTO monitor_task_briefs(id,space_id,scan_job_id,payload_json) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM monitor_scan_jobs WHERE id=? AND space_id=?) ON CONFLICT(id) DO NOTHING`).bind(snapshotId,spaceId,jobId,json,jobId,spaceId);
 }
 
-export async function readTaskBrief(db:D1Database,spaceId:string,jobId='',snapshotId=''):Promise<TaskBriefView|null>{
+export async function readTaskBrief(db:D1Database,spaceId:string,jobId='',snapshotId='',paperId=''):Promise<TaskBriefView|null>{
  if(!await storageAvailable(db))return null;
- const row=await db.prepare(`SELECT b.id,b.payload_json,b.created_at FROM monitor_task_briefs b JOIN monitor_scan_jobs j ON j.id=b.scan_job_id AND j.space_id=b.space_id WHERE b.space_id=? AND (?='' OR b.scan_job_id=?) AND (?='' OR b.id=?) ORDER BY j.started_at DESC,j.rowid DESC,b.created_at DESC,b.rowid DESC LIMIT 1`).bind(spaceId,jobId,jobId,snapshotId,snapshotId).first<{id:string;payload_json:string;created_at:string}>();
+ const row=await db.prepare(`SELECT b.id,b.payload_json,b.created_at FROM monitor_task_briefs b JOIN monitor_scan_jobs j ON j.id=b.scan_job_id AND j.space_id=b.space_id WHERE b.space_id=? AND (?='' OR b.scan_job_id=?) AND (?='' OR b.id=?) AND (?='' OR EXISTS(SELECT 1 FROM json_each(b.payload_json,'$.records') r WHERE json_extract(r.value,'$.paperId')=? AND json_extract(r.value,'$.selected')=1)) ORDER BY j.started_at DESC,j.rowid DESC,b.created_at DESC,b.rowid DESC LIMIT 1`).bind(spaceId,jobId,jobId,snapshotId,snapshotId,paperId,paperId).first<{id:string;payload_json:string;created_at:string}>();
  if(!row)return null;
  const payload=JSON.parse(row.payload_json) as TaskBriefPayload;
  const ids=payload.records.map(r=>r.paperId).filter((id):id is string=>Boolean(id));

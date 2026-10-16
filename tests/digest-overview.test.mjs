@@ -5,7 +5,9 @@ const brief={date:'2026-09-20',isCurrent:false,model:'evidence-summary',overview
 const p=id=>({id,title:id,qualityStage:'recommended'});
 test('saved overview uses its own date and keeps evidence aligned after unavailable papers',()=>{
  const result=digestOverview(brief,[p('b'),p('a')]);
- assert.equal(result.overview,'2026-09-20确认两篇。');
+ assert.equal(result.overview,'[1] A的发现\n\n[2] B的发现');
+ assert.equal(result.process,'2026-09-20确认两篇。');
+ assert.deepEqual(result.overviewSources.map(p=>p.id),['a','b']);
  assert.deepEqual(result.findings.map(p=>[p.id,p.text,p.action]),[['a','A的发现','核对A'],['b','B的发现','核对B']]);
  assert.equal(result.historical,true);
 });

@@ -76,6 +76,16 @@ test('digest includes publication metadata and retains a useful empty edition',(
  assert.match(empty,/pi-research-digest/);assert.doesNotMatch(empty,/<form/);assert.match(empty,/No published reading/);
 });
 
+test('every home paper explains relevance, a reading action and limits with a task-bound evidence entry',()=>{
+ const records=[{paperId:'A',selected:true,title:'A',review:{whyReadEn:'Relevant to the actual question',readingFocusEn:'Check the channel assumptions',contributionEn:'A saved result',limitationsEn:'Abstract does not establish a common scale'}}];
+ const taskBrief={snapshotId:'frozen',summary:{briefDate:'2026-10-16'},records,scope:{problemId:'g'},currentStates:[{paperId:'A',recommended:true,readingStatus:'unread',feedback:null}]};
+ const html=render({goal,papers:[]},null,[],false,'home',[],{taskBrief});
+ assert.match(html,/Why read/);assert.match(html,/Relevant to the actual question/);assert.match(html,/Start with/);assert.match(html,/Check the channel assumptions/);assert.match(html,/A saved result/);assert.match(html,/Abstract does not establish a common scale/);assert.match(html,/View abstract evidence/);
+ assert.match(html,/<details class="pi-digest-boundaries"><summary>/);
+ const fallback=render({goal:null,papers:[]},null,[],false,'home',[{...paper('Legacy'),whyEn:'',focusEn:''}]);
+ assert.match(fallback,/No saved reading rationale/);assert.doesNotMatch(fallback,/View abstract evidence/,'no snapshot means no invented citation');
+});
+
 test('without a question the field brief keeps multiple readings and a compact continuation, not an empty form',()=>{
  const html=render({goal:null,papers:[]},{id:'resume',title:'Earlier reading',readingNote:'User note'},[],false,'home',[paper('Field recommendation'),paper('Next field reading')],{fieldDescription:'Finite blocklength coding',homeBrief:React.createElement('p',null,'Empty placeholder')});
  assert.match(html,/YOUR RESEARCH FIELD/);assert.match(html,/Finite blocklength coding/);assert.match(html,/pi-digest-grid/);assert.match(html,/Field recommendation/);assert.match(html,/Next field reading/);assert.match(html,/Continue reading: /);

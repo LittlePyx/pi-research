@@ -3959,10 +3959,10 @@ async function generateDailyBrief(
         : verificationFailed
           ? `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. ${verificationFailed} reached the high-potential stage but failed bibliographic and abstract evidence checks, so the formal recommendation count is zero. Their evidence-check reasons remain in the research ledger.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`
           : `Pi fast-screened ${metrics.screened || metrics.reviewed} of ${metrics.scanned} candidates and deeply reviewed ${metrics.deepReviewed || metrics.reviewed}. None cleared all four gates for fit, quality, evidence completeness, and an explicit recommendation, so Pi did not lower the bar to fill the page.${metrics.deepDeferred ? ` ${metrics.deepDeferred} slow papers were deferred for a later retry.` : ""}`,
-    signalsZh: selected.slice(0, 6).map((review) => review.contributionZh || review.summaryZh || review.whyReadZh).filter(Boolean),
-    signalsEn: selected.slice(0, 6).map((review) => review.contributionEn || review.summaryEn || review.whyReadEn).filter(Boolean),
-    readingPlanZh: selected.slice(0, 6).map((review) => review.readingFocusZh || review.whyReadZh || review.summaryZh).filter(Boolean),
-    readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn).filter(Boolean),
+    signalsZh: selected.slice(0, 6).map((review) => review.contributionZh || review.summaryZh || review.whyReadZh),
+    signalsEn: selected.slice(0, 6).map((review) => review.contributionEn || review.summaryEn || review.whyReadEn),
+    readingPlanZh: selected.slice(0, 6).map((review) => review.readingFocusZh || review.whyReadZh || review.summaryZh),
+    readingPlanEn: selected.slice(0, 6).map((review) => review.readingFocusEn || review.whyReadEn || review.summaryEn),
     watchlistZh: [
       ...(metrics.deepDeferred ? [`${metrics.deepDeferred} 篇响应较慢的论文会在后续扫描中重试，不会重复处理已完成论文。`] : []),
       ...(verificationPending ? [`${verificationPending} 篇高潜力论文已保存核对进度；Pi 会在后台自动继续，无需用户操作。`] : []),

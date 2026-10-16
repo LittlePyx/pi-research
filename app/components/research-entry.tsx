@@ -12,7 +12,7 @@ import {digestDiscoveries} from '../../lib/research-digest.mjs';
 import {ProblemDiscovery} from './problem-discovery';
 
 type Goal = {id:string;trackId:string;question:string;status:string;monitoringStatus:string};
-type Reading = {id:string;title:string;whyZh:string;whyEn:string;focusZh:string;focusEn:string;checkZh:string;checkEn:string};
+type Reading = {id:string;title:string;whyZh:string;whyEn:string;focusZh:string;focusEn:string;checkZh:string;checkEn:string;contributionZh?:string;contributionEn?:string};
 type Result = {goal:Goal|null;papers:Reading[]};
 function checkedResult(value:unknown, requireGoal=false):Result {
  const data=value as Result|null;
@@ -37,6 +37,8 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
  const [result,setResult]=useState<Result|null>(null),[editing,setEditing]=useState(false),[question,setQuestion]=useState(''),[seed,setSeed]=useState('');
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[readError,setReadError]=useState(false),[retry,setRetry]=useState(0),[saved,setSaved]=useState(false);
  const [removing,setRemoving]=useState(false);
+ const [evidenceRequest,setEvidenceRequest]=useState({paperId:'',nonce:0});
+ const showEvidence=(paperId:string)=>setEvidenceRequest(current=>({paperId,nonce:current.nonce+1}));
  const alive=useRef(true),chosen=useRef(''),generation=useRef(0),submitting=useRef(false);
  const readingCallback=useRef(onReadingList);
  useEffect(()=>{readingCallback.current=onReadingList},[onReadingList]);
@@ -121,9 +123,9 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
    {inactive&&<p className="pi-question-status">{zh?'此问题已暂停或结束':'This problem is paused or resolved'}</p>}
    <section className="pi-research-digest" aria-label={zh?'阅读与发现简报':'Reading and discovery brief'}>
     <div className="pi-digest-masthead"><strong>PI RESEARCH</strong><span>{demo?(zh?'演示简报':'SAMPLE EDITION'):taskBrief?(zh?'任务简报 · ':'TASK BRIEF · ')+taskBrief.summary.briefDate:briefDate?(zh?'最近简报 · ':'LATEST BRIEF · ')+briefDate:(zh?'研究简报':'RESEARCH BRIEF')}</span></div>
-    {overview?<DigestOverview data={overview} locale={locale} demo={demo} onRead={onRead}/>:<header className="pi-digest-heading"><div><p>{goal?(zh?'围绕当前问题':'YOUR RESEARCH QUESTION'):(zh?'你的研究领域':'YOUR RESEARCH FIELD')}</p><h3>{zh?'阅读与发现':'Reading & discovery'}</h3></div></header>}
+    {overview?<DigestOverview data={overview} locale={locale} demo={demo} onRead={onRead} onEvidence={taskBrief?showEvidence:undefined}/>:<header className="pi-digest-heading"><div><p>{goal?(zh?'围绕当前问题':'YOUR RESEARCH QUESTION'):(zh?'你的研究领域':'YOUR RESEARCH FIELD')}</p><h3>{zh?'阅读与发现':'Reading & discovery'}</h3></div></header>}
     {taskBriefError&&<p role="status" className="pi-digest-caption">{zh?'任务简报暂未更新，已有内容保留。':'Task brief could not refresh; saved content is preserved.'}</p>}
-    {taskBrief&&<TaskBriefEvidence key={taskBrief.snapshotId} spaceId={spaceId} brief={taskBrief} locale={locale} demo={demo}/>}
+    {taskBrief&&<TaskBriefEvidence key={taskBrief.snapshotId+':'+evidenceRequest.nonce} spaceId={spaceId} brief={taskBrief} locale={locale} demo={demo} paperId={evidenceRequest.paperId||undefined} onRead={onRead}/>}
     {!goal&&fieldDescription&&<p className="pi-digest-scope">{fieldDescription}</p>}
     {readError||!result?<p role="status">{readError?(zh?'问题关联暂未核对，推荐稍后显示。':'Question links could not be verified. Recommendations will appear when available.'):(zh?'正在整理已有阅读…':'Loading saved readings…')}</p>:<>
     <div className="pi-digest-section-heading"><h4>{usingTaskReadings?(zh?'本次任务可读文献':'Reading from this task'):taskBrief?(zh?'继续阅读 · 既有推荐':'Continue reading · saved recommendations'):(zh?'值得读的文献':'Worth reading')}</h4><span>{digestPapers.length?(zh?`${digestPapers.length} 篇 · ${demo?'阅读样例':'已保存推荐'}`:`${digestPapers.length} ${demo?'sample readings':'saved recommendations'}`):(zh?'暂无可展示的推荐':'No available recommendations')}</span></div>
@@ -131,9 +133,11 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
      <p className="pi-digest-meta">{meta?.venue}{meta?.publishedAt?' · '+meta.publishedAt.slice(0,4):''}</p>
      <h4><button type="button" onClick={()=>onRead(p.id)}><MathText inline>{p.title}</MathText></button></h4>
      {meta?.authors&&<p className="pi-digest-authors">{meta.authors}</p>}
-     <p className="pi-digest-reason"><MathText inline>{(zh?p.whyZh:p.whyEn)||(zh?'打开论文，查看已保存的解读与推荐依据。':'Open the paper for its saved analysis and rationale.')}</MathText></p>
+     <p className="pi-digest-reason"><strong>{zh?'为什么读':'Why read'}</strong><MathText inline>{(zh?p.whyZh:p.whyEn)||(zh?'推荐理由尚未保存，请先打开论文核对相关性。':'No saved reading rationale; open the paper to check relevance.')}</MathText></p>
+     {(zh?p.focusZh:p.focusEn)&&<p className="pi-digest-focus"><strong>{zh?'先看哪里':'Start with'}</strong><MathText inline>{zh?p.focusZh:p.focusEn}</MathText></p>}
+     {((zh?p.contributionZh:p.contributionEn)||(zh?p.checkZh:p.checkEn))&&<details className="pi-digest-boundaries"><summary>{zh?'主要发现与适用边界':'Finding & limits'}</summary>{(zh?p.contributionZh:p.contributionEn)&&<p><MathText inline>{(zh?p.contributionZh:p.contributionEn)||''}</MathText></p>}{(zh?p.checkZh:p.checkEn)&&<p><strong>{zh?'仍需核对：':'Check next: '}</strong><MathText inline>{zh?p.checkZh:p.checkEn}</MathText></p>}</details>}
      <PaperFigure key={spaceId+p.id} spaceId={spaceId} paperId={p.id} demo={demo} locale={locale}/>
-     <footer>{meta?.recommendedAt&&<span>{zh?'推荐于 ':'Recommended '}{meta.recommendedAt.slice(0,10)}</span>}<button type="button" onClick={()=>onRead(p.id)}>{zh?'阅读与笔记':'Read & take notes'}</button></footer>
+     <footer>{meta?.recommendedAt&&<span>{zh?'推荐于 ':'Recommended '}{meta.recommendedAt.slice(0,10)}</span>}{taskBrief&&<button type="button" onClick={()=>showEvidence(p.id)}>{zh?'查看摘要依据':'View abstract evidence'}</button>}<button type="button" onClick={()=>onRead(p.id)}>{zh?'阅读与笔记':'Read & take notes'}</button></footer>
     </article>})}</div>:<p className="pi-digest-empty">{goal?(zh?'当前问题暂无可读的已核验推荐。下面仍可查看本领域检索材料。':'No verified reading is available for this question. Field discovery materials remain below.'):(zh?'本领域暂无可读的正式推荐。先看看已发现的材料，评审通过后会进入阅读区。':'No published reading is available for this field. Discovered materials remain below while reviews continue.')}</p>}
     </>}
     <details className="pi-digest-leads"><summary><span>{zh?'检索线索':'Discovery leads'} · {discoveries.length}</span><span>{zh?'尚未入选，展开查看':'Not selected · expand to inspect'}</span></summary><section className="pi-digest-discoveries"><div className="pi-digest-section-heading"><h4>{zh?'检索线索':'Discovery leads'}</h4><button type="button" onClick={onProgress}>{zh?'查看发现进度':'View discovery'}</button></div>

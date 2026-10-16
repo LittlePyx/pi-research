@@ -21,7 +21,8 @@ async function read(db: D1Database, spaceId: string, goalId = '') {
   if (goal && await db.prepare('SELECT 1 FROM research_entry_removals WHERE space_id=? AND problem_id=?').bind(spaceId,goal.id).first()) return {goal:null,papers:[]};
   const papers = goal ? (await db.prepare(`SELECT p.id,p.title,i.why_read_zh AS whyZh,i.why_read_en AS whyEn,
     i.reading_focus_zh AS focusZh,i.reading_focus_en AS focusEn,
-    i.research_decision_zh AS checkZh,i.research_decision_en AS checkEn
+    i.limitations_zh AS checkZh,i.limitations_en AS checkEn,
+    i.contribution_zh AS contributionZh,i.contribution_en AS contributionEn
     FROM monitored_papers p JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id
     WHERE p.space_id=? AND i.research_problem_id=? AND ${START_ELIGIBLE}
     AND NOT EXISTS(SELECT 1 FROM paper_reading_progress r WHERE r.paper_id=p.id AND r.space_id=p.space_id AND r.status IN ('read','mastered','cited'))

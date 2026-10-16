@@ -188,6 +188,20 @@
 .v2-app.pi-workspace .pi-research-digest .pi-digest-authors { margin:0 0 12px; font-size:13px !important; line-height:1.6; color:#7b8792; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .v2-app.pi-workspace .pi-research-digest .pi-digest-reason { margin:0 0 18px; font-size:15px !important; line-height:1.8; color:#526779; }
 .pi-digest-grid article>footer { margin-top:auto; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.pi-digest-grid article>footer { flex-wrap:wrap; }
+.v2-app.pi-workspace .pi-digest-reason>strong,.v2-app.pi-workspace .pi-digest-focus>strong { display:block; margin-bottom:6px; color:#315d80; font-size:12px; font-weight:600; }
+.v2-app.pi-workspace .pi-digest-focus { margin:0 0 18px; color:#526779; font-size:14px !important; line-height:1.8; }
+.pi-digest-boundaries { margin:0 0 20px; color:#607588; font-size:14px; }
+.pi-digest-boundaries>summary,.pi-digest-process>summary { min-height:44px; padding:10px 0; cursor:pointer; }
+.v2-app.pi-workspace .pi-digest-boundaries p,.v2-app.pi-workspace .pi-digest-process p { font-size:14px !important; line-height:1.8; }
+.pi-digest-sources { display:flex; flex-direction:column; align-items:flex-start; gap:4px; margin:-10px 0 16px; }
+.v2-app.pi-workspace .pi-digest-sources button { padding:8px 0; min-height:44px; border:0; background:none; color:#315d80; font-size:13px; line-height:1.7; text-align:left; overflow-wrap:anywhere; cursor:pointer; text-decoration:underline; text-underline-offset:4px; text-decoration-color:#bdcbd6; }
+.pi-digest-process { color:#697e8e; font-size:13px; }
+.pi-digest-opening { white-space:pre-line; }
+.pi-task-brief-evidence { scroll-margin-top:90px; }
+.pi-task-brief-evidence:focus-visible { outline:2px solid #587d99; outline-offset:5px; }
+.pi-task-brief-evidence summary { overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-task-brief-evidence article>button,.pi-task-brief-evidence article>a { display:inline-block; min-height:44px; padding:10px 12px; margin:8px 12px 0 0; border:1px solid #c7d3df; border-radius:4px; background:none; color:#315d80; font-size:14px; text-decoration:none; cursor:pointer; }
 .pi-digest-grid article>footer>span { font-size:12px !important; color:#788896; }
 .v2-app.pi-workspace .pi-research-digest :is(footer button,.pi-digest-section-heading>button) { min-height:44px; padding:8px 14px; border:1px solid #c7d3df; border-radius:5px; background:#f8fafc; color:#315d80; font-size:14px !important; font-weight:600; cursor:pointer; }
 .v2-app.pi-workspace .pi-research-digest :is(footer button,.pi-digest-section-heading>button):hover { background:#edf3f8; border-color:#9bafc1; }
