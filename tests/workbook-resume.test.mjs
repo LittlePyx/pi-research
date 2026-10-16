@@ -23,6 +23,46 @@ function harness(extra={}){
 }
 const ready=id=>({workbook:{id,revision:'rev',status:'ready',stale:false,sources:workbookSources,candidates:workbookSources,content:workbookSample(),artifact:{revision:1,value:{observations:{},decision:'Saved decision',unresolved:'Check assumptions'}},retryAt:0},versions:[{id:'old',status:'ready',created_at:'yesterday'},{id:'new',status:'ready',created_at:'today'}]});
 
+test('evidence uses a modal below 1400px, returns focus to its cell and preserves notes when opening a paper',async()=>{
+ const before={window:globalThis.window,document:globalThis.document,requestAnimationFrame:globalThis.requestAnimationFrame};
+ try{
+  for(const width of [390,1280,1399,1400]){
+   const calls=[],listeners=new Set(),media={matches:width<1400,addEventListener:(_,fn)=>listeners.add(fn),removeEventListener:(_,fn)=>listeners.delete(fn)};
+   const trigger={isConnected:true,focus:()=>calls.push('trigger-focus'),scrollIntoView:()=>calls.push('trigger-scroll')};
+   const dialog={open:false,close(){this.open=false},showModal(){this.open=true;calls.push('modal')},show(){this.open=true;calls.push('inline')},focus:()=>calls.push('dialog-focus')};
+   globalThis.window={matchMedia:()=>media};globalThis.document={activeElement:trigger,body:{style:{overflow:''}},getElementById:()=>dialog};globalThis.requestAnimationFrame=fn=>fn();
+   const h=harness();h.requests.shift().resolve(ready('exact'));await settle();h.render();
+   const cell=h.nodes().find(n=>n.type==='button'&&n.props['data-evidence-id']);cell.props.onClick();h.render();h.render();
+   assert.equal(calls.at(-2),width<1400?'modal':'inline');assert.equal(dialog.open,true);
+   assert.equal(globalThis.document.body.style.overflow,width<1400?'hidden':'');
+   assert.equal(h.nodes().find(n=>n.type==='dialog').props['aria-modal'],width<1400?true:undefined);
+   const recoveryInDialog=JSON.stringify(h.nodes().find(n=>n.type==='dialog')).includes('"storageKey"');
+   assert.equal(recoveryInDialog,width<1400,'draft recovery must remain reachable inside the modal');
+   h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===2500).props.onChange({target:{value:'Exact quote check, not yet saved'}});h.render();
+   h.props.active=false;h.render();assert.equal(dialog.open,false);assert.equal(globalThis.document.body.style.overflow,'');assert.match(h.text(),/Exact quote check, not yet saved/);
+   h.props.active=true;h.render();assert.equal(dialog.open,true);
+   let prevented=false;h.nodes().find(n=>n.type==='dialog').props.onCancel({preventDefault:()=>{prevented=true}});h.render();h.render();
+   assert.equal(prevented,true);assert.deepEqual(calls.filter(c=>c.startsWith('trigger-')).slice(-2),['trigger-focus','trigger-scroll']);assert.equal(h.views.at(-1)[1],'');
+   assert.equal(dialog.open,width>=1400);
+   h.nodes().find(n=>n.type==='button'&&n.props['data-evidence-id']).props.onClick();h.render();h.render();
+   assert.equal(h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===2500).props.value,'Exact quote check, not yet saved');
+   assert.equal(JSON.stringify(h.nodes().find(n=>n.type==='dialog')).includes('"storageKey"'),false,'an older recovery choice must not reappear during live editing');
+  }
+ }finally{for(const [key,value] of Object.entries(before)){if(value===undefined)delete globalThis[key];else globalThis[key]=value;}}
+});
+
+test('a cold evidence URL restores its panel but an invalid cell never opens an empty modal',async()=>{
+ const before={window:globalThis.window,document:globalThis.document};
+ try{
+  const dialog={open:false,close(){this.open=false},showModal(){this.open=true},focus(){}};
+  globalThis.window={matchMedia:()=>({matches:true,addEventListener(){},removeEventListener(){}})};
+  globalThis.document={body:{style:{overflow:''}},getElementById:()=>dialog};
+  const data=ready('cold'),focus=`${data.workbook.content.dimensions[0].id}:${data.workbook.sources[0].id}`;
+  const h=harness({initialFocus:focus});h.requests.shift().resolve(data);await settle();h.render();assert.equal(dialog.open,true);
+  h.props.initialFocus='missing-cell';h.render();h.render();assert.equal(dialog.open,false);assert.equal(globalThis.document.body.style.overflow,'');
+ }finally{for(const [key,value] of Object.entries(before)){if(value===undefined)delete globalThis[key];else globalThis[key]=value;}}
+});
+
 test('only field-patch checkpoints claim that approved fields were preserved',async()=>{
  const h=harness(),data=ready('patched');data.workbook.revisionFlow={engine:'langgraph-v1',repairs:1,limit:1,next:'stopped',revisedFields:1,preservedFields:18};
  h.requests.shift().resolve(data);await settle();h.render();assert.match(h.text(),/Changed only 1 failed fields; preserved 18 fields/);
