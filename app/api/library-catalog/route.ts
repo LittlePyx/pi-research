@@ -1,6 +1,7 @@
 import { ensureSchema,getApiUser,getDatabase } from '../../../db/repository';
 import { catalogWhere,routeCatalogTerms,type LibraryPaper } from '../../../lib/library-catalog';
 import {routeReviewCurrentSql} from '../../../lib/research-maintenance-policy';
+import {comparisonEligibility} from '../../../lib/comparison-eligibility';
 export async function GET(request:Request) {
   const user=getApiUser(request);if(!user)return Response.json({error:'Authentication required'},{status:401});
   const url=new URL(request.url),spaceId=url.searchParams.get('spaceId')||'',trackId=url.searchParams.get('trackId')||'',q=(url.searchParams.get('q')||'').trim().slice(0,160),offset=Number(url.searchParams.get('offset')||0);
@@ -14,10 +15,10 @@ export async function GET(request:Request) {
   const args=[trackId,...where.bindings];
   const [count,rows,coverage]=await Promise.all([
     db.prepare(`SELECT COUNT(*) AS total ${from}`).bind(...args).first<{total:number}>(),
-    db.prepare(`SELECT rr.relevance,rr.assessment_json AS assessmentJson,rr.checked_at AS reviewedAt,p.id,p.canonical_id AS canonicalId,p.title,p.authors,p.venue,p.url,p.doi,p.published_at AS publishedAt,COALESCE(i.abstract_text,'') AS abstractText,COALESCE(i.ever_recommended,0) AS recommended,CASE WHEN i.verification_status IN ('verified','revised') THEN 1 ELSE 0 END AS verified,m.status AS membership,m.category,g.status AS graphStatus,g.checked_at AS checkedAt,EXISTS(SELECT 1 FROM research_track_papers tp WHERE tp.space_id=p.space_id AND tp.canonical_id=p.canonical_id AND tp.curation_status='active' AND (?='' OR tp.track_id=?)) AS inRoute ${from} ORDER BY COALESCE(i.ever_recommended,0) DESC,p.discovered_at DESC,p.id LIMIT 24 OFFSET ?`).bind(trackId,trackId,...args,offset).all<LibraryPaper>(),
+    db.prepare(`SELECT EXISTS(SELECT 1 FROM paper_feedback f WHERE f.space_id=p.space_id AND f.paper_id=p.id AND f.feedback='not_relevant') AS excluded,rr.relevance,rr.assessment_json AS assessmentJson,rr.checked_at AS reviewedAt,p.id,p.canonical_id AS canonicalId,p.title,p.authors,p.venue,p.url,p.doi,p.published_at AS publishedAt,COALESCE(i.abstract_text,'') AS abstractText,COALESCE(i.ever_recommended,0) AS recommended,CASE WHEN i.verification_status IN ('verified','revised') THEN 1 ELSE 0 END AS verified,m.status AS membership,m.category,g.status AS graphStatus,g.checked_at AS checkedAt,EXISTS(SELECT 1 FROM research_track_papers tp WHERE tp.space_id=p.space_id AND tp.canonical_id=p.canonical_id AND tp.curation_status='active' AND (?='' OR tp.track_id=?)) AS inRoute ${from} ORDER BY COALESCE(i.ever_recommended,0) DESC,p.discovered_at DESC,p.id LIMIT 24 OFFSET ?`).bind(trackId,trackId,...args,offset).all<LibraryPaper & {excluded:number}>(),
     db.prepare(`SELECT COUNT(*) AS total,SUM(CASE WHEN g.status IN ('ready','partial','empty') THEN 1 ELSE 0 END) AS checked,SUM(CASE WHEN g.status='empty' THEN 1 ELSE 0 END) AS noLinks,SUM(CASE WHEN g.status IN ('error','missing_id') THEN 1 ELSE 0 END) AS blocked FROM monitored_papers p LEFT JOIN library_graph_checks g ON g.paper_id=p.id AND g.space_id=p.space_id WHERE p.space_id=?`).bind(spaceId).first(),
   ]);
-  return Response.json({items:rows.results.map(p=>({...p,matchTerms:terms.filter(t=>(p.title+' '+p.abstractText).toLowerCase().includes(t))})),total:count?.total||0,nextOffset:offset+rows.results.length<(count?.total||0)?offset+rows.results.length:null,coverage,terms},{headers:{'Cache-Control':'private, no-store'}});
+  return Response.json({items:rows.results.map(p=>({...p,comparisonEligibility:comparisonEligibility(p),matchTerms:terms.filter(t=>(p.title+' '+p.abstractText).toLowerCase().includes(t))})),total:count?.total||0,nextOffset:offset+rows.results.length<(count?.total||0)?offset+rows.results.length:null,coverage,terms},{headers:{'Cache-Control':'private, no-store'}});
 }
 export async function POST(request:Request) {
   if(request.headers.get('origin')&&request.headers.get('origin')!==new URL(request.url).origin)return Response.json({error:'Origin mismatch'},{status:403});

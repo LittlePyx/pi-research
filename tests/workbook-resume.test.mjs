@@ -15,7 +15,7 @@ function harness(extra={}){
   useRef(initial){const i=index++;cells[i]??={current:initial};return cells[i]},
   useEffect(fn,deps){const i=index++,old=cells[i];if(!old||deps.some((v,n)=>v!==old.deps[n]))effects.push(()=>{old?.cleanup?.();cells[i]={deps,cleanup:fn()}})}};
  const mod={exports:{}};
- new Function('require','exports',code)(name=>name==='react'?hooks:name.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true)=>resolve({ok,json:async()=>data})}))}:name.endsWith('.css')?{}:name==='./math-text'?{MathText:({children})=>children}:name==='./draft-recovery'?{DraftRecovery:()=>null}:name.startsWith('../../lib/')?require('../lib/'+name.split('/').at(-1)+'.ts'):require(name),mod.exports);
+ new Function('require','exports',code)(name=>name==='react'?hooks:name.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true,status=ok?200:422)=>resolve({ok,status,json:async()=>data})}))}:name.endsWith('.css')?{}:name==='./math-text'?{MathText:({children})=>children}:name==='./draft-recovery'?{DraftRecovery:()=>null}:name.startsWith('../../lib/')?require('../lib/'+name.split('/').at(-1)+'.ts'):require(name),mod.exports);
  const props={userId:'u',spaceId:'s',trackId:'t',locale:'en',onBack(){},onOpenPaper(){},onWorkbookChange:id=>versions.push(id),onViewChange:(...v)=>views.push(v),...extra};
  const render=()=>{index=0;tree=mod.exports.ResearchWorkbook(props);effects.splice(0).forEach(fn=>fn());return tree};
  const nodes=()=>{const list=[];function walk(n){if(Array.isArray(n))n.forEach(walk);else if(n&&typeof n==='object'){list.push(n);walk(n.props?.children)}}walk(tree);return list};
@@ -132,4 +132,16 @@ test('save-and-return waits for persistence; failure retains the judgment and or
  const button=()=>h.nodes().find(n=>n.type==='button'&&n.props.children==='Save & return to task');button().props.onClick();assert.equal(returned,0);
  h.requests.shift().resolve({error:'Conflicting version'},false);await settle();h.render();assert.match(h.text(),/Unsubmitted sourced judgment/);assert.equal(returned,0);
  button().props.onClick();const saved=ready('exact');saved.workbook.artifact.value.decision='Unsubmitted sourced judgment';h.requests.shift().resolve(saved);await settle();h.render();assert.equal(returned,1);
+});
+
+test('the persistent save bar distinguishes tab drafts, active saving, conflicts and confirmed server saves',async()=>{
+ const before=globalThis.sessionStorage,values=new Map();globalThis.sessionStorage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+ try{
+  const h=harness();h.requests.shift().resolve(ready('exact'));await settle();h.render();assert.match(h.text(),/Saved to workspace/);
+  assert.equal(h.nodes().filter(n=>n.type==='footer'&&n.props.className==='pi-workbook-savebar').length,1);
+  h.nodes().find(n=>n.type==='textarea'&&n.props.value==='Saved decision').props.onChange({target:{value:'A new sourced judgment'}});h.render();assert.match(h.text(),/draft saved in this tab/);
+  h.nodes().find(n=>n.type==='button'&&n.props.children==='Save notes').props.onClick();h.render();assert.match(h.text(),/Saving to workspace/);
+  h.requests.shift().resolve({error:'Newer saved revision'},false,409);await settle();h.render();assert.match(h.text(),/Saved version changed/);assert.match(h.text(),/A new sourced judgment/);
+  h.nodes().find(n=>n.type==='button'&&n.props.children==='Save notes').props.onClick();const saved=ready('exact');saved.workbook.artifact={revision:2,value:{observations:{},decision:'A new sourced judgment',unresolved:'Check assumptions'}};h.requests.shift().resolve(saved);await settle();h.render();assert.match(h.text(),/revision 2/);assert.doesNotMatch(h.text(),/Saved version changed/);
+ }finally{if(before===undefined)delete globalThis.sessionStorage;else globalThis.sessionStorage=before;}
 });

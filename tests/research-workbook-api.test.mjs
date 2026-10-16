@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { glob, mkdtemp, rm } from "node:fs/promises";
+import { glob, mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from "node:url";
@@ -187,6 +187,30 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       cookie='pi_anonymous_workspace=workbook-other-owner-0000001';await request(overviewPath,null,404);
       cookie='pi_anonymous_workspace=workbook-fixture-owner-00001';
       assert.equal(calls,before,'opening an overview must not generate a comparison or assessment');
+    });
+    await t.test('selection eligibility and catalog expose real reasons without changing reading or collection states',async()=>{
+      const before=calls,ids=[workbookSources[0].canonicalId,'unreviewed','unknown'];
+      const eligibility=path+'&eligibility=1&canonicalIds='+encodeURIComponent(ids.join(','));
+      let response=await request(eligibility);
+      assert.equal(response.spaceId,'math');assert.equal(response.trackId,'kls');
+      assert.deepEqual(response.materials.map(p=>p.eligibility),['eligible','not_recommended','not_found']);
+      const exact=(await request(path+'&selection=1&paperId='+encodeURIComponent(workbookSources[1].id))).workbook;
+      assert.equal(exact.candidates[0].id,workbookSources[1].id,'the exact reading source must be available before the display limit');
+      await sql([insert('research_track_papers',{id:'selectable-route-source',space_id:'math',track_id:'kls',canonical_id:workbookSources[0].canonicalId,title:workbookSources[0].title,url:workbookSources[0].url,role:'background'}),
+        {sql:"INSERT INTO paper_feedback(id,space_id,paper_id,feedback) VALUES('selection-excluded','math',?,'not_relevant')",values:[workbookSources[0].id]}]);
+      response=await request(eligibility);assert.equal(response.materials[0].eligibility,'excluded');
+      let overview=(await request(path+'&overview=1')).overview;
+      assert.equal(overview.materials[0].eligibility,'excluded');assert.equal(overview.materials[0].whyReadZh,'');assert.equal(overview.materials[0].readingStatus,'unread');
+      const catalogDDL=(await readFile(new URL('../drizzle/0063_fair_kulan_gath.sql',import.meta.url),'utf8')).split('--> statement-breakpoint').filter(s=>s.includes('library_graph')||s.includes('research_route_library'));
+      const reviewsDDL=(await readFile(new URL('../drizzle/0064_watery_veda.sql',import.meta.url),'utf8')).split('--> statement-breakpoint').filter(s=>s.trim());
+      await sql([...catalogDDL,...reviewsDDL].map(statement=>({sql:statement})));
+      const catalog=await request('/api/library-catalog?spaceId=math&trackId=kls&scope=all');
+      assert.equal(catalog.items.find(p=>p.id===workbookSources[0].id).comparisonEligibility,'excluded');
+      await sql([{sql:"DELETE FROM paper_feedback WHERE id='selection-excluded'"}]);
+      overview=(await request(path+'&overview=1')).overview;assert.equal(overview.materials[0].eligibility,'eligible');
+      await sql([{sql:"DELETE FROM research_track_papers WHERE id='selectable-route-source'"}]);
+      cookie='pi_anonymous_workspace=workbook-other-owner-0000001';await request(eligibility,null,404);cookie='pi_anonymous_workspace=workbook-fixture-owner-00001';
+      assert.equal(calls,before);assert.equal((await sql([{sql:'SELECT COUNT(*) n FROM paper_reading_progress'}]))[0].results[0].n,0);
     });
     await t.test('practice results persist independently, reject stale writes and leave reading and learning-path progress unchanged',async()=>{
       const beforeCalls=calls,original=structuredClone(state.artifact.value),baseRevision=state.artifact.revision;

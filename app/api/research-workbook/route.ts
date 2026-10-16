@@ -7,6 +7,7 @@ import { WORKBOOK_POLICY, WORKBOOK_REVIEW_BATCH_SIZE, rankWorkbookSources, valid
 import type { WorkbookGraphReview } from '../../../lib/workbook-graph';
 import { anchoredWorkbookPrompt, resolveAnchoredWorkbook } from '../../../lib/workbook-evidence';
 import type { RouteComparison, RouteOverview } from '../../../lib/route-overview';
+import { comparisonEligibility, type ComparisonMaterial } from '../../../lib/comparison-eligibility';
 
 type Row = { id: string; question: string; source_revision: string; source_ids_json: string; draft_json: string; content_json: string; review_json: string; status: WorkbookState["status"]; retry_at: number; lease_until: number };
 type SourceRow = { id: string; canonical_id: string; title: string; authors: string; url: string; abstract_text: string; reading_focus_zh: string; reading_focus_en: string; route_member: number };
@@ -63,9 +64,11 @@ async function rowFor(ctx: Context, id = "") {
     .bind(ctx.spaceId, ctx.trackId, ...(id ? [id] : [])).first<Row>();
 }
 
-async function projection(original: Context, row: Row | null, preferred: string[] = [], focus = "") {
+async function projection(original: Context, row: Row | null, preferred: string[] = [], focus = "", preferredPaperId = "") {
   const ctx = { ...original, question: focusedWorkbookQuestion(original.track.question || `${original.track.title_zh} / ${original.track.title_en}: ${original.track.summary_zh} ${original.track.summary_en}`, row ? workbookFocus(row.question) : focus) };
   const candidates = await sources(ctx);
+  const preferredSource=candidates.find(s=>s.id===preferredPaperId);
+  if(preferredSource&&!preferred.includes(preferredSource.canonicalId.toLowerCase()))preferred=[...preferred,preferredSource.canonicalId.toLowerCase()];
   const ids: string[] = row ? parse(row.source_ids_json) || [] : [];
   const selected = ids.map(id => candidates.find(s => s.id === id)).filter((s): s is WorkbookSource => Boolean(s));
   const revision = await workbookRevision(ctx.question, selected);
@@ -98,6 +101,29 @@ async function projection(original: Context, row: Row | null, preferred: string[
   return Response.json({ workbook: state, versions: versions.results }, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function comparisonMaterials(ctx:Context,candidates:WorkbookSource[],requested?:string[]) {
+  type MaterialRow={canonicalId:string;paperId:string|null;recommended:number;verified:number;excluded:number;abstractText:string;readingStatus:string;whyReadZh:string;whyReadEn:string};
+  const rows=await ctx.database.prepare(`SELECT ${requested?'p.canonical_id':'r.canonical_id'} AS canonicalId,p.id AS paperId,
+    COALESCE(i.ever_recommended,0) AS recommended,CASE WHEN i.verification_status IN ('verified','revised') THEN 1 ELSE 0 END AS verified,
+    COALESCE(i.abstract_text,'') AS abstractText,COALESCE(i.why_read_zh,'') AS whyReadZh,COALESCE(i.why_read_en,'') AS whyReadEn,
+    COALESCE(pr.status,'unread') AS readingStatus,
+    EXISTS(SELECT 1 FROM paper_feedback f WHERE f.space_id=p.space_id AND f.paper_id=p.id AND f.feedback='not_relevant') AS excluded
+    FROM ${requested?'monitored_papers p':`research_track_papers r LEFT JOIN monitored_papers p ON p.space_id=r.space_id AND lower(p.canonical_id)=lower(r.canonical_id)`}
+    LEFT JOIN paper_insights i ON i.space_id=p.space_id AND i.paper_id=p.id
+    LEFT JOIN paper_reading_progress pr ON pr.space_id=p.space_id AND pr.paper_id=p.id
+    WHERE ${requested?`p.space_id=? AND lower(p.canonical_id) IN (${requested.map(()=>'?').join(',')})`:`r.space_id=? AND r.track_id=? AND r.curation_status='active'`}`)
+    .bind(ctx.spaceId,...(requested?requested:[ctx.trackId])).all<MaterialRow>();
+  const ids=requested || [...new Set(rows.results.map(r=>r.canonicalId.toLowerCase()))];
+  return ids.map(canonicalId=>{
+    const available=candidates.find(s=>s.canonicalId.toLowerCase()===canonicalId.toLowerCase());
+    const row=rows.results.find(r=>r.canonicalId.toLowerCase()===canonicalId.toLowerCase()&&(!available||r.paperId===available.id));
+    const reason=comparisonEligibility(row?.paperId?row:null);
+    const material:ComparisonMaterial={canonicalId,paperId:row?.paperId||null,eligibility:available?'eligible':reason==='eligible'?'unavailable':reason,
+      readingStatus:row?.readingStatus||'unread',whyReadZh:available?row?.whyReadZh||'':'',whyReadEn:available?row?.whyReadEn||'':''};
+    return material;
+  });
+}
+
 async function routeOverview(ctx: Context) {
   const candidates = await sources(ctx);
   type SummaryRow = Row & { saved_revision: number; saved_at: string | null; value_json: string | null; titles_json: string };
@@ -127,7 +153,8 @@ async function routeOverview(ctx: Context) {
   const comparisons=await Promise.all(rows.results.map(summarize));
   const overview: RouteOverview = {spaceId:ctx.spaceId,trackId:ctx.trackId,question:ctx.track.question,
     eligibleCount:candidates.length,routeEligibleCount:candidates.filter(s=>s.routeMember).length,comparisons,
-    savedJudgment:saved ? comparisons.find(c=>c.id===saved.id) || await summarize(saved) : null};
+    savedJudgment:saved ? comparisons.find(c=>c.id===saved.id) || await summarize(saved) : null,
+    materials:await comparisonMaterials(ctx,candidates)};
   return Response.json({overview},{headers:{'Cache-Control':'private, no-store'}});
 }
 
@@ -135,6 +162,11 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const ctx = await context(request, safeId(url.searchParams.get("spaceId")), safeId(url.searchParams.get("trackId")));
   if ("error" in ctx) return ctx.error;
+  if(url.searchParams.get('eligibility')==='1'){
+    const ids=[...new Set((url.searchParams.get('canonicalIds')||'').split(',').filter(Boolean).map(v=>v.trim().toLowerCase()))].slice(0,3);
+    const materials=ids.length?await comparisonMaterials(ctx,await sources(ctx),ids):[];
+    return Response.json({spaceId:ctx.spaceId,trackId:ctx.trackId,materials},{headers:{'Cache-Control':'private, no-store'}});
+  }
   if (url.searchParams.get('overview') === '1') return routeOverview(ctx);
   const id = safeId(url.searchParams.get("workbookId"));
   const preferred = (url.searchParams.get("canonicalIds") || "").split(",").filter(Boolean).map(v=>v.toLowerCase()).slice(0,3);
@@ -151,7 +183,7 @@ export async function GET(request: Request) {
     row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${id}:revision-v8`) || await rowFor(ctx, `${id}:evidence-v8`) || await rowFor(ctx, `${id}:revision-v7`) || await rowFor(ctx, `${id}:evidence-v7`) || await rowFor(ctx, `${id}:revision-v6`) || await rowFor(ctx, `${id}:evidence-v6`) || await rowFor(ctx, `${id}:revision-v5`) || await rowFor(ctx, `${id}:evidence-v5`) || await rowFor(ctx, `${id}:revision-v4`) || await rowFor(ctx, `${id}:evidence-v4`) || await rowFor(ctx, `${id}:revision-v3`) || await rowFor(ctx, `${id}:evidence-v3`) || await rowFor(ctx, `${id}:revision-v2`) || await rowFor(ctx, `${id}:evidence-v2`) || await rowFor(ctx, `${id}:revision-v1`) || await rowFor(ctx, id) : null;
   } else row = await rowFor(ctx, id);
   if (id && !row) return Response.json({ error: "Workbook not found" }, { status: 404 });
-  return projection(ctx, row, preferred, focus);
+  return projection(ctx, row, preferred, focus, safeId(url.searchParams.get('paperId')));
 }
 
 export async function POST(request: Request) {

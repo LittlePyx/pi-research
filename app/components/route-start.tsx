@@ -5,17 +5,20 @@ import { routeNextAction, type RouteComparison, type RouteOverview } from "../..
 import { currentRouteStatements, routeMaterialState } from "../../lib/route-material-state";
 import { MathText } from "./math-text";
 import { InterfaceIcon } from "./interface-icon";
+import {comparisonEligibilityText} from '../../lib/comparison-eligibility';
+import type {RouteSelection} from './use-route-selection';
 import "./route-start.css";
 
 type Synthesis = { status: string; stale: boolean; statements: Array<{ id: string; kind: string; titleZh: string; titleEn: string; textZh: string; textEn: string; sourcePaperIds: string[]; sources: Array<{ paperId: string; title: string; evidenceQuote: string; evidenceLevel: string; sourceUrl: string }> }> };
 const href = (url: string) => /^https?:\/\//i.test(url) ? url : undefined;
 
-export function RouteStart({ spaceId, active, track, synthesis, loading, failed, locale, onEvidence, onMaterials, onSynthesis, onPaperOpen, onRead, onCompare, onProblem, onLearn }: {
+export function RouteStart({ spaceId, active, track, synthesis, loading, failed, locale, onEvidence, onMaterials, onSynthesis, onPaperOpen, onRead, onCompare, onProblem, onLearn, selection }: {
   spaceId: string; active: boolean;
   track: ResearchTrack; synthesis: Synthesis | null; loading: boolean; failed: boolean; locale: "zh" | "en";
   onEvidence: () => void; onMaterials: () => void; onSynthesis: () => void; onPaperOpen: () => void;
   onRead?: (id:string)=>void;
   onCompare: (workbookId?: string, question?: string) => void; onProblem: () => void; onLearn: () => void;
+  selection:RouteSelection;
 }) {
   const zh = locale === "zh";
   const scope = `${spaceId}:${track.id}`;
@@ -27,7 +30,7 @@ export function RouteStart({ spaceId, active, track, synthesis, loading, failed,
     setRemote({scope,data:null,error:false});
     fetch('/api/research-workbook?'+new URLSearchParams({spaceId,trackId:track.id,overview:'1'}),{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(20000)]),cache:'no-store'})
       .then(async response=>{const data=await response.json() as {overview?:RouteOverview};if(!response.ok||!data.overview||data.overview.spaceId!==spaceId||data.overview.trackId!==track.id)throw Error();return data.overview;})
-      .then(data=>{if(!controller.signal.aborted)setRemote({scope,data,error:false});})
+      .then(data=>{if(!controller.signal.aborted){setRemote({scope,data,error:false});selection.seedQuestion(data.question);}})
       .catch(()=>{if(!controller.signal.aborted)setRemote({scope,data:null,error:true});});
     return()=>controller.abort();
   },[spaceId,track.id,active,retry]);
@@ -68,14 +71,19 @@ export function RouteStart({ spaceId, active, track, synthesis, loading, failed,
         <header className="pi-route-section-heading"><div><h2>{zh ? "路线材料" : "Route materials"} <span>{papers.length}</span></h2><p>{papers.length ? (zh ? "选一篇开始阅读，或查看全部材料。" : "Pick a paper to read, or explore the full collection.") : (zh ? "尚未收录材料，不代表相关研究不存在。" : "No materials collected yet; relevant research may exist.")}</p></div><button type="button" onClick={onEvidence}>{zh ? "查看全部" : "View all"} →</button></header>
         {papers.length ? <div className="pi-route-start-papers">{papers.slice(0, 4).map((paper,index) => {
           const sourceUrl=href(paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : ""));
+          const material=overview?.materials?.find(m=>m.canonicalId.toLowerCase()===paper.canonicalId.toLowerCase());
+          const checked=selection.value.papers.some(p=>p.canonicalId.toLowerCase()===paper.canonicalId.toLowerCase());
+          const why=material?.eligibility==='eligible'?(zh?material.whyReadZh||material.whyReadEn:material.whyReadEn||material.whyReadZh):'';
           return <article key={paper.id}>
             <span className="pi-route-paper-index" aria-hidden="true">{String(index+1).padStart(2,"0")}</span>
             <div className="pi-route-paper-content">
-              <div className="pi-route-paper-meta"><small>{paper.venue || (zh ? "研究论文" : "Research paper")}{paper.publishedAt ? ` · ${paper.publishedAt.slice(0,4)}` : ""}</small><span className="pi-route-paper-state">{paper.provenance === "user_confirmed" ? (zh ? "已确认纳入" : "Confirmed") : (zh ? "收录待核对" : "Collected · to check")}</span></div>
+              <div className="pi-route-paper-meta"><small>{paper.venue || (zh ? "研究论文" : "Research paper")}{paper.publishedAt ? ` · ${paper.publishedAt.slice(0,4)}` : ""}</small><span className="pi-route-paper-state">{paper.provenance === "user_confirmed" ? (zh ? "已确认纳入路线" : "Confirmed") : (zh ? "已收录 · 归属待确认" : "Collected · route fit unconfirmed")}</span></div>
+              <p className="pi-route-eligibility">{comparisonEligibilityText(material?.eligibility,zh)}{material&&<span> · {({reading:zh?'阅读中':'Reading',read:zh?'已读':'Read',mastered:zh?'已掌握':'Mastered',cited:zh?'已引用':'Cited',unread:zh?'未标记已读':'Not marked read',queued:zh?'待阅读':'Queued'} as Record<string,string>)[material.readingStatus] || (zh?'未标记已读':'Not marked read')}</span>}</p>
               <h3>{onRead ? <button type="button" className="pi-route-paper-title" onClick={()=>onRead(paper.id)}><MathText inline>{paper.title}</MathText></button> : <MathText inline>{paper.title}</MathText>}</h3>
               <p className="pi-route-paper-authors" title={paper.authors}>{paper.authors}</p>
-              {(paper.rationaleZh || paper.rationaleEn) && <p className="pi-route-paper-relevance"><strong>{zh?'值得读：':'Why read: '}</strong>{zh?paper.rationaleZh||paper.rationaleEn:paper.rationaleEn||paper.rationaleZh}</p>}
+              {(why || paper.rationaleZh || paper.rationaleEn) && <p className="pi-route-paper-relevance"><strong>{why?(zh?'推荐理由：':'Why read: '):(zh?'收录理由：':'Collection rationale: ')}</strong>{why || (zh?paper.rationaleZh||paper.rationaleEn:paper.rationaleEn||paper.rationaleZh)}</p>}
               <div className="pi-route-paper-actions">{onRead && <button type="button" onClick={()=>onRead(paper.id)}><InterfaceIcon name="reading" />{zh ? "阅读与笔记" : "Read & take notes"}</button>}{sourceUrl ? <a href={sourceUrl} target="_blank" rel="noreferrer" onClick={onPaperOpen}>{zh ? "原文" : "Original"} ↗</a> : <span>{zh ? "原文链接待补" : "Source link pending"}</span>}</div>
+              <label className="pi-route-choose"><input type="checkbox" aria-label={`${zh?'选择比较':'Select for comparison'} ${paper.title}`} checked={checked} disabled={!checked&&(material?.eligibility!=='eligible'||selection.value.papers.length>=3)} onChange={()=>selection.toggle({canonicalId:paper.canonicalId,title:paper.title})} />{zh?'加入比较':'Select to compare'}</label>
               {(paper.rationaleZh || paper.rationaleEn) && <details><summary>{zh ? "完整收录理由" : "Full collection rationale"}</summary><p>{zh ? paper.rationaleZh || paper.rationaleEn : paper.rationaleEn || paper.rationaleZh}</p></details>}
             </div>
           </article>;

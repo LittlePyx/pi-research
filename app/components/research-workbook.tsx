@@ -7,7 +7,7 @@ import type { WorkbookArtifact, WorkbookSource, WorkbookState } from "../../lib/
 import { workbookPaperLabel } from '../../lib/research-workbook';
 import { graphSelection, type GraphTaskContext } from "../../lib/graph-task";
 import { DraftRecovery } from "./draft-recovery";
-import { sessionDraftKey, writeSessionDraft, clearSessionDraft } from "../../lib/session-draft";
+import { sessionDraftKey, readSessionDraft, writeSessionDraft, clearSessionDraft } from "../../lib/session-draft";
 import {comparisonInputKey,readComparisonInput,writeComparisonInput} from '../../lib/comparison-input';
 import { MathText } from "./math-text";
 import { workbookFailureText, workbookResponseDetailText } from "../../lib/workbook-recovery";
@@ -39,6 +39,8 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const [restoredView, setRestoredView] = useState({spaceId,trackId,panel:initialPanel,focus:initialFocus});
   const [artifact, setArtifact] = useState<WorkbookArtifact>(emptyArtifact);
   const [busy, setBusy] = useState("load"); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
+  const [draftStored,setDraftStored]=useState(true);
+  const [saveConflict,setSaveConflict]=useState(false);
   const generation = useRef(0);
   const [now, setNow] = useState(() => Date.now());
   const zh = locale === "zh";
@@ -56,7 +58,8 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   };
   const editArtifact = (update: (previous: WorkbookArtifact) => WorkbookArtifact) => {
     const next = update(artifact); setArtifact(next);
-    if (!writeSessionDraft(draftKey, JSON.stringify(state?.artifact?.value || emptyArtifact()), JSON.stringify(next))) setError(zh ? "无法暂存草稿，请保存后再离开。" : "Draft storage unavailable. Save before leaving.");
+    const stored=writeSessionDraft(draftKey, JSON.stringify(state?.artifact?.value || emptyArtifact()), JSON.stringify(next));setDraftStored(stored);
+    if (!stored) setError(zh ? "无法暂存草稿，请保存后再离开。" : "Draft storage unavailable. Save before leaving.");
   };
   const dirty = JSON.stringify(artifact) !== JSON.stringify(state?.artifact?.value || emptyArtifact());
   const questionDirty = comparisonQuestion !== (state?.focusQuestion || '');
@@ -73,7 +76,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     if(refreshOnly&&(dirty || questionDirty))return;
     const readId = refreshOnly && state?.id ? state.id : initialWorkbookId;
     const abort = new AbortController(); const epoch = ++generation.current;
-    setBusy("load"); setError(""); setState(null); setArtifact(emptyArtifact()); setMissing([]);
+    setBusy("load"); setError(""); setSaveConflict(false); setDraftStored(true); setState(null); setArtifact(emptyArtifact()); setMissing([]);
     if (!refreshOnly) setComparisonQuestion(taskContext?.question || '');
     fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&workbookId=${encodeURIComponent(readId)}&selection=${taskContext ? "1" : "0"}&canonicalIds=${encodeURIComponent(taskContext?.papers.map(p=>p.canonicalId).join(",") || "")}&focus=${encodeURIComponent(taskContext?.question || "")}`, { signal: abort.signal })
       .then(async r => { const data = await r.json() as WorkbookResponse; if (!r.ok) throw new Error(data.error || "Unable to load workbook"); return data; })
@@ -105,19 +108,19 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
 
   const request = async (body: Record<string, unknown>) => {
     const response = await fetch("/api/research-workbook", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spaceId, trackId, ...body }) });
-    const data = await response.json() as WorkbookResponse; if (!response.ok) throw new Error(data.error || "Unable to update workbook");
+    const data = await response.json() as WorkbookResponse; if (!response.ok) { const error=new Error(data.error || "Unable to update workbook") as Error & {status:number};error.status=response.status;throw error; }
     return data as { workbook: WorkbookState; versions: typeof versions };
   };
   const save = async (returnAfter=false) => {
     if (!state || busy || state.stale) return;
-    const epoch = generation.current; setBusy("save"); setError(""); setNotice("");
+    const epoch = generation.current; setBusy("save"); setError(""); setNotice(""); setSaveConflict(false);
     try {
       const data = await request({ action: "save-artifact", workbookId: state.id, sourceRevision: state.revision, baseRevision: state.artifact?.revision || 0, value: artifact });
       if (generation.current !== epoch) return;
       clearSessionDraft(draftKey, JSON.stringify(artifact));
-      setState(data.workbook); setNotice(zh ? "产物已保存；阅读与掌握状态保持原样。" : "Artifact saved; reading and mastery statuses are unchanged.");
+      setState(data.workbook); setNotice(zh ? "比较记录已保存。" : "Comparison notes saved.");
       if(returnAfter)onBack();
-    } catch (e) { if (generation.current === epoch) setError(e instanceof Error ? e.message : "Save failed"); }
+    } catch (e) { if (generation.current === epoch) {setSaveConflict((e as {status?:number}).status===409);setError(e instanceof Error ? e.message : "Save failed");} }
     finally { if (generation.current === epoch) setBusy(""); }
   };
   const prepare = async (resume: boolean, revise = false) => {
@@ -155,12 +158,16 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   };
   const focused = content?.dimensions.flatMap(d => d.cells.map(c => ({ dimension: d, cell: c, id: `${d.id}:${c.paperId}` }))).find(c => c.id === focus);
   const source = state?.sources.find(s => s.id === focused?.cell.paperId);
+  const storedDraft=readSessionDraft(draftKey);
+  const pendingDraft=!dirty&&storedDraft&&storedDraft.value!==JSON.stringify(artifact)&&storedDraft.value!==JSON.stringify(state?.artifact?.value||emptyArtifact());
+  const saveStatus=busy==='save'?(zh?'正在保存到工作区…':'Saving to workspace…'):state?.stale?(zh?'依据已变化 · 当前版本仅供回顾':'Evidence changed · historical version'):saveConflict?(zh?'保存版本有变化 · 本地输入已保留':'Saved version changed · local input retained'):error?(zh?'操作未完成 · 输入保留在本页':'Action incomplete · input retained here'):dirty?(draftStored?(zh?'未提交 · 草稿已暂存在本标签页':'Not submitted · draft saved in this tab'):(zh?'未提交 · 无法暂存，请先保存':'Not submitted · draft storage failed; save now')):pendingDraft?(zh?'有本地草稿待恢复':'Local draft available to restore'):state?.artifact?(zh?`已保存到工作区 · 版本 ${state.artifact.revision}`:`Saved to workspace · revision ${state.artifact.revision}`):(zh?'尚未保存判断':'No judgment saved yet');
+  const jumpToRecord=()=>{const element=document.querySelector<HTMLElement>(pendingDraft?'.pi-workbook-artifact .pi-draft-recovery button':'.pi-workbook-artifact textarea');element?.scrollIntoView({block:'center',behavior:'auto'});element?.focus({preventScroll:true});};
 
   return <main className="pi-workbook pi-comparison-workspace">
     <button type="button" className="v2-back" onClick={onBack}>← {zh ? "返回原任务" : "Return to original task"}</button>
     <header className="pi-workbook-heading"><p>{zh ? "研究工作台" : "RESEARCH WORKSPACE"}</p><h1>{zh ? "论文比较" : "Paper comparison"}</h1><p>{zh ? "对齐研究条件，核对每条结论的依据。" : "Align the conditions and check the evidence behind each conclusion."}</p></header>
     {content && <section className="pi-comparison-question"><small>{zh ? "本次研究问题" : "RESEARCH QUESTION"}</small><p><MathText>{text(content,"question")}</MathText></p></section>}
-    {error && <p role="alert" className="pi-workbook-error">{error}</p>}
+    {error && <p role="alert" tabIndex={-1} className="pi-workbook-error">{error}</p>}
     {(busy || notice) && <p role="status">{busy ? busy === "verify" ? (zh ? "正在独立核对每个比较项和学习任务…" : "Independently checking every comparison and learning field…") : busy === "draft" ? (zh ? "正在从选定摘要提取比较维度和具体任务…" : "Extracting comparison dimensions and concrete tasks from the selected abstracts…") : (zh ? "正在读取或保存…" : "Loading or saving…") : notice}</p>}
     {state?.stale && <p className="pi-workbook-error">{zh ? "这是旧证据版本。来源或研究问题已变化，旧内容仅供回顾；请用当前材料重新准备。" : "Evidence or the research question changed. This version is historical; prepare a new comparison with current sources."}</p>}
     {taskContext && <details className="pi-graph-handoff" open={missing.length>0}><summary>{zh ? "来源任务与初始选材" : "Original task and starting papers"}</summary><p>{taskContext.question}</p><ul>{taskContext.papers.map(p=><li key={p.canonicalId}>{p.title}{missing.includes(p.canonicalId.toLowerCase()) ? (zh ? " · 尚未通过摘要评审，未用于正式比较" : " · not yet eligible for reviewed comparison") : ""}</li>)}</ul>{missing.length>0&&<p>{zh ? "保留了你的选择，不会换成其他论文。可以返回原任务查看原文或完成材料评审后重试。" : "Your selection is preserved; other papers will not be substituted. Return to the task to inspect originals or retry after review."}</p>}</details>}
@@ -201,7 +208,8 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
         {panel === "task" && <section><h2>{text(content.task, "title")}</h2><p>{zh ? "逐项核查写在证据侧栏的「这一项的核查笔记」；整体结论与可比性判断写在下方「目前的判断及依据」，缺失条件写在「仍缺的条件或待解决问题」。" : "Write cell checks in Check note for this cell in the evidence sidebar. Put the overall conclusion and comparability judgment in Current judgment and evidence below, and missing conditions in Missing conditions or unresolved questions."}</p><ol>{content.task.steps.map((s, i) => <li key={i}><MathText>{text(s, "text")}</MathText>{onStartPractice&&<button type="button" disabled={Boolean(busy)||dirty||state.stale} onClick={()=>onStartPractice(`task-${i}`)}>{zh?"执行这项核查":"Work on this check"} →</button>}<div className="pi-workbook-evidence-links">{s.evidenceIds.map(id => <button key={id} type="button" onClick={() => inspect(id)}>{zh ? "查看依据" : "Inspect evidence"} · {content.dimensions.find(d => id.startsWith(d.id + ":"))?.[zh ? "labelZh" : "labelEn"]}</button>)}</div></li>)}</ol><p><strong>{zh ? "完成标准：" : "Completion criteria: "}</strong><MathText>{text(content.task, "criterion")}</MathText></p><section className="pi-workbook-lesson"><h3>{zh ? "解决当前障碍的学习单元" : "Learning unit for the current obstacle"}</h3><h4>{text(content.learning, "goal")}</h4><dl><dt>{zh ? "需要的基础" : "Prerequisites"}</dt><dd><MathText>{text(content.learning, "prerequisite")}</MathText></dd><dt>{zh ? "用这些材料练习" : "Exercise using these sources"}</dt><dd><MathText>{text(content.learning, "exercise")}</MathText></dd><dt>{zh ? "检查自己的结果" : "Check your result"}</dt><dd><MathText>{text(content.learning, "checkpoint")}</MathText></dd></dl>{onStartPractice&&<button type="button" disabled={Boolean(busy)||dirty||state.stale} onClick={()=>onStartPractice("learning")}>{zh?"开始这项学习练习":"Start this learning exercise"} →</button>}</section>{dirty&&<p>{zh?"请先保存比较记录，再进入练习。":"Save comparison notes before starting an exercise."}</p>}</section>}
 
       </div><aside id="workbook-evidence-inspector" tabIndex={-1} className="pi-workbook-inspector" aria-label={zh ? "证据与核查笔记" : "Evidence and check notes"}>{focused && source ? <><div className="pi-inspector-heading"><h2>{text(focused.dimension, "label")}</h2><button type="button" onClick={() => { setFocus("");onViewChange?.(panel,""); requestAnimationFrame(() => inspectorTrigger.current?.focus()); }}>{zh ? "关闭依据" : "Close evidence"} ×</button></div><h3><MathText inline>{source.title}</MathText></h3>{focused.cell.quote ? <>{(focused.cell.quotes || [focused.cell.quote]).map((quote,index) => <blockquote key={index}><MathText>{quote}</MathText><cite>{zh ? "来源：该论文摘要" : "Source: paper abstract"} · {index+1}</cite></blockquote>)}</> : <p>{zh ? "摘要未提供这项信息，不能用推测补全。" : "The abstract does not provide this information; do not fill it by inference."}</p>}<button type="button" onClick={() => onOpenPaper(source, text(focused.dimension, "purpose"))}>{zh ? "带着这项核查打开论文" : "Open paper for this check"} →</button><label>{zh ? "这一项的核查笔记" : "Check note for this cell"}<textarea value={artifact.observations[focus] || ""} maxLength={2500} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, observations: { ...a.observations, [focus]: e.target.value } }))} /></label><small>{zh ? "核查笔记与下方判断一并保存。" : "This note is saved with the comparison artifact."}</small></> : <><h2>{zh ? "证据侧栏" : "Evidence inspector"}</h2><p>{zh ? "选择表格中的比较项或任务中的依据，即可查看具体出处。" : "Select a comparison cell or task reference to inspect its source."}</p></>}</aside></div>
-        <section className="pi-workbook-artifact"><DraftRecovery key={draftKey} storageKey={draftKey} current={JSON.stringify(artifact)} base={JSON.stringify(state.artifact?.value || emptyArtifact())} locale={locale} onRestore={value => { try { const restored = JSON.parse(value); if (typeof restored.decision === "string" && typeof restored.unresolved === "string" && restored.observations && typeof restored.observations === "object") setArtifact(restored); } catch { setError(zh ? "草稿无法读取，已保存内容不受影响。" : "Draft unavailable; saved content is unchanged."); } }} /><h2>{zh ? "我的判断与记录" : "My judgment and notes"}</h2><p>{zh ? "记录自己的判断；这不会自动确认研究路线、已读或掌握。" : "Record your judgment. This does not confirm a research route, reading status or mastery."}</p><label>{zh ? "目前的判断及依据" : "Current judgment and evidence"}<textarea value={artifact.decision} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, decision: e.target.value }))} /></label><label>{zh ? "仍缺的条件或待解决问题" : "Missing conditions or unresolved questions"}<textarea value={artifact.unresolved} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, unresolved: e.target.value }))} /></label><button type="button" disabled={Boolean(busy) || !dirty || state.stale} onClick={() => void save()}>{zh ? "保存记录" : "Save notes"}</button><button type="button" disabled={Boolean(busy) || !dirty || state.stale} onClick={() => void save(true)}>{zh ? "保存并返回原任务" : "Save & return to task"}</button><small>{dirty ? zh ? "有未保存修改，请先保存再切换版本。" : "Unsaved changes; save before switching versions." : state.artifact ? `${zh ? "已保存版本" : "Saved revision"} ${state.artifact.revision}` : zh ? "尚未保存" : "Not saved yet"}</small></section>
+        <section className="pi-workbook-artifact"><DraftRecovery key={draftKey} storageKey={draftKey} current={JSON.stringify(artifact)} base={JSON.stringify(state.artifact?.value || emptyArtifact())} locale={locale} onRestore={value => { try { const restored = JSON.parse(value); if (typeof restored.decision === "string" && typeof restored.unresolved === "string" && restored.observations && typeof restored.observations === "object") setArtifact(restored); } catch { setError(zh ? "草稿无法读取，已保存内容不受影响。" : "Draft unavailable; saved content is unchanged."); } }} /><h2>{zh ? "我的判断与记录" : "My judgment and notes"}</h2><p>{zh ? "记录自己的判断；这不会自动确认研究路线、已读或掌握。" : "Record your judgment. This does not confirm a research route, reading status or mastery."}</p><label>{zh ? "目前的判断及依据" : "Current judgment and evidence"}<textarea value={artifact.decision} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, decision: e.target.value }))} /></label><label>{zh ? "仍缺的条件或待解决问题" : "Missing conditions or unresolved questions"}<textarea value={artifact.unresolved} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, unresolved: e.target.value }))} /></label></section>
+      <footer className="pi-workbook-savebar" aria-label={zh?'比较记录保存':'Save comparison notes'}><div><strong role="status">{saveStatus}</strong>{dirty&&<small>{zh?'证据笔记、整体判断和待查问题一并保存':'Cell notes, judgment and unresolved questions are saved together'}</small>}</div><div className="pi-savebar-actions"><button type="button" onClick={jumpToRecord}>{pendingDraft?(zh?'恢复本地草稿':'Restore local draft'):(zh?'编辑判断':'Edit judgment')}</button><button type="button" disabled={Boolean(busy) || !dirty || state.stale} onClick={() => void save()}>{zh ? "保存记录" : "Save notes"}</button><button type="button" className="pi-savebar-primary" disabled={Boolean(busy) || !dirty || state.stale} onClick={() => void save(true)}>{zh ? "保存并返回原任务" : "Save & return to task"}</button></div></footer>
     </>}
   </main>;
 }

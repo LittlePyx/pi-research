@@ -1,4 +1,5 @@
 import type { WorkbookState } from './research-workbook';
+import type { ComparisonMaterial } from './comparison-eligibility';
 
 export type RouteComparison = {
   id: string; status: Exclude<WorkbookState['status'], 'empty'>; stale: boolean;
@@ -9,6 +10,7 @@ export type RouteOverview = {
   spaceId: string; trackId: string; question: string;
   eligibleCount: number; routeEligibleCount: number;
   comparisons: RouteComparison[]; savedJudgment: RouteComparison | null;
+  materials: ComparisonMaterial[];
 };
 
 /** Collection membership alone never establishes comparison eligibility. */

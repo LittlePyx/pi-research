@@ -6,10 +6,10 @@ import {readWorkspaceLocation,workspaceHash} from '../lib/workspace-navigation.t
 const app=readFileSync(new URL('../app/research-app.tsx',import.meta.url),'utf8');
 const source=app.slice(app.indexOf('  const compareFromReading='),app.indexOf('  const openWorkbookPaper ='));
 const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
-function harness(fetch){
+function harness(fetch,extra={}){
  const origin=workspaceHash({view:'thread-detail',space:'s',id:'r',tab:'problem',libraryPage:3});
  const location={hash:workspaceHash({view:'paper-detail',space:'s',id:'p',track:'r',from:'thread-detail',readingFocus:'Real research question',returnTo:origin})};
- const opened=[],messages=[];const scope={window:{location},readWorkspaceLocation,workspaceHash,activeSpace:{id:'s'},selectedMonitorPaper:{id:'p'},readingComparisonBusy:false,setReadingComparisonBusy:()=>{},fetch,paperNetworkSpaceRef:{current:'s'},workbookPaperFocus:'Real research question',paperReturnView:'thread-detail',openWorkbook:(...args)=>opened.push(args),locale:'en',setToast:m=>messages.push(m)};
+ const opened=[],messages=[];const scope={window:{location},readWorkspaceLocation,workspaceHash,activeSpace:{id:'s'},selectedMonitorPaper:{id:'p'},routeSelectionTrackId:'r',routeSelection:{value:{spaceId:'s',question:'',papers:[]},change:()=>{}},readingComparisonBusy:false,setReadingComparisonBusy:()=>{},fetch,paperNetworkSpaceRef:{current:'s'},workbookPaperFocus:'Real research question',paperReturnView:'thread-detail',openWorkbook:(...args)=>opened.push(args),locale:'en',setToast:m=>messages.push(m),...extra};
  return {run:new Function(...Object.keys(scope),code+';return compareFromReading')(...Object.values(scope)),opened,messages,location,origin};
 }
 test('internal reading seeds the exact paper and research question, then returns to the original task rather than the paper',async()=>{
@@ -18,6 +18,14 @@ test('internal reading seeds the exact paper and research question, then returns
 });
 test('unavailable evidence is never replaced with another paper',async()=>{
  const h=harness(async()=>({ok:true,json:async()=>({workbook:{candidates:[{id:'other',canonicalId:'doi:other',title:'Other source'}]}})}));await h.run();assert.equal(h.opened.length,0);assert.match(h.messages[0],/not eligible/);
+});
+
+test('reading retains previous exact selections and the edited question, and never silently replaces a full selection',async()=>{
+ const fetch=async()=>({ok:true,json:async()=>({workbook:{candidates:[{id:'p',canonicalId:'doi:actual',title:'Exact source'}]}})});
+ const prior={canonicalId:'doi:previous',title:'Previous exact source'};
+ const h=harness(fetch,{routeSelection:{value:{spaceId:'s',question:'My edited question',papers:[prior]},change:()=>{}}});await h.run();
+ assert.deepEqual(h.opened[0][1].papers,[prior,{canonicalId:'doi:actual',title:'Exact source'}]);assert.equal(h.opened[0][1].question,'My edited question');
+ const full=harness(fetch,{routeSelection:{value:{spaceId:'s',question:'Keep my question',papers:[prior,{canonicalId:'doi:two',title:'Two'},{canonicalId:'doi:three',title:'Three'}]},change:()=>{}}});await full.run();assert.equal(full.opened.length,0);assert.match(full.messages[0],/Remove one/);
 });
 test('a late source lookup cannot redirect a reader who already left the task',async()=>{
  let resolve;const h=harness(()=>new Promise(r=>{resolve=r}));const pending=h.run();h.location.hash='#today?space=s';resolve({ok:true,json:async()=>({workbook:{candidates:[{id:'p',canonicalId:'doi:actual',title:'Exact source'}]}})});await pending;assert.equal(h.opened.length,0);
