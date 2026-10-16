@@ -564,8 +564,8 @@ test("keeps a durable, view-aware paper inbox with reversible decisions", async 
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(monitor, /seen: pendingPapers\.filter/);
-  assert.match(monitor, /snoozed: pendingPapers\.filter/);
+  assert.match(monitor, /seen: known\?\.seen/);
+  assert.match(monitor, /snoozed: known\?\.snoozed/);
   assert.match(feedback, /snoozed_until/);
   assert.match(client, /IntersectionObserver/);
   assert.match(client, /intersectionRatio < 0\.55/);

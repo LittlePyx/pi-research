@@ -1,5 +1,6 @@
 import {prepareTaskBriefCapture} from '../../../lib/task-brief';
 import {librarySearchWhere,librarySearchOrder,libraryUserStateSql} from '../../../lib/library-search.mjs';
+import {paperUserStateView} from '../../../lib/paper-user-state.mjs';
 import { readingNoteHash } from "../../../lib/reading-note-consistency.mjs";
 import { currentReadingMemories } from "../../../lib/current-reading-memories";
 import { PROBLEM_QUERY_POLICY, parseProblemQueries, protectProblemQueries, problemSourceKey, type ProblemQueries } from "../../../lib/problem-query-plan";
@@ -4770,11 +4771,7 @@ async function updateRunPhase(database: D1Database, spaceId: string, jobId: stri
 }
 
 function paperUserState(paper: PaperRow, now: number) {
-  if (paper.feedback === "not_relevant") return "dismissed" as const;
-  if (paper.saved || paper.feedback === "relevant" || ["queued", "reading", "read", "mastered", "cited"].includes(paper.reading_status)) return "accepted" as const;
-  if (paper.snoozed_until && Date.parse(paper.snoozed_until) > now) return "snoozed" as const;
-  if (paper.opened_at || paper.show_count > 0) return "seen" as const;
-  return "unseen" as const;
+  return paperUserStateView({feedback:paper.feedback,saved:paper.saved,readingStatus:paper.reading_status,snoozedUntil:paper.snoozed_until,openedAt:paper.opened_at,showCount:paper.show_count},now);
 }
 
 function databaseTime(value: string | null | undefined) {
@@ -5069,13 +5066,21 @@ const LIBRARY_PAPER_SELECT = `SELECT p.id, p.canonical_id, p.doi, p.title, p.aut
         ON route_track.id = COALESCE(audit_route_origin.route_id, fallback_route_origin.route_id)
         AND route_track.space_id = p.space_id`;
 
+async function readLibraryCounts(database:D1Database,spaceId:string) {
+ const inbox="(quality_stage IN ('recommended','reviewing') OR saved=1 OR (feedback IS NOT NULL AND feedback<>'') OR reading_status<>'unread') AND user_state NOT IN ('accepted','dismissed')";
+ return database.prepare(`WITH library AS (${LIBRARY_PAPER_SELECT} WHERE p.space_id=?), classified AS (SELECT *,${libraryUserStateSql} AS user_state FROM library)
+ SELECT COUNT(*) AS total,SUM(CASE WHEN user_state='accepted' THEN 1 ELSE 0 END) AS accepted,SUM(CASE WHEN user_state='dismissed' THEN 1 ELSE 0 END) AS dismissed,SUM(saved) AS saved,
+ SUM(CASE WHEN ${inbox} THEN 1 ELSE 0 END) AS inbox,
+ ${['unseen','seen','snoozed'].map(state=>`SUM(CASE WHEN ${inbox} AND user_state='${state}' THEN 1 ELSE 0 END) AS ${state}`).join(',')}
+ FROM classified`).bind(spaceId).first<{total:number;accepted:number;dismissed:number;saved:number;inbox:number;unseen:number;seen:number;snoozed:number}>();
+}
 export async function readLibraryPage(database:D1Database,spaceId:string,options:ReturnType<typeof import('../../../lib/library-search.mjs').librarySearchOptions>) {
  const where=librarySearchWhere(options,ABSTRACT_BLOCK_REASON);
  const base=`WITH library AS (${LIBRARY_PAPER_SELECT} WHERE p.space_id=?), classified AS (SELECT *,${libraryUserStateSql} AS user_state FROM library)`;
  const [count,rows,counts]=await Promise.all([
   database.prepare(`${base} SELECT COUNT(*) AS total FROM classified WHERE ${where.sql}`).bind(spaceId,...where.values).first<{total:number}>(),
   database.prepare(`${base} SELECT * FROM classified WHERE ${where.sql} ORDER BY ${librarySearchOrder(options.sort)} LIMIT 60 OFFSET ?`).bind(spaceId,...where.values,options.offset).all<PaperRow>(),
-  database.prepare(`${base} SELECT COUNT(*) AS total,SUM(CASE WHEN user_state='accepted' THEN 1 ELSE 0 END) AS accepted,SUM(CASE WHEN user_state='dismissed' THEN 1 ELSE 0 END) AS dismissed,SUM(CASE WHEN (quality_stage IN ('recommended','reviewing') OR saved=1 OR (feedback IS NOT NULL AND feedback<>'') OR reading_status<>'unread') AND user_state NOT IN ('accepted','dismissed') THEN 1 ELSE 0 END) AS inbox FROM classified`).bind(spaceId).first<{total:number;accepted:number;dismissed:number;inbox:number}>(),
+  readLibraryCounts(database,spaceId),
  ]);
  const total=count?.total||0;
  return {papers:rows.results.map(p=>toPaper(p,Date.now())),total,offset:options.offset,nextOffset:options.offset+rows.results.length<total?options.offset+rows.results.length:null,counts:{total:counts?.total||0,inbox:counts?.inbox||0,accepted:counts?.accepted||0,dismissed:counts?.dismissed||0}};
@@ -5103,7 +5108,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
         WHERE p.space_id = ?
         ORDER BY CASE WHEN p.id = ? THEN 0 ELSE 1 END, p.discovered_at DESC, i.quality_score DESC LIMIT 2000`,
     ).bind(space.id, focusPaperId).all<PaperRow>(),
-    database.prepare("SELECT COUNT(*) AS count FROM monitored_papers WHERE space_id = ?").bind(space.id).first<{ count: number }>(),
+    readLibraryCounts(database,space.id),
     database.prepare(
       `SELECT id, status, current_horizon, current_source, progress, discovered_count, new_candidate_count,
        duplicate_count, reviewed_count, recommended_count, rejected_count, attempt, trigger_source,
@@ -5659,7 +5664,7 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       lastTrigger: run?.last_trigger || "visit",
       leaseGeneration: run?.lease_generation || 0,
       leaseExpiresAt: run?.lock_expires_at || null,
-      knownCount: known?.count || 0,
+      knownCount: known?.total || 0,
       error: run?.error || null,
       cadenceHours: 24,
       automation: {
@@ -5854,14 +5859,14 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
       savedCandidatePapers,
       historyPapers,
       historyCounts: {
-        all: recommendationHistoryPapers.length,
-        inbox: pendingPapers.length,
-        unseen: pendingPapers.filter((paper) => paper.userState === "unseen").length,
-        seen: pendingPapers.filter((paper) => paper.userState === "seen").length,
-        snoozed: pendingPapers.filter((paper) => paper.userState === "snoozed").length,
-        accepted: recommendationHistoryPapers.filter((paper) => paper.userState === "accepted").length,
-        saved: recommendationHistoryPapers.filter((paper) => paper.saved).length,
-        dismissed: recommendationHistoryPapers.filter((paper) => paper.userState === "dismissed").length,
+        all: known?.total || 0,
+        inbox: known?.inbox || 0,
+        unseen: known?.unseen || 0,
+        seen: known?.seen || 0,
+        snoozed: known?.snoozed || 0,
+        accepted: known?.accepted || 0,
+        saved: known?.saved || 0,
+        dismissed: known?.dismissed || 0,
         reading: Object.fromEntries(readingCounts.results.map((row) => [row.status, row.count])),
       },
       ...extra,
@@ -5877,7 +5882,9 @@ export async function GET(request: Request) {
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
     await recordMonitorVisitActivity(context.database, context.space.id);
-    return Response.json(await readState(context.database, context.space, {}, focusPaperId));
+    const resolved=focusPaperId?await context.database.prepare(`SELECT p.id FROM monitored_papers p WHERE p.space_id=? AND (p.id=? OR EXISTS(SELECT 1 FROM research_track_papers t WHERE t.space_id=p.space_id AND t.id=? AND lower(t.canonical_id)=lower(p.canonical_id))) ORDER BY CASE WHEN p.id=? THEN 0 ELSE 1 END LIMIT 1`).bind(context.space.id,focusPaperId,focusPaperId,focusPaperId).first<{id:string}>():null;
+    if(focusPaperId&&!resolved)return Response.json({error:'Paper not found in this space'},{status:404});
+    return Response.json(await readState(context.database, context.space, resolved?{resolvedPaperId:resolved.id}:{}, resolved?.id||null));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to load monitoring state" }, { status: 500 });
   }

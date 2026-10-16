@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {readingQueueExclusions,nextReadingPaperId} from '../lib/today-presentation.mjs';
+import {paperUserStateView} from '../lib/paper-user-state.mjs';
 
 const app=readFileSync(new URL('../app/research-app.tsx',import.meta.url),'utf8');
 const source=app.slice(app.indexOf('  const saveFeedback ='),app.indexOf('  const openRecommendationMemory ='));
@@ -16,7 +17,7 @@ function harness(){
  const scope={taskBriefState:{patchPaper:()=>{}},setLibraryRevision:()=>{},activeSpace:{id:'a'},saved:state.saved,locale:'en',feedbackSaving:ref,paperNetworkSpaceRef:space,
   document:{querySelectorAll:()=>[]},setFeedbackBusy:()=>{},setFeedbackReceipt:v=>update('receipt',v),setToast:()=>{},
   setSaved:v=>update('saved',v),setSelectedMonitorPaper:v=>update('selected',v),setMonitor:v=>update('monitor',v),
-  setFeedbackPrompt:()=>{},setFeedbackNote:()=>{},historyCountsFor:()=>({}),feedbackEffectCopy:()=> 'Saved',
+  setFeedbackPrompt:()=>{},setFeedbackNote:()=>{},historyCountsFor:()=>({}),paperUserStateView,feedbackEffectCopy:()=> 'Saved',
   fetch:(_url,options)=>options?new Promise(r=>{resolve=r}):Promise.resolve(Response.json({})),
  };
  const save=new Function(...Object.keys(scope),compiled+'\nreturn saveFeedback;')(...Object.values(scope));

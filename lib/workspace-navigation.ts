@@ -32,7 +32,7 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     ...(view === 'today' && params.get('panel') === 'discovery' && params.get('focus') === 'recovery' ? {focus: 'recovery' as const} : {}),
     ...((view === 'threads' || view === 'paper-detail' && from === 'threads') && identifier(params.get('graph')) && params.get('graphFrom') === 'library' ? {graphFrom: 'library' as const} : {}),
     ...(view==='paper-detail'&&['reading','notes','record'].includes(paperPanel||'')?{paperPanel:paperPanel as PaperPanel}:{}), ...(["home","reading","discovery","records","settings"].includes(params.get("panel")||"") ? {panel:params.get("panel") as TodayPanel} : {}), tab: tabs.has(tab) ? tab : "start", space: identifier(params.get("space")), from: views.has(from) && from !== "paper-detail" ? from : undefined, track: identifier(params.get("track")), graph: identifier(params.get("graph")), step: identifier(params.get("step")), path: identifier(params.get("path")),
-    ...(view==='paper-detail'&&from==='workbook'&&text(params.get('readingFocus'),600)?{readingFocus:text(params.get('readingFocus'),600)}:{}),
+    ...(view==='paper-detail'&&(from==='workbook'||['thread-detail','today'].includes(from)&&identifier(params.get('track')))&&text(params.get('readingFocus'),['thread-detail','today'].includes(from)?1000:600)?{readingFocus:text(params.get('readingFocus'),['thread-detail','today'].includes(from)?1000:600)}:{}),
     ...(libraryRoute&&text(params.get('q'),300)?{libraryQuery:text(params.get('q'),300)}:{}),
     ...(libraryRoute&&params.get('scope')==='all'?{libraryScope:'all' as const}:{}),
     ...(libraryRoute&&positiveInteger(params.get('page'))?{libraryPage:positiveInteger(params.get('page'))}:{}),
@@ -76,7 +76,7 @@ export function workspaceHash(location: WorkspaceLocation): string {
   for (const key of ["space", "from", "track", "graph", "step", "path", "panel"] as const) if (location[key]) params.set(key, location[key]);
   if (location.tab && location.view !== "thread-detail") params.set("tab", location.tab);
   if(location.view==='paper-detail'&&location.paperPanel)params.set('paperPanel',location.paperPanel);
-  if(location.view==='paper-detail'&&(location.from==='workbook'||location.from==='learn'&&Boolean(readWorkspaceLocation(location.returnTo||'').workbookId))&&text(location.readingFocus||null,600))params.set('readingFocus',location.readingFocus!);
+  if(location.view==='paper-detail'&&(location.from==='workbook'||['thread-detail','today'].includes(location.from||'')&&location.track||location.from==='learn'&&Boolean(readWorkspaceLocation(location.returnTo||'').workbookId))&&text(location.readingFocus||null,['thread-detail','today'].includes(location.from||'')?1000:600))params.set('readingFocus',location.readingFocus!);
   if(location.view==='today'&&location.panel==='discovery'&&location.focus==='recovery')params.set('focus','recovery');
   if(location.graph&&(location.view==='threads'||location.view==='paper-detail'&&location.from==='threads')&&location.graphFrom==='library')params.set('graphFrom','library');
   if(location.view==='library'||location.view==='thread-detail'||location.view==='threads'&&Boolean(location.graph)){

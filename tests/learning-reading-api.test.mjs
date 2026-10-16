@@ -154,8 +154,7 @@ test("learning → reading → stage → route runs through the built Worker and
       const before = await states();
       await request("/api/library", { spaceId: "math", paperId: "paper-info", status: "cited", note: "wrong space" }, 404);
       await request("/api/learning-path", { spaceId: "math", pathId: "path-info", stepId: "step-info", completed: true }, 404);
-      const focused = await request("/api/monitor?spaceId=math&paperId=paper-info");
-      assert.ok(focused.monitor.historyPapers.every((paper) => paper.id !== "paper-info"));
+      await request("/api/monitor?spaceId=math&paperId=paper-info", undefined, 404);
       assert.deepEqual(await states(), before);
     });
     await t.test("an older learning paper remains reachable beyond the archive display window", async () => {

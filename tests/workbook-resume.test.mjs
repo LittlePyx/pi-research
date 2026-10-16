@@ -111,3 +111,25 @@ test('changing spaces clears an old comparison question even if the new record c
  h.props.spaceId='another-space';h.render();h.render();h.requests.shift().resolve({error:'Unavailable'},false);await settle();h.render();
  assert.equal(h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===1000).props.value,'');
 });
+
+test('a refreshed unfinished comparison restores the exact selection and edited question, including an empty selection',async()=>{
+ const before=globalThis.sessionStorage,values=new Map();globalThis.sessionStorage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+ try{
+  const data=ready('');Object.assign(data.workbook,{content:null,artifact:null,focusQuestion:''});
+  const h=harness({taskContext:{spaceId:'s',question:'Original task',papers:[]}});h.requests.shift().resolve(data);await settle();h.render();
+  h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===1000).props.onChange({target:{value:'My narrowed comparison question'}});h.render();
+  const checkbox=h.nodes().find(n=>n.type==='input'&&n.props.type==='checkbox');checkbox.props.onChange();h.render();
+  const fresh=harness();fresh.requests.shift().resolve(data);await settle();fresh.render();
+  assert.match(fresh.text(),/My narrowed comparison question/);assert.equal(fresh.nodes().filter(n=>n.type==='input'&&n.props.type==='checkbox'&&n.props.checked).length,1);
+  fresh.nodes().find(n=>n.type==='input'&&n.props.type==='checkbox'&&n.props.checked).props.onChange();fresh.render();
+  const empty=harness();empty.requests.shift().resolve(data);await settle();empty.render();assert.equal(empty.nodes().filter(n=>n.type==='input'&&n.props.type==='checkbox'&&n.props.checked).length,0);
+ }finally{if(before===undefined)delete globalThis.sessionStorage;else globalThis.sessionStorage=before;}
+});
+
+test('save-and-return waits for persistence; failure retains the judgment and original task',async()=>{
+ let returned=0;const h=harness({onBack:()=>returned++});h.requests.shift().resolve(ready('exact'));await settle();h.render();
+ h.nodes().find(n=>n.type==='textarea'&&n.props.value==='Saved decision').props.onChange({target:{value:'Unsubmitted sourced judgment'}});h.render();
+ const button=()=>h.nodes().find(n=>n.type==='button'&&n.props.children==='Save & return to task');button().props.onClick();assert.equal(returned,0);
+ h.requests.shift().resolve({error:'Conflicting version'},false);await settle();h.render();assert.match(h.text(),/Unsubmitted sourced judgment/);assert.equal(returned,0);
+ button().props.onClick();const saved=ready('exact');saved.workbook.artifact.value.decision='Unsubmitted sourced judgment';h.requests.shift().resolve(saved);await settle();h.render();assert.equal(returned,1);
+});

@@ -11,6 +11,15 @@ test('workspace links preserve paper identity, route subpage, scope and return d
   assert.equal(readWorkspaceLocation('#threads?graph=paper-1').graph, 'paper-1');
 });
 
+test('a research question remains attached to internal reading and the original task survives comparison refresh',()=>{
+ const origin=workspaceHash({view:'thread-detail',space:'s',id:'route',tab:'problem',libraryQuery:'Gaussian',libraryPage:3});
+ const paper=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'paper',space:'s',track:'route',from:'thread-detail',readingFocus:'Compare Gaussian output constraints and common randomness',returnTo:origin}));
+ assert.equal(paper.readingFocus,'Compare Gaussian output constraints and common randomness');assert.equal(paper.returnTo,origin);
+ const comparison=readWorkspaceLocation(workspaceHash({view:'workbook',space:'s',id:paper.track,from:'thread-detail',returnTo:paper.returnTo,workbookId:'pinned'}));
+ assert.equal(comparison.returnTo,origin);assert.equal(readWorkspaceLocation(comparison.returnTo).tab,'problem');assert.equal(readWorkspaceLocation(comparison.returnTo).libraryPage,3);
+ const unrelated=readWorkspaceLocation('#paper/paper?space=s&from=library&readingFocus=Wrong&track=route');assert.equal(unrelated.readingFocus,undefined);
+});
+
 test('recovery and library graph origins survive only on their valid routes', () => {
   const recovery = {view:'today', space:'space-1', panel:'discovery', focus:'recovery'};
   assert.deepEqual(readWorkspaceLocation(workspaceHash(recovery)), {...recovery, id:undefined, tab:'start', from:undefined, track:undefined, graph:undefined, step:undefined, path:undefined});

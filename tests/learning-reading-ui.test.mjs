@@ -1,3 +1,4 @@
+import {paperUserStateView} from "../lib/paper-user-state.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -128,7 +129,7 @@ function readingHarness(fetch) {
   const readingWriteRef = { current: null };
   const paperNetworkSpaceRef = { current: "space-a" };
   const dependencies = {
-    taskBriefState:{patchPaper:()=>{}}, setLibraryRevision:()=>{}, user: { userId: "qa-user" }, sessionDraftKey: (...parts) => parts.join(":"), clearSessionDraft: (...args) => state.clearedDrafts.push(args),
+    paperUserStateView,taskBriefState:{patchPaper:()=>{}}, setLibraryRevision:()=>{}, user: { userId: "qa-user" }, sessionDraftKey: (...parts) => parts.join(":"), clearSessionDraft: (...args) => state.clearedDrafts.push(args),
     setNoteSaveError: value => { state.noteError = value; },
     setSavedReadingId: value => { state.savedReadingId = value; },
     demo:false, fetch, readingWriteRef, paperNetworkSpaceRef, activeSpace: { id: "space-a" }, locale: "en",

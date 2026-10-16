@@ -16,7 +16,7 @@ test("the paper library keeps the discovery archive separate from the recommenda
   assert.match(monitor, /\.bind\(space\.id, focusPaperId\)\.all<PaperRow>/);
   assert.match(monitor, /const historyPapers = papers\.results\.map\(\(paper\) => toPaper\(paper, now\)\)/);
   assert.match(monitor, /const recommendationHistoryPapers = historyPapers\.filter/);
-  assert.match(monitor, /all: recommendationHistoryPapers\.length/);
+  assert.match(monitor, /all: known\?\.total/);
 });
 
 test("archived discoveries are visible without being mislabeled as recommendations", () => {

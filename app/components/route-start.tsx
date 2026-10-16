@@ -6,9 +6,10 @@ import "./route-start.css";
 type Synthesis = { status: string; stale: boolean; statements: Array<{ id: string; kind: string; titleZh: string; titleEn: string; textZh: string; textEn: string; sourcePaperIds: string[]; sources: Array<{ paperId: string; title: string; evidenceQuote: string; evidenceLevel: string; sourceUrl: string }> }> };
 const href = (url: string) => /^https?:\/\//i.test(url) ? url : undefined;
 
-export function RouteStart({ track, synthesis, loading, failed, locale, onEvidence, onMaterials, onSynthesis, onPaperOpen, onCompare, onProblem, onLearn, question }: {
+export function RouteStart({ track, synthesis, loading, failed, locale, onEvidence, onMaterials, onSynthesis, onPaperOpen, onRead, onCompare, onProblem, onLearn, question }: {
   track: ResearchTrack; synthesis: Synthesis | null; loading: boolean; failed: boolean; locale: "zh" | "en";
   onEvidence: () => void; onMaterials: () => void; onSynthesis: () => void; onPaperOpen: () => void;
+  onRead?: (id:string)=>void;
   onCompare: () => void; onProblem: () => void; onLearn: () => void; question?: string;
 }) {
   const zh = locale === "zh";
@@ -29,7 +30,8 @@ export function RouteStart({ track, synthesis, loading, failed, locale, onEviden
       <small>{paper.provenance === "user_confirmed" ? (zh ? "已确认纳入路线" : "Confirmed in route") : (zh ? "路线收录材料 · 待自行核对" : "Collected route paper · check the source")}</small>
       <h3><MathText inline>{paper.title}</MathText></h3><p>{[paper.authors, paper.venue].filter(Boolean).join(" · ")}</p>
       {(paper.rationaleZh || paper.rationaleEn) && <details><summary>{zh ? "查看收录理由" : "Why this paper was collected"}</summary><p>{zh ? paper.rationaleZh : paper.rationaleEn}</p></details>}
-      {href(paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : "")) ? <a href={href(paper.url || `https://doi.org/${paper.doi}`)} target="_blank" rel="noreferrer" onClick={onPaperOpen}>{zh ? "打开这篇论文" : "Open this paper"} ↗</a> : <span>{zh ? "原文链接待补" : "Source link pending"}</span>}
+      {onRead&&<button type="button" onClick={()=>onRead(paper.id)}>{zh?'阅读与笔记':'Read & take notes'} →</button>}
+      {href(paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : "")) ? <a href={href(paper.url || `https://doi.org/${paper.doi}`)} target="_blank" rel="noreferrer" onClick={onPaperOpen}>{zh ? "打开原文" : "Open original"} ↗</a> : <span>{zh ? "原文链接待补" : "Source link pending"}</span>}
     </article>)}<button type="button" onClick={onEvidence}>{zh ? "查看全部材料与比较入口" : "All materials and comparison tools"} →</button></div> : <button type="button" onClick={onMaterials}>{zh ? "查看待补材料与候选" : "View pending materials and candidates"} →</button>}
     </section><section className="pi-route-findings-preview"><h2>{zh ? "已有材料支持的判断" : "Findings grounded in current material"}</h2>
       {findings.length ? findings.slice(0, 3).map(item => <article key={item.id}><h3>{zh ? item.titleZh : item.titleEn}</h3><p><MathText>{zh ? item.textZh : item.textEn}</MathText></p><details><summary>{zh ? "核对出处" : "Check sources"}</summary>{item.sources.filter(source => source.evidenceLevel === "abstract" && source.evidenceQuote.trim()).map((source, index) => <blockquote key={`${source.paperId}:${index}`}><p><MathText>{source.evidenceQuote}</MathText></p>{href(source.sourceUrl) ? <a href={href(source.sourceUrl)} target="_blank" rel="noreferrer">{source.title} ↗</a> : <cite>{source.title}</cite>}</blockquote>)}</details></article>) : <p role="status">{loading ? loadingMessage : failed ? failureMessage : synthesis?.stale ? (zh ? "材料已变化，旧判断需要重新核对。" : "The materials changed; previous findings need review.") : (zh ? "本空间尚未形成有来源支持的跨论文判断。这是整理尚未完成，不是已经发现研究空白。" : "No source-backed cross-paper findings are ready in this workspace. This is unfinished synthesis, not an established research gap.")}</p>}
