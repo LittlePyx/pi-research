@@ -3001,6 +3001,10 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if (location.view === "thread-detail" && !track) { setView("threads"); if (!mapLoading) { setRequestedLocation(location); setNavigationIssue("missing"); } return; }
     setNavigationIssue(null);
     if (location.view === 'learn') setComparisonPractice(location.workbookId && location.track ? location : null);
+    else if (location.view === 'paper-detail' && location.from === 'learn') {
+      const practice = location.returnTo ? readWorkspaceLocation(location.returnTo) : null;
+      setComparisonPractice(practice?.view === 'learn' && practice.space === activeSpace.id && practice.workbookId && practice.track ? practice : null);
+    }
     if (!location.space) { hash = workspaceHash({ ...location, space: activeSpace.id }); window.history.replaceState(null, "", hash); }
     restoredLocationRef.current = activeSpace.id + hash;
     if (track) setSelectedThread(track);

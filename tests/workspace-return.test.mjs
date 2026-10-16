@@ -79,3 +79,16 @@ test('restoring the already mounted comparison keeps unsaved inputs; cold or dif
   assert.deepEqual(versions,loaded==='s:r:v1'?[]:['v1']);assert.equal(tasks.length,loaded==='s:r:v1'?0:1);
  }
 });
+test('refreshing a paper opened from comparison practice restores the pinned practice context',()=>{
+ const start=source.indexOf("    if (location.view === 'learn') setComparisonPractice");
+ const end=source.indexOf('    if (!location.space)',start);
+ const restore=ts.transpileModule(source.slice(start,end),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ const workbook=workspaceHash({view:'workbook',id:'r',space:'s',workbookId:'v1',from:'threads'});
+ const practice=workspaceHash({view:'learn',space:'s',track:'r',workbookId:'v1',practiceId:'task-1',from:'workbook',returnTo:workbook});
+ const location=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'learn',readingFocus:'Check the original assumptions',returnTo:practice}));
+ let restored=null;
+ const apply=(value,space='s')=>new Function('location','activeSpace','setComparisonPractice','readWorkspaceLocation',restore)(value,{id:space},value=>restored=value,readWorkspaceLocation);
+ apply(location);assert.equal(restored.workbookId,'v1');assert.equal(restored.practiceId,'task-1');assert.equal(restored.returnTo,workbook);assert.equal(location.readingFocus,'Check the original assumptions');
+ apply(location,'other');assert.equal(restored,null);
+ apply(readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'learn',returnTo:'#learn?space=s'})));assert.equal(restored,null,'ordinary paper reading must not mount comparison practice');
+});

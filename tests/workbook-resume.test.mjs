@@ -105,3 +105,9 @@ test('a rejected comparison can narrow its question without losing the original 
  h.requests.shift().resolve({...ready('narrow-version'),workbook:{...ready('narrow-version').workbook,focusQuestion:body.focusQuestion}});await settle();h.render();assert.deepEqual(h.versions,['rejected-broad-question','narrow-version']);
  assert.equal(h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===1000).props.value,body.focusQuestion);
 });
+test('changing spaces clears an old comparison question even if the new record cannot load',async()=>{
+ const h=harness(),data=ready('old');data.workbook.focusQuestion='Old-space question';h.requests.shift().resolve(data);await settle();h.render();
+ h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===1000).props.onChange({target:{value:'Unsubmitted old-space question'}});h.render();
+ h.props.spaceId='another-space';h.render();h.render();h.requests.shift().resolve({error:'Unavailable'},false);await settle();h.render();
+ assert.equal(h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===1000).props.value,'');
+});
