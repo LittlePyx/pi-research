@@ -1951,21 +1951,21 @@ main { min-width: 0; }
 
 /* Pi Research V3 — readable type and live discovery monitor */
 .v2-app { font-size: 16px; }
-.v2-app p, .v2-app button, .v2-app input, .v2-app textarea, .v2-app dt, .v2-app dd { font-size: 15px !important; }
-.v2-app small { font-size: 13px !important; line-height: 1.45; }
-.v2-app .v2-kicker { font-size: 12px !important; }
-.v2-app .v2-logo > div small { font-size: 10px !important; }
-.v2-app .v2-space-switch small, .v2-app .v2-nav > p { font-size: 11px !important; }
-.v2-app .v2-space-switch strong { font-size: 15px !important; }
-.v2-app .v2-space-switch em, .v2-app .v2-isolation { font-size: 12px !important; }
-.v2-app .v2-nav > button { min-height: 44px; font-size: 15px !important; }
-.v2-app .v2-nav > button > span { font-size: 11px !important; }
-.v2-app .v2-nav > button > b { font-size: 11px !important; }
-.v2-app .v2-openai-state strong, .v2-app .v2-account strong { font-size: 13px !important; }
-.v2-app .v2-openai-state small, .v2-app .v2-account small { font-size: 11px !important; }
-.v2-app .v2-breadcrumb { font-size: 13px !important; }
-.v2-app .v2-ask-trigger, .v2-app .v2-ask-button { font-size: 14px !important; }
-.v2-app .v2-ask-trigger kbd, .v2-app .v2-language button { font-size: 11px !important; }
+.v2-app p, .v2-app button, .v2-app input, .v2-app textarea, .v2-app dt, .v2-app dd { font-size: 15px; }
+.v2-app small { font-size: 13px; line-height: 1.45; }
+.v2-app .v2-kicker { font-size: 12px; }
+.v2-app .v2-logo > div small { font-size: 10px; }
+.v2-app .v2-space-switch small, .v2-app .v2-nav > p { font-size: 11px; }
+.v2-app .v2-space-switch strong { font-size: 15px; }
+.v2-app .v2-space-switch em, .v2-app .v2-isolation { font-size: 12px; }
+.v2-app .v2-nav > button { min-height: 44px; font-size: 15px; }
+.v2-app .v2-nav > button > span { font-size: 11px; }
+.v2-app .v2-nav > button > b { font-size: 11px; }
+.v2-app .v2-openai-state strong, .v2-app .v2-account strong { font-size: 13px; }
+.v2-app .v2-openai-state small, .v2-app .v2-account small { font-size: 11px; }
+.v2-app .v2-breadcrumb { font-size: 13px; }
+.v2-app .v2-ask-trigger, .v2-app .v2-ask-button { font-size: 14px; }
+.v2-app .v2-ask-trigger kbd, .v2-app .v2-language button { font-size: 11px; }
 .v2-app .v2-today-hero h1 { font-size: 42px; }
 .v2-app .v2-today-hero > div:first-child > p:last-child { font-size: 16px !important; line-height: 1.6; }
 .v2-app .v2-attention-number span { font-size: 17px !important; }
