@@ -172,6 +172,7 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await post({...save,baseRevision:state.artifact.revision,value:{activeId:'invented',entries:{}}},422);
       const today=await request('/api/workspace-continuation?spaceId=math&location='+encodeURIComponent('#workbook/kls?space=math&workbookId='+encodeURIComponent(state.id)));
       assert.equal(today.continuation.practice.completed,1);assert.match(today.continuation.hash,/#learn\?/);assert.match(today.continuation.hash,/practice=task-0/);
+      assert.equal(today.continuation.titleZh,'KLS 条件比较','Today describes the comparison, not the selected exercise goal');
       const notes={...original,decision:'Updated comparison judgment'};
       state=(await post({action:'save-artifact',workbookId:state.id,sourceRevision:state.revision,baseRevision:state.artifact.revision,value:notes})).workbook;
       assert.deepEqual(state.artifact.value.practice,practice);assert.equal(state.artifact.value.decision,notes.decision);

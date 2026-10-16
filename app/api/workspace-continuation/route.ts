@@ -39,7 +39,6 @@ export async function GET(request: Request) {
         if (!pinned || location.view === 'workbook' || location.view === 'learn') {
           const origin = location.view === 'workbook' ? workspaceHash(location) : workspaceHash({ view: 'workbook', id: row.track_id, space: spaceId, workbookId: row.id, workbookPanel: 'task', from: 'today', returnTo: workspaceHash({view:'today',space:spaceId}) });
           continuation.hash = workspaceHash({ view:'learn', space:spaceId, track:row.track_id, workbookId:row.id, practiceId:progress.active.id, from:'workbook', returnTo:location.view==='learn'?location.returnTo||origin:origin });
-          continuation.titleZh = progress.active.titleZh; continuation.titleEn = progress.active.titleEn;
         }
       }
     } catch { /* Older artifacts without a valid practice remain ordinary comparisons. */ }
