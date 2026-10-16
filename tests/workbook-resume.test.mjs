@@ -95,3 +95,13 @@ test('a feedback correction preserves the original selected sources and focused 
  h.requests.shift().resolve({...data,workbook:{...data.workbook,id:'pilot',revisionFlow:{engine:'langgraph-v1',repairs:1,limit:1,next:'stopped'}}});await settle();h.render();
  assert.equal(h.nodes().some(n=>n.type==='button'&&n.props.children==='Try one feedback correction'),false,'stopped trials cannot start another correction');
 });
+test('a rejected comparison can narrow its question without losing the original version or papers',async()=>{
+ const h=harness(),data=ready('rejected-broad-question');Object.assign(data.workbook,{status:'rejected',content:null,artifact:null,focusQuestion:'Broad route question'});
+ h.requests.shift().resolve(data);await settle();h.render();
+ const question=h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===1000);assert.equal(question.props.value,'Broad route question');
+ question.props.onChange({target:{value:'Compare only the channel assumptions stated in these abstracts'}});h.render();
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Prepare comparison and tasks').props.onClick();
+ const body=JSON.parse(h.requests[0].init.body);assert.equal(body.action,'prepare');assert.equal(body.focusQuestion,'Compare only the channel assumptions stated in these abstracts');assert.deepEqual(body.paperIds,workbookSources.map(s=>s.id));
+ h.requests.shift().resolve({...ready('narrow-version'),workbook:{...ready('narrow-version').workbook,focusQuestion:body.focusQuestion}});await settle();h.render();assert.deepEqual(h.versions,['rejected-broad-question','narrow-version']);
+ assert.equal(h.nodes().find(n=>n.type==='textarea'&&n.props.maxLength===1000).props.value,body.focusQuestion);
+});

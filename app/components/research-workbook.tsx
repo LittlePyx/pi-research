@@ -32,6 +32,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const [selected, setSelected] = useState<string[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
   const [allowRepair, setAllowRepair] = useState(false);
+  const [comparisonQuestion, setComparisonQuestion] = useState(taskContext?.question || '');
   const [panel, setPanel] = useState<WorkbookPanel>(initialPanel);
   const [focus, setFocus] = useState(initialFocus);
   const [restoredView, setRestoredView] = useState({spaceId,trackId,panel:initialPanel,focus:initialFocus});
@@ -43,11 +44,17 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const content = state?.content;
   const text = (value: { [key: string]: unknown }, key: string) => String(value[`${key}${zh ? "Zh" : "En"}`] || "");
   const draftKey = sessionDraftKey(userId, spaceId, `workbook:${trackId}:${state?.id || ""}:${state?.revision || ""}`);
+  const questionDraftKey = sessionDraftKey(userId, spaceId, `workbook-question:${trackId}`);
+  const editQuestion = (value: string) => {
+    setComparisonQuestion(value);
+    if (!writeSessionDraft(questionDraftKey, state?.focusQuestion || '', value)) setError(zh ? '无法暂存问题，请准备比较后再离开。' : 'Question draft storage unavailable. Prepare the comparison before leaving.');
+  };
   const editArtifact = (update: (previous: WorkbookArtifact) => WorkbookArtifact) => {
     const next = update(artifact); setArtifact(next);
     if (!writeSessionDraft(draftKey, JSON.stringify(state?.artifact?.value || emptyArtifact()), JSON.stringify(next))) setError(zh ? "无法暂存草稿，请保存后再离开。" : "Draft storage unavailable. Save before leaving.");
   };
   const dirty = JSON.stringify(artifact) !== JSON.stringify(state?.artifact?.value || emptyArtifact());
+  const questionDirty = comparisonQuestion !== (state?.focusQuestion || '');
   const refreshed = useRef(refreshKey);
 
   if(restoredView.spaceId!==spaceId||restoredView.trackId!==trackId||restoredView.panel!==initialPanel||restoredView.focus!==initialFocus){
@@ -58,13 +65,13 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
 
   useEffect(() => {
     const refreshOnly = refreshed.current !== refreshKey; refreshed.current = refreshKey;
-    if(refreshOnly&&dirty)return;
+    if(refreshOnly&&(dirty || questionDirty))return;
     const readId = refreshOnly && state?.id ? state.id : initialWorkbookId;
     const abort = new AbortController(); const epoch = ++generation.current;
     setBusy("load"); setError(""); setState(null); setArtifact(emptyArtifact()); setMissing([]);
     fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&workbookId=${encodeURIComponent(readId)}&selection=${taskContext ? "1" : "0"}&canonicalIds=${encodeURIComponent(taskContext?.papers.map(p=>p.canonicalId).join(",") || "")}&focus=${encodeURIComponent(taskContext?.question || "")}`, { signal: abort.signal })
       .then(async r => { const data = await r.json() as WorkbookResponse; if (!r.ok) throw new Error(data.error || "Unable to load workbook"); return data; })
-      .then(data => { if (generation.current !== epoch) return; setState(data.workbook); setVersions(data.versions); setArtifact(data.workbook.artifact?.value || emptyArtifact()); if (data.workbook.id) onWorkbookChange?.(data.workbook.id); if (taskContext?.papers.length && !data.workbook.id) { const selection = graphSelection(data.workbook.candidates, taskContext.papers.map(p=>p.canonicalId)); setSelected(selection.selected); setMissing(selection.missing); } else setSelected(data.workbook.sources.length ? data.workbook.sources.map((s: WorkbookSource) => s.id) : data.workbook.candidates.filter((s: WorkbookSource) => s.routeMember).slice(0, 3).map((s: WorkbookSource) => s.id)); })
+      .then(data => { if (generation.current !== epoch) return; setState(data.workbook); setComparisonQuestion(data.workbook.id ? data.workbook.focusQuestion || '' : taskContext?.question || ''); setVersions(data.versions); setArtifact(data.workbook.artifact?.value || emptyArtifact()); if (data.workbook.id) onWorkbookChange?.(data.workbook.id); if (taskContext?.papers.length && !data.workbook.id) { const selection = graphSelection(data.workbook.candidates, taskContext.papers.map(p=>p.canonicalId)); setSelected(selection.selected); setMissing(selection.missing); } else setSelected(data.workbook.sources.length ? data.workbook.sources.map((s: WorkbookSource) => s.id) : data.workbook.candidates.filter((s: WorkbookSource) => s.routeMember).slice(0, 3).map((s: WorkbookSource) => s.id)); })
       .catch(e => { if (!abort.signal.aborted && generation.current === epoch) setError(e.message); })
       .finally(() => { if (generation.current === epoch) setBusy(""); });
     return () => { abort.abort(); generation.current = epoch + 1; };
@@ -111,8 +118,9 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     const epoch = generation.current; setBusy(resume ? "verify" : "draft"); setError(""); setNotice("");
     try {
       let data = await request(resume ? { action: "advance", workbookId: state?.id } : { action: "prepare", paperIds: revise ? state?.sources.map(s => s.id) : selected,
-        focusQuestion: revise ? state?.focusQuestion || '' : taskContext?.question || "", allowRepair: revise || allowRepair });
+        focusQuestion: revise ? state?.focusQuestion || '' : comparisonQuestion, allowRepair: revise || allowRepair });
       if (generation.current !== epoch) return;
+      if (!resume && !revise && data.workbook.id) { clearSessionDraft(questionDraftKey, comparisonQuestion); setComparisonQuestion(data.workbook.focusQuestion || comparisonQuestion.trim()); }
       setState(data.workbook); setVersions(data.versions);
       if (data.workbook.id) onWorkbookChange?.(data.workbook.id);
       if (revise) setSelected(data.workbook.sources.map(s => s.id));
@@ -132,7 +140,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       const r = await fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&workbookId=${encodeURIComponent(id)}`);
       const data = await r.json() as WorkbookResponse; if (!r.ok) throw new Error(data.error);
       if (generation.current !== epoch) return;
-      setState(data.workbook); setArtifact(data.workbook.artifact?.value || emptyArtifact()); setFocus("");
+      setState(data.workbook); setComparisonQuestion(data.workbook.focusQuestion || ''); setArtifact(data.workbook.artifact?.value || emptyArtifact()); setFocus("");
       setMissing([]); onWorkbookChange?.(data.workbook.id!); onViewChange?.(panel, "");
       setSelected(data.workbook.sources.map((s: WorkbookSource) => s.id));
     } catch (e) { if (generation.current === epoch) setError(e instanceof Error ? e.message : "Load failed"); }
@@ -151,11 +159,14 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     <details className="pi-workbook-picker" open={!content}>
       <summary>{zh ? "调整比较材料" : "Change comparison sources"}</summary>
       <p>{zh ? "选择 2–3 篇已审核论文。原始成果与补充阅读的身份不会因此改变。" : "Select 2–3 reviewed papers. This does not change their original or supplementary evidence roles."}</p>
+      <label className="pi-workbook-question">{zh ? '本次比较问题' : 'Question for this comparison'}<textarea rows={3} maxLength={1000} disabled={Boolean(busy)} value={comparisonQuestion} onChange={event => editQuestion(event.target.value)} /><small>{zh ? '收窄到所选摘要能支持的对象、条件和结果。留空则沿用路线问题；改写后点击“准备有据的比较与任务”会新建版本，旧记录保留。' : 'Focus on objects, conditions and results supported by the selected abstracts. Leave empty to use the route question. Prepare again to create a new version; previous records are preserved.'}</small></label>
+      <DraftRecovery key={questionDraftKey} storageKey={questionDraftKey} current={comparisonQuestion} base={state?.focusQuestion || ''} locale={locale} onRestore={editQuestion} />
       <div>{state?.candidates.map(s => <label key={s.id} aria-label={s.title}><input type="checkbox" checked={selected.includes(s.id)} disabled={Boolean(busy) || (!selected.includes(s.id) && selected.length >= 3)} onChange={() => setSelected(ids => ids.includes(s.id) ? ids.filter(id => id !== s.id) : [...ids, s.id])} /><span><MathText inline>{s.title}</MathText><small>{s.routeMember ? zh ? "当前路线材料" : "Current route material" : zh ? "本空间候选材料，需判断适配性" : "Workspace candidate; check its fit"}</small></span></label>)}</div>
       <label className="pi-workbook-repair-option"><input type="checkbox" checked={allowRepair} disabled={Boolean(busy)} onChange={e => setAllowRepair(e.target.checked)} /><span>{zh ? '允许根据评审反馈修订一次' : 'Allow one correction using review feedback'}<small>{zh ? '试用：会增加模型调用。材料不足时停止；修订后全部重新核对。' : 'Pilot: adds model calls. Stops for missing evidence; all corrected content is reviewed again.'}</small></span></label>
       {state && state.candidates.length < 2 && <p>{zh ? "当前不足两篇已审核且有摘要的材料。已有发现流程继续补证；这里不会用未审核论文凑数。" : "Fewer than two reviewed papers have abstracts. Existing discovery continues; unreviewed papers cannot fill the comparison."}</p>}
       <button type="button" disabled={Boolean(busy) || dirty || selected.length < 2 || missing.length > 0} onClick={() => void prepare(false)}>{zh ? "准备有据的比较与任务" : "Prepare comparison and tasks"}</button>
-      {versions.length > 1 && <label>{zh ? "历史版本" : "History"}<select value={state?.id || ""} disabled={Boolean(busy) || dirty} onChange={e => void openVersion(e.target.value)}>{versions.map((v, i) => <option key={v.id} value={v.id}>{versions.length - i} · {v.created_at} · {v.status}</option>)}</select></label>}
+      {questionDirty && <small>{zh ? '本次比较问题尚未提交，请准备新版本后再切换历史。' : 'This comparison question is unsubmitted. Prepare a new version before switching history.'}</small>}
+      {versions.length > 1 && <label>{zh ? "历史版本" : "History"}<select value={state?.id || ""} disabled={Boolean(busy) || dirty || questionDirty} onChange={e => void openVersion(e.target.value)}>{versions.map((v, i) => <option key={v.id} value={v.id}>{versions.length - i} · {v.created_at} · {v.status}</option>)}</select></label>}
     </details>
     {state && ["draft", "verifying", "retryable"].includes(state.status) && !busy && <div role="status">
       <p>{state.failure ? workbookFailureText(state.failure.code, zh) : zh ? "内容尚未完成，已保存的部分可继续处理。" : "Content is unfinished; saved progress can be continued."}</p>
