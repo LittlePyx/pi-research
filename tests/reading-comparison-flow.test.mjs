@@ -33,3 +33,29 @@ test('a cold route-material entry resolves the paper alias and loads its active 
  const run=new Function(...Object.keys(scope),routeCode+';return openRoutePaper')(...Object.values(scope));await run('route-alias');
  assert.deepEqual(opened,[[{id:'actual'},'thread-detail','Exact active research question','r']]);assert.equal(requests.length,2);assert.ok(requests.every(([,options])=>!options.method),'Entry must only read existing question and evidence');
 });
+
+test('a refreshed comparison loads its original route before returning, retaining the exact tab and preventing late redirects',async()=>{
+ const source=app.slice(app.indexOf('  const returnFromWorkbook='),app.indexOf('  const compareFromReading='));
+ const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ const origin=workspaceHash({view:'thread-detail',id:'r',space:'s',tab:'evidence',libraryPage:3});
+ const location={hash:workspaceHash({view:'workbook',id:'r',space:'s',from:'thread-detail',workbookId:'w',returnTo:origin})};
+ const events=[],messages=[];let resolve;
+ const scope={workbookReturnView:'thread-detail',workbookTrackId:'r',activeSpace:{id:'s'},window:{location},readWorkspaceLocation,researchMap:{tracks:[]},
+  readResearchMapState:()=>new Promise(r=>{resolve=r}),paperNetworkSpaceRef:{current:'s'},setResearchMap:v=>events.push(['map',v]),setSelectedThread:v=>events.push(['route',v]),navigate:(...args)=>events.push(['navigate',...args]),locale:'en',setToast:v=>messages.push(v)};
+ const run=new Function(...Object.keys(scope),compiled+';return returnFromWorkbook')(...Object.values(scope));
+ let pending=run();assert.deepEqual(events,[]);resolve({tracks:[{id:'r'}]});await pending;
+ assert.deepEqual(events.map(e=>e[0]),['map','route','navigate']);assert.deepEqual(events[2],['navigate','thread-detail','r',{id:'r',tab:'evidence'}]);
+ events.length=0;pending=run();location.hash='#today?space=s';resolve({tracks:[{id:'r'}]});await pending;assert.deepEqual(events,[]);
+ location.hash=workspaceHash({view:'workbook',id:'r',space:'s',from:'thread-detail',workbookId:'w',returnTo:origin});
+ pending=run();resolve({tracks:[]});await pending;assert.deepEqual(events,[]);assert.match(messages[0],/preserved/);
+});
+
+test('cold and cross-space route restoration waits for that space to load before announcing a missing route',()=>{
+ const start=app.indexOf('    const restore = () => {');
+ const source=app.slice(app.indexOf('    let hash =',start),app.indexOf('    setNavigationIssue(null);',start));
+ const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ for(const [loaded,loading,expected] of [['',false,[]],['other-space',false,[]],['s',true,[]],['s',false,['missing']]]){
+  const issues=[];const scope={window:{location:{hash:'#thread/unknown/start?space=s'}},activeSpace:{id:'s'},restoredLocationRef:{current:''},readWorkspaceLocation,researchMap:{tracks:[]},mapReadSpaceId:loaded,mapLoading:loading,setView:()=>{},setRequestedLocation:()=>{},setNavigationIssue:v=>issues.push(v)};
+  new Function(...Object.keys(scope),compiled)(...Object.values(scope));assert.deepEqual(issues,expected);
+ }
+});

@@ -162,6 +162,32 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await post({action:'save-practice',workbookId:state.id,baseRevision:1,value:{activeId:'learning',entries:{}}},404);
       cookie = "pi_anonymous_workspace=workbook-fixture-owner-00001";
     });
+    await t.test('route overview reads the current question, eligible sources and saved judgment without model or research-state writes',async()=>{
+      const before=calls;
+      const overviewPath=path+'&overview=1';
+      let overview=(await request(overviewPath)).overview;
+      assert.equal(overview.spaceId,'math');assert.equal(overview.trackId,'kls');
+      assert.equal(overview.question,'Which assumptions should I compare?');
+      assert.equal(overview.eligibleCount,2);assert.equal(overview.routeEligibleCount,0);
+      assert.equal(overview.savedJudgment.id,state.id);assert.equal(overview.savedJudgment.savedRevision,1);
+      assert.equal(overview.savedJudgment.decision,state.artifact.value.decision);assert.equal(overview.savedJudgment.stale,false);
+      assert.deepEqual(new Set(overview.savedJudgment.papers.map(p=>p.id)),new Set(workbookSources.map(s=>s.id)));
+      await sql([insert('research_tracks',{id:'separate-route',space_id:'math',title_zh:'另一研究路线',title_en:'Another route'}),
+        insert('research_problems',{id:'other-question',space_id:'math',track_id:'separate-route',question:'A different question',objective:'Other',scope:'Other',success_criteria:'Other',status:'active',model:'user-entry-v1'}),
+        insert('research_comparison_workbooks',{id:'new-unfinished',space_id:'math',track_id:'kls',question:'unfinished',source_revision:'old',source_ids_json:JSON.stringify(workbookSources.map(s=>s.id)),policy:'evidence-workbook-v1',status:'retryable',created_at:'2099-01-01'})]);
+      overview=(await request(overviewPath)).overview;
+      assert.equal(overview.comparisons[0].id,'new-unfinished');assert.equal(overview.comparisons[0].stale,true);
+      assert.equal(overview.savedJudgment.id,state.id,'an unfinished comparison must not hide saved work');
+      const other=(await request('/api/research-workbook?spaceId=math&trackId=separate-route&overview=1')).overview;
+      assert.equal(other.question,'A different question');assert.deepEqual(other.comparisons,[]);assert.equal(other.savedJudgment,null);
+      await sql([{sql:"INSERT INTO paper_feedback(id,space_id,paper_id,feedback) VALUES('overview-withdrawal','math',?,'not_relevant')",values:[workbookSources[0].id]}]);
+      overview=(await request(overviewPath)).overview;
+      assert.equal(overview.eligibleCount,1);assert.equal(overview.savedJudgment.stale,true);assert.equal(overview.savedJudgment.decision,state.artifact.value.decision);
+      await sql([{sql:"DELETE FROM paper_feedback WHERE id='overview-withdrawal'"},{sql:"DELETE FROM research_comparison_workbooks WHERE id='new-unfinished'"}]);
+      cookie='pi_anonymous_workspace=workbook-other-owner-0000001';await request(overviewPath,null,404);
+      cookie='pi_anonymous_workspace=workbook-fixture-owner-00001';
+      assert.equal(calls,before,'opening an overview must not generate a comparison or assessment');
+    });
     await t.test('practice results persist independently, reject stale writes and leave reading and learning-path progress unchanged',async()=>{
       const beforeCalls=calls,original=structuredClone(state.artifact.value),baseRevision=state.artifact.revision;
       const practice={activeId:'task-0',entries:{learning:{result:'Compared the assumptions and recorded the cited evidence.',unresolved:'Check definitions in the full papers.',completed:true}}};

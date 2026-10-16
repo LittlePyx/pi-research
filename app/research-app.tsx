@@ -2222,17 +2222,18 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   }, []);
 
 
-  const [researchSynthesis, setResearchSynthesis] = useState<ResearchSynthesis | null>(null);
+  const [scopedSynthesis, setScopedSynthesis] = useState<{scope:string;value:ResearchSynthesis|null}>({scope:'',value:null});
   const [researchSynthesisLoading, setResearchSynthesisLoading] = useState(false);
   const [researchSynthesisError, setResearchSynthesisError] = useState("");
   const synthesisAutoAttemptRef = useRef(new Set<string>());
-  const [researchProblemState, setResearchProblemState] = useState<ResearchProblemState | null>(null);
+  const [scopedProblem, setScopedProblem] = useState<{scope:string;value:ResearchProblemState|null}>({scope:'',value:null});
   const researchProblemTrackRef=useRef('');
   const [researchProblemLoading, setResearchProblemLoading] = useState(false);
   const [researchProblemAction, setResearchProblemAction] = useState<string | null>(null);
   const [researchProblemError, setResearchProblemError] = useState("");
   const researchProblemAutoAttemptRef = useRef(new Set<string>());
   const [researchMap, setResearchMap] = useState<ResearchMapState>(() => emptyResearchMapState());
+  const [mapReadSpaceId,setMapReadSpaceId] = useState('');
   const [selectedThread, setSelectedThread] = useState<ResearchTrack | null>(null);
   const [researchMapMode, setResearchMapMode] = useState<ResearchMapMode>("directions");
   const [researchRouteTab, updateResearchRouteTab] = useState<ResearchRouteTab>("start");
@@ -2416,6 +2417,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const t = copy[locale];
   useEffect(() => { paperNetworkSpaceRef.current = activeSpaceId; }, [activeSpaceId]);
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
+  const researchRouteScope=`${activeSpace.id}:${selectedThread?.id || ''}`;
+  const researchProblemState=scopedProblem.scope===researchRouteScope?scopedProblem.value:null;
+  const researchSynthesis=scopedSynthesis.scope===researchRouteScope?scopedSynthesis.value:null;
+  const setResearchProblemState=(value:ResearchProblemState|null)=>{researchProblemTrackRef.current=researchRouteScope;setScopedProblem({scope:researchRouteScope,value});};
+  const setResearchSynthesis=(value:ResearchSynthesis|null)=>setScopedSynthesis({scope:researchRouteScope,value});
   useEffect(()=>()=>{savedMonitorReadRef.current?.controller.abort()},[activeSpace.id]);
   const currentGraphTask = graphTask.spaceId === activeSpace.id ? graphTask : {spaceId:activeSpace.id,question:"",papers:[]};
   const activeSpaceSupportsLearning = !activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-");
@@ -3008,7 +3014,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     const location = readWorkspaceLocation(hash);
     if (location.space && location.space !== activeSpace.id) { setRequestedLocation(location); setNavigationIssue("space"); return; }
     const track = researchMap.tracks.find(item => item.id === (location.view === "thread-detail" ? location.id : location.track));
-    if (location.view === "thread-detail" && !track) { setView("threads"); if (!mapLoading) { setRequestedLocation(location); setNavigationIssue("missing"); } return; }
+    if (location.view === "thread-detail" && !track) { setView("threads"); if (!mapLoading && mapReadSpaceId === activeSpace.id) { setRequestedLocation(location); setNavigationIssue("missing"); } return; }
     setNavigationIssue(null);
     if (location.view === 'learn') setComparisonPractice(location.workbookId && location.track ? location : null);
     else if (location.view === 'paper-detail' && location.from === 'learn') {
@@ -3058,7 +3064,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     let cleanup: (() => void) | undefined;
     const frame = requestAnimationFrame(() => { cleanup = restore(); });
     return () => { cancelAnimationFrame(frame); cleanup?.(); };
-  }, [activeSpace.id, researchMap.tracks, mapLoading, navigationRevision, locale, selectedMonitorPaper?.id, view, navigationScroll, restoredLocationRef, restorePaperNetworkNavigation, setSelectedNetworkPaperId]);
+  }, [activeSpace.id, researchMap.tracks, mapLoading, mapReadSpaceId, navigationRevision, locale, selectedMonitorPaper?.id, view, navigationScroll, restoredLocationRef, restorePaperNetworkNavigation, setSelectedNetworkPaperId]);
 
   useEffect(() => {
     if (!recoveryFocusRequested || view !== "today" || todaySurface !== "discovery" || monitor?.status !== "error") return;
@@ -3207,6 +3213,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         }
         if (!cancelled) {
           setResearchMap(data);
+          setMapReadSpaceId(activeSpace.id);
           setSelectedThread((current) => data.tracks.find((track) => track.id === current?.id) || data.tracks[0] || null);
           setMapLoading(false);
           setMapAction(null);
@@ -3730,6 +3737,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setReloadingMonitor(false);
     setMonitoring(false);
     setResearchMap(emptyResearchMapState());
+    setMapReadSpaceId("");
     setSelectedThread(null);
     setResearchSynthesis(null);
     setResearchSynthesisLoading(false);
@@ -4334,16 +4342,36 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     }catch{setToast(locale==='zh'?'原研究问题暂未载入，已有阅读和输入仍保留。':'The original question could not load. Reading and input are preserved.');}
   };
 
-  const openWorkbook = (trackId: string, task?: GraphTaskContext, origin?:{view:View;hash:string}) => {
+  const openWorkbook = (trackId: string, task?: GraphTaskContext, origin?:{view:View;hash:string}, workbookId = "") => {
     loadedWorkbookRef.current = '';
     setWorkbookTask(task);
     const inputKey=comparisonInputKey(user.userId,activeSpace.id,trackId);
-    if(task){if(!writeComparisonInput(inputKey,task))setToast(locale==='zh'?'无法暂存比较选择，请保留当前页面。':'Selection storage unavailable; keep this page open.');}else clearComparisonInput(inputKey);
-    setWorkbookVersionId("");
+    if(task){if(!writeComparisonInput(inputKey,task))setToast(locale==='zh'?'无法暂存比较选择，请保留当前页面。':'Selection storage unavailable; keep this page open.');}else if(!workbookId)clearComparisonInput(inputKey);
+    setWorkbookVersionId(workbookId);
     setWorkbookViewState({panel:"evidence",focus:""});
     setWorkbookTrackId(trackId);
     setWorkbookReturnView(origin?.view||view);
-    navigate("workbook", trackId, { from: origin?.view||view, ...(origin?{returnTo:origin.hash}:{}), workbookId: undefined, workbookPanel: "evidence", workbookFocus: undefined });
+    navigate("workbook", trackId, { from: origin?.view||view, ...(origin?{returnTo:origin.hash}:{}), workbookId: workbookId || undefined, workbookPanel: "evidence", workbookFocus: undefined });
+  };
+
+  const returnFromWorkbook=async()=>{
+    if(workbookReturnView!=="thread-detail"){navigate(workbookReturnView);return;}
+    const hash=window.location.hash,spaceId=activeSpace.id;
+    const location=readWorkspaceLocation(hash);
+    const origin=location.returnTo?readWorkspaceLocation(location.returnTo):null;
+    const trackId=origin?.view==="thread-detail"&&origin.space===spaceId?origin.id:workbookTrackId;
+    try{
+      let route=researchMap.tracks.find(t=>t.id===trackId);
+      if(!route){
+        const map=await readResearchMapState(spaceId);
+        if(paperNetworkSpaceRef.current!==spaceId||window.location.hash!==hash)return;
+        route=map.tracks.find(t=>t.id===trackId);
+        if(!route)throw Error();
+        setResearchMap(map);
+      }
+      setSelectedThread(route);
+      navigate("thread-detail",workbookTrackId,{id:route.id,tab:origin?.tab||"start"});
+    }catch{setToast(locale==='zh'?'原路线暂未载入，已保存的比较仍保留，请重试返回。':'The original route could not load. Your saved comparison is preserved; retry returning.');}
   };
 
   const compareFromReading=async()=>{
@@ -5600,7 +5628,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
               <nav className="v2-route-workspace-tabs pi-route-navigation" aria-label={locale === "zh" ? "路线工作区" : "Route workspace"}>{(["start", "evidence", "problem", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" aria-current={researchRouteTab === tab ? "page" : undefined} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><strong>{tab === "start" ? (locale === "zh" ? "概览" : "Overview") : tab === "problem" ? (locale === "zh" ? "问题与判断" : "Question & findings") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "材料" : "Materials") : tab === "gaps" ? (locale === "zh" ? "材料补充" : "Collect materials") : (locale === "zh" ? "任务" : "Tasks")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{routeMaterialState(selectedThread).paperIds.length}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</nav>
 
-              {researchRouteTab === "start" && <DeferredWorkspacePanel locale={locale}><RouteStart track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} failed={Boolean(researchSynthesisError)} locale={locale} onEvidence={() => setResearchRouteTab("evidence")} onMaterials={() => setResearchRouteTab("gaps")} onSynthesis={() => setResearchRouteTab("assessment")} onPaperOpen={() => recordMapPaperOpen(selectedThread.id)} onRead={id=>void openRoutePaper(id)} onCompare={() => openWorkbook(selectedThread.id)} onProblem={() => setResearchRouteTab("problem")} onLearn={() => openRouteLearningPath(selectedThread)} question={researchProblemState?.problem?.status === "active" ? researchProblemState.problem.question : undefined} /></DeferredWorkspacePanel>}
+              {researchRouteTab === "start" && <DeferredWorkspacePanel locale={locale}><RouteStart key={`${user.userId}:${activeSpace.id}:${selectedThread.id}`} spaceId={activeSpace.id} active={view === "thread-detail"} track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} failed={Boolean(researchSynthesisError)} locale={locale} onEvidence={() => setResearchRouteTab("evidence")} onMaterials={() => setResearchRouteTab("gaps")} onSynthesis={() => setResearchRouteTab("assessment")} onPaperOpen={() => recordMapPaperOpen(selectedThread.id)} onRead={id=>void openRoutePaper(id)} onCompare={(id,question) => openWorkbook(selectedThread.id,id?undefined:{spaceId:activeSpace.id,question:question||"",papers:[]}, {view:"thread-detail",hash:workspaceHash({view:"thread-detail",id:selectedThread.id,tab:"start",space:activeSpace.id})},id)} onProblem={() => setResearchRouteTab("problem")} onLearn={() => openRouteLearningPath(selectedThread)} /></DeferredWorkspacePanel>}
 
               <div hidden={!["problem", "agenda"].includes(researchRouteTab)}><ResearchProblemWorkbench draftStorageKey={sessionDraftKey(user.userId, activeSpace.id, `problem:${selectedThread.id}`)} mode={researchRouteTab === "agenda" ? "tasks" : "question"} key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} synthesis={researchSynthesis} loading={researchProblemLoading} action={researchProblemAction || (mapAction === `problem:${selectedThread.id}` ? "scan-problem" : null)} error={researchProblemError} locale={locale} onSynthesis={() => { setResearchRouteTab("problem"); requestAnimationFrame(() => focusWorkspaceSection(".v2-research-synthesis")); }} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onScanProblem={() => void scanResearchProblemGap(selectedThread)} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} onExecuteAction={(item) => void executeResearchProblemAction(item)} /></div>
               {researchRouteTab === "problem" && <ResearchSynthesisWorkbench reviewStages={Object.fromEntries(historyPapers.map(p => [p.id, p.qualityStage]))} track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} error={researchSynthesisError} locale={locale} onMaterials={() => setResearchRouteTab("evidence")} onPaper={(id) => void openRoutePaper(id)} onRefresh={() => void refreshResearchSynthesis(selectedThread)} onScanGap={() => void scanResearchRouteGap(selectedThread)} onExplain={() => askAboutResearchRoute(selectedThread, "gap")} />}
@@ -5768,7 +5796,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         )}
 
         {comparisonPractice?.workbookId&&comparisonPractice.track&&<div hidden={view!=="learn"}><WorkbookPractice key={`${activeSpace.id}:${comparisonPractice.workbookId}`} userId={user.userId} spaceId={activeSpace.id} trackId={comparisonPractice.track} workbookId={comparisonPractice.workbookId} practiceId={comparisonPractice.practiceId} locale={locale} onSaved={()=>setWorkbookRefreshKey(n=>n+1)} onSelect={practiceId=>{setComparisonPractice(current=>current?{...current,practiceId}:current);if(readWorkspaceLocation(window.location.hash).view==="learn")updateWorkspaceHash({practiceId},"replace");}} onOpenPaper={(source,focus)=>void openWorkbookPaper(source,focus,"learn")} onBack={()=>{rememberCurrentLocation();const origin=comparisonPractice.returnTo?readWorkspaceLocation(comparisonPractice.returnTo):null;window.location.hash=origin?.view==="workbook"?comparisonPractice.returnTo!:workspaceHash({view:"workbook",id:comparisonPractice.track,space:activeSpace.id,workbookId:comparisonPractice.workbookId,workbookPanel:"task",from:"today",returnTo:workspaceHash({view:"today",space:activeSpace.id})});}}/></div>}
-        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook refreshKey={workbookRefreshKey} onStartPractice={practiceId=>{const current=readWorkspaceLocation(window.location.hash);if(current.workbookId)navigate("learn",undefined,{workbookId:current.workbookId,track:workbookTrackId||undefined,practiceId,from:"workbook",returnTo:window.location.hash});}} initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{loadedWorkbookRef.current=`${activeSpace.id}:${workbookTrackId}:${id}`;const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => navigate(workbookReturnView)} /></DeferredWorkspacePanel></div>}
+        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook refreshKey={workbookRefreshKey} onStartPractice={practiceId=>{const current=readWorkspaceLocation(window.location.hash);if(current.workbookId)navigate("learn",undefined,{workbookId:current.workbookId,track:workbookTrackId||undefined,practiceId,from:"workbook",returnTo:window.location.hash});}} initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{loadedWorkbookRef.current=`${activeSpace.id}:${workbookTrackId}:${id}`;const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => void returnFromWorkbook()} /></DeferredWorkspacePanel></div>}
 
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail pi-paper-workspace">

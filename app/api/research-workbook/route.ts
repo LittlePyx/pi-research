@@ -6,6 +6,7 @@ import { WorkbookModelError, workbookFailure, workbookRetryDelay, workbookValida
 import { WORKBOOK_POLICY, WORKBOOK_REVIEW_BATCH_SIZE, rankWorkbookSources, validateWorkbook, validateWorkbookArtifact, validateWorkbookReview, validateWorkbookReviewPart, workbookReviewFields, workbookReviewIssues, workbookRevision, type WorkbookSource, type WorkbookState } from "../../../lib/research-workbook";
 import type { WorkbookGraphReview } from '../../../lib/workbook-graph';
 import { anchoredWorkbookPrompt, resolveAnchoredWorkbook } from '../../../lib/workbook-evidence';
+import type { RouteComparison, RouteOverview } from '../../../lib/route-overview';
 
 type Row = { id: string; question: string; source_revision: string; source_ids_json: string; draft_json: string; content_json: string; review_json: string; status: WorkbookState["status"]; retry_at: number; lease_until: number };
 type SourceRow = { id: string; canonical_id: string; title: string; authors: string; url: string; abstract_text: string; reading_focus_zh: string; reading_focus_en: string; route_member: number };
@@ -97,10 +98,44 @@ async function projection(original: Context, row: Row | null, preferred: string[
   return Response.json({ workbook: state, versions: versions.results }, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function routeOverview(ctx: Context) {
+  const candidates = await sources(ctx);
+  type SummaryRow = Row & { saved_revision: number; saved_at: string | null; value_json: string | null; titles_json: string };
+  const select = `SELECT w.*, COALESCE(a.revision,0) AS saved_revision,a.created_at AS saved_at,a.value_json,
+    (SELECT json_group_array(json_object('id',p.id,'title',p.title)) FROM monitored_papers p
+      WHERE p.space_id=w.space_id AND p.id IN (SELECT value FROM json_each(w.source_ids_json))) AS titles_json
+    FROM research_comparison_workbooks w LEFT JOIN research_comparison_artifacts a
+      ON a.workbook_id=w.id AND a.space_id=w.space_id AND a.revision=(SELECT MAX(revision) FROM research_comparison_artifacts WHERE workbook_id=w.id AND space_id=w.space_id)
+    WHERE w.space_id=? AND w.track_id=?`;
+  const rows = await ctx.database.prepare(`${select} ORDER BY w.created_at DESC,w.rowid DESC LIMIT 3`).bind(ctx.spaceId,ctx.trackId).all<SummaryRow>();
+  // A newer unfinished comparison must not hide a judgment saved in an older comparison.
+  const saved = await ctx.database.prepare(`${select} AND a.revision IS NOT NULL
+    AND (trim(COALESCE(json_extract(a.value_json,'$.decision'),''))<>'' OR trim(COALESCE(json_extract(a.value_json,'$.unresolved'),''))<>''
+      OR EXISTS (SELECT 1 FROM json_each(a.value_json,'$.observations') WHERE trim(value)<>''))
+    ORDER BY a.created_at DESC,a.rowid DESC LIMIT 1`).bind(ctx.spaceId,ctx.trackId).first<SummaryRow>();
+  const summarize = async (row: SummaryRow): Promise<RouteComparison> => {
+    const ids: string[] = parse(row.source_ids_json) || [];
+    const selected = ids.map(id=>candidates.find(s=>s.id===id)).filter((s):s is WorkbookSource=>Boolean(s));
+    const question = focusedWorkbookQuestion(ctx.question,workbookFocus(row.question));
+    const value = parse(row.value_json || '') || {};
+    return { id:row.id,status:row.status as RouteComparison['status'],
+      stale:selected.length!==ids.length || await workbookRevision(question,selected)!==row.source_revision,
+      question:workbookFocus(row.question),papers:parse(row.titles_json) || [],
+      savedRevision:row.saved_revision,savedAt:row.saved_at,decision:value.decision || '',unresolved:value.unresolved || '',
+      observationCount:Object.values(value.observations || {}).filter(v=>typeof v==='string'&&v.trim()).length };
+  };
+  const comparisons=await Promise.all(rows.results.map(summarize));
+  const overview: RouteOverview = {spaceId:ctx.spaceId,trackId:ctx.trackId,question:ctx.track.question,
+    eligibleCount:candidates.length,routeEligibleCount:candidates.filter(s=>s.routeMember).length,comparisons,
+    savedJudgment:saved ? comparisons.find(c=>c.id===saved.id) || await summarize(saved) : null};
+  return Response.json({overview},{headers:{'Cache-Control':'private, no-store'}});
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const ctx = await context(request, safeId(url.searchParams.get("spaceId")), safeId(url.searchParams.get("trackId")));
   if ("error" in ctx) return ctx.error;
+  if (url.searchParams.get('overview') === '1') return routeOverview(ctx);
   const id = safeId(url.searchParams.get("workbookId"));
   const preferred = (url.searchParams.get("canonicalIds") || "").split(",").filter(Boolean).map(v=>v.toLowerCase()).slice(0,3);
   const focus = (url.searchParams.get("focus") || "").slice(0,1000);
