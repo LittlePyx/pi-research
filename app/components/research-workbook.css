@@ -54,3 +54,15 @@
   .pi-workbook-inspector { order: 2; position: static; border-left: 0; border-top: 1px solid #d4ddd5; padding: 16px 0; scroll-margin-top: 76px; }
   .pi-workbook table { min-width: 570px; }
 }
+
+.pi-workbook-followup { margin:24px 0; }
+.pi-workbook-followup section { margin:20px 0; padding:18px; border:1px solid #e1e5e9; border-radius:10px; scroll-margin-top:90px; }
+.pi-workbook-followup h3,.pi-workbook-followup h4 { margin:0 0 10px; }
+.pi-workbook-followup h5 { margin:14px 0 4px; font-size:13px; }
+.pi-workbook-followup p { line-height:1.8; }
+.pi-workbook-followup small { display:block; margin-top:8px; color:#60646c; }
+.pi-workbook-followup summary { cursor:pointer; font-weight:500; }
+.pi-workbook-followup article { padding:18px 0; border-top:1px solid #e5e7eb; }
+.pi-workbook-followup-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.pi-workbook-followup-actions button { max-width:100%; text-align:left; overflow-wrap:anywhere; }
+.pi-workbook-followup-note { white-space:pre-wrap; overflow-wrap:anywhere; }

@@ -196,7 +196,8 @@ test("learning detail navigation returns to the path and retains original-resour
   assert.match(open, /paperNetworkSpaceRef\.current !== spaceId/);
   assert.match(open, /openMonitorPaper\(paper, "learn"\)/);
   assert.match(app, /navigate\(paperReturnView\)/);
-  assert.match(app, /paperReturnView === "learn" \? t\.learn/);
+  assert.match(app, /paperReturnView === "learn" \? \(comparisonPractice\?/);
+  assert.match(app, /"返回原核查任务" : "Return to original check"\):t\.learn/);
   assert.match(app, /<LearningStageWorkspace step=\{activeLearningStep\}/);
 });
 

@@ -355,3 +355,33 @@ test('resuming a failed generation announces active work while the request is pe
  finally {release();}
  await ready(page);
 });
+
+test('open question, source reading, saved check and explicit judgment append form one recoverable task',async({page})=>{
+ await enterComparison(page);await ready(page);
+ const judgment='保留原判断：不同任务的性能界暂不排序。',pending='全文中反馈与编码器限制的条件、定理编号尚待核对。';
+ const decision=page.getByRole('textbox',{name:'目前的判断及依据',exact:true});
+ await decision.fill(judgment);await page.getByRole('textbox',{name:'仍缺的条件或待解决问题',exact:true}).fill(pending);
+ await page.getByRole('button',{name:'保存记录',exact:true}).click();
+ await page.getByRole('region',{name:'继续核查待查问题',exact:true}).getByRole('button',{name:'继续核查并记录成果 →',exact:true}).click();
+ await expect(page).toHaveURL(/#learn\?/);await expect(page.getByRole('complementary',{name:'原判断中的待查问题',exact:true})).toContainText(pending);
+ const result='原文位置：摘要。已核对量子擦除信道与通用编码的设定；定理编号仍待全文补证。';
+ await page.getByRole('textbox',{name:'本项成果与依据',exact:true}).fill(result);
+ await page.getByRole('textbox',{name:'仍需查证的问题',exact:true}).fill('仍需核对正文中的编码器限制。');
+ await page.reload();await page.getByRole('button',{name:'恢复到编辑区',exact:true}).click();
+ await expect(page.getByRole('textbox',{name:'本项成果与依据',exact:true})).toHaveValue(result);
+ const evidence=page.getByRole('main',{name:'比较练习',exact:true}).locator('details').filter({has:page.locator('summary').filter({hasText:'核对原文与比较依据'})});
+ await evidence.locator('summary').click();await evidence.getByRole('button',{name:'带着任务打开论文 →',exact:true}).first().click();
+ await expect(page).toHaveURL(/#paper\//);await expect(page.locator('.pi-paper-workspace')).toContainText('仍需核对正文中的编码器限制。');
+ await page.reload();await page.getByRole('button',{name:'← 返回原核查任务',exact:true}).click();
+ await page.getByRole('button',{name:'恢复到编辑区',exact:true}).click();
+ await expect(page.getByRole('textbox',{name:'本项成果与依据',exact:true})).toHaveValue(result);
+ await page.getByRole('button',{name:'保存成果并返回原判断',exact:true}).click();
+ await expect(page).toHaveURL(/#workbook\//);const results=page.getByRole('region',{name:'已保存核查成果',exact:true});
+ await expect(results).toBeFocused();await expect(results).toContainText(result);await expect(results).toContainText('已保存，待继续');
+ await expect(decision).toHaveValue(judgment);
+ await results.getByRole('button',{name:'补入当前判断',exact:true}).click();await results.getByRole('button',{name:'补入当前判断',exact:true}).click();
+ const appended=await decision.inputValue();expect(appended.startsWith(judgment)).toBe(true);expect(appended.split(result).length-1).toBe(1);
+ await expect(page.getByRole('textbox',{name:'仍缺的条件或待解决问题',exact:true})).toHaveValue(pending);
+ await page.reload();await page.getByRole('button',{name:'恢复到编辑区',exact:true}).click();await expect(decision).toHaveValue(appended);
+ await page.getByRole('button',{name:'保存记录',exact:true}).click();await page.reload();await expect(decision).toHaveValue(appended);
+});
