@@ -1,3 +1,4 @@
+import {comparisonEligibility} from '../../../lib/comparison-eligibility';
 import {prepareTaskBriefCapture} from '../../../lib/task-brief';
 import {librarySearchWhere,librarySearchOrder,libraryUserStateSql} from '../../../lib/library-search.mjs';
 import {paperUserStateView} from '../../../lib/paper-user-state.mjs';
@@ -326,6 +327,7 @@ type CoverageRow = {
   last_error: string | null;
 };
 type PaperRow = {
+  ever_recommended?: number;
   id: string;
   canonical_id: string;
   doi: string | null;
@@ -4943,7 +4945,7 @@ const LIBRARY_PAPER_SELECT = `SELECT p.id, p.canonical_id, p.doi, p.title, p.aut
        COALESCE(i.quality_score, 0) AS quality_score, COALESCE(i.priority_venue, 0) AS priority_venue,
        COALESCE(i.analysis_source, 'metadata') AS analysis_source, COALESCE(i.analysis_model, '') AS analysis_model,
        COALESCE(i.screening_reason, '') AS screening_reason,
-       COALESCE(i.llm_recommended, 0) AS llm_recommended,
+       COALESCE(i.llm_recommended, 0) AS llm_recommended, COALESCE(i.ever_recommended, 0) AS ever_recommended,
        MAX(COALESCE(i.llm_relevance_score, 0), COALESCE((
          SELECT MAX(history.relevance_score) FROM recommendation_audit_events history
          WHERE history.space_id = p.space_id AND history.paper_id = p.id
@@ -5083,7 +5085,7 @@ export async function readLibraryPage(database:D1Database,spaceId:string,options
   readLibraryCounts(database,spaceId),
  ]);
  const total=count?.total||0;
- return {papers:rows.results.map(p=>toPaper(p,Date.now())),total,offset:options.offset,nextOffset:options.offset+rows.results.length<total?options.offset+rows.results.length:null,counts:{total:counts?.total||0,inbox:counts?.inbox||0,accepted:counts?.accepted||0,dismissed:counts?.dismissed||0}};
+ return {papers:rows.results.map(p=>({...toPaper(p,Date.now()),canonicalId:p.canonical_id,comparisonEligibility:comparisonEligibility({recommended:p.ever_recommended||0,verified:['verified','revised'].includes(p.verification_status)?1:0,abstractText:p.abstract_text,excluded:p.feedback==='not_relevant'?1:0})})),total,offset:options.offset,nextOffset:options.offset+rows.results.length<total?options.offset+rows.results.length:null,counts:{total:counts?.total||0,inbox:counts?.inbox||0,accepted:counts?.accepted||0,dismissed:counts?.dismissed||0}};
 }
 export async function libraryExportRows(database:D1Database,spaceId:string,after:string,cutoff:number,scope:string) {
  const condition=scope==='accepted'?"AND (f.saved=1 OR f.feedback='relevant' OR r.status IN ('queued','reading','read','mastered','cited'))":'';

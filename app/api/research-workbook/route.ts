@@ -44,7 +44,10 @@ function evidenceGuard(ctx: Context, selected: WorkbookSource[]) {
   };
 }
 
-async function sources(ctx: Context) {
+async function sources(ctx: Context, canonicalIds:string[]=[], paperIds:string[]=[]) {
+  const canonical=canonicalIds.slice(0,3).map(id=>id.toLowerCase());
+  const ids=paperIds.slice(0,4);
+  const priority=[...(canonical.length?[`lower(p.canonical_id) IN (${canonical.map(()=>'?').join(',')})`]:[]),...(ids.length?[`p.id IN (${ids.map(()=>'?').join(',')})`]:[])].join(' OR ')||'0';
   const rows = await ctx.database.prepare(`SELECT p.id, p.canonical_id, p.title, p.authors, p.url,
       i.abstract_text, i.reading_focus_zh, i.reading_focus_en,
       CASE WHEN EXISTS (SELECT 1 FROM research_track_papers r WHERE r.space_id = p.space_id AND r.track_id = ?
@@ -52,7 +55,7 @@ async function sources(ctx: Context) {
     FROM monitored_papers p JOIN paper_insights i ON i.space_id = p.space_id AND i.paper_id = p.id
     WHERE p.space_id = ? AND i.ever_recommended = 1 AND i.verification_status IN ('verified', 'revised')
       AND NOT EXISTS (SELECT 1 FROM paper_feedback f WHERE f.space_id = p.space_id AND f.paper_id = p.id AND f.feedback = 'not_relevant')
-    ORDER BY route_member DESC, p.id LIMIT 2000`).bind(ctx.trackId, ctx.spaceId).all<SourceRow>();
+    ORDER BY CASE WHEN ${priority} THEN 0 ELSE 1 END,route_member DESC, p.id LIMIT 2000`).bind(ctx.trackId, ctx.spaceId,...canonical,...ids).all<SourceRow>();
   return rankWorkbookSources(ctx.question, rows.results.map(r => ({ id: r.id, canonicalId: r.canonical_id, title: r.title,
     authors: r.authors, url: r.url, abstractText: r.abstract_text.slice(0, 7000), readingFocusZh: r.reading_focus_zh,
     readingFocusEn: r.reading_focus_en, routeMember: Boolean(r.route_member) })));
@@ -66,10 +69,10 @@ async function rowFor(ctx: Context, id = "") {
 
 async function projection(original: Context, row: Row | null, preferred: string[] = [], focus = "", preferredPaperId = "") {
   const ctx = { ...original, question: focusedWorkbookQuestion(original.track.question || `${original.track.title_zh} / ${original.track.title_en}: ${original.track.summary_zh} ${original.track.summary_en}`, row ? workbookFocus(row.question) : focus) };
-  const candidates = await sources(ctx);
+  const ids: string[] = row ? parse(row.source_ids_json) || [] : [];
+  const candidates = await sources(ctx,preferred,[...ids,...(preferredPaperId?[preferredPaperId]:[])]);
   const preferredSource=candidates.find(s=>s.id===preferredPaperId);
   if(preferredSource&&!preferred.includes(preferredSource.canonicalId.toLowerCase()))preferred=[...preferred,preferredSource.canonicalId.toLowerCase()];
-  const ids: string[] = row ? parse(row.source_ids_json) || [] : [];
   const selected = ids.map(id => candidates.find(s => s.id === id)).filter((s): s is WorkbookSource => Boolean(s));
   const revision = await workbookRevision(ctx.question, selected);
   const stale = Boolean(row && (row.source_revision !== revision || selected.length !== ids.length));
@@ -92,8 +95,9 @@ async function projection(original: Context, row: Row | null, preferred: string[
       ...(savedReview.workflow.repairMode === 'fields-v1' ? { revisedFields: savedReview.workflow.previousIssues.length, preservedFields: workbookReviewFields(parse(row!.draft_json)).length - savedReview.workflow.previousIssues.length } : {}),
       next: stale || row?.status === 'ready' || row?.status === 'rejected' ? 'stopped' : workbookGraphNext(parse(row?.draft_json || ''), savedReview) };
   }
+  const pinned=new Set([...preferred,...selected.map(s=>s.canonicalId.toLowerCase())]);
   const state: WorkbookState = { id: row?.id || null, revision: row?.source_revision || revision, status: row?.status || "empty",
-    stale, sources: selected, candidates: [...candidates.filter(c=>preferred.includes(c.canonicalId.toLowerCase())), ...candidates.filter(c=>!preferred.includes(c.canonicalId.toLowerCase()))].slice(0, 15), content: row?.status === "ready" ? parse(row.content_json) : null,
+    stale, sources: selected, candidates: [...candidates.filter(c=>pinned.has(c.canonicalId.toLowerCase())), ...candidates.filter(c=>!pinned.has(c.canonicalId.toLowerCase()))].slice(0, 15), content: row?.status === "ready" ? parse(row.content_json) : null,
     artifact: artifact ? { revision: artifact.revision, value: parse(artifact.value_json) } : null, retryAt: row?.retry_at || 0,
     stage: row?.draft_json ? 'review' : 'draft', busyUntil: row && row.lease_until > Date.now() ? row.lease_until : 0, failure,
     reviewProgress: { completed: savedReview?.checks?.length || 0, total: row?.draft_json ? workbookReviewFields(parse(row.draft_json)).length : 0 },
@@ -141,7 +145,8 @@ async function routeOverview(ctx: Context) {
     ORDER BY a.created_at DESC,a.rowid DESC LIMIT 1`).bind(ctx.spaceId,ctx.trackId).first<SummaryRow>();
   const summarize = async (row: SummaryRow): Promise<RouteComparison> => {
     const ids: string[] = parse(row.source_ids_json) || [];
-    const selected = ids.map(id=>candidates.find(s=>s.id===id)).filter((s):s is WorkbookSource=>Boolean(s));
+    const recordSources=ids.every(id=>candidates.some(s=>s.id===id))?candidates:await sources(ctx,[],ids);
+    const selected = ids.map(id=>recordSources.find(s=>s.id===id)).filter((s):s is WorkbookSource=>Boolean(s));
     const question = focusedWorkbookQuestion(ctx.question,workbookFocus(row.question));
     const value = parse(row.value_json || '') || {};
     return { id:row.id,status:row.status as RouteComparison['status'],
@@ -160,11 +165,22 @@ async function routeOverview(ctx: Context) {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  if (url.searchParams.get('routes') === '1') {
+    const user = getApiUser(request);
+    if (!user) return Response.json({error:'Authentication required'}, {status:401});
+    const database=getDatabase(); await ensureSchema(database);
+    const spaceId=safeId(url.searchParams.get('spaceId'));
+    if (!await database.prepare('SELECT id FROM research_spaces WHERE id=? AND owner_user_id=?').bind(spaceId,user.userId).first()) return Response.json({error:'Space not found'}, {status:404});
+    const routes=await database.prepare(`SELECT t.id,t.title_zh AS titleZh,t.title_en AS titleEn,
+      COALESCE((SELECT question FROM research_problems WHERE space_id=t.space_id AND track_id=t.id AND status='active'),'') AS question
+      FROM research_tracks t WHERE t.space_id=? ORDER BY t.created_at,t.id`).bind(spaceId).all();
+    return Response.json({spaceId,routes:routes.results},{headers:{'Cache-Control':'private, no-store'}});
+  }
   const ctx = await context(request, safeId(url.searchParams.get("spaceId")), safeId(url.searchParams.get("trackId")));
   if ("error" in ctx) return ctx.error;
   if(url.searchParams.get('eligibility')==='1'){
     const ids=[...new Set((url.searchParams.get('canonicalIds')||'').split(',').filter(Boolean).map(v=>v.trim().toLowerCase()))].slice(0,3);
-    const materials=ids.length?await comparisonMaterials(ctx,await sources(ctx),ids):[];
+    const materials=ids.length?await comparisonMaterials(ctx,await sources(ctx,ids),ids):[];
     return Response.json({spaceId:ctx.spaceId,trackId:ctx.trackId,materials},{headers:{'Cache-Control':'private, no-store'}});
   }
   if (url.searchParams.get('overview') === '1') return routeOverview(ctx);
@@ -174,7 +190,7 @@ export async function GET(request: Request) {
   let row: Row | null;
   if (!id && url.searchParams.get("selection") === "1") {
     const scoped = { ...ctx, question: focusedWorkbookQuestion(ctx.question, focus) };
-    const candidates = await sources(scoped);
+    const candidates = await sources(scoped,preferred);
     const selection = graphSelection(candidates, preferred);
     const selected = selection.selected.map(id => candidates.find(s=>s.id===id)!);
     // A graph task must resume only its own question and exact source set.
@@ -201,7 +217,7 @@ export async function POST(request: Request) {
     if (action !== "prepare" && (!body.workbookId || !row)) return Response.json({ error: "Workbook not found" }, { status: 404 });
     if (action === "save-artifact" || action === "save-practice") {
       if (!row || row.status !== "ready") return Response.json({ error: "Reviewed workbook required" }, { status: 422 });
-      const live = await sources(ctx); const ids = parse(row.source_ids_json) as string[];
+      const ids = parse(row.source_ids_json) as string[]; const live = await sources(ctx,[],ids);
       const selected = live.filter(s => ids.includes(s.id));
       if (body.sourceRevision !== row.source_revision || selected.length !== ids.length || await workbookRevision(ctx.question, selected) !== row.source_revision) return Response.json({ error: "Evidence changed; open the current workbook before saving" }, { status: 409 });
       if (!Number.isInteger(body.baseRevision) || Number(body.baseRevision) < 0) return Response.json({ error: "Artifact revision required" }, { status: 400 });
@@ -220,7 +236,7 @@ export async function POST(request: Request) {
     }
     const credential = resolveDeepSeekCredential(request);
     if (!credential.apiKey) return Response.json({ error: "Connect the model to prepare this comparison", modelRequired: true }, { status: 428 });
-    const candidates = await sources(ctx);
+    const candidates = await sources(ctx,[],Array.isArray(body.paperIds)?body.paperIds.filter((id):id is string=>typeof id==='string').slice(0,3):parse(row?.source_ids_json||'[]')||[]);
     if (action === "prepare") {
       const ids = Array.isArray(body.paperIds) ? [...new Set(body.paperIds.map(safeId))] : [];
       const selected = ids.map(id => candidates.find(s => s.id === id)).filter((s): s is WorkbookSource => Boolean(s));
@@ -293,7 +309,7 @@ export async function POST(request: Request) {
     const published = status === 'ready';
     const freshCtx = await context(request, ctx.spaceId, ctx.trackId);
     if ("error" in freshCtx) throw new Error("workbook_context_changed");
-    const freshSources = (await sources(freshCtx)).filter(s => ids.includes(s.id));
+    const freshSources = (await sources(freshCtx,[],ids)).filter(s => ids.includes(s.id));
     if (await workbookRevision(focusedWorkbookQuestion(freshCtx.question, workbookFocus(row.question)), freshSources) !== row.source_revision) throw new Error("workbook_evidence_changed");
     const guard = evidenceGuard(freshCtx, freshSources);
     const saved = await ctx.database.prepare(`UPDATE research_comparison_workbooks SET draft_json = ?, content_json = ?, review_json = ?, status = ?,

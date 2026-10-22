@@ -46,6 +46,7 @@ import { LearningGoalPlanner, LearningPathHeader } from "./components/learning-g
 import type { GraphDeskPaper } from "./components/graph-research-desk";
 import type { GraphTaskContext } from "../lib/graph-task";
 import {useRouteSelection} from "./components/use-route-selection";
+import {LibraryComparisonControls} from "./components/library-comparison-controls";
 import {RouteSelectionBar} from "./components/route-selection-bar";
 import {comparisonInputKey,readComparisonInput,writeComparisonInput,clearComparisonInput} from '../lib/comparison-input';
 import {paperUserStateView} from '../lib/paper-user-state.mjs';
@@ -152,6 +153,8 @@ type Localized = { zh: string; en: string };
 type RouteDiscoveryKind = "route_foundation" | "route_milestone" | "route_frontier" | "route_gap" | "route_synthesis" | "route_network" | "route_version_shadow" | "route_learning" | "route_classic" | "route_search";
 type RouteDiscoveryType = "route_search" | "gap" | "synthesis" | "citation_network";
 type MonitorPaper = {
+  canonicalId?:string;
+  comparisonEligibility?:import("../lib/comparison-eligibility").ComparisonEligibility;
   id: string;
   doi: string | null;
   title: string;
@@ -2421,6 +2424,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
   const routeSelectionTrackId=view==="paper-detail"&&paperReturnView==="thread-detail"&&typeof window!=="undefined"?readWorkspaceLocation(window.location.hash).track||selectedThread?.id||"":selectedThread?.id||"";
   const routeSelection=useRouteSelection(user.userId,activeSpace.id,routeSelectionTrackId);
+  const [libraryComparisonScope,setLibraryComparisonScope]=useState({spaceId:"",trackId:""});
+  const libraryComparisonTrackId=libraryComparisonScope.spaceId===activeSpace.id?libraryComparisonScope.trackId:"";
+  const librarySelection=useRouteSelection(user.userId,activeSpace.id,libraryComparisonTrackId);
   const researchRouteScope=`${activeSpace.id}:${selectedThread?.id || ''}`;
   const researchProblemState=scopedProblem.scope===researchRouteScope?scopedProblem.value:null;
   const researchSynthesis=scopedSynthesis.scope===researchRouteScope?scopedSynthesis.value:null;
@@ -3034,9 +3040,12 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setPaperPanel(location.paperPanel||"reading");
     setRecoveryFocusRequested(location.focus === "recovery");
     if(location.view==='library'||location.view==='thread-detail'||location.view==='threads'&&Boolean(location.graph))setLibraryViewState({query:location.libraryQuery||'',scope:location.libraryScope||'related',page:location.libraryPage||1,focusId:location.libraryFocus||''});
-    if(location.view==='library'){setLibrarySearch(location.libraryQuery||'');setLibraryFilter(location.libraryFilter||'all');setLibraryStageFilter(location.libraryStage||'all');setInboxFilter(location.libraryInbox||'all');setLibrarySort(location.librarySort||'priority');setLibraryTag(location.libraryTag||'all');setLibraryPageNumber(location.libraryPage||1);}
+    if(location.view==='library'){setLibraryComparisonScope({spaceId:activeSpace.id,trackId:location.track||''});setLibrarySearch(location.libraryQuery||'');setLibraryFilter(location.libraryFilter||'all');setLibraryStageFilter(location.libraryStage||'all');setInboxFilter(location.libraryInbox||'all');setLibrarySort(location.librarySort||'priority');setLibraryTag(location.libraryTag||'all');setLibraryPageNumber(location.libraryPage||1);}
     if (location.graph) { setResearchMapMode("papers"); setLibraryGraphPaperId(location.graph === "all" ? "" : location.graph); setGraphReturnView(location.graphFrom === "library" ? "library" : "threads");restorePaperNetworkNavigation(location,new Set(researchMap.tracks.map(track=>track.id)));setGraphDetailsOpen(Boolean(location.graphFocus)); }
     else if (location.view === "threads") {setResearchMapMode("directions");setSelectedNetworkPaperId(null);}
+    const returnLocation=location.returnTo?readWorkspaceLocation(location.returnTo):null;
+    const libraryOrigin=location.view==="library"?location:returnLocation?.view==="library"?returnLocation:returnLocation?.view==="workbook"&&returnLocation.returnTo?readWorkspaceLocation(returnLocation.returnTo):null;
+    if(libraryOrigin?.view==="library"&&libraryOrigin.space===activeSpace.id)setLibraryComparisonScope({spaceId:activeSpace.id,trackId:libraryOrigin.track||""});
     const comparisonLocation = location.view === "workbook" ? location : location.view === "paper-detail" && location.from === "workbook" && location.returnTo ? readWorkspaceLocation(location.returnTo) : null;
     if (comparisonLocation?.view === "workbook" && loadedWorkbookRef.current !== `${activeSpace.id}:${comparisonLocation.id}:${comparisonLocation.workbookId || ''}`) {
       loadedWorkbookRef.current = '';
@@ -3673,7 +3682,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       panel: next === "today" ? (returning ? todaySurface : undefined) : next === "paper-detail" && view === "today" ? todaySurface : undefined,
       id: next === "workbook" ? workbookTarget || undefined : next === "thread-detail" ? selectedThread?.id : next === "paper-detail" ? selectedMonitorPaper?.id : undefined,
       tab: next === "thread-detail" || next === "paper-detail" ? researchRouteTab : undefined,
-      track: next === "paper-detail" ? (view === "workbook" ? workbookTarget || undefined : selectedThread?.id) : undefined,
+      track: next === "library" ? libraryComparisonTrackId || undefined : next === "paper-detail" && view === "library" ? libraryComparisonTrackId || undefined : next === "paper-detail" ? (view === "workbook" ? workbookTarget || undefined : selectedThread?.id) : undefined,
       from: next === "paper-detail" ? view : next === "workbook" ? workbookReturnView : undefined,
       graph: (next === "threads" || next === "paper-detail" && view === "threads") && researchMapMode === "papers" ? libraryGraphPaperId || "all" : undefined,
       graphFrom: (next === "threads" || next === "paper-detail" && view === "threads") && researchMapMode === "papers" && graphReturnView === "library" ? "library" : undefined,
@@ -5628,6 +5637,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           </main>
         )}
 
+        {!demo && libraryComparisonTrackId && (view === "library" || view === "paper-detail" && paperReturnView === "library") && <RouteSelectionBar requireQuestion key={`library:${user.userId}:${activeSpace.id}:${libraryComparisonTrackId}`} spaceId={activeSpace.id} trackId={libraryComparisonTrackId} locale={locale} selection={librarySelection} onMaterials={()=>{if(view!=="library")navigate("library");else{const input=document.querySelector<HTMLInputElement>(".v2-library-toolbar input");input?.scrollIntoView({block:"center"});input?.focus();}}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(libraryComparisonTrackId,librarySelection.value,{view:"library",hash:origin||workspaceHash({view:"library",space:activeSpace.id,track:libraryComparisonTrackId})});}} />}
         {routeSelectionTrackId && (view === "thread-detail" || view === "paper-detail" && paperReturnView === "thread-detail") && <RouteSelectionBar key={`${user.userId}:${activeSpace.id}:${routeSelectionTrackId}:${view}`} spaceId={activeSpace.id} trackId={routeSelectionTrackId} locale={locale} selection={routeSelection} onMaterials={()=>{if(view==="paper-detail")navigate("thread-detail",undefined,{id:routeSelectionTrackId,tab:"evidence"});else setResearchRouteTab("evidence");}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(routeSelectionTrackId,routeSelection.value,{view:"thread-detail",hash:origin||workspaceHash({view:"thread-detail",space:activeSpace.id,id:routeSelectionTrackId,tab:"start"})});}} />}
         {(view === "thread-detail" || view === "paper-detail" && paperReturnView === "thread-detail" || view === "workbook" && workbookReturnView === "thread-detail" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "thread-detail") && (
           <main hidden={view !== "thread-detail"} className="v2-page v2-detail-page v2-map-detail v2-route-workspace">
@@ -5705,6 +5715,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         {(view === "library" || view === "paper-detail" && paperReturnView === "library" || view === "workbook" && workbookReturnView === "library" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "library") && (
           <PrimaryLibrary
             visible={view === "library"}
+            comparisonSelection={demo?undefined:librarySelection}
+            comparisonTrackId={libraryComparisonTrackId}
+            comparisonControls={demo?undefined:<LibraryComparisonControls spaceId={activeSpace.id} trackId={libraryComparisonTrackId} locale={locale} selection={librarySelection} onTrack={trackId=>{setLibraryComparisonScope({spaceId:activeSpace.id,trackId});updateWorkspaceHash({track:trackId||undefined},"push");}} onResearch={()=>navigatePrimary("threads")} />}
             demo={demo}
             locale={locale}
             spaceId={activeSpace.id}

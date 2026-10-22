@@ -13,7 +13,7 @@ function harness(hash,overrides={}){
  const state={view:readWorkspaceLocation(hash).view,workbookTrackId:'r',activeSpace:{id:'s'},selectedThread:{id:'r'},selectedMonitorPaper:{id:'p'},
   graphReturnView:'threads',todaySurface:'home',researchRouteTab:'start',researchMapMode:'directions',libraryGraphPaperId:'',
   paperNetworkMode:'similarity',graphSurface:'library',paperNetworkScope:'all',paperNetworkTrackId:'all',selectedNetworkPaperId:null,
-  librarySearch:'',libraryViewState:{query:'',scope:'related',page:1,focusId:''},libraryPageNumber:1,libraryFilter:'all',libraryStageFilter:'all',inboxFilter:'all',librarySort:'priority',libraryTag:'all',
+  libraryComparisonTrackId:readWorkspaceLocation(hash).track||'',librarySearch:'',libraryViewState:{query:'',scope:'related',page:1,focusId:''},libraryPageNumber:1,libraryFilter:'all',libraryStageFilter:'all',inboxFilter:'all',librarySort:'priority',libraryTag:'all',
   workbookReturnView:'threads',workbookViewState:{panel:'evidence',focus:''},learningBrowseSelection:null,
   navigationScroll:{current:new Map()},workbookScrollRef:{current:0},restoredLocationRef:{current:''},
   rememberCurrentLocation(){},setPaperPanel(){},setNavigationIssue(){},setTodaySurface(value){state.todaySurface=value},setRecoveryFocusRequested(){},setView(value){state.view=value},setMobileNav(){},...overrides};

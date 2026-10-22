@@ -10,7 +10,8 @@ import { DraftRecovery } from "./draft-recovery";
 import { sessionDraftKey, readSessionDraft, writeSessionDraft, clearSessionDraft } from "../../lib/session-draft";
 import {comparisonInputKey,readComparisonInput,writeComparisonInput} from '../../lib/comparison-input';
 import { MathText } from "./math-text";
-import { workbookFailureText, workbookResponseDetailText } from "../../lib/workbook-recovery";
+import {workbookPresentation,workbookStatusLabel} from "../../lib/workbook-presentation";
+import { workbookResponseDetailText } from "../../lib/workbook-recovery";
 import "./research-workbook.css";
 
 const emptyArtifact = (): WorkbookArtifact => ({ observations: {}, decision: "", unresolved: "" });
@@ -42,6 +43,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const [draftStored,setDraftStored]=useState(true);
   const [saveConflict,setSaveConflict]=useState(false);
   const generation = useRef(0);
+  const [loadRetry,setLoadRetry]=useState(0);
   const [now, setNow] = useState(() => Date.now());
   const zh = locale === "zh";
   const content = state?.content;
@@ -78,13 +80,13 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     const abort = new AbortController(); const epoch = ++generation.current;
     setBusy("load"); setError(""); setSaveConflict(false); setDraftStored(true); setState(null); setArtifact(emptyArtifact()); setMissing([]);
     if (!refreshOnly) setComparisonQuestion(taskContext?.question || '');
-    fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&workbookId=${encodeURIComponent(readId)}&selection=${taskContext ? "1" : "0"}&canonicalIds=${encodeURIComponent(taskContext?.papers.map(p=>p.canonicalId).join(",") || "")}&focus=${encodeURIComponent(taskContext?.question || "")}`, { signal: abort.signal })
+    fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&workbookId=${encodeURIComponent(readId)}&selection=${taskContext ? "1" : "0"}&canonicalIds=${encodeURIComponent(taskContext?.papers.map(p=>p.canonicalId).join(",") || "")}&focus=${encodeURIComponent(taskContext?.question || "")}`, { signal: AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]) })
       .then(async r => { const data = await r.json() as WorkbookResponse; if (!r.ok) throw new Error(data.error || "Unable to load workbook"); return data; })
       .then(data => { if (generation.current !== epoch) return; setState(data.workbook); setComparisonQuestion(data.workbook.id ? data.workbook.focusQuestion || '' : taskContext?.question || ''); setVersions(data.versions); setArtifact(data.workbook.artifact?.value || emptyArtifact()); if (data.workbook.id) onWorkbookChange?.(data.workbook.id); const input=readComparisonInput(comparisonInputKey(userId,spaceId,trackId,data.workbook.id||initialWorkbookId),spaceId); if(input){const selection=graphSelection(data.workbook.candidates,input.papers.map(p=>p.canonicalId));setSelected(selection.selected);setMissing(selection.missing);if(!data.workbook.id)setComparisonQuestion(input.question);} else if (taskContext?.papers.length && !data.workbook.id) { const selection = graphSelection(data.workbook.candidates, taskContext.papers.map(p=>p.canonicalId)); setSelected(selection.selected); setMissing(selection.missing); } else setSelected(data.workbook.sources.length ? data.workbook.sources.map((s: WorkbookSource) => s.id) : data.workbook.candidates.filter((s: WorkbookSource) => s.routeMember).slice(0, 3).map((s: WorkbookSource) => s.id)); })
       .catch(e => { if (!abort.signal.aborted && generation.current === epoch) setError(e.message); })
       .finally(() => { if (generation.current === epoch) setBusy(""); });
     return () => { abort.abort(); generation.current = epoch + 1; };
-  }, [spaceId, trackId, taskContext, initialWorkbookId, refreshKey]);
+  }, [spaceId, trackId, taskContext, initialWorkbookId, refreshKey, loadRetry]);
 
   useEffect(() => {
     setNow(Date.now());
@@ -187,37 +189,47 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const artifactRecovery = !dirty && <DraftRecovery key={draftKey} storageKey={draftKey} current={JSON.stringify(artifact)} base={JSON.stringify(state?.artifact?.value || emptyArtifact())} locale={locale} onRestore={value => { try { const restored = JSON.parse(value); if (typeof restored.decision === "string" && typeof restored.unresolved === "string" && restored.observations && typeof restored.observations === "object") setArtifact(restored); } catch { setError(zh ? "草稿无法读取，已保存内容不受影响。" : "Draft unavailable; saved content is unchanged."); } }} />;
   const jumpToRecord=()=>{const element=document.querySelector<HTMLElement>(pendingDraft?'.pi-workbook-artifact .pi-draft-recovery button':'.pi-workbook-artifact textarea');element?.scrollIntoView({block:'center',behavior:'auto'});element?.focus({preventScroll:true});};
 
+  const progress=workbookPresentation(state,busy,error,zh);
+  const refreshProgress=()=>{if(dirty||state&&questionDirty)return;if(state?.id)void openVersion(state.id);else setLoadRetry(n=>n+1);};
+
   return <main className="pi-workbook pi-comparison-workspace">
     <button type="button" className="v2-back" onClick={onBack}>← {zh ? "返回原任务" : "Return to original task"}</button>
     <header className="pi-workbook-heading"><p>{zh ? "研究工作台" : "RESEARCH WORKSPACE"}</p><h1>{zh ? "论文比较" : "Paper comparison"}</h1><p>{zh ? "对齐研究条件，核对每条结论的依据。" : "Align the conditions and check the evidence behind each conclusion."}</p></header>
     {content && <section className="pi-comparison-question"><small>{zh ? "本次研究问题" : "RESEARCH QUESTION"}</small><p><MathText>{text(content,"question")}</MathText></p></section>}
-    {error && <p role="alert" tabIndex={-1} className="pi-workbook-error">{error}</p>}
-    {(busy || notice) && <p role="status">{busy ? busy === "verify" ? (zh ? "正在独立核对每个比较项和学习任务…" : "Independently checking every comparison and learning field…") : busy === "draft" ? (zh ? "正在从选定摘要提取比较维度和具体任务…" : "Extracting comparison dimensions and concrete tasks from the selected abstracts…") : (zh ? "正在读取或保存…" : "Loading or saving…") : notice}</p>}
-    {state?.stale && <p className="pi-workbook-error">{zh ? "这是旧证据版本。来源或研究问题已变化，旧内容仅供回顾；请用当前材料重新准备。" : "Evidence or the research question changed. This version is historical; prepare a new comparison with current sources."}</p>}
+    <section className="pi-workbook-progress" aria-label={zh?"比较进度与恢复":"Comparison progress and recovery"}>
+      <ol aria-label={zh?"比较步骤":"Comparison steps"}>{([['sources','选材','Sources'],['draft','生成','Draft'],['review','核对','Review'],['record','记录判断','Judgment']] as const).map(([phase,zhLabel,enLabel])=><li key={phase} aria-current={progress.phase===phase?'step':undefined}>{zh?zhLabel:enLabel}</li>)}</ol>
+      <strong role="status">{progress.title}</strong>
+      <details className="pi-progress-explanation" open={state?.status!=='ready'||Boolean(error)||busy==='save'}><summary>{zh?'保留内容与下一步':'Preserved content and next steps'}</summary>
+      <p><b>{zh?'已保留：':'Preserved: '}</b>{progress.retained}</p>
+      {progress.failure&&<p role="alert">{progress.failure}</p>}
+      <p><b>{zh?'下一步：':'Next: '}</b>{progress.next}</p>
+      {Boolean(state?.reviewProgress?.total)&&<p>{zh?'已核对比较项：':'Reviewed fields: '}{state!.reviewProgress!.completed} / {state!.reviewProgress!.total}</p>}
+      </details>
+      {error&&<div role="alert"><p>{saveConflict?(zh?'保存版本有变化，本地输入已保留。请核对最新保存内容后恢复草稿。':'The saved version changed. Local input is retained; check the latest saved content before restoring your draft.'):(zh?'本次操作未完成，输入仍保留在当前页。':'The action did not complete; input is retained on this page.')}</p><details><summary>{zh?'查看错误详情':'Error details'}</summary><p>{error}</p></details></div>}
+      {state?.failure?.detail&&<details><summary>{zh?'查看连接或格式详情':'Connection or format details'}</summary><p>{workbookResponseDetailText(state.failure.detail,zh)}</p></details>}
+      {!busy&&(error||state&&['draft','verifying','retryable'].includes(state.status))&&<div className="pi-workbook-recovery-actions">
+        {state?.id&&!error&&<button type="button" disabled={state.stale||dirty||questionDirty||state.retryAt>now||(state.busyUntil||0)>now} onClick={()=>void prepare(true)}>{state.revisionFlow?.next==='repair'?(zh?'修订并重新核对':'Correct and review again'):state.stage==='draft'?(zh?'继续生成':'Continue generation'):(zh?'继续核对':'Continue review')}</button>}
+        <button type="button" disabled={dirty||Boolean(state&&questionDirty)} onClick={refreshProgress}>{zh?'刷新进度':'Refresh progress'}</button>
+        {Boolean(state?.busyUntil&&state.busyUntil>now)&&<small>{zh?'已有请求正在处理，请刷新进度确认结果。':'A request is in progress. Refresh to check its result.'}</small>}
+        {Boolean(state?.retryAt&&state.retryAt>now)&&<small>{zh?'可继续时间：':'Continue after: '}{new Date(state!.retryAt).toLocaleTimeString(zh?'zh-CN':'en-US')}</small>}
+        {(dirty||state&&questionDirty)&&<small>{zh?'请先保存或保留当前草稿，再刷新比较。':'Save or retain the current draft before refreshing the comparison.'}</small>}
+      </div>}
+      {state?.revisionFlow&&<details><summary>{zh?'修订与保留记录':'Correction and preservation record'}</summary><p>{zh?'反馈修订：':'Feedback corrections: '}{state.revisionFlow.repairs} / {state.revisionFlow.limit}{state.revisionFlow.revisedFields!==undefined?(zh?` · 仅修改 ${state.revisionFlow.revisedFields} 个未通过字段，保留 ${state.revisionFlow.preservedFields} 个字段；全部重新核对。`:` · Changed only ${state.revisionFlow.revisedFields} failed fields; preserved ${state.revisionFlow.preservedFields} fields. All fields are reviewed again.`):''}</p></details>}
+    </section>
+    {notice&&<p role="status">{notice}</p>}
     {taskContext && <details className="pi-graph-handoff" open={missing.length>0}><summary>{zh ? "来源任务与初始选材" : "Original task and starting papers"}</summary><p>{taskContext.question}</p><ul>{taskContext.papers.map(p=><li key={p.canonicalId}>{p.title}{missing.includes(p.canonicalId.toLowerCase()) ? (zh ? " · 尚未通过摘要评审，未用于正式比较" : " · not yet eligible for reviewed comparison") : ""}</li>)}</ul>{missing.length>0&&<p>{zh ? "保留了你的选择，不会换成其他论文。可以返回原任务查看原文或完成材料评审后重试。" : "Your selection is preserved; other papers will not be substituted. Return to the task to inspect originals or retry after review."}</p>}</details>}
     <details className="pi-workbook-picker" open={!content}>
       <summary>{zh ? "调整比较材料" : "Change comparison sources"}</summary>
       <p>{zh ? "选择 2–3 篇已审核论文。原始成果与补充阅读的身份不会因此改变。" : "Select 2–3 reviewed papers. This does not change their original or supplementary evidence roles."}</p>
-      <label className="pi-workbook-question">{zh ? '本次比较问题' : 'Question for this comparison'}<textarea rows={3} maxLength={1000} disabled={Boolean(busy)} value={comparisonQuestion} onChange={event => editQuestion(event.target.value)} /><small>{zh ? '收窄到所选摘要能支持的对象、条件和结果。留空则沿用路线问题；改写后点击“准备有据的比较与任务”会新建版本，旧记录保留。' : 'Focus on objects, conditions and results supported by the selected abstracts. Leave empty to use the route question. Prepare again to create a new version; previous records are preserved.'}</small></label>
+      <label className="pi-workbook-question">{zh ? '本次比较问题' : 'Question for this comparison'}<textarea aria-label={zh?'本次比较问题':'Question for this comparison'} rows={3} maxLength={1000} disabled={Boolean(busy)} value={comparisonQuestion} onChange={event => editQuestion(event.target.value)} /><small>{zh ? '收窄到所选摘要能支持的对象、条件和结果。留空则沿用路线问题；改写后点击“准备有据的比较与任务”会新建版本，旧记录保留。' : 'Focus on objects, conditions and results supported by the selected abstracts. Leave empty to use the route question. Prepare again to create a new version; previous records are preserved.'}</small></label>
       <DraftRecovery key={questionDraftKey} storageKey={questionDraftKey} current={comparisonQuestion} base={state?.focusQuestion || ''} locale={locale} onRestore={editQuestion} />
       <div>{state?.candidates.map(s => <label key={s.id} aria-label={s.title}><input type="checkbox" checked={selected.includes(s.id)} disabled={Boolean(busy) || (!selected.includes(s.id) && selected.length >= 3)} onChange={() => editSelection(selected.includes(s.id) ? selected.filter(id => id !== s.id) : [...selected, s.id])} /><span><MathText inline>{s.title}</MathText><small>{s.routeMember ? zh ? "当前路线材料" : "Current route material" : zh ? "本空间候选材料，需判断适配性" : "Workspace candidate; check its fit"}</small></span></label>)}</div>
       <label className="pi-workbook-repair-option"><input type="checkbox" checked={allowRepair} disabled={Boolean(busy)} onChange={e => setAllowRepair(e.target.checked)} /><span>{zh ? '允许根据评审反馈修订一次' : 'Allow one correction using review feedback'}<small>{zh ? '试用：会增加模型调用。材料不足时停止；修订后全部重新核对。' : 'Pilot: adds model calls. Stops for missing evidence; all corrected content is reviewed again.'}</small></span></label>
       {state && state.candidates.length < 2 && <p>{zh ? "当前不足两篇已审核且有摘要的材料。已有发现流程继续补证；这里不会用未审核论文凑数。" : "Fewer than two reviewed papers have abstracts. Existing discovery continues; unreviewed papers cannot fill the comparison."}</p>}
       <button type="button" disabled={Boolean(busy) || dirty || selected.length < 2 || missing.length > 0} onClick={() => void prepare(false)}>{zh ? "准备有据的比较与任务" : "Prepare comparison and tasks"}</button>
       {questionDirty && <small>{zh ? '本次比较问题尚未提交，请准备新版本后再切换历史。' : 'This comparison question is unsubmitted. Prepare a new version before switching history.'}</small>}
-      {versions.length > 1 && <label>{zh ? "历史版本" : "History"}<select value={state?.id || ""} disabled={Boolean(busy) || dirty || questionDirty} onChange={e => void openVersion(e.target.value)}>{versions.map((v, i) => <option key={v.id} value={v.id}>{versions.length - i} · {v.created_at} · {v.status}</option>)}</select></label>}
+      {versions.length > 1 && <label>{zh ? "历史版本" : "History"}<select value={state?.id || ""} disabled={Boolean(busy) || dirty || questionDirty} onChange={e => void openVersion(e.target.value)}>{versions.map((v, i) => <option key={v.id} value={v.id}>{versions.length - i} · {v.created_at} · {workbookStatusLabel(v.status,zh)}</option>)}</select></label>}
     </details>
-    {state && ["draft", "verifying", "retryable"].includes(state.status) && !busy && <div role="status">
-      <p>{state.failure ? workbookFailureText(state.failure.code, zh) : zh ? "内容尚未完成，已保存的部分可继续处理。" : "Content is unfinished; saved progress can be continued."}</p>
-      {state.failure?.code === 'invalid_response' && state.failure.detail && <p>{workbookResponseDetailText(state.failure.detail, zh)}</p>}
-      <p>{state.revisionFlow?.next === 'repair' ? (zh ? '评审反馈已保存，下一步按反馈修订一次，再全部重新核对。' : 'Review feedback is saved. Next: one correction, followed by a full independent review.') : state.stage === 'review' ? (zh ? "比较草稿已保存，继续时只进行独立核对。" : "The draft is saved. Continuing resumes independent review only.") : (zh ? "尚未保存完整草稿，继续时会重新生成当前步骤。" : "A complete draft is not saved yet. Continuing regenerates this step.")}</p>
-      {Boolean(state.reviewProgress?.total) && <p>{zh ? "已核对比较项：" : "Reviewed fields: "}{state.reviewProgress!.completed} / {state.reviewProgress!.total}</p>}
-      <button type="button" disabled={state.stale || dirty || state.retryAt > now || (state.busyUntil || 0) > now} onClick={() => void prepare(true)}>{state.revisionFlow?.next === 'repair' ? (zh ? '修订并重新核对' : 'Correct and review again') : state.stage === 'draft' ? (zh ? "继续生成" : "Continue generation") : (zh ? "继续核对" : "Continue review")}</button>
-      <button type="button" disabled={dirty} onClick={() => void openVersion(state.id!)}>{zh ? "刷新进度" : "Refresh progress"}</button>
-      {(state.busyUntil || 0) > now && <small>{zh ? "已有请求正在处理，可以刷新进度；超时后可继续。" : "A request is in progress. Refresh its progress; continue if it expires."}</small>}
-      {state.retryAt > now && <small>{zh ? "稍后重试：" : "Retry after: "}{new Date(state.retryAt).toLocaleTimeString()}</small>}
-    </div>}
-    {state?.revisionFlow && <p role="status">{zh ? '反馈修订：' : 'Feedback corrections: '}{state.revisionFlow.repairs} / {state.revisionFlow.limit}{state.revisionFlow.revisedFields !== undefined ? (zh ? ` · 仅修改 ${state.revisionFlow.revisedFields} 个未通过字段，保留 ${state.revisionFlow.preservedFields} 个字段；全部重新核对。` : ` · Changed only ${state.revisionFlow.revisedFields} failed fields; preserved ${state.revisionFlow.preservedFields} fields. All fields are reviewed again.`) : ''}{state.status === 'rejected' ? (zh ? ' · 本次流程已停止，请按下方原因补充材料或调整问题。' : ' · This run has stopped. Use the reasons below to revise the question or sources.') : ''}</p>}
     {state?.status === "rejected" && <section className="pi-workbook-review-issues"><h2>{zh ? '比较未通过的原因' : 'Why the comparison did not pass'}</h2><p>{zh ? "请按具体原因核查材料。未通过的内容尚未发布为研究结论。" : "Check the sources against these specific reasons. Rejected content has not been published as a research finding."}</p>
       {!!state.reviewIssues?.length && <ul>{state.reviewIssues.map(issue => <li key={issue.id}><strong>{reviewIssueLabel(issue.id, zh)}</strong><p><MathText>{issue.reason}</MathText></p>{issue.issueType === 'evidence_gap' && <small>{zh ? '需要补充证据，自动修订已停止。' : 'Additional evidence is needed; automatic correction has stopped.'}</small>}<div>{issue.paperIds.map(id => { const paper = state.sources.find(s => s.id === id); return paper && <button type="button" key={id} onClick={() => onOpenPaper(paper, issue.reason)}>{zh ? '核查材料：' : 'Inspect source: '}{paper.title}</button>; })}</div></li>)}</ul>}
       {!state.revisionFlow && <button type="button" disabled={Boolean(busy) || state.stale || dirty} onClick={() => void prepare(false, true)}>{zh ? '试用按反馈修订一次' : 'Try one feedback correction'}</button>}

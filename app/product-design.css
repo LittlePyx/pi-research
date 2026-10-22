@@ -309,6 +309,33 @@
 .v2-app.pi-workspace.pi-product :is(.v2-route-status-details,.pi-processing-details,.pi-research-maintenance) { margin-top: 24px; padding-top: 16px; border-top: 1px solid #eceef1; color: #6e7783; }
 
 /* Comparison is a work surface, with evidence alongside it on larger screens. */
+.v2-app.pi-workspace.pi-product .pi-library-comparison { padding: 20px; margin: 0 0 24px; border: 1px solid var(--ui-border); border-radius: 12px; background: #f8f9fb; }
+.v2-app.pi-workspace.pi-product .pi-library-comparison p { color: var(--ui-secondary); font: 400 13px/1.7 var(--ui-font); margin: 6px 0 14px; }
+.v2-app.pi-workspace.pi-product .pi-library-comparison label { display: block; font: 500 13px/1.6 var(--ui-font); margin-top: 12px; }
+.v2-app.pi-workspace.pi-product .pi-library-comparison :is(select,textarea) { display: block; width: 100%; max-width: 760px; padding: 10px 12px; margin-top: 6px; min-height: 44px; border: 1px solid #d7dde5; border-radius: 8px; background: #fff; color: var(--ui-text); font: 400 14px/1.7 var(--ui-font); }
+.v2-app.pi-workspace.pi-product .pi-library-comparison textarea { min-height: 84px; resize: vertical; }
+.v2-app.pi-workspace.pi-product .pi-library-comparison > details > summary { cursor: pointer; font: 600 14px/1.7 var(--ui-font); }
+.v2-app.pi-workspace.pi-product .pi-library-comparison > details[open] > summary { margin-bottom: 14px; }
+.v2-app.pi-workspace.pi-product .pi-library-workspace .v2-library-paper:has(.pi-library-compare-choice) { grid-template-areas: "choice choice" "paper actions" "context context"; }
+.v2-app.pi-workspace.pi-product .pi-library-workspace .v2-library-paper:has(.pi-library-compare-choice) > .v2-library-paper-main { grid-area: paper; }
+.v2-app.pi-workspace.pi-product .pi-library-workspace .v2-library-paper:has(.pi-library-compare-choice) > .pi-library-row-actions { grid-area: actions; }
+.v2-app.pi-workspace.pi-product .pi-library-workspace .v2-library-paper:has(.pi-library-compare-choice) > .pi-library-context { grid-area: context; }
+.v2-app.pi-workspace.pi-product .pi-library-compare-choice { grid-area: choice; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 0; }
+.v2-app.pi-workspace.pi-product .pi-library-compare-choice label { display: flex; align-items: center; gap: 8px; min-height: 44px; font: 500 13px/1.6 var(--ui-font); }
+.v2-app.pi-workspace.pi-product .pi-library-compare-choice input { width: 18px; height: 18px; accent-color: #30343b; }
+.v2-app.pi-workspace.pi-product .pi-library-compare-choice small { font: 400 12px/1.6 var(--ui-font); color: var(--ui-secondary); }
+.v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar) .v2-library-page { padding-bottom: 260px; }
+.v2-app.pi-workspace.pi-product .pi-workbook-progress { padding: 18px 20px; border: 1px solid var(--ui-border); border-radius: 10px; background: #f8f9fb; margin: 24px 0; }
+.v2-app.pi-workspace.pi-product .pi-workbook-progress ol { list-style: none; display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 0; margin: 0 0 14px; }
+.v2-app.pi-workspace.pi-product .pi-workbook-progress li { font-size: 12px; color: #747e8c; padding: 0; }
+.v2-app.pi-workspace.pi-product .pi-workbook-progress li[aria-current] { color: #253e63; font-weight: 600; }
+.v2-app.pi-workspace.pi-product .pi-workbook-progress p { font: 400 13px/1.8 var(--ui-font); margin: 8px 0; }
+.v2-app.pi-workspace.pi-product .pi-workbook-progress summary { cursor: pointer; font-size: 12px; color: #5d6a7e; margin-top: 10px; }
+.v2-app.pi-workspace.pi-product .pi-workbook-recovery-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.v2-app.pi-workspace.pi-product .pi-workbook-recovery-actions button { min-height: 44px; }
+@media (max-width: 760px) {
+  .v2-app.pi-workspace.pi-product .pi-library-workspace .v2-library-paper:has(.pi-library-compare-choice) { grid-template-columns: minmax(0,1fr); grid-template-areas: "choice" "paper" "context" "actions"; }
+}
 .v2-app.pi-workspace.pi-product .pi-paper-workspace .pi-reading-brief { padding: 16px 0; border-block: 1px solid #e7eaee; margin-bottom: 20px; }
 .v2-app.pi-workspace.pi-product .pi-paper-workspace .pi-reading-brief h2 { font: 600 14px/1.5 var(--ui-font); margin: 0 0 8px; }
 .v2-app.pi-workspace.pi-product .pi-paper-workspace :is(.pi-reading-value,.pi-reading-focus) { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 8px 0; font: 400 14px/1.8 var(--ui-font); color: var(--ui-text); }

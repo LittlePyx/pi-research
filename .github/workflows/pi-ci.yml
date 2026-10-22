@@ -43,5 +43,9 @@ jobs:
         run: npm test
       - name: Check offline discovery benchmark
         run: npm run test:discovery
+      - name: Install browser for isolated regression
+        run: npx playwright install --with-deps chromium --only-shell
+      - name: Browser acceptance against the built Worker and isolated D1
+        run: npm run test:browser
       # Public-provider probes and production health belong to separate runs.
       # This workflow needs no model key, scheduler secret or deployment access.

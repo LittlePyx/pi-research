@@ -11,6 +11,7 @@
     "start": "vinext start",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "test:browser": "playwright test",
     "test:live": "node scripts/verify-live-sources.mjs",
     "test:discovery": "node scripts/run-discovery-benchmark.mjs",
     "test:discovery:live": "node scripts/run-discovery-benchmark.mjs --live",
@@ -33,6 +34,7 @@
     "remark-math": "6.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.58.2",
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "^4.20260702.1",
     "@eslint/js": "9.39.4",

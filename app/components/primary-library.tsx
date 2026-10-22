@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { archiveQualityStagePresentation, isRecommendationQualityStage } from "../../lib/discovery-archive-semantics.mjs";
 import { LibraryExport } from "./library-export";
 import { MathText } from "./math-text";
+import type {RouteSelection} from './use-route-selection';
+import {comparisonEligibilityText,type ComparisonEligibility} from '../../lib/comparison-eligibility';
 
 type Locale = "zh" | "en";
 type LibraryFilter = "inbox" | "accepted" | "all" | "dismissed";
@@ -13,6 +15,8 @@ type ReadingStatus = "unread" | "queued" | "reading" | "read" | "mastered" | "ci
 
 type LibraryPaper = {
   id: string;
+  canonicalId?: string;
+  comparisonEligibility?: ComparisonEligibility;
   title: string;
   authors: string;
   venue: string;
@@ -40,6 +44,9 @@ type LibraryPageState = {
 
 type PrimaryLibraryProps<Paper extends LibraryPaper> = {
   visible: boolean;
+  comparisonSelection?: RouteSelection;
+  comparisonControls?: ReactNode;
+  comparisonTrackId?: string;
   demo: boolean;
   locale: Locale;
   spaceId: string;
@@ -117,6 +124,7 @@ export function PrimaryLibrary<Paper extends LibraryPaper>(props: PrimaryLibrary
   return <main hidden={!props.visible} className="v2-page v2-library-page pi-library-workspace">
     {props.monitorReadNotice}
     <section className="v2-page-head"><div><p className="v2-kicker">{props.spaceName}</p><h1>{locale === "zh" ? "论文库" : "Library"}</h1><p className="pi-page-purpose">{locale === "zh" ? "查找已发现的论文，查看评审结果，安排阅读并留下笔记。" : "Find discovered papers, inspect reviews, plan reading and keep notes."}</p></div><LibraryExport spaceId={props.spaceId} locale={locale}/></section>
+    {props.comparisonControls}
     <div className="v2-library-tabs">
       <button className={props.filter === "inbox" ? "active" : ""} aria-pressed={props.filter === "inbox"} type="button" onClick={() => props.onFilter("inbox")}>{labels.inbox}<span>{props.counts?.inbox ?? "—"}</span></button>
       <button className={props.filter === "accepted" ? "active" : ""} aria-pressed={props.filter === "accepted"} type="button" onClick={() => props.onFilter("accepted")}>{labels.accepted}<span>{props.counts?.accepted ?? "—"}</span></button>
@@ -133,6 +141,7 @@ export function PrimaryLibrary<Paper extends LibraryPaper>(props: PrimaryLibrary
     {!props.demo && page.error && <p role="alert">{locale === "zh" ? "全库查询暂未成功，已显示的内容保留。" : "Library search failed; displayed results are preserved."}<button type="button" onClick={page.retry}>{locale === "zh" ? "重试" : "Retry"}</button></p>}
     <div className="v2-library-list">
       {props.papers.map((paper) => <article className={`v2-library-paper ${paper.userState}`} key={paper.id}>
+        {props.comparisonSelection&&<div className="pi-library-compare-choice"><label><input type="checkbox" aria-label={`${locale==='zh'?'选择比较':'Select for comparison'} ${paper.title}`} checked={props.comparisonSelection.value.papers.some(p=>p.canonicalId.toLowerCase()===paper.canonicalId?.toLowerCase())} disabled={!props.comparisonSelection.value.papers.some(p=>p.canonicalId.toLowerCase()===paper.canonicalId?.toLowerCase())&&(!props.comparisonTrackId||!paper.canonicalId||paper.comparisonEligibility!=='eligible'||props.comparisonSelection.value.papers.length>=3)} onChange={()=>{if(paper.canonicalId)props.comparisonSelection?.toggle({canonicalId:paper.canonicalId,title:paper.title});}} />{locale==='zh'?'加入比较':'Select to compare'}</label><small>{!props.comparisonTrackId?(locale==='zh'?'先选择比较所属路线':'Choose a comparison route first'):comparisonEligibilityText(paper.comparisonEligibility,locale==='zh')}</small></div>}
         <button className="v2-library-paper-main" type="button" onClick={() => props.onOpen(paper)}><h2><MathText inline>{paper.title}</MathText></h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p><div className="v2-library-paper-flags"><span className={`v2-history-state ${paper.userState}`}>{paper.userState === "unseen" ? labels.unseen : paper.userState === "accepted" ? labels.accepted : paper.userState === "dismissed" ? labels.ignored : paper.userState === "snoozed" ? labels.snoozed : labels.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(paper, locale) : archiveQualityStagePresentation(paper.qualityStage, locale).label}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span></div><footer><b>{labels.viewAnalysis} →</b></footer></button>
         <div className="pi-library-row-actions"><button type="button" onClick={() => props.onExploreGraph(paper)}>{locale === "zh" ? "在图谱中探索" : "Explore in graph"}</button><details className="v2-library-paper-actions"><summary>{locale === "zh" ? "管理" : "Manage"} ＋</summary><div><select disabled={props.readingSaving} value={paper.readingStatus || "unread"} onChange={(event) => props.onReadingStatus(paper, event.target.value as ReadingStatus)} aria-label={locale === "zh" ? "阅读状态" : "Reading status"}>{(["unread", "queued", "reading", "read", "mastered", "cited"] as ReadingStatus[]).map((status) => <option value={status} key={status}>{readingStatusLabel(status, locale)}</option>)}</select>{!["accepted", "dismissed"].includes(paper.userState) ? <><button type="button" onClick={() => props.onRelevant(paper)}>✓ {labels.relevant}</button><button type="button" onClick={() => props.onLater(paper)}>◷ {labels.readLater}</button><button type="button" onClick={() => props.onNotRelevant(paper)}>× {labels.notRelevant}</button></> : <button type="button" onClick={() => props.onReturnInbox(paper)}>↶ {labels.returnPending}</button>}<button type="button" onClick={() => props.onShare(paper)} disabled={props.sharingSnapshot}>↗ {labels.sharePaper}</button></div></details></div>
         <details className="pi-library-context"><summary>{locale === "zh" ? "推荐理由与来源" : "Rationale & sources"}</summary><p className="v2-library-paper-why"><b>{isRecommendationQualityStage(paper.qualityStage) ? labels.whySuitable : locale === "zh" ? "归档说明" : "Archive note"}</b>{isRecommendationQualityStage(paper.qualityStage) ? ((locale === "zh" ? paper.whyReadZh : paper.whyReadEn) || (locale === "zh" ? "正在共享质量队列中核对，尚未形成正式推荐。" : "This candidate is still being checked in the shared quality queue and is not yet a formal recommendation.")) : archiveQualityStagePresentation(paper.qualityStage, locale).note}</p><PaperDiscoverySourceBadge paper={paper} locale={locale} /></details>

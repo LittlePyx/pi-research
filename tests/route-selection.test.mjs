@@ -27,3 +27,10 @@ test('selection storage failures keep live choices and enforce a maximum of thre
  for(let n=0;n<4;n++){selection=render();selection.toggle({canonicalId:'doi:'+n,title:'Paper '+n});}
  selection=render();assert.equal(selection.value.papers.length,3);assert.equal(selection.storageError,true);
 });
+test('library seeding fills a new question once and preserves an explicitly cleared question across refresh',()=>{
+ const before=globalThis.sessionStorage,values=new Map();globalThis.sessionStorage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+ try{
+  const render=harness();let selection=render();selection.seedQuestion('Default route question',true);selection=render();assert.equal(selection.value.question,'Default route question');
+  selection.change({...selection.value,question:''});selection=harness()();selection.seedQuestion('Default route question',true);assert.equal(harness()().value.question,'');
+ }finally{if(before===undefined)delete globalThis.sessionStorage;else globalThis.sessionStorage=before;}
+});

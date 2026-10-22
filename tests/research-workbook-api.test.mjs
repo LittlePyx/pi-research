@@ -212,6 +212,25 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       cookie='pi_anonymous_workspace=workbook-other-owner-0000001';await request(eligibility,null,404);cookie='pi_anonymous_workspace=workbook-fixture-owner-00001';
       assert.equal(calls,before);assert.equal((await sql([{sql:'SELECT COUNT(*) n FROM paper_reading_progress'}]))[0].results[0].n,0);
     });
+    await t.test('library route choices enforce ownership and exact papers survive the candidate limit and saved reads',async()=>{
+      const before=calls;
+      const choices=await request('/api/research-workbook?spaceId=math&routes=1');
+      assert.equal(choices.spaceId,'math');assert.ok(choices.routes.some(r=>r.id==='kls'));assert.ok(choices.routes.every(r=>typeof r.question==='string'));
+      cookie='pi_anonymous_workspace=workbook-other-owner-0000001';await request('/api/research-workbook?spaceId=math&routes=1',null,404);cookie='pi_anonymous_workspace=workbook-fixture-owner-00001';
+      await sql([{sql:`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<2000)
+        INSERT INTO monitored_papers(id,space_id,canonical_id,title,authors,url,horizon)
+        SELECT printf('a-cap-%04d',i),'math',printf('fixture:cap-%04d',i),'Candidate limit fixture','Regression','https://example.test','years' FROM n`},
+        {sql:`INSERT INTO paper_insights(paper_id,space_id,ever_recommended,verification_status,abstract_text)
+        SELECT id,'math',1,'verified',? FROM monitored_papers WHERE id LIKE 'a-cap-%'`,values:[workbookSources[0].abstractText]}]);
+      const canonicalIds=encodeURIComponent(workbookSources.map(s=>s.canonicalId).join(','));
+      const eligible=await request(path+'&eligibility=1&canonicalIds='+canonicalIds);assert.ok(eligible.materials.every(m=>m.eligibility==='eligible'));
+      const exact=(await request(path+'&selection=1&canonicalIds='+canonicalIds+'&focus=Only+these+two+papers')).workbook;
+      assert.deepEqual(new Set(exact.candidates.slice(0,2).map(s=>s.id)),new Set(workbookSources.map(s=>s.id)));
+      assert.equal((await request(path+'&workbookId='+encodeURIComponent(state.id))).workbook.stale,false);
+      state=(await post({action:'save-artifact',workbookId:state.id,sourceRevision:state.revision,baseRevision:state.artifact.revision,value:state.artifact.value})).workbook;
+      assert.equal(state.stale,false);assert.equal(calls,before,'library selection and saved-result access must not generate model calls');
+      await sql([{sql:"DELETE FROM paper_insights WHERE paper_id LIKE 'a-cap-%'"},{sql:"DELETE FROM monitored_papers WHERE id LIKE 'a-cap-%'"}]);
+    });
     await t.test('practice results persist independently, reject stale writes and leave reading and learning-path progress unchanged',async()=>{
       const beforeCalls=calls,original=structuredClone(state.artifact.value),baseRevision=state.artifact.revision;
       const practice={activeId:'task-0',entries:{learning:{result:'Compared the assumptions and recorded the cited evidence.',unresolved:'Check definitions in the full papers.',completed:true}}};

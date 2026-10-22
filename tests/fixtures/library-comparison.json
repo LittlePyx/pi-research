@@ -1,0 +1,174 @@
+{
+  "description": "Offline browser regression replay of two public paper abstracts and a previously reviewed comparison; synthetic audit replies test transport and UI only, not research quality. No production user records or credentials.",
+  "sources": [
+    {
+      "id": "4c0fc56a-c684-4209-808e-b8f83c7d910c",
+      "canonicalId": "title:f7a8bdf71e01a848ed7a58425a29a618a638e6a5beacf3d5030a0c28dcdb661a",
+      "title": "Finite-blocklength classical communication over the quantum erasure channel with and without classical feedback",
+      "authors": "Wilde, Mark M.",
+      "url": "https://arxiv.org/abs/2610.00440",
+      "abstractText": "We determine the optimal success probability for transmitting a fixed number of classical messages through a finite number of uses of the quantum erasure channel, assisted by noiseless classical feedback and without initial shared entanglement. For an input dimension $d$, an erasure probability $p$, a blocklength $n$, and $M$ equiprobable messages, the optimal success probability is equal to $E[\\min\\{1,d^K/M\\}]$, where $K$ is binomial with parameters $n$ and $1-p$. The converse allows arbitrary adaptive quantum encoders, quantum memories, and receiver instruments. Its main ingredient is an elementary dimension bound for noiseless quantum communication with classical feedback, proved by fixing the classical controls without conditioning the sender's state on the observed transcript. A classical protocol that transmits the base-$d$ digits of an integer representing the message, repeating each digit until the receiver acknowledges its reception or the prescribed blocklength is reached, attains the bound for every integer $M$. We also establish a relative-majorization property of erasure-channel outputs and exactly evaluate a hypothesis-testing converse, recovering the same numerical bound without feedback. That converse need not be achievable without feedback: four uses of the qubit erasure channel and four messages give a strict gap. A product-state code employing tetrahedral qubit states nevertheless outperforms every classical binary erasure code with these parameters. We give an explicit message-size formula and show that the bounded-remainder normal approximation and the average-success strong-converse exponent are unchanged without feedback. We also determine the feedback-assisted error exponent below capacity, prove that it agrees with the no-feedback exponent above a critical rate, and give no-feedback bounds at lower rates.",
+      "readingFocusZh": "聚焦维度界证明中固定经典控制这一步的合法性及其推广空间；核对最优成功概率表达式如何随输入维数、擦除概率与消息数变化；分析有/无反馈严格间隙的构造与条件，判断它对有限码长逆定理强度的影响；留意假设检验逆定理与随机编码/成功概率视角的衔接方式。",
+      "readingFocusEn": "Focus on the legitimacy and generality of fixing classical controls in the dimension-bound proof; trace how the optimal success probability varies with input dimension, erasure probability, and message count; analyze the strict feedback-gap construction and its implications for converse strength; note how the hypothesis-testing converse connects to random-coding and success-probability views.",
+      "routeMember": true
+    },
+    {
+      "id": "e0ec011e-2bad-42c5-9097-9e151c4444d0",
+      "canonicalId": "title:4366c838cf2a7958ad1262b6b22fcb800fa1a0a66d50ee275a4346f72bcd4359",
+      "title": "Universality Sacrifices Reliability in Classical-Quantum Channel Coding",
+      "authors": "Watanabe, Kaito, Hayashi, Masahito, Matsuura, Takaya, Cheng, Hao-Chung",
+      "url": "https://arxiv.org/abs/2610.01941",
+      "abstractText": "Universal channel coding enables communication without a complete description of the channel. For classical channels, universal codes can attain both capacity and the optimal high-rate reliability. We show that this compatibility fails for classical-quantum channels in general; that is, the optimal reliability in the channel-aware scenario is not always achievable with universal coding due to the ignorance of the unitary rotation of the output system. We exhibit a family of classical-quantum channels for which one cannot achieve the channel-aware optimal reliability by a fixed coding scheme. We further derive a converse bound on the reliability for unitary-invariant decoders, a natural assumption for the universal coding scheme, that can be strictly smaller than the optimal channel-aware error exponent. Conversely, we construct a channel-independent encoder-decoder pair and establish a universally achievable bound on the reliability that matches this converse bound in the high-rate regime, thereby characterizing the optimal universal reliability. Specifically, the channel-aware and universal exponents are governed by the Petz and sandwiched Rényi divergences, respectively. These divergences coincide for commuting outputs but differ for noncommuting ones, explaining why universality preserves optimal reliability classically but can reduce it quantumly. Our results showcase the fundamental reliability cost of performing the classical-quantum channel coding task universally.",
+      "readingFocusZh": "重点理解：输出酉旋转未知如何造成信道感知与通用可靠性的分离；Petz 与 sandwiched Rényi 散度分别出现在哪一端的界中，以及可交换输出下二者重合的机制；高码率区间逆界与可达界吻合的证明组织方式；并判断论文的方法在读者自身关注的擦除类信道问题上是否有参照价值。",
+      "readingFocusEn": "Focus on how ignorance of the output unitary rotation separates channel-aware from universal reliability; which divergence (Petz vs. sandwiched Rényi) enters which bound and why they coincide for commuting outputs; how converse and achievability are matched in the high-rate regime; and whether the paper's approach offers a useful reference for the reader's own interests in erasure-type channels.",
+      "routeMember": false
+    }
+  ],
+  "content": {
+    "questionZh": "仅依据所给两篇论文摘要：比较它们的研究任务、编码器与信道假设、性能指标与明确结论；区分擦除信道加反馈的设定与经典-量子通用编码，不跨设定直接排序界，未给出的条件标为缺失。",
+    "questionEn": "Using only the two supplied abstracts, compare their research tasks, encoder and channel assumptions, performance metrics, and explicitly reported conclusions; distinguish the erasure-channel-with-feedback setting from universal classical-quantum coding, do not directly rank bounds across settings, and mark unstated conditions as missing.",
+    "dimensions": [
+      {
+        "id": "task-object",
+        "labelZh": "研究任务与信道设定",
+        "labelEn": "Research task and channel setting",
+        "purposeZh": "确认两篇论文处理的问题是否属同一类通信任务。",
+        "purposeEn": "Check whether both papers treat the same kind of communication task.",
+        "cells": [
+          {
+            "paperId": "4c0fc56a-c684-4209-808e-b8f83c7d910c",
+            "status": "supported",
+            "textZh": "研究在有限次量子擦除信道使用下、有噪声-free经典反馈且无初始共享纠缠时，传输固定数目经典消息的最优成功概率。",
+            "textEn": "Studies the optimal success probability for transmitting a fixed number of classical messages over finitely many uses of the quantum erasure channel, assisted by noiseless classical feedback and without initial shared entanglement.",
+            "quote": "We determine the optimal success probability for transmitting a fixed number of classical messages through a finite number of uses of the quantum erasure channel, assisted by noiseless classical feedback and without initial shared entanglement.",
+            "quotes": [
+              "We determine the optimal success probability for transmitting a fixed number of classical messages through a finite number of uses of the quantum erasure channel, assisted by noiseless classical feedback and without initial shared entanglement."
+            ]
+          },
+          {
+            "paperId": "e0ec011e-2bad-42c5-9097-9e151c4444d0",
+            "status": "supported",
+            "textZh": "研究经典-量子信道的通用编码，即在不完整描述信道的情况下通信，并考察通用编码能否达到信道已知时的最优可靠性。",
+            "textEn": "Studies universal coding for classical-quantum channels, i.e. communication without a complete description of the channel, and whether universal codes can attain the channel-aware optimal reliability.",
+            "quote": "Universal channel coding enables communication without a complete description of the channel. For classical channels, universal codes can attain both capacity and the optimal high-rate reliability. We show that this compatibility fails for classical-quantum channels in general; that is, the optimal reliability in the channel-aware scenario is not always achievable with universal coding due to the ignorance of the unitary rotation of the output system.",
+            "quotes": [
+              "Universal channel coding enables communication without a complete description of the channel. For classical channels, universal codes can attain both capacity and the optimal high-rate reliability. We show that this compatibility fails for classical-quantum channels in general; that is, the optimal reliability in the channel-aware scenario is not always achievable with universal coding due to the ignorance of the unitary rotation of the output system."
+            ]
+          }
+        ]
+      },
+      {
+        "id": "encoder-converse",
+        "labelZh": "编码器与逆定理假设",
+        "labelEn": "Encoder and converse assumptions",
+        "purposeZh": "比较两篇论文对编码器/解码器施加的假设范围，避免把不同设定下的界混为一谈。",
+        "purposeEn": "Compare the assumed scope of encoders/decoders to avoid conflating bounds from different settings.",
+        "cells": [
+          {
+            "paperId": "4c0fc56a-c684-4209-808e-b8f83c7d910c",
+            "status": "supported",
+            "textZh": "逆定理允许任意自适应量子编码器、量子存储与接收仪器；其关键是无噪声量子通信配经典反馈的维数界，证明方式为固定经典控制而不以观测到的记录为条件。",
+            "textEn": "The converse allows arbitrary adaptive quantum encoders, quantum memories, and receiver instruments; its key ingredient is a dimension bound for noiseless quantum communication with classical feedback, proved by fixing the classical controls without conditioning the sender's state on the observed transcript.",
+            "quote": "We determine the optimal success probability for transmitting a fixed number of classical messages through a finite number of uses of the quantum erasure channel, assisted by noiseless classical feedback and without initial shared entanglement. For an input dimension $d$, an erasure probability $p$, a blocklength $n$, and $M$ equiprobable messages, the optimal success probability is equal to $E[\\min\\{1,d^K/M\\}]$, where $K$ is binomial with parameters $n$ and $1-p$. The converse allows arbitrary adaptive quantum encoders, quantum memories, and receiver instruments.",
+            "quotes": [
+              "We determine the optimal success probability for transmitting a fixed number of classical messages through a finite number of uses of the quantum erasure channel, assisted by noiseless classical feedback and without initial shared entanglement. For an input dimension $d$, an erasure probability $p$, a blocklength $n$, and $M$ equiprobable messages, the optimal success probability is equal to $E[\\min\\{1,d^K/M\\}]$, where $K$ is binomial with parameters $n$ and $1-p$. The converse allows arbitrary adaptive quantum encoders, quantum memories, and receiver instruments.",
+              "For an input dimension $d$, an erasure probability $p$, a blocklength $n$, and $M$ equiprobable messages, the optimal success probability is equal to $E[\\min\\{1,d^K/M\\}]$, where $K$ is binomial with parameters $n$ and $1-p$. The converse allows arbitrary adaptive quantum encoders, quantum memories, and receiver instruments. Its main ingredient is an elementary dimension bound for noiseless quantum communication with classical feedback, proved by fixing the classical controls without conditioning the sender's state on the observed transcript."
+            ]
+          },
+          {
+            "paperId": "e0ec011e-2bad-42c5-9097-9e151c4444d0",
+            "status": "supported",
+            "textZh": "为酉不变解码器（通用编码方案的自然假设）给出可靠性逆界，该界可严格小于信道已知时的最优误差指数；并构造与信道无关的编码器-解码器对，其可达界在高码率区间与该逆界匹配。",
+            "textEn": "Derives a reliability converse bound for unitary-invariant decoders, a natural assumption for universal coding, that can be strictly smaller than the optimal channel-aware error exponent; conversely constructs a channel-independent encoder-decoder pair whose achievable bound matches this converse bound in the high-rate regime.",
+            "quote": "We show that this compatibility fails for classical-quantum channels in general; that is, the optimal reliability in the channel-aware scenario is not always achievable with universal coding due to the ignorance of the unitary rotation of the output system. We exhibit a family of classical-quantum channels for which one cannot achieve the channel-aware optimal reliability by a fixed coding scheme. We further derive a converse bound on the reliability for unitary-invariant decoders, a natural assumption for the universal coding scheme, that can be strictly smaller than the optimal channel-aware error exponent.",
+            "quotes": [
+              "We show that this compatibility fails for classical-quantum channels in general; that is, the optimal reliability in the channel-aware scenario is not always achievable with universal coding due to the ignorance of the unitary rotation of the output system. We exhibit a family of classical-quantum channels for which one cannot achieve the channel-aware optimal reliability by a fixed coding scheme. We further derive a converse bound on the reliability for unitary-invariant decoders, a natural assumption for the universal coding scheme, that can be strictly smaller than the optimal channel-aware error exponent.",
+              "We exhibit a family of classical-quantum channels for which one cannot achieve the channel-aware optimal reliability by a fixed coding scheme. We further derive a converse bound on the reliability for unitary-invariant decoders, a natural assumption for the universal coding scheme, that can be strictly smaller than the optimal channel-aware error exponent. Conversely, we construct a channel-independent encoder-decoder pair and establish a universally achievable bound on the reliability that matches this converse bound in the high-rate regime, thereby characterizing the optimal universal reliability."
+            ]
+          }
+        ]
+      },
+      {
+        "id": "metric-conclusion",
+        "labelZh": "性能指标与明确结论",
+        "labelEn": "Performance metric and reported conclusion",
+        "purposeZh": "记录两篇论文使用的量化指标及其摘要明确给出的结论方向。",
+        "purposeEn": "Record the quantitative metric each paper uses and the direction of its explicitly stated conclusion.",
+        "cells": [
+          {
+            "paperId": "4c0fc56a-c684-4209-808e-b8f83c7d910c",
+            "status": "supported",
+            "textZh": "指标为固定消息数下的最优成功概率等于 E[min{1,d^K/M}]，其中 K 服从参数 n 与 1-p 的二项分布；结论包括一个重复各位直至确认的经典协议达到该界，且四次量子比特擦除信道使用与四条消息时无反馈的逆界存在严格差距。",
+            "textEn": "The metric is the optimal success probability for a fixed number of messages, equal to E[min{1,d^K/M}] with K binomial in n and 1-p; conclusions include a classical protocol repeating digits until acknowledgment attaining the bound, and a strict gap without feedback for four uses of the qubit erasure channel and four messages.",
+            "quote": "We determine the optimal success probability for transmitting a fixed number of classical messages through a finite number of uses of the quantum erasure channel, assisted by noiseless classical feedback and without initial shared entanglement. For an input dimension $d$, an erasure probability $p$, a blocklength $n$, and $M$ equiprobable messages, the optimal success probability is equal to $E[\\min\\{1,d^K/M\\}]$, where $K$ is binomial with parameters $n$ and $1-p$.",
+            "quotes": [
+              "We determine the optimal success probability for transmitting a fixed number of classical messages through a finite number of uses of the quantum erasure channel, assisted by noiseless classical feedback and without initial shared entanglement. For an input dimension $d$, an erasure probability $p$, a blocklength $n$, and $M$ equiprobable messages, the optimal success probability is equal to $E[\\min\\{1,d^K/M\\}]$, where $K$ is binomial with parameters $n$ and $1-p$.",
+              "The converse allows arbitrary adaptive quantum encoders, quantum memories, and receiver instruments. Its main ingredient is an elementary dimension bound for noiseless quantum communication with classical feedback, proved by fixing the classical controls without conditioning the sender's state on the observed transcript. A classical protocol that transmits the base-$d$ digits of an integer representing the message, repeating each digit until the receiver acknowledges its reception or the prescribed blocklength is reached, attains the bound for every integer $M$.",
+              "A classical protocol that transmits the base-$d$ digits of an integer representing the message, repeating each digit until the receiver acknowledges its reception or the prescribed blocklength is reached, attains the bound for every integer $M$. We also establish a relative-majorization property of erasure-channel outputs and exactly evaluate a hypothesis-testing converse, recovering the same numerical bound without feedback. That converse need not be achievable without feedback: four uses of the qubit erasure channel and four messages give a strict gap."
+            ]
+          },
+          {
+            "paperId": "e0ec011e-2bad-42c5-9097-9e151c4444d0",
+            "status": "supported",
+            "textZh": "指标为可靠性/误差指数：信道已知指数与通用指数分别由 Petz 与 sandwiched Rényi 散度支配；这些散度在输出对易时相等，在非对易时不同，因此经典情形通用性保持最优可靠性，量子情形可能降低。",
+            "textEn": "The metric is reliability/error exponent: the channel-aware and universal exponents are governed by the Petz and sandwiched Rényi divergences respectively; these coincide for commuting outputs but differ for noncommuting ones, so universality preserves optimal reliability classically but can reduce it quantumly.",
+            "quote": "We further derive a converse bound on the reliability for unitary-invariant decoders, a natural assumption for the universal coding scheme, that can be strictly smaller than the optimal channel-aware error exponent. Conversely, we construct a channel-independent encoder-decoder pair and establish a universally achievable bound on the reliability that matches this converse bound in the high-rate regime, thereby characterizing the optimal universal reliability. Specifically, the channel-aware and universal exponents are governed by the Petz and sandwiched Rényi divergences, respectively.",
+            "quotes": [
+              "We further derive a converse bound on the reliability for unitary-invariant decoders, a natural assumption for the universal coding scheme, that can be strictly smaller than the optimal channel-aware error exponent. Conversely, we construct a channel-independent encoder-decoder pair and establish a universally achievable bound on the reliability that matches this converse bound in the high-rate regime, thereby characterizing the optimal universal reliability. Specifically, the channel-aware and universal exponents are governed by the Petz and sandwiched Rényi divergences, respectively.",
+              "Conversely, we construct a channel-independent encoder-decoder pair and establish a universally achievable bound on the reliability that matches this converse bound in the high-rate regime, thereby characterizing the optimal universal reliability. Specifically, the channel-aware and universal exponents are governed by the Petz and sandwiched Rényi divergences, respectively. These divergences coincide for commuting outputs but differ for noncommuting ones, explaining why universality preserves optimal reliability classically but can reduce it quantumly."
+            ]
+          }
+        ]
+      }
+    ],
+    "comparison": {
+      "status": "conditional",
+      "textZh": "两篇论文的任务、信道设定与指标均不同：P1 针对有限块长量子擦除信道（含无噪声经典反馈）的成功概率，P2 针对经典-量子信道的通用编码误差指数；没有共同的量化基准，摘要也未给出跨设定的可换算或可直接排序的界，故不能直接排列两者数值优劣。",
+      "textEn": "The two papers differ in task, channel setting, and metric: P1 concerns success probability over a finite-blocklength quantum erasure channel (with noiseless classical feedback), while P2 concerns universal coding error exponents for classical-quantum channels; with no shared quantitative baseline and no cross-setting conversion or directly rankable bound supplied in the abstracts, their numerical values cannot be directly ordered.",
+      "evidenceIds": [
+        "task-object:4c0fc56a-c684-4209-808e-b8f83c7d910c",
+        "task-object:e0ec011e-2bad-42c5-9097-9e151c4444d0",
+        "metric-conclusion:4c0fc56a-c684-4209-808e-b8f83c7d910c",
+        "metric-conclusion:e0ec011e-2bad-42c5-9097-9e151c4444d0"
+      ]
+    },
+    "task": {
+      "titleZh": "工作簿：依据可见对比表区分两类编码设定并作出可比性判断",
+      "titleEn": "Workbook: distinguish the two coding settings and decide comparability using the displayed comparison table",
+      "steps": [
+        {
+          "textZh": "针对“研究任务与信道设定”“编码器与逆定理假设”两行，分别从 P1 与 P2 列抄录一段可见原文并注明论文标签，确认各设定是擦除信道加经典反馈还是通用经典-量子编码。",
+          "textEn": "For the rows “Research task and channel setting” and “Encoder and converse assumptions”, transcribe one visible passage from the P1 column and one from the P2 column with the paper label, confirming whether each setting is erasure-channel-with-classical-feedback or universal classical-quantum coding.",
+          "evidenceIds": [
+            "task-object:4c0fc56a-c684-4209-808e-b8f83c7d910c",
+            "task-object:e0ec011e-2bad-42c5-9097-9e151c4444d0",
+            "encoder-converse:4c0fc56a-c684-4209-808e-b8f83c7d910c",
+            "encoder-converse:e0ec011e-2bad-42c5-9097-9e151c4444d0"
+          ]
+        },
+        {
+          "textZh": "针对“性能指标与明确结论”行，分别写出 P1 的成功概率指标与 P2 的可靠性/误差指数指标，并在结论行写明：跨设定数值不可直接排序，缺失项标注为摘要未给出。",
+          "textEn": "For the row “Performance metric and reported conclusion”, write out P1’s success-probability metric and P2’s reliability/error-exponent metric, and in the comparability row state that cross-setting numerical values cannot be directly ordered, marking unavailable items as not given in the abstract.",
+          "evidenceIds": [
+            "metric-conclusion:4c0fc56a-c684-4209-808e-b8f83c7d910c",
+            "metric-conclusion:e0ec011e-2bad-42c5-9097-9e151c4444d0",
+            "task-object:4c0fc56a-c684-4209-808e-b8f83c7d910c",
+            "task-object:e0ec011e-2bad-42c5-9097-9e151c4444d0"
+          ]
+        }
+      ],
+      "criterionZh": "完成的表在每一行给出两篇论文各自的一句话观察；每条观察至少引用一个可见短句并注明 P1 或 P2；最后给出可比性判断，且不把 P1 的成功概率与 P2 的误差指数放在同一尺度上排序。",
+      "criterionEn": "The finished table gives one-sentence observations for each paper in every row; each observation cites at least one short visible phrase and names P1 or P2; and it ends with a comparability judgment that does not place P1’s success probability and P2’s error exponent on the same scale."
+    },
+    "learning": {
+      "goalZh": "能够从摘要可见短句中分辨“擦除信道加经典反馈”与“通用经典-量子编码”两类设定，并据此决定哪些数值可以比较。",
+      "goalEn": "Being able to tell the erasure-channel-with-classical-feedback setting apart from universal classical-quantum coding from short visible abstract passages, and to decide which numbers are comparable.",
+      "prerequisiteZh": "能够识别成功概率与误差指数是不同的性能量；建议对照摘要中关于反馈、无共享纠缠与酉不变解码器的语句。",
+      "prerequisiteEn": "Able to recognize that success probability and error exponent are different performance quantities; recommend cross-checking the abstract statements about feedback, no shared entanglement, and unitary-invariant decoders.",
+      "exerciseZh": "请用两分钟：在显示表中“研究任务与信道设定”行，各写出 P1 与 P2 的一个可见短句；再把 P1 的“最优成功概率”与 P2 的“误差指数”并排写出，并用一句话说明它们为何不能直接排序，若摘要未给出某条件则写“摘要未给出”。",
+      "exerciseEn": "In two minutes: in the “Research task and channel setting” row of the displayed table, write one short visible phrase each for P1 and P2; then place P1’s “optimal success probability” beside P2’s “error exponent” and add one sentence explaining why they cannot be directly ordered, writing “not given in the abstract” where a condition is absent.",
+      "checkpointZh": "有效回答须包含：对 P1 引用关于有限次量子擦除信道使用、无噪声经典反馈且无初始共享纠缠的原文；对 P2 引用关于通用编码或酉不变解码器的原文；明确写出两项指标名称不同；给出“不能直接排序”的理由；缺失条件标注为摘要未给出；不虚构跨设定换算或未报告的比较。",
+      "checkpointEn": "A valid answer must include: for P1 a quoted phrase about finitely many uses of the quantum erasure channel with noiseless classical feedback and without initial shared entanglement; for P2 a quoted phrase about universal coding or unitary-invariant decoders; an explicit statement that the two metric names differ; a reason for “cannot be directly ordered”; missing conditions marked as not given in the abstract; and no invented cross-setting conversion or unreported comparison."
+    }
+  }
+}
