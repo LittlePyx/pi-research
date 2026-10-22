@@ -5371,15 +5371,12 @@ async function readState(database: D1Database, space: SpaceRow, extra: Record<st
   // The paper library is a durable discovery archive, not a synonym for today's recommendation queue.
   // Keep every discovered paper visible while quality_stage makes clear how far Pi has evaluated it.
   const historyPapers = papers.results.map((paper) => toPaper(paper, now));
-  const recommendationHistoryPapers = historyPapers.filter((paper) => paper.qualityStage === "recommended"
-    || paper.qualityStage === "reviewing" || paper.saved || Boolean(paper.feedback) || paper.readingStatus !== "unread");
   const savedCandidatePapers = papers.results
     .filter((paper) => paper.quality_stage === "reviewing")
     .sort((left, right) => right.llm_relevance_score - left.llm_relevance_score
       || right.quality_score - left.quality_score || databaseTime(right.discovered_at) - databaseTime(left.discovered_at))
     .slice(0, 12)
     .map((paper) => toPaper(paper, now));
-  const pendingPapers = recommendationHistoryPapers.filter((paper) => paper.userState !== "accepted" && paper.userState !== "dismissed");
   const automationPauseReason = (run?.automation_pause_reason || "") as AutomationPauseReason | "";
   const automationPauseCopy = monitorAutomationPauseCopy(automationPauseReason || null);
   let latestQueries: Partial<Record<Horizon, string[]>> = {};

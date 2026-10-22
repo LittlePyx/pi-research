@@ -5,12 +5,25 @@ import {createRequire} from 'node:module';
 import ts from 'typescript';
 const require=createRequire(import.meta.url);
 const code=ts.transpileModule(readFileSync(new URL('../app/components/use-route-selection.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-function harness(){
+function harness(shared=false){
  const cells=[];let index=0;
  const hooks={useState(initial){const i=index++;cells[i]??={value:typeof initial==='function'?initial():initial};return[cells[i].value,v=>{cells[i].value=typeof v==='function'?v(cells[i].value):v}];},useMemo(fn,deps){const i=index++,old=cells[i];if(!old||deps.some((d,n)=>d!==old.deps[n]))cells[i]={value:fn(),deps};return cells[i].value;}};
  const mod={exports:{}};new Function('require','exports',code)(name=>name==='react'?hooks:require('../lib/'+name.split('/').at(-1)+'.ts'),mod.exports);
- return (user='u',space='s',route='r')=>{index=0;return mod.exports.useRouteSelection(user,space,route);};
+ return (user='u',space='s',route='r')=>{index=0;const select=mod.exports.useRouteSelections(user,space);return shared?select:select(route);};
 }
+
+test('library and route pickers share changes while preserving other route drafts even without storage',()=>{
+ const render=harness(true),paper={canonicalId:'doi:A',title:'Paper A'};
+ let select=render();select('r').toggle(paper);
+ select=render();assert.equal(select('r').value.papers.length,1);
+ select('other').change({spaceId:'s',question:'Other route question',papers:[]});
+ select=render();select('r').toggle(paper);
+ select=render();assert.deepEqual(select('r').value.papers,[]);
+ assert.equal(select('other').value.question,'Other route question');
+ assert.equal(select('r').storageError,true);
+ assert.deepEqual(render('other-user')('r').value.papers,[]);
+ assert.deepEqual(render('u','other-space')('r').value.papers,[]);
+});
 test('selection persists across remounts, empty selections and route or workspace changes without mixing identities',()=>{
  const before=globalThis.sessionStorage,values=new Map();globalThis.sessionStorage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
  try{

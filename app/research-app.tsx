@@ -45,7 +45,7 @@ import { InterfaceIcon, type InterfaceIconName } from "./components/interface-ic
 import { LearningGoalPlanner, LearningPathHeader } from "./components/learning-goal-planner";
 import type { GraphDeskPaper } from "./components/graph-research-desk";
 import type { GraphTaskContext } from "../lib/graph-task";
-import {useRouteSelection} from "./components/use-route-selection";
+import {useRouteSelections} from "./components/use-route-selection";
 import {LibraryComparisonControls} from "./components/library-comparison-controls";
 import {RouteSelectionBar} from "./components/route-selection-bar";
 import {comparisonInputKey,readComparisonInput,writeComparisonInput,clearComparisonInput} from '../lib/comparison-input';
@@ -2423,10 +2423,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   useEffect(() => { paperNetworkSpaceRef.current = activeSpaceId; }, [activeSpaceId]);
   const activeSpace = spaces.find((space) => space.id === activeSpaceId) || spaces[0] || fallbackSpaces[0];
   const routeSelectionTrackId=view==="paper-detail"&&paperReturnView==="thread-detail"&&typeof window!=="undefined"?readWorkspaceLocation(window.location.hash).track||selectedThread?.id||"":selectedThread?.id||"";
-  const routeSelection=useRouteSelection(user.userId,activeSpace.id,routeSelectionTrackId);
+  const selectionForRoute=useRouteSelections(user.userId,activeSpace.id);
+  const routeSelection=selectionForRoute(routeSelectionTrackId);
   const [libraryComparisonScope,setLibraryComparisonScope]=useState({spaceId:"",trackId:""});
   const libraryComparisonTrackId=libraryComparisonScope.spaceId===activeSpace.id?libraryComparisonScope.trackId:"";
-  const librarySelection=useRouteSelection(user.userId,activeSpace.id,libraryComparisonTrackId);
+  const librarySelection=selectionForRoute(libraryComparisonTrackId);
   const researchRouteScope=`${activeSpace.id}:${selectedThread?.id || ''}`;
   const researchProblemState=scopedProblem.scope===researchRouteScope?scopedProblem.value:null;
   const researchSynthesis=scopedSynthesis.scope===researchRouteScope?scopedSynthesis.value:null;

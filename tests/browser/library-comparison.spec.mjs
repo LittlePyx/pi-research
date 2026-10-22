@@ -8,6 +8,11 @@ const route=page=>page.getByRole('combobox',{name:'比较所属路线',exact:tru
 const query=page=>page.getByRole('textbox',{name:'搜索标题、作者、期刊或论文介绍',exact:true});
 const choose=(page,index)=>page.getByRole('checkbox',{name:'选择比较 '+sample.sources[index].title,exact:true});
 const tray=page=>page.getByRole('complementary',{name:'已选比较论文',exact:true});
+async function primaryNavigation(page,name){
+  const menu=page.getByRole('button',{name:'Menu',exact:true});
+  if(await menu.isVisible())await menu.click();
+  await page.getByRole('navigation',{name:'Primary navigation',exact:true}).getByRole('button',{name}).click();
+}
 async function selectFromSearch(page){
   await page.goto('/__acceptance/start');
   await page.locator('.pi-library-comparison summary').click();
@@ -104,6 +109,36 @@ test('an initial comparison read failure can refresh without losing the chosen p
   await expect(page.getByRole('textbox',{name:'本次比较问题',exact:true})).toHaveValue(question);
   await expect(page.locator('.pi-workbook-picker input[type="checkbox"]:checked')).toHaveCount(2);
   await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();await ready(page);
+});
+
+test('library and route selection stay synchronized in both directions without mixing routes',async({page})=>{
+  await selectFromSearch(page);
+  await primaryNavigation(page,/^研究$/);
+  await page.getByRole('button',{name:'进入研究：量子编码条件比较',exact:true}).click();
+  await expect(tray(page)).toContainText('2/3');
+  await tray(page).getByRole('button',{name:'移除 '+sample.sources[0].title,exact:true}).click();
+  await expect(tray(page)).toContainText('1/3');
+  await primaryNavigation(page,/^论文库/);
+  await expect(tray(page)).toContainText('1/3');
+  await expect(tray(page)).not.toContainText(sample.sources[0].title);
+  await route(page).selectOption('acceptance-other');
+  await expect(tray(page)).toHaveCount(0);
+  await page.getByRole('textbox',{name:'本次比较问题',exact:true}).fill('另一条路线的独立草稿');
+  await route(page).selectOption('acceptance-quantum');
+  await expect(tray(page)).toContainText('1/3');
+  await expect(page.getByRole('textbox',{name:'本次比较问题',exact:true})).toHaveValue(question);
+  await tray(page).getByRole('button',{name:'移除 '+sample.sources[1].title,exact:true}).click();
+  await expect(tray(page)).toHaveCount(0);
+  await primaryNavigation(page,/^研究$/);
+  await page.getByRole('button',{name:'进入研究：量子编码条件比较',exact:true}).click();
+  await expect(tray(page)).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('checkbox',{name:'选择比较 '+sample.sources[0].title,exact:true})).toBeEnabled();
+  await expect(tray(page)).toHaveCount(0);
+  await primaryNavigation(page,/^论文库/);
+  await page.locator('.pi-library-comparison summary').click();
+  await route(page).selectOption('acceptance-other');
+  await expect(page.getByRole('textbox',{name:'本次比较问题',exact:true})).toHaveValue('另一条路线的独立草稿');
 });
 test('a dropped review request refreshes the same checkpoint without regenerating the draft',async({page,request})=>{
   let dropped=false;

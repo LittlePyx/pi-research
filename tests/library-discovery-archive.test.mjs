@@ -15,7 +15,7 @@ test("the paper library keeps the discovery archive separate from the recommenda
   assert.match(monitor, /WHERE p\.space_id = \?\s+ORDER BY CASE WHEN p\.id = \? THEN 0 ELSE 1 END, p\.discovered_at DESC, i\.quality_score DESC LIMIT 2000/);
   assert.match(monitor, /\.bind\(space\.id, focusPaperId\)\.all<PaperRow>/);
   assert.match(monitor, /const historyPapers = papers\.results\.map\(\(paper\) => toPaper\(paper, now\)\)/);
-  assert.match(monitor, /const recommendationHistoryPapers = historyPapers\.filter/);
+  assert.match(monitor, /classified AS \(SELECT \*,\$\{libraryUserStateSql\} AS user_state FROM library\)/);
   assert.match(monitor, /all: known\?\.total/);
 });
 
