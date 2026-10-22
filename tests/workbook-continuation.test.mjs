@@ -19,7 +19,10 @@ test('comparison bookmarks retain the exact version, cell, source-reading task a
     const back=readWorkspaceLocation(saved.returnTo);
     assert.equal(back.workbookId,'s:r:version-1');assert.equal(back.workbookFocus,'assumptions:p');assert.equal(back.workbookPanel,'relations');assert.equal(back.returnTo,origin);
     assert.equal(readComparisonLocation('bob','s'),'');assert.equal(readComparisonLocation('alice','other'),'');
-    assert.equal(values.size,1,'bookmark stores only the location, not notes or model output');
+    assert.equal(values.size,2,'global and route bookmarks store locations only, never notes or model output');
+    rememberComparison('alice','s',workspaceHash({view:'workbook',space:'s',id:'other-route',workbookId:'other-version'}));
+    assert.equal(readWorkspaceLocation(readComparisonLocation('alice','s','r')).id,'p','another route must not replace the original reading task');
+    assert.equal(readWorkspaceLocation(readComparisonLocation('alice','s','other-route')).workbookId,'other-version');
     values.set(continuationKey('alice','other'),paper);assert.equal(readComparisonLocation('alice','other'),'');
   } finally {globalThis.localStorage=old;}
 });

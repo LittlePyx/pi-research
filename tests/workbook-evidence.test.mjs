@@ -96,7 +96,7 @@ test('a comparison patch preserves the independently approved question and every
  const comparison={...anchoredSample().comparison,textZh:'摘要信息不足，不能直接比较结果。',textEn:'The abstracts are insufficient for direct comparison.'};
  const after=applyWorkbookPatches({patches:[{id:'f1',value:comparison}]},before,workbookSources,issues);
  assert.notEqual(after.comparison.textZh,before.comparison.textZh);
- const {comparison: _old,...approved}=before,{comparison:_new,...preserved}=after;assert.deepEqual(approved,preserved);assert.deepEqual(before,resolvedSample(),'input checkpoint is never mutated');
+ const approved=Object.fromEntries(Object.entries(before).filter(([key])=>key!=='comparison')),preserved=Object.fromEntries(Object.entries(after).filter(([key])=>key!=='comparison'));assert.deepEqual(approved,preserved);assert.deepEqual(before,resolvedSample(),'input checkpoint is never mutated');
  assert.deepEqual(workbookReviewFields(before),workbookReviewFields(after));
 });
 test('field patches reject unreviewed targets, extra properties, omissions, duplicates and full rewrites',()=>{

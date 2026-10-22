@@ -27,7 +27,8 @@ export function LibraryExplorer({spaceId,trackId='',locale,onOpen,initialPaperId
   const setSelection=(update:GraphTaskPaper[]|((list:GraphTaskPaper[])=>GraphTaskPaper[]))=>{const papers=typeof update==='function'?update(selection):update; if(controlledSelection)controlledSelection.change({...controlledSelection.value,papers});else setLocalSelection(papers);};
   const setQuestion=(value:string)=>{if(controlledSelection)controlledSelection.change({...controlledSelection.value,question:value});else setLocalQuestion(value);};
   useEffect(()=>{if(!questionTouched.current&&initialQuestion){setQuestion(initialQuestion);questionTouched.current=true}},[initialQuestion]);
-  useEffect(()=>{if(inputStorageKey&&!writeComparisonInput(inputStorageKey,{spaceId,question,papers:selection}))setError(zh?"无法暂存比较选择，请保留当前页。":"Selection storage unavailable; keep this page open.")},[inputStorageKey,spaceId,question,selection]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- Report an external storage failure without changing the user's selection.
+  useEffect(()=>{if(inputStorageKey&&!writeComparisonInput(inputStorageKey,{spaceId,question,papers:selection}))setError(zh?"无法暂存比较选择，请保留当前页。":"Selection storage unavailable; keep this page open.")},[inputStorageKey,spaceId,question,selection,zh]);
   const reviewKey=JSON.stringify([spaceId,question,selection]);const reviewRequest=useRef<AbortController|null>(null);
   useEffect(()=>()=>reviewRequest.current?.abort(),[]);
   useEffect(()=>{const timer=setInterval(()=>{if(!document.hidden)setReload(n=>n+1);},60000);return()=>clearInterval(timer);},[]);

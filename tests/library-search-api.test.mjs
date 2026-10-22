@@ -24,6 +24,9 @@ test('full-library search and exports find oldest notes beyond display limits an
   const first=await search('q=Sequence&sort=newest'),second=await search('q=Sequence&sort=newest&offset=60'),third=await search('q=Sequence&sort=newest&offset=120');
   assert.equal(first.total,129);assert.equal(first.nextOffset,60);assert.equal(third.nextOffset,null);assert.equal(new Set([...first.papers,...second.papers,...third.papers].map(p=>p.id)).size,129);
   assert.equal((await search()).counts.total,2102);
+  const priorityBefore=(await search()).papers.map(p=>p.id);
+  await sql([insert('paper_delivery_state',{id:'reading-position',space_id:'s',paper_id:'p0001',opened_at:'2026-10-22 10:00:00'})]);
+  assert.deepEqual((await search()).papers.map(p=>p.id),priorityBefore,'opening a paper must not move it off its current priority page');
   const monitor=(await (await call('/api/monitor?spaceId=s')).json()).monitor;
   assert.equal(monitor.knownCount,2102);assert.equal(monitor.historyCounts.all,2102,'full counts must not inherit the 2000-row display cap');assert.equal(monitor.historyCounts.accepted,(await search()).counts.accepted);
   await sql([insert('research_tracks',{id:'route',space_id:'s',title_zh:'路线',title_en:'Route'}),insert('research_track_papers',{id:'route-p0000',space_id:'s',track_id:'route',canonical_id:'fixture:p0000',title:'Oldest Lossy Compression',role:'background',summary_zh:'',summary_en:'',rationale_zh:'',rationale_en:''})]);

@@ -7,6 +7,7 @@ export type RouteComparison = {
   savedRevision: number; savedAt: string | null; decision: string; unresolved: string; observationCount: number;
 };
 export type RouteOverview = {
+  titleZh?: string; titleEn?: string;
   spaceId: string; trackId: string; question: string;
   eligibleCount: number; routeEligibleCount: number;
   comparisons: RouteComparison[]; savedJudgment: RouteComparison | null;

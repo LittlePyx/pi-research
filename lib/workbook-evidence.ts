@@ -122,7 +122,7 @@ export function validateWorkbookLayout(content: WorkbookContent) {
 
 export function anchoredWorkbookPrompt(question: string, sources: WorkbookSource[]) {
   const base = JSON.parse(workbookDraftPrompt(question, sources));
-  base.sources = workbookEvidenceCatalog(sources).map(({ paperId: _id, ...s }) => ({...s,
+  base.sources = workbookEvidenceCatalog(sources).map(s => ({key:s.key,title:s.title,abstractText:s.abstractText,
     quotes:s.quotes.filter(q=>q.id.includes('.q')).map(q=>({...contextQuote(s.quotes,q),id:q.id})),
   }));
   base.evidenceProtocol = 'anchors-v2';

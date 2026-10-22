@@ -16,9 +16,11 @@ export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practic
   const zh = locale === 'zh', [state, setState] = useState<WorkbookState | null>(null), [practice, setPractice] = useState<Practice | null>(null);
   const [busy, setBusy] = useState('load'), [error, setError] = useState(''), [notice, setNotice] = useState(''), [reload, setReload] = useState(0);
   const [conflicts, setConflicts] = useState<PracticeConflict[]>([]);
-  const generation = useRef(0), selection = useRef(practiceId); selection.current = practiceId;
+  const generation = useRef(0), selection = useRef(practiceId);
+  useEffect(()=>{selection.current=practiceId;},[practiceId]);
   useEffect(() => {
     const abort = new AbortController(), epoch = ++generation.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the scoped external read while retaining session drafts under their own workbook key.
     setBusy('load'); setError(''); setState(null); setPractice(null); setConflicts([]);
     fetch('/api/research-workbook?' + new URLSearchParams({ spaceId, trackId, workbookId }), { signal: abort.signal })
       .then(async response => { if (!response.ok) throw Error(); const data = await response.json() as { workbook: WorkbookState }; if (data.workbook.id !== workbookId || !data.workbook.content) throw Error(); return data.workbook; })
@@ -31,6 +33,7 @@ export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practic
     return () => { abort.abort(); generation.current = epoch + 1; };
   }, [spaceId, trackId, workbookId, reload]);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- The URL selection is external navigation state, including browser back/forward.
     if (state?.content && workbookPracticeTasks(state.content).some(task => task.id === practiceId)) setPractice(value => value ? { ...value, activeId: practiceId } : value);
   }, [practiceId, state?.content]);
   const draftKey = sessionDraftKey(userId, spaceId, `practice:${workbookId}`);

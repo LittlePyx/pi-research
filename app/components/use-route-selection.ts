@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useRef,useState} from 'react';
 import {comparisonInputKey,readComparisonInput,writeComparisonInput} from '../../lib/comparison-input';
 import type {GraphTaskContext,GraphTaskPaper} from '../../lib/graph-task';
 
@@ -6,17 +6,18 @@ export type RouteSelection = {value:GraphTaskContext;change:(value:GraphTaskCont
 /** Share one owner between library and route views while keeping each route scoped. */
 export function useRouteSelections(userId:string,spaceId:string):(trackId:string)=>RouteSelection {
   const [inputs,setInputs]=useState<Record<string,GraphTaskContext>>({});
+  const live=useRef(inputs);
   const [failed,setFailed]=useState('');
   return trackId=>{
     const key=comparisonInputKey(userId,spaceId,trackId,'picker');
     const value=inputs[key]||readComparisonInput(key,spaceId)||{spaceId,question:'',papers:[]};
     const change=(next:GraphTaskContext)=>{
       if(next.spaceId!==spaceId||next.papers.length>3)return;
-      setInputs(current=>({...current,[key]:next}));
+      live.current={...live.current,[key]:next};setInputs(live.current);
       setFailed(writeComparisonInput(key,next)?'':key);
     };
     return {value,change,storageError:failed===key,
-      seedQuestion:(question,onlyIfNew=false)=>{if(onlyIfNew&&(inputs[key]||readComparisonInput(key,spaceId)))return;if(question&&!value.question)change({...value,question});},
+      seedQuestion:(question,onlyIfNew=false)=>{const current=live.current[key]||readComparisonInput(key,spaceId);if(onlyIfNew&&current)return;if(question&&!current?.question)change({...current||{spaceId,question:'',papers:[]},question});},
       toggle:paper=>{
         const contains=value.papers.some(p=>p.canonicalId.toLowerCase()===paper.canonicalId.toLowerCase());
         if(!contains&&value.papers.length>=3)return;

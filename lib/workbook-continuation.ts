@@ -1,6 +1,7 @@
 import { readWorkspaceLocation, workspaceHash, type WorkspaceLocation } from './workspace-navigation.ts';
 
 export const continuationKey = (user: string, space: string) => `pi-comparison-location-v1:${JSON.stringify([user, space])}`;
+export const routeContinuationKey = (user:string,space:string,track:string) => `pi-comparison-route-v1:${JSON.stringify([user,space,track])}`;
 
 /** A bookmark is a location, never a second copy of the comparison or its notes. */
 export function comparisonLocation(hash: string, space: string): { location: WorkspaceLocation; workbook: WorkspaceLocation } | null {
@@ -17,14 +18,14 @@ export function comparisonLocation(hash: string, space: string): { location: Wor
 export function rememberComparison(user: string, space: string, hash: string) {
   const parsed = comparisonLocation(hash, space);
   if (!parsed) return;
-  try { localStorage.setItem(continuationKey(user, space), workspaceHash(parsed.location)); } catch { /* Server-saved comparisons remain available. */ }
+  try { const value=workspaceHash(parsed.location);localStorage.setItem(continuationKey(user, space),value);if(parsed.workbook.id)localStorage.setItem(routeContinuationKey(user,space,parsed.workbook.id),value); } catch { /* Server-saved comparisons remain available. */ }
 }
 
-export function readComparisonLocation(user: string, space: string): string {
+export function readComparisonLocation(user: string, space: string, track = ''): string {
   try {
-    const hash = localStorage.getItem(continuationKey(user, space)) || '';
+    const hash = (track?localStorage.getItem(routeContinuationKey(user,space,track)):'') || localStorage.getItem(continuationKey(user, space)) || '';
     const parsed = comparisonLocation(hash, space);
-    return parsed ? workspaceHash(parsed.location) : '';
+    return parsed&&(!track||parsed.workbook.id===track) ? workspaceHash(parsed.location) : '';
   } catch { return ''; }
 }
 

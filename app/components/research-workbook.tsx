@@ -8,7 +8,7 @@ import { workbookPaperLabel } from '../../lib/research-workbook';
 import { graphSelection, type GraphTaskContext } from "../../lib/graph-task";
 import { DraftRecovery } from "./draft-recovery";
 import { sessionDraftKey, readSessionDraft, writeSessionDraft, clearSessionDraft } from "../../lib/session-draft";
-import {comparisonInputKey,readComparisonInput,writeComparisonInput} from '../../lib/comparison-input';
+import {comparisonInputKey,comparisonQuestionKey,migrateComparisonQuestionDraft,readComparisonInput,writeComparisonInput} from '../../lib/comparison-input';
 import { MathText } from "./math-text";
 import {workbookPresentation,workbookStatusLabel} from "../../lib/workbook-presentation";
 import { workbookResponseDetailText } from "../../lib/workbook-recovery";
@@ -49,7 +49,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const content = state?.content;
   const text = (value: { [key: string]: unknown }, key: string) => String(value[`${key}${zh ? "Zh" : "En"}`] || "");
   const draftKey = sessionDraftKey(userId, spaceId, `workbook:${trackId}:${state?.id || ""}:${state?.revision || ""}`);
-  const questionDraftKey = sessionDraftKey(userId, spaceId, `workbook-question:${trackId}`);
+  const questionDraftKey = comparisonQuestionKey(userId,spaceId,trackId,state?.id||initialWorkbookId);
   const inputKey=comparisonInputKey(userId,spaceId,trackId,state?.id||initialWorkbookId);
   const retainInputs=(ids:string[],question:string)=>writeComparisonInput(inputKey,{spaceId,question,papers:ids.flatMap(id=>{const source=state?.candidates.find(s=>s.id===id);return source?[{canonicalId:source.canonicalId,title:source.title}]:[]})});
   const editSelection=(ids:string[])=>{setSelected(ids);if(!retainInputs(ids,comparisonQuestion))setError(zh?'无法暂存材料选择，请保留当前页。':'Selection storage unavailable; keep this page open.');};
@@ -82,13 +82,14 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     if (!refreshOnly) setComparisonQuestion(taskContext?.question || '');
     fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&workbookId=${encodeURIComponent(readId)}&selection=${taskContext ? "1" : "0"}&canonicalIds=${encodeURIComponent(taskContext?.papers.map(p=>p.canonicalId).join(",") || "")}&focus=${encodeURIComponent(taskContext?.question || "")}`, { signal: AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]) })
       .then(async r => { const data = await r.json() as WorkbookResponse; if (!r.ok) throw new Error(data.error || "Unable to load workbook"); return data; })
-      .then(data => { if (generation.current !== epoch) return; setState(data.workbook); setComparisonQuestion(data.workbook.id ? data.workbook.focusQuestion || '' : taskContext?.question || ''); setVersions(data.versions); setArtifact(data.workbook.artifact?.value || emptyArtifact()); if (data.workbook.id) onWorkbookChange?.(data.workbook.id); const input=readComparisonInput(comparisonInputKey(userId,spaceId,trackId,data.workbook.id||initialWorkbookId),spaceId); if(input){const selection=graphSelection(data.workbook.candidates,input.papers.map(p=>p.canonicalId));setSelected(selection.selected);setMissing(selection.missing);if(!data.workbook.id)setComparisonQuestion(input.question);} else if (taskContext?.papers.length && !data.workbook.id) { const selection = graphSelection(data.workbook.candidates, taskContext.papers.map(p=>p.canonicalId)); setSelected(selection.selected); setMissing(selection.missing); } else setSelected(data.workbook.sources.length ? data.workbook.sources.map((s: WorkbookSource) => s.id) : data.workbook.candidates.filter((s: WorkbookSource) => s.routeMember).slice(0, 3).map((s: WorkbookSource) => s.id)); })
+      .then(data => { if (generation.current !== epoch) return; setState(data.workbook); migrateComparisonQuestionDraft(userId,spaceId,trackId,data.workbook.id||initialWorkbookId,data.workbook.focusQuestion||''); setComparisonQuestion(data.workbook.id ? data.workbook.focusQuestion || '' : taskContext?.question || ''); setVersions(data.versions); setArtifact(data.workbook.artifact?.value || emptyArtifact()); if (data.workbook.id) onWorkbookChange?.(data.workbook.id); const input=readComparisonInput(comparisonInputKey(userId,spaceId,trackId,data.workbook.id||initialWorkbookId),spaceId); if(input){const selection=graphSelection(data.workbook.candidates,input.papers.map(p=>p.canonicalId));setSelected(selection.selected);setMissing(selection.missing);if(!data.workbook.id)setComparisonQuestion(input.question);} else if (taskContext?.papers.length && !data.workbook.id) { const selection = graphSelection(data.workbook.candidates, taskContext.papers.map(p=>p.canonicalId)); setSelected(selection.selected); setMissing(selection.missing); } else setSelected(data.workbook.sources.length ? data.workbook.sources.map((s: WorkbookSource) => s.id) : data.workbook.candidates.filter((s: WorkbookSource) => s.routeMember).slice(0, 3).map((s: WorkbookSource) => s.id)); })
       .catch(e => { if (!abort.signal.aborted && generation.current === epoch) setError(e.message); })
       .finally(() => { if (generation.current === epoch) setBusy(""); });
     return () => { abort.abort(); generation.current = epoch + 1; };
   }, [spaceId, trackId, taskContext, initialWorkbookId, refreshKey, loadRetry]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronize the external clock after the server changes a retry deadline.
     setNow(Date.now());
     const deadlines = [state?.retryAt || 0, state?.busyUntil || 0].filter(value => value > Date.now());
     if (!deadlines.length) return;
@@ -159,6 +160,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       setState(data.workbook); setVersions(data.versions);
       if (data.workbook.id) onWorkbookChange?.(data.workbook.id);
       if (revise) setSelected(data.workbook.sources.map(s => s.id));
+      // eslint-disable-next-line react-hooks/purity -- This runs in the asynchronous prepare handler, checking the server lease between requests.
       for (let pass=0; pass<12 && data.workbook.status === "verifying" && !data.workbook.stale && !(data.workbook.busyUntil && data.workbook.busyUntil > Date.now()); pass++) {
         setBusy("verify"); data = await request({ action: "advance", workbookId: data.workbook.id });
         if (generation.current !== epoch) return;

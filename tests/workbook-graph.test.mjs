@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { advanceWorkbookGraph, initialWorkbookGraphReview, restoreWorkbookGraphReview, workbookGraphNext } from '../lib/workbook-graph.ts';
-import { workbookReviewFields, validateWorkbook, WORKBOOK_REVIEW_BATCH_SIZE } from '../lib/research-workbook.ts';
-import { workbookSample, workbookSources, anchoredSample, resolvedSample } from './fixtures/research-workbook.mjs';
+import { workbookReviewFields, WORKBOOK_REVIEW_BATCH_SIZE } from '../lib/research-workbook.ts';
+import { workbookSources, anchoredSample, resolvedSample } from './fixtures/research-workbook.mjs';
 
 function fixture(mode='repairable') {
   const calls=[];

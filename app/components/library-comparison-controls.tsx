@@ -19,10 +19,10 @@ export function LibraryComparisonControls({spaceId,trackId,locale,selection,onTr
   const route=loaded?remote.routes.find(route=>route.id===trackId):undefined;
   useEffect(()=>{if(route?.question)selection.seedQuestion(route.question,true);},[spaceId,trackId,route?.question]);
   return <section className="pi-library-comparison" aria-label={zh?'从论文库开始比较':'Compare from the library'}>
-    <details open={Boolean(trackId)}><summary>{zh?'选择论文比较':'Choose papers to compare'}</summary>
-    <div><strong>{zh?'选论文，推进一个研究问题':'Choose papers for a research question'}</strong><p>{zh?'选择所属路线，再勾选 2–3 篇可用论文。切换路线会保留各自的问题和选择。':'Choose a route, then select 2–3 eligible papers. Each route keeps its own question and selection.'}</p></div>
+    <div className="pi-library-task-heading"><strong>{zh?'比较选材':'Comparison sources'}</strong><small>{zh?'选择路线后，勾选 2–3 篇论文':'Choose a route and 2–3 papers'}</small></div>
     <label>{zh?'比较所属路线':'Comparison route'}<select value={trackId} disabled={!loaded} onChange={event=>onTrack(event.target.value)}><option value="">{zh?'选择研究路线…':'Choose a research route…'}</option>{trackId&&!route&&<option value={trackId}>{zh?'当前路线暂未载入':'Current route unavailable'}</option>}{loaded&&remote.routes.map(route=><option key={route.id} value={route.id}>{zh?route.titleZh:route.titleEn}</option>)}</select></label>
     {remote.spaceId===spaceId&&remote.failed?<p role="alert">{zh?'路线暂未载入，搜索和已有选择仍保留。':'Routes could not load. Search and selections are preserved.'}<button type="button" onClick={()=>setRetry(n=>n+1)}>{zh?'重试加载路线':'Retry routes'}</button></p>:loaded&&!remote.routes.length?<p>{zh?'先建立一条研究路线，即可把比较保存在对应问题下。':'Create a route to save a comparison under its research question.'}<button type="button" onClick={onResearch}>{zh?'前往研究路线':'Open research routes'} →</button></p>:!loaded?<p role="status">{zh?'正在读取研究路线…':'Loading research routes…'}</p>:null}
+    <details><summary>{zh?'选择论文比较':'Choose papers to compare'}<span className="pi-library-question-preview">{selection.value.question||(zh?'填写或调整比较问题':'Set or adjust the comparison question')}</span></summary>
     {route&&<label className="pi-library-comparison-question">{zh?'本次比较问题':'Comparison question'}<textarea value={selection.value.question} maxLength={1000} onChange={event=>selection.change({...selection.value,question:event.target.value})} placeholder={zh?'输入要用这些论文核对的具体问题':'What should these papers help you check?'} /></label>}
     </details>
   </section>;

@@ -11,6 +11,7 @@ export function TaskBriefEvidence({spaceId,brief,locale,demo,paperId,onRead}:{sp
   if(evidence||unavailable||loading.current)return;loading.current=true;setBusy(true);setError(false);
   try{const r=await workspaceFetch('/api/task-brief?'+new URLSearchParams({spaceId,...(boundToBrief?{jobId:brief.job.id,snapshotId:brief.snapshotId}:{paperId:paperId!}),evidence:'1'}),{signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error();const data=await r.json() as {brief:TaskBriefView|null};if(!data.brief&&!boundToBrief){if(alive.current)setUnavailable(true);return}if(!data.brief||boundToBrief&&data.brief.snapshotId!==brief.snapshotId||paperId&&!data.brief.records.some(r=>r.paperId===paperId&&r.selected))throw Error();if(alive.current)setEvidence(data.brief)}catch{if(alive.current)setError(true)}finally{loading.current=false;if(alive.current)setBusy(false)}
  };
+ // eslint-disable-next-line react-hooks/set-state-in-effect -- A URL evidence target starts an external read and synchronizes document focus.
  useEffect(()=>{if(paperId){void load();panel.current?.scrollIntoView({block:'start'});panel.current?.focus({preventScroll:true})}},[paperId]);
  const records=evidence?.records.filter(r=>r.abstractText&&(!paperId||r.paperId===paperId)).slice(0,6)||[];
  const saved=evidence||(boundToBrief?brief:null);

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import ts from 'typescript';
-import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {workspaceHash,readWorkspaceLocation} from '../lib/workspace-navigation.ts';
 const require=createRequire(import.meta.url);

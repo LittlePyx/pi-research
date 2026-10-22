@@ -27,10 +27,9 @@ export function RouteStart({ spaceId, active, track, synthesis, loading, failed,
   useEffect(()=>{
     if(!active)return;
     const controller=new AbortController();
-    setRemote({scope,data:null,error:false});
     fetch('/api/research-workbook?'+new URLSearchParams({spaceId,trackId:track.id,overview:'1'}),{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(20000)]),cache:'no-store'})
       .then(async response=>{const data=await response.json() as {overview?:RouteOverview};if(!response.ok||!data.overview||data.overview.spaceId!==spaceId||data.overview.trackId!==track.id)throw Error();return data.overview;})
-      .then(data=>{if(!controller.signal.aborted){setRemote({scope,data,error:false});selection.seedQuestion(data.question);}})
+      .then(data=>{if(!controller.signal.aborted){setRemote({scope,data,error:false});selection.seedQuestion(data.question,true);}})
       .catch(()=>{if(!controller.signal.aborted)setRemote({scope,data:null,error:true});});
     return()=>controller.abort();
   },[spaceId,track.id,active,retry]);

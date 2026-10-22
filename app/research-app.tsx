@@ -46,9 +46,10 @@ import { LearningGoalPlanner, LearningPathHeader } from "./components/learning-g
 import type { GraphDeskPaper } from "./components/graph-research-desk";
 import type { GraphTaskContext } from "../lib/graph-task";
 import {useRouteSelections} from "./components/use-route-selection";
+import {useComparisonWorkspace} from "./components/use-comparison-workspace";
 import {LibraryComparisonControls} from "./components/library-comparison-controls";
 import {RouteSelectionBar} from "./components/route-selection-bar";
-import {comparisonInputKey,readComparisonInput,writeComparisonInput,clearComparisonInput} from '../lib/comparison-input';
+import {comparisonInputKey,readComparisonInput} from '../lib/comparison-input';
 import {paperUserStateView} from '../lib/paper-user-state.mjs';
 import "./components/graph-research-desk.css";
 import { GraphTaskNavigation } from "./components/graph-task-navigation";
@@ -2248,19 +2249,14 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if (view === "thread-detail" && selectedThread) navigate("thread-detail", workbookTrackId, { id: selectedThread.id, tab: next });
   };
   const [graphTask, setGraphTask] = useState<GraphTaskContext>({spaceId:"",question:"",papers:[]});
-  const [workbookTask, setWorkbookTask] = useState<GraphTaskContext | undefined>();
+  const {workbookTask,setWorkbookTask,workbookVersionId,setWorkbookVersionId,workbookTrackId,setWorkbookTrackId,workbookReturnView,setWorkbookReturnView,workbookViewState,setWorkbookViewState,loadedWorkbookRef,beginComparison,rememberVersion}=useComparisonWorkspace(user.userId,activeSpaceId);
   const [readingComparisonBusy,setReadingComparisonBusy]=useState(false);
   const [learningTask, setLearningTask] = useState<GraphTaskContext | undefined>();
   const [graphDetailsOpen, setGraphDetailsOpen] = useState(false);
-  const [workbookVersionId, setWorkbookVersionId] = useState("");
-  const [workbookTrackId, setWorkbookTrackId] = useState<string | null>(null);
-  const [workbookReturnView, setWorkbookReturnView] = useState<View>("threads");
   const [workbookPaperFocus, setWorkbookPaperFocus] = useState("");
   const [comparisonPractice, setComparisonPractice] = useState<WorkspaceLocation | null>(null);
   const [workbookRefreshKey, setWorkbookRefreshKey] = useState(0);
   const [libraryViewState,setLibraryViewState]=useState({query:"",scope:"related" as "related"|"all",page:1,focusId:""});
-  const [workbookViewState,setWorkbookViewState]=useState({panel:"evidence" as "evidence"|"relations"|"task",focus:""});
-  const loadedWorkbookRef = useRef('');
   const { workbookScrollRef, navigationScroll, restoredLocation: restoredLocationRef, navigationRevision, requestLocationRestore, updateWorkspaceHash, rememberCurrentLocation } = useWorkspaceNavigation(activeSpaceId, user.userId);
   const [navigationIssue, setNavigationIssue] = useState<"space" | "missing" | "paper" | null>(null);
   const [requestedLocation, setRequestedLocation] = useState<WorkspaceLocation | null>(null);
@@ -4058,7 +4054,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     const key = spaceId + ":" + paper.id;
     const currentSaved = saved[key] ?? paper.saved;
     const value = forcedValue ?? (kind === "save" ? !currentSaved : true);
-    const nextState=paperUserStateView({...paper,readingStatus:reasonCode==='duplicate_known'?'mastered':paper.readingStatus,saved:kind==='not_relevant'&&value?false:kind==='save'?value:currentSaved,feedback:kind==='relevant'||kind==='not_relevant'?(value?kind:null):paper.feedback,snoozedUntil:kind==='later'&&value?new Date(Date.now()+3*86400000).toISOString():null});
+    const nextState=kind==='later'&&value?'snoozed':paperUserStateView({...paper,readingStatus:reasonCode==='duplicate_known'?'mastered':paper.readingStatus,saved:kind==='not_relevant'&&value?false:kind==='save'?value:currentSaved,feedback:kind==='relevant'||kind==='not_relevant'?(value?kind:null):paper.feedback,snoozedUntil:null});
     if (feedbackSaving.current) return;
     document.querySelectorAll(".v2-paper-more-actions[open]").forEach(element => element.removeAttribute("open"));
     feedbackSaving.current = true;
@@ -4357,14 +4353,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   };
 
   const openWorkbook = (trackId: string, task?: GraphTaskContext, origin?:{view:View;hash:string}, workbookId = "") => {
-    loadedWorkbookRef.current = '';
-    setWorkbookTask(task);
-    const inputKey=comparisonInputKey(user.userId,activeSpace.id,trackId);
-    if(task){if(!writeComparisonInput(inputKey,task))setToast(locale==='zh'?'无法暂存比较选择，请保留当前页面。':'Selection storage unavailable; keep this page open.');}else if(!workbookId)clearComparisonInput(inputKey);
-    setWorkbookVersionId(workbookId);
-    setWorkbookViewState({panel:"evidence",focus:""});
-    setWorkbookTrackId(trackId);
-    setWorkbookReturnView(origin?.view||view);
+    if(!beginComparison(trackId,task,workbookId,origin?.view||view))setToast(locale==='zh'?'无法暂存比较选择，请保留当前页面。':'Selection storage unavailable; keep this page open.');
     navigate("workbook", trackId, { from: origin?.view||view, ...(origin?{returnTo:origin.hash}:{}), workbookId: workbookId || undefined, workbookPanel: "evidence", workbookFocus: undefined });
   };
 
@@ -5638,8 +5627,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           </main>
         )}
 
-        {!demo && libraryComparisonTrackId && (view === "library" || view === "paper-detail" && paperReturnView === "library") && <RouteSelectionBar requireQuestion key={`library:${user.userId}:${activeSpace.id}:${libraryComparisonTrackId}`} spaceId={activeSpace.id} trackId={libraryComparisonTrackId} locale={locale} selection={librarySelection} onMaterials={()=>{if(view!=="library")navigate("library");else{const input=document.querySelector<HTMLInputElement>(".v2-library-toolbar input");input?.scrollIntoView({block:"center"});input?.focus();}}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(libraryComparisonTrackId,librarySelection.value,{view:"library",hash:origin||workspaceHash({view:"library",space:activeSpace.id,track:libraryComparisonTrackId})});}} />}
-        {routeSelectionTrackId && (view === "thread-detail" || view === "paper-detail" && paperReturnView === "thread-detail") && <RouteSelectionBar key={`${user.userId}:${activeSpace.id}:${routeSelectionTrackId}:${view}`} spaceId={activeSpace.id} trackId={routeSelectionTrackId} locale={locale} selection={routeSelection} onMaterials={()=>{if(view==="paper-detail")navigate("thread-detail",undefined,{id:routeSelectionTrackId,tab:"evidence"});else setResearchRouteTab("evidence");}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(routeSelectionTrackId,routeSelection.value,{view:"thread-detail",hash:origin||workspaceHash({view:"thread-detail",space:activeSpace.id,id:routeSelectionTrackId,tab:"start"})});}} />}
+        {!demo && libraryComparisonTrackId && (view === "library" || view === "paper-detail" && paperReturnView === "library") && <RouteSelectionBar userId={user.userId} onResumeDraft={draft=>openWorkbook(libraryComparisonTrackId,draft,{view:"library",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash})} onResume={id=>openWorkbook(libraryComparisonTrackId,undefined,{view:"library",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash},id)} requireQuestion key={`library:${user.userId}:${activeSpace.id}:${libraryComparisonTrackId}`} spaceId={activeSpace.id} trackId={libraryComparisonTrackId} locale={locale} selection={librarySelection} onMaterials={()=>{if(view!=="library")navigate("library");else{const input=document.querySelector<HTMLInputElement>(".v2-library-toolbar input");input?.scrollIntoView({block:"center"});input?.focus();}}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(libraryComparisonTrackId,librarySelection.value,{view:"library",hash:origin||workspaceHash({view:"library",space:activeSpace.id,track:libraryComparisonTrackId})});}} />}
+        {routeSelectionTrackId && (view === "thread-detail" || view === "paper-detail" && paperReturnView === "thread-detail") && <RouteSelectionBar userId={user.userId} onResumeDraft={draft=>openWorkbook(routeSelectionTrackId,draft,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash})} onResume={id=>openWorkbook(routeSelectionTrackId,undefined,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash},id)} key={`${user.userId}:${activeSpace.id}:${routeSelectionTrackId}:${view}`} spaceId={activeSpace.id} trackId={routeSelectionTrackId} locale={locale} selection={routeSelection} onMaterials={()=>{if(view==="paper-detail")navigate("thread-detail",undefined,{id:routeSelectionTrackId,tab:"evidence"});else setResearchRouteTab("evidence");}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(routeSelectionTrackId,routeSelection.value,{view:"thread-detail",hash:origin||workspaceHash({view:"thread-detail",space:activeSpace.id,id:routeSelectionTrackId,tab:"start"})});}} />}
         {(view === "thread-detail" || view === "paper-detail" && paperReturnView === "thread-detail" || view === "workbook" && workbookReturnView === "thread-detail" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "thread-detail") && (
           <main hidden={view !== "thread-detail"} className="v2-page v2-detail-page v2-map-detail v2-route-workspace">
             <button className="v2-back" type="button" onClick={() => navigate("threads")}>← {locale === "zh" ? "返回路线总览" : "Back to route overview"}</button>
@@ -5715,6 +5704,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
         {(view === "library" || view === "paper-detail" && paperReturnView === "library" || view === "workbook" && workbookReturnView === "library" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "library") && (
           <PrimaryLibrary
+            userId={user.userId}
             visible={view === "library"}
             comparisonSelection={demo?undefined:librarySelection}
             comparisonTrackId={libraryComparisonTrackId}
@@ -5820,7 +5810,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         )}
 
         {comparisonPractice?.workbookId&&comparisonPractice.track&&<div hidden={view!=="learn"}><WorkbookPractice key={`${activeSpace.id}:${comparisonPractice.workbookId}`} userId={user.userId} spaceId={activeSpace.id} trackId={comparisonPractice.track} workbookId={comparisonPractice.workbookId} practiceId={comparisonPractice.practiceId} locale={locale} onSaved={()=>setWorkbookRefreshKey(n=>n+1)} onSelect={practiceId=>{setComparisonPractice(current=>current?{...current,practiceId}:current);if(readWorkspaceLocation(window.location.hash).view==="learn")updateWorkspaceHash({practiceId},"replace");}} onOpenPaper={(source,focus)=>void openWorkbookPaper(source,focus,"learn")} onBack={()=>{rememberCurrentLocation();const origin=comparisonPractice.returnTo?readWorkspaceLocation(comparisonPractice.returnTo):null;window.location.hash=origin?.view==="workbook"?comparisonPractice.returnTo!:workspaceHash({view:"workbook",id:comparisonPractice.track,space:activeSpace.id,workbookId:comparisonPractice.workbookId,workbookPanel:"task",from:"today",returnTo:workspaceHash({view:"today",space:activeSpace.id})});}}/></div>}
-        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook active={view === "workbook"} refreshKey={workbookRefreshKey} onStartPractice={practiceId=>{const current=readWorkspaceLocation(window.location.hash);if(current.workbookId)navigate("learn",undefined,{workbookId:current.workbookId,track:workbookTrackId||undefined,practiceId,from:"workbook",returnTo:window.location.hash});}} initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{loadedWorkbookRef.current=`${activeSpace.id}:${workbookTrackId}:${id}`;const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => void returnFromWorkbook()} /></DeferredWorkspacePanel></div>}
+        {workbookTrackId && <div hidden={view !== "workbook"}><DeferredWorkspacePanel locale={locale}><ResearchWorkbook active={view === "workbook"} refreshKey={workbookRefreshKey} onStartPractice={practiceId=>{const current=readWorkspaceLocation(window.location.hash);if(current.workbookId)navigate("learn",undefined,{workbookId:current.workbookId,track:workbookTrackId||undefined,practiceId,from:"workbook",returnTo:window.location.hash});}} initialWorkbookId={workbookVersionId} onWorkbookChange={id=>{rememberVersion(workbookTrackId,id);const current=readWorkspaceLocation(window.location.hash);if(current.view==="workbook"&&current.id===workbookTrackId)updateWorkspaceHash({workbookId:id},"replace");}} userId={user.userId} key={`${activeSpace.id}:${workbookTrackId}:${JSON.stringify(workbookTask || null)}`} taskContext={workbookTask?.spaceId === activeSpace.id ? workbookTask : undefined} spaceId={activeSpace.id} trackId={workbookTrackId} locale={locale} initialPanel={workbookViewState.panel} initialFocus={workbookViewState.focus} onViewChange={(panel,focus)=>{setWorkbookViewState({panel,focus});updateWorkspaceHash({workbookPanel:panel,workbookFocus:focus||undefined},'push');}} onOpenPaper={(source, focus) => void openWorkbookPaper(source, focus)} onBack={() => void returnFromWorkbook()} /></DeferredWorkspacePanel></div>}
 
         {view === "paper-detail" && selectedMonitorPaper && (
           <main className="v2-page v2-paper-detail pi-paper-workspace">

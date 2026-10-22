@@ -156,7 +156,7 @@ async function routeOverview(ctx: Context) {
       observationCount:Object.values(value.observations || {}).filter(v=>typeof v==='string'&&v.trim()).length };
   };
   const comparisons=await Promise.all(rows.results.map(summarize));
-  const overview: RouteOverview = {spaceId:ctx.spaceId,trackId:ctx.trackId,question:ctx.track.question,
+  const overview: RouteOverview = {spaceId:ctx.spaceId,trackId:ctx.trackId,titleZh:ctx.track.title_zh,titleEn:ctx.track.title_en,question:ctx.track.question,
     eligibleCount:candidates.length,routeEligibleCount:candidates.filter(s=>s.routeMember).length,comparisons,
     savedJudgment:saved ? comparisons.find(c=>c.id===saved.id) || await summarize(saved) : null,
     materials:await comparisonMaterials(ctx,candidates)};
@@ -199,6 +199,7 @@ export async function GET(request: Request) {
     row = !selection.missing.length && selected.length >= 2 ? await rowFor(ctx, `${id}:revision-v8`) || await rowFor(ctx, `${id}:evidence-v8`) || await rowFor(ctx, `${id}:revision-v7`) || await rowFor(ctx, `${id}:evidence-v7`) || await rowFor(ctx, `${id}:revision-v6`) || await rowFor(ctx, `${id}:evidence-v6`) || await rowFor(ctx, `${id}:revision-v5`) || await rowFor(ctx, `${id}:evidence-v5`) || await rowFor(ctx, `${id}:revision-v4`) || await rowFor(ctx, `${id}:evidence-v4`) || await rowFor(ctx, `${id}:revision-v3`) || await rowFor(ctx, `${id}:evidence-v3`) || await rowFor(ctx, `${id}:revision-v2`) || await rowFor(ctx, `${id}:evidence-v2`) || await rowFor(ctx, `${id}:revision-v1`) || await rowFor(ctx, id) : null;
   } else row = await rowFor(ctx, id);
   if (id && !row) return Response.json({ error: "Workbook not found" }, { status: 404 });
+  if(url.searchParams.get('intent')==='1'&&url.searchParams.get('selection')==='1')return Response.json({spaceId:ctx.spaceId,trackId:ctx.trackId,matching:row?{id:row.id,status:row.status}:null},{headers:{'Cache-Control':'private, no-store'}});
   return projection(ctx, row, preferred, focus, safeId(url.searchParams.get('paperId')));
 }
 
