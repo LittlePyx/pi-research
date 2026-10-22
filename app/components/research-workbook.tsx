@@ -203,7 +203,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       <strong role="status">{progress.title}</strong>
       {progress.reviewLabel&&<p className="pi-workbook-round" role="status">{progress.reviewLabel}</p>}
       {progress.preservation&&<p className="pi-workbook-preservation">{progress.preservation}</p>}
-      {!!state?.protocolRecoveries&&<p>{zh?`已自动恢复 ${state.protocolRecoveries} 次格式异常；仍需通过完整证据核对。`:`Automatically recovered ${state.protocolRecoveries} format errors; full evidence review is still required.`}</p>}
+      {!!state?.protocolRecoveries&&<p>{zh?`已自动恢复 ${state.protocolRecoveries} 次格式或引用异常；仍需通过完整证据核对。`:`Automatically recovered ${state.protocolRecoveries} format or reference errors; full evidence review is still required.`}</p>}
       <details className="pi-progress-explanation" open={state?.status!=='ready'||Boolean(error)||busy==='save'}><summary>{zh?'保留内容与下一步':'Preserved content and next steps'}</summary>
       <p><b>{zh?'已保留：':'Preserved: '}</b>{progress.retained}</p>
       {progress.failure&&<p role="alert">{progress.failure}</p>}

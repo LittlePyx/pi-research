@@ -85,7 +85,7 @@ async function projection(original: Context, row: Row | null, preferred: string[
   const detail = workbookValidationCode(failureRow?.code);
   const responseDetail = workbookResponseDetail(failureRow?.code);
   const failure = failureRow && detail ? { code: 'invalid_evidence' as const, stage: failureRow.stage, detail } : failureRow && responseDetail ? { code: 'invalid_response' as const, stage: failureRow.stage, detail: responseDetail } : failureRow;
-  const recovered = row ? await ctx.database.prepare(`SELECT COUNT(*) AS count FROM research_workbook_attempts WHERE workbook_id = ? AND space_id = ? AND code = 'protocol_retry_succeeded'`).bind(row.id,ctx.spaceId).first<{count:number}>() : null;
+  const recovered = row ? await ctx.database.prepare(`SELECT COUNT(*) AS count FROM research_workbook_attempts WHERE workbook_id = ? AND space_id = ? AND code IN ('protocol_retry_succeeded','reference_retry_succeeded')`).bind(row.id,ctx.spaceId).first<{count:number}>() : null;
   const savedReview = parse(row?.review_json || '');
   const reviewIssues = workbookReviewIssues(savedReview);
   let revisionFlow: WorkbookState['revisionFlow'];
@@ -273,15 +273,18 @@ export async function POST(request: Request) {
     const savedReview = parse(row.review_json);
     const isGraph = savedReview?.workflow?.engine === 'langgraph-v1';
     const previous = await ctx.database.prepare(`SELECT code, stage FROM research_workbook_attempts WHERE workbook_id = ? AND space_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`).bind(row.id, ctx.spaceId).first<{code:string;stage:string}>();
-    const model = async (prompt: string, reviewer: boolean) => {
+    const model = async (prompt: string, reviewer: boolean, validate?:(raw:unknown)=>unknown) => {
       active!.stage = reviewer ? 'review' : 'draft';
       // A correction retry contract must never instruct the independent reviewer to return patches.
       const hint = previous?.stage === active!.stage ? workbookRecoveryHint(previous.code, reviewer) : '';
       const recordProtocol = (code:string,status=200,finishReason='stop') => ctx.database.prepare(`INSERT INTO research_workbook_attempts (id,workbook_id,space_id,stage,code,provider_status,finish_reason,elapsed_ms)
         SELECT ?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM research_comparison_workbooks WHERE id=? AND space_id=? AND lock_token=?)`)
         .bind(crypto.randomUUID(),row!.id,ctx.spaceId,active!.stage,code,status,finishReason,Date.now()-active!.started,row!.id,ctx.spaceId,token).run();
-      const response = await requestWorkbookModel(credential.apiKey, hint ? JSON.stringify({...JSON.parse(prompt), recovery: hint}) : prompt, reviewer, fetch, async error=>{await recordProtocol(error.detail!,error.providerStatus,error.finishReason);});
-      if(response.requests>1)await recordProtocol('protocol_retry_succeeded');
+      const response = await requestWorkbookModel(credential.apiKey, hint ? JSON.stringify({...JSON.parse(prompt), recovery: hint}) : prompt, reviewer, fetch, async error=>{
+        if(error instanceof WorkbookModelError)await recordProtocol(error.detail!,error.providerStatus,error.finishReason);
+        else await recordProtocol(workbookValidationCode(error)!);
+      },validate);
+      if(response.requests>1)await recordProtocol(response.recoveryKind==='references'?'reference_retry_succeeded':'protocol_retry_succeeded');
       await ctx.database.prepare(`INSERT INTO ai_usage_daily (id, scope, usage_date, request_count, input_tokens, output_tokens)
         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(scope, usage_date) DO UPDATE SET request_count = request_count + excluded.request_count,
         input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens, updated_at = CURRENT_TIMESTAMP`)
@@ -304,7 +307,7 @@ export async function POST(request: Request) {
       output: { verdict: "supported|unsupported", checks: [{ id: "exact requiredCheckId", verdict: "supported|unsupported", paperIds: ["exact source ID"], reason: "specific support or failure reason" }] },
       batchRule: 'Return checks for ONLY the supplied requiredCheckIds. Keep each reason to one short sentence. Other fields are reviewed in separate saved batches.',
     }) : anchoredWorkbookPrompt(comparisonQuestion, selected);
-    const raw = await model(prompt, Boolean(draft));
+    const raw = await model(prompt, Boolean(draft),draft?undefined:raw=>resolveAnchoredWorkbook(raw,selected));
     content = draft || resolveAnchoredWorkbook(raw, selected);
     const part = draft ? validateWorkbookReviewPart(raw, draft, selected, pending) : null;
     review = part ? { supported: (earlier?.supported ?? true) && part.supported, checks: [...(earlier?.checks || []), ...part.checks] } : null;

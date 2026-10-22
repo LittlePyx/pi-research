@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {requestWorkbookModel} from '../lib/workbook-model.ts';
 import {workbookFailure, workbookRetryDelay, workbookFailureText, workbookValidationCode, workbookRecoveryHint,workbookResponseDetailText} from '../lib/workbook-recovery.ts';
+import {resolveAnchoredWorkbook} from '../lib/workbook-evidence.ts';
+import {workbookSources,anchoredSample} from './fixtures/research-workbook.mjs';
 test('comparison calls classify provider and response failures without forwarding error bodies',async()=>{
  const cases=[
   [()=>Response.json({error:'secret-key-and-prompt'}, {status:401}),'model_auth'],
@@ -101,4 +103,26 @@ test('structural and evidence failures have useful safe explanations and exact r
  assert.match(workbookRecoveryHint('untraceable_workbook_instruction'),/NONEMPTY/);
  assert.match(workbookRecoveryHint('untraceable_workbook_instruction'),/Never reference missing cells/);
  assert.match(workbookRecoveryHint('untraceable_workbook_instruction',true),/REVIEW ONLY/);
+});
+
+test('reference self-correction receives the failed candidate and must pass the original evidence validator',async()=>{
+ const invalid=anchoredSample();invalid.task.steps[0].evidenceIds=['invented:p1'];let calls=0;const failures=[];let signal;
+ const result=await requestWorkbookModel('fixture','source',false,async(_url,init)=>{
+  calls++;if(calls===1)signal=init.signal;
+  else {assert.equal(init.signal,signal);const repair=JSON.parse(JSON.parse(init.body).messages[2].content);assert.deepEqual(repair.previousResponse,invalid);assert.match(repair.feedback,/Never reference missing cells/);}
+  return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(calls===1?invalid:anchoredSample())}}]});
+ },async error=>failures.push(error.message),raw=>resolveAnchoredWorkbook(raw,workbookSources));
+ assert.equal(calls,2);assert.equal(result.recoveryKind,'references');assert.deepEqual(failures,['untraceable_workbook_instruction']);
+ assert.doesNotThrow(()=>resolveAnchoredWorkbook(result.raw,workbookSources));
+});
+
+test('reference recovery shares the single retry allowance and never repairs unsupported quotations',async()=>{
+ for(const mode of ['persistent','json-first','bad-evidence']){
+  let calls=0;
+  await assert.rejects(requestWorkbookModel('fixture','source',false,async()=>{
+   calls++;const wire=anchoredSample();if(mode==='bad-evidence')wire.dimensions[0].cells[0].quoteIds=['p1.invented'];else wire.task.steps[0].evidenceIds=['invented:p1'];
+   return Response.json({choices:[{finish_reason:'stop',message:{content:mode==='json-first'&&calls===1?'bad JSON':JSON.stringify(wire)}}]});
+  },undefined,raw=>resolveAnchoredWorkbook(raw,workbookSources)),error=>workbookFailure(error)==='invalid_evidence');
+  assert.equal(calls,mode==='bad-evidence'?1:2);
+ }
 });

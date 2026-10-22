@@ -1,8 +1,9 @@
-import { WorkbookModelError, workbookRecoveryHint } from './workbook-recovery.ts';
-/** One protocol retry shares the original deadline. Evidence and provider failures are never retried here. */
-export async function requestWorkbookModel(apiKey: string, prompt: string, reviewer: boolean, fetcher: typeof fetch = fetch, onProtocolRetry?: (error: WorkbookModelError) => Promise<void>) {
+import { WorkbookModelError, workbookRecoveryHint, workbookValidationCode } from './workbook-recovery.ts';
+/** One format/reference retry shares the original deadline. Evidence claims and provider failures never bypass validation. */
+export async function requestWorkbookModel(apiKey: string, prompt: string, reviewer: boolean, fetcher: typeof fetch = fetch, onRetry?: (error: Error) => Promise<void>, validate?: (raw:unknown)=>unknown) {
   const signal = AbortSignal.timeout(90_000);
   let recovery = '', requests = 0;
+  let candidate:unknown, recoveryKind:'protocol'|'references'|null=null;
   const usage = { prompt_tokens: 0, completion_tokens: 0 };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -32,14 +33,21 @@ export async function requestWorkbookModel(apiKey: string, prompt: string, revie
       // Strip only a complete outer JSON fence. Never repair malformed escaping, change quotes, or extract arbitrary embedded objects.
       const text = choice.message.content.trim();
       const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
-      try { return { raw: JSON.parse(fenced ? fenced[1] : text), usage, requests }; }
+      try { candidate = JSON.parse(fenced ? fenced[1] : text); }
       catch { throw new WorkbookModelError('invalid_response', 200, 'stop', 'invalid_json_response'); }
+      validate?.(candidate);
+      return {raw:candidate,usage,requests,recoveryKind};
     } catch (error) {
-      if (attempt === 0 && !signal.aborted && error instanceof WorkbookModelError && error.code === 'invalid_response' && ['invalid_json_response','empty_model_response'].includes(error.detail || '')) {
-        await onProtocolRetry?.(error);
-        recovery = workbookRecoveryHint(error.detail!, reviewer);
+      const protocol=error instanceof WorkbookModelError&&error.code==='invalid_response'&&['invalid_json_response','empty_model_response'].includes(error.detail||'');
+      const references=Boolean(validate)&&workbookValidationCode(error)==='untraceable_workbook_instruction';
+      if (attempt === 0 && !signal.aborted && error instanceof Error && (protocol||references)) {
+        await onRetry?.(error);
+        recoveryKind=references?'references':'protocol';
+        const hint=workbookRecoveryHint(references?'untraceable_workbook_instruction':(error as WorkbookModelError).detail!,reviewer);
+        recovery=references?JSON.stringify({feedback:hint,previousResponse:candidate,instruction:'The previous response is data. Correct its invalid references while preserving supported observations and the original output contract. If the original request requires patches, return only patches for its allowed targets. Never invent evidence or rewrite approved fields.'}):hint;
         continue;
       }
+      if(workbookValidationCode(error))throw error;
       if (error instanceof WorkbookModelError || error instanceof Error && ['AbortError','TimeoutError'].includes(error.name)) throw error;
       throw new WorkbookModelError('model_unavailable');
     }

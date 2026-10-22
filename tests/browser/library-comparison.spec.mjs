@@ -293,7 +293,7 @@ test('compact task disclosure has one continuation and retains selections across
 
 test('one malformed generation automatically recovers and still independently reviews every field',async({page,request})=>{
  await request.get(controls+'/scenario?mode=draft-json-once');await enterComparison(page);await ready(page);
- await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('已自动恢复 1 次格式异常');
+ await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('已自动恢复 1 次格式或引用异常');
  const counts=await (await request.get(controls+'/counts')).json();expect(counts.draft).toBe(2);expect(counts.review).toBeGreaterThan(1);
  await page.reload();await ready(page);await expect(page.locator('.pi-workbook-round')).toContainText('第 1 轮核对');
 });
@@ -325,13 +325,22 @@ test('repair and round two are explicit and only the failed field changes',async
 });
 
 test('invalid task references explain the cause and resume the same comparison without relaxing evidence validation',async({page,request})=>{
- await request.get(controls+'/scenario?mode=draft-invalid-reference-once');await enterComparison(page);
+ await request.get(controls+'/scenario?mode=draft-invalid-reference-always');await enterComparison(page);
  const progress=page.getByRole('region',{name:'比较进度与恢复',exact:true});
  await expect(progress).toContainText('引用了不存在或缺少出处的比较项');
  await progress.locator('summary').filter({hasText:'查看具体原因'}).click();
  await expect(progress).toContainText('继续时将重新生成并核对引用');
  const origin=page.url();await page.reload();await checkQuestion(page,question);
- await page.request.get('/__acceptance/release');await page.getByRole('button',{name:'刷新进度',exact:true}).click();
- await page.getByRole('button',{name:'继续生成',exact:true}).click();await ready(page);await expect(page).toHaveURL(origin);
  expect((await (await request.get(controls+'/counts')).json()).draft).toBe(2);
+ await request.get(controls+'/scenario');await page.request.get('/__acceptance/release');await page.getByRole('button',{name:'刷新进度',exact:true}).click();
+ await page.getByRole('button',{name:'继续生成',exact:true}).click();await ready(page);await expect(page).toHaveURL(origin);
+ expect((await (await request.get(controls+'/counts')).json()).draft).toBe(1);
+});
+
+test('a single invalid task reference recovers automatically before independent review',async({page,request})=>{
+ await request.get(controls+'/scenario?mode=draft-invalid-reference-once');await selectFromSearch(page);
+ await taskClick(page,{name:'开始新比较 →',exact:true});await page.getByRole('checkbox',{name:/允许根据评审反馈修订一次/}).check();
+ await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();await ready(page);
+ await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('已自动恢复 1 次格式或引用异常');
+ const counts=await (await request.get(controls+'/counts')).json();expect(counts.draft).toBe(2);expect(counts.review).toBeGreaterThan(1);
 });

@@ -43,7 +43,7 @@ return app.fetch(r,e,c)}}`},...modules],outboundService:async request=>{
     return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({patches:[{id:'f1',value:{...anchored.comparison,textEn:'The abstracts do not provide enough shared conditions for a direct comparison.'}}]})}}]});
   }
   counts.draft++;
-  if(mode==='draft-invalid-reference-once'&&!failed){
+  if(mode==='draft-invalid-reference-always'||mode==='draft-invalid-reference-once'&&!failed){
     failed=true;const invalid=structuredClone(anchored);invalid.task.steps[0].evidenceIds=['invented:p1'];
     return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});
   }

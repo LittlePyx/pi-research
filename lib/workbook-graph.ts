@@ -6,7 +6,7 @@ export const WORKBOOK_GRAPH_ENGINE = 'langgraph-v1';
 type Review = ReturnType<typeof validateWorkbookReview>;
 export type WorkbookGraphReview = { supported: boolean; checks: Review['checks']; workflow: { engine: typeof WORKBOOK_GRAPH_ENGINE; repairs: number; previousIssues: ReturnType<typeof workbookReviewIssues>; repairMode?: 'fields-v1' } };
 type Snapshot = { content: WorkbookContent | null; review: WorkbookGraphReview; status: 'verifying' | 'rejected' | 'ready' };
-type Model = (prompt: string, reviewer: boolean) => Promise<unknown>;
+type Model = (prompt: string, reviewer: boolean, validate?:(raw:unknown)=>unknown) => Promise<unknown>;
 
 export function initialWorkbookGraphReview(): WorkbookGraphReview {
   return { supported: true, checks: [], workflow: { engine: WORKBOOK_GRAPH_ENGINE, repairs: 0, previousIssues: [] } };
@@ -43,7 +43,7 @@ export function workbookReviewPrompt(question: string, sources: WorkbookSource[]
 export async function advanceWorkbookGraph(question: string, sources: WorkbookSource[], snapshot: Snapshot, model: Model): Promise<Snapshot> {
   const State = Annotation.Root({ checkpoint: Annotation<Snapshot>() });
   const graph = new StateGraph(State)
-    .addNode('draft', async () => ({ checkpoint: { ...snapshot, content: resolveAnchoredWorkbook(await model(anchoredWorkbookPrompt(question, sources), false), sources) } }))
+    .addNode('draft', async () => ({ checkpoint: { ...snapshot, content: resolveAnchoredWorkbook(await model(anchoredWorkbookPrompt(question, sources), false,raw=>resolveAnchoredWorkbook(raw,sources)), sources) } }))
     .addNode('review', async ({ checkpoint: s }) => {
       const pending = workbookReviewFields(s.content!).filter(id => !s.review.checks.some(c => c.id === id)).slice(0, WORKBOOK_REVIEW_BATCH_SIZE);
       const raw = await model(workbookReviewPrompt(question, sources, s.content!, pending, true), true);
@@ -54,7 +54,7 @@ export async function advanceWorkbookGraph(question: string, sources: WorkbookSo
     .addNode('repair', async ({ checkpoint: s }) => {
       const issues = workbookReviewIssues(s.review);
       const prompt = workbookPatchPrompt(question, sources, s.content!, issues);
-      return { checkpoint: { ...s, content: applyWorkbookPatches(await model(prompt, false), s.content!, sources, issues), review: { ...initialWorkbookGraphReview(),
+      return { checkpoint: { ...s, content: applyWorkbookPatches(await model(prompt, false,raw=>applyWorkbookPatches(raw,s.content!,sources,issues)), s.content!, sources, issues), review: { ...initialWorkbookGraphReview(),
         workflow: { engine: WORKBOOK_GRAPH_ENGINE, repairs: s.review.workflow.repairs + 1, previousIssues: issues, repairMode: 'fields-v1' } } } };
     })
     .addNode('settle', ({ checkpoint: s }) => {
