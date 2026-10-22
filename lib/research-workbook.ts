@@ -23,6 +23,7 @@ export type WorkbookState = {
   artifact: { revision: number; value: WorkbookArtifact } | null; retryAt: number;
   stage?: 'draft' | 'review'; busyUntil?: number;
   reviewProgress?: { completed: number; total: number };
+  protocolRecoveries?: number;
   focusQuestion?: string;
   reviewIssues?: WorkbookReviewIssue[];
   revisionFlow?: { engine: 'langgraph-v1'; repairs: number; limit: 1; next: 'draft' | 'review' | 'repair' | 'stopped'; revisedFields?: number; preservedFields?: number };

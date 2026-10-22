@@ -8,6 +8,15 @@ const route=page=>page.getByRole('combobox',{name:'比较所属路线',exact:tru
 const query=page=>page.getByRole('textbox',{name:'搜索标题、作者、期刊或论文介绍',exact:true});
 const choose=(page,index)=>page.getByRole('checkbox',{name:'选择比较 '+sample.sources[index].title,exact:true});
 const tray=page=>page.getByRole('complementary',{name:'已选比较论文',exact:true});
+async function expandTask(page){
+ const button=tray(page).getByRole('button',{name:'展开任务',exact:true});
+ if(await button.isVisible())await button.click();
+}
+async function taskClick(page,options){
+ const button=tray(page).getByRole('button',options);
+ if(!await button.isVisible())await expandTask(page);
+ await button.click();
+}
 async function questionField(page){
   const panel=page.getByRole('region',{name:'从论文库开始比较',exact:true});
   if(new URL(page.url()).hash.startsWith('#library')){
@@ -45,7 +54,7 @@ async function selectFromSearch(page){
 }
 async function enterComparison(page){
   await selectFromSearch(page);
-  await tray(page).getByRole('button',{name:/^(开始新比较|继续这次比较) →$/}).click();
+  await taskClick(page,{name:/^(开始新比较|继续这次比较) →$/});
   await checkQuestion(page,question);
   await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();
 }
@@ -83,7 +92,7 @@ test('search, filters, pagination, exact selections and drafts survive reading, 
   await page.getByRole('button',{name:'← 论文库',exact:true}).click();
   await assertSearchRestored(page);await expect(page).toHaveURL(origin);
   await page.reload();await assertSearchRestored(page);
-  await tray(page).getByRole('button',{name:/^(开始新比较|继续这次比较) →$/}).click();
+  await taskClick(page,{name:/^(开始新比较|继续这次比较) →$/});
   await page.reload();
   await checkQuestion(page,question);
   await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();await ready(page);
@@ -98,6 +107,8 @@ test('search, filters, pagination, exact selections and drafts survive reading, 
   await page.getByRole('textbox',{name:'目前的判断及依据',exact:true}).fill('不同信道和编码限制下的性能量不作直接排序。');
   await page.getByRole('textbox',{name:'仍缺的条件或待解决问题',exact:true}).fill('下一步核对全文中的编码器限制及定理编号。');
   await page.getByRole('button',{name:'保存并返回原任务',exact:true}).click();await assertSearchRestored(page);
+  await expect(tray(page).getByRole('button',{name:'查看已保存判断 →',exact:true})).toBeVisible();
+  await expect(tray(page).locator('.pi-selection-compare:visible')).toHaveCount(0);
   await route(page).selectOption('acceptance-other');
   await expect(tray(page)).toHaveCount(0);
   await checkQuestion(page,'通用编码需要哪些信道未知条件？');
@@ -110,7 +121,7 @@ test('search, filters, pagination, exact selections and drafts survive reading, 
   await route(page).selectOption('acceptance-other');await checkQuestion(page,'另一条路线的独立问题');
   await route(page).selectOption('acceptance-quantum');
   await assertSearchRestored(page);await page.reload();await assertSearchRestored(page);
-  await tray(page).getByRole('button',{name:/^(开始新比较|继续这次比较) →$/}).click();await ready(page);
+  await taskClick(page,{name:/^(开始新比较|继续这次比较) →$/});await ready(page);
   await expect(page.getByRole('textbox',{name:'目前的判断及依据',exact:true})).toHaveValue('不同信道和编码限制下的性能量不作直接排序。');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:info.outputPath('saved-comparison.png'),fullPage:true});
@@ -118,7 +129,7 @@ test('search, filters, pagination, exact selections and drafts survive reading, 
 test('an initial comparison read failure can refresh without losing the chosen papers and question',async({page})=>{
   await selectFromSearch(page);let dropped=false;
   await page.route(/\/api\/research-workbook\?/,async routed=>{if(new URL(routed.request().url()).searchParams.get('selection')==='1'&&new URL(routed.request().url()).searchParams.get('intent')!=='1'&&!dropped){dropped=true;await routed.abort();}else await routed.continue();});
-  await tray(page).getByRole('button',{name:/^(开始新比较|继续这次比较) →$/}).click();
+  await taskClick(page,{name:/^(开始新比较|继续这次比较) →$/});
   await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('本次操作未完成');
   await page.getByRole('button',{name:'刷新进度',exact:true}).click();
   await checkQuestion(page,question);
@@ -130,7 +141,7 @@ test('task entries preserve local comparison drafts, distinguish saved records a
   await selectFromSearch(page);
   await expect(tray(page)).toContainText('量子编码条件比较');
   await expect(tray(page)).toContainText('选材草稿');
-  await tray(page).getByRole('button',{name:'开始新比较 →',exact:true}).click();
+  await taskClick(page,{name:'开始新比较 →',exact:true});
   const refined='仅依据摘要，核对反馈擦除信道与通用编码各自的编码器条件和性能指标。';
   await setQuestion(page,refined);
   await page.getByRole('button',{name:'← 返回原任务',exact:true}).click();
@@ -140,7 +151,7 @@ test('task entries preserve local comparison drafts, distinguish saved records a
   await route(page).selectOption('acceptance-other');
   await expect(page.getByRole('button',{name:'继续本地比较草稿 →',exact:true})).toHaveCount(0);
   await route(page).selectOption('acceptance-quantum');
-  await tray(page).getByRole('button',{name:'继续本地比较草稿 →',exact:true}).click();
+  await taskClick(page,{name:'继续本地比较草稿 →',exact:true});
   await checkQuestion(page,refined);
   await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();await ready(page);
   const id=new URLSearchParams(page.url().split('?')[1]).get('workbookId');
@@ -148,19 +159,19 @@ test('task entries preserve local comparison drafts, distinguish saved records a
   await page.getByRole('button',{name:'保存并返回原任务',exact:true}).click();
   await expect(tray(page)).toContainText('已保存判断');
   await expect(page.getByRole('button',{name:'继续本地比较草稿 →',exact:true})).toHaveCount(0);
-  await tray(page).getByRole('button',{name:'继续已有比较 →',exact:true}).click();await ready(page);
+  await taskClick(page,{name:'继续已有比较 →',exact:true});await ready(page);
   await expect(page).toHaveURL(new RegExp(encodeURIComponent(id)));
   await expect(page.getByRole('textbox',{name:'目前的判断及依据',exact:true})).toHaveValue('分开核对编码设定，暂不比较不同任务的界。');
   await page.getByRole('button',{name:'← 返回原任务',exact:true}).click();
   await setQuestion(page,'新的未生成比较问题');
-  await tray(page).getByRole('button',{name:'开始新比较 →',exact:true}).click();
+  await taskClick(page,{name:'开始新比较 →',exact:true});
   await setQuestion(page,'另一份比较草稿的问题改写');
   await page.getByRole('button',{name:'← 返回原任务',exact:true}).click();
-  await tray(page).getByRole('button',{name:'继续已有比较 →',exact:true}).click();await ready(page);
+  await taskClick(page,{name:'继续已有比较 →',exact:true});await ready(page);
   await checkQuestion(page,refined);
   await expect(page.getByRole('button',{name:'恢复到编辑区',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'← 返回原任务',exact:true}).click();
-  await tray(page).getByRole('button',{name:'继续本地比较草稿 →',exact:true}).click();
+  await taskClick(page,{name:'继续本地比较草稿 →',exact:true});
   await checkQuestion(page,'另一份比较草稿的问题改写');
   expect((await (await request.get(controls+'/counts')).json()).draft).toBe(1);
 });
@@ -195,7 +206,7 @@ test('library and route selection stay synchronized in both directions without m
   await primaryNavigation(page,/^研究$/);
   await page.getByRole('button',{name:'进入研究：量子编码条件比较',exact:true}).click();
   await expect(tray(page)).toContainText('2/3');
-  await tray(page).getByRole('button',{name:'移除 '+sample.sources[0].title,exact:true}).click();
+  await taskClick(page,{name:'移除 '+sample.sources[0].title,exact:true});
   await expect(tray(page)).toContainText('1/3');
   await primaryNavigation(page,/^论文库/);
   await expect(tray(page)).toContainText('1/3');
@@ -206,7 +217,7 @@ test('library and route selection stay synchronized in both directions without m
   await route(page).selectOption('acceptance-quantum');
   await expect(tray(page)).toContainText('1/3');
   await checkQuestion(page,question);
-  await tray(page).getByRole('button',{name:'移除 '+sample.sources[1].title,exact:true}).click();
+  await taskClick(page,{name:'移除 '+sample.sources[1].title,exact:true});
   await expect(tray(page)).toHaveCount(0);
   await primaryNavigation(page,/^研究$/);
   await page.getByRole('button',{name:'进入研究：量子编码条件比较',exact:true}).click();
@@ -234,7 +245,7 @@ test('a dropped review request refreshes the same checkpoint without regeneratin
 test('a lost generation response discovers the saved checkpoint instead of generating again',async({page,request})=>{
   await selectFromSearch(page);let dropped=false;
   await page.route('**/api/research-workbook',async routed=>{const req=routed.request();if(req.method()==='POST'&&req.postDataJSON().action==='prepare'&&!dropped){dropped=true;await routed.fetch();await routed.abort();}else await routed.continue();});
-  await tray(page).getByRole('button',{name:/^(开始新比较|继续这次比较) →$/}).click();
+  await taskClick(page,{name:/^(开始新比较|继续这次比较) →$/});
   await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();
   await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('本次操作未完成');
   await page.getByRole('button',{name:'刷新进度',exact:true}).click();
@@ -265,4 +276,50 @@ test('a real saved-version conflict retains local input and allows explicit reco
   await expect(decision).toHaveValue('这个标签页尚未提交的核查判断');
   await page.getByRole('button',{name:'保存记录',exact:true}).click();
   await expect(page.getByRole('status').filter({hasText:'已保存到工作区 · 版本 2'})).toBeVisible();
+});
+
+test('compact task disclosure has one continuation and retains selections across refresh and routes',async({page},info)=>{
+ await selectFromSearch(page);
+ await expect(tray(page).getByRole('button')).toHaveCount(2);
+ await expect(tray(page).getByRole('button',{name:'展开任务',exact:true})).toHaveAttribute('aria-expanded','false');
+ expect(await tray(page).evaluate(e=>e.getBoundingClientRect().height)).toBeLessThan(165);
+ await expandTask(page);await expect(tray(page).getByRole('button',{name:'移除 '+sample.sources[0].title,exact:true})).toBeVisible();
+ await page.reload();await expect(tray(page).getByRole('button',{name:'展开任务',exact:true})).toBeVisible();
+ await assertSearchRestored(page);
+ await route(page).selectOption('acceptance-other');await expect(tray(page)).toHaveCount(0);
+ await route(page).selectOption('acceptance-quantum');await expect(tray(page)).toContainText('2/3');
+ await page.screenshot({path:info.outputPath('compact-task.png'),fullPage:false});
+});
+
+test('one malformed generation automatically recovers and still independently reviews every field',async({page,request})=>{
+ await request.get(controls+'/scenario?mode=draft-json-once');await enterComparison(page);await ready(page);
+ await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('已自动恢复 1 次格式异常');
+ const counts=await (await request.get(controls+'/counts')).json();expect(counts.draft).toBe(2);expect(counts.review).toBeGreaterThan(1);
+ await page.reload();await ready(page);await expect(page.locator('.pi-workbook-round')).toContainText('第 1 轮核对');
+});
+
+test('persistent malformed output stops after one retry and restores the same comparison on manual continuation',async({page,request})=>{
+ await request.get(controls+'/scenario?mode=draft-json-always');await enterComparison(page);
+ await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('JSON 格式有误');
+ expect((await (await request.get(controls+'/counts')).json()).draft).toBe(2);
+ const origin=page.url();await checkQuestion(page,question);await page.reload();await checkQuestion(page,question);
+ await request.get(controls+'/scenario');await page.request.get('/__acceptance/release');
+ await page.getByRole('button',{name:'刷新进度',exact:true}).click();await page.getByRole('button',{name:'继续生成',exact:true}).click();await ready(page);
+ await expect(page).toHaveURL(origin);
+});
+
+test('repair and round two are explicit and only the failed field changes',async({page,request})=>{
+ await request.get(controls+'/scenario?mode=repair');await selectFromSearch(page);
+ await taskClick(page,{name:'开始新比较 →',exact:true});
+ await page.getByRole('checkbox',{name:/允许根据评审反馈修订一次/}).check();
+ const snapshots=[];
+ page.on('response',async response=>{if(response.url().endsWith('/api/research-workbook')&&response.request().method()==='POST'){try{snapshots.push((await response.json()).workbook);}catch{/* A navigation can discard its response body; final state is asserted below. */}}});
+ await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();await ready(page);
+ await expect(page.locator('.pi-workbook-round')).toContainText('第 2 轮核对');
+ await expect(page.locator('.pi-workbook-preservation')).toContainText('保留');
+ expect(snapshots.some(s=>s?.revisionFlow?.next==='repair')).toBe(true);
+ const final=snapshots.findLast(s=>s?.status==='ready');expect(final.revisionFlow.revisedFields).toBe(1);
+ const {comparison,...unchanged}=final.content;const {comparison:original,...expected}=sample.content;
+ expect(unchanged).toEqual(expected);expect(comparison.textEn).not.toBe(original.textEn);
+ expect((await (await request.get(controls+'/counts')).json()).repair).toBe(1);
 });

@@ -35,7 +35,10 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       reviewFlags.push(Boolean(input.requiredCheckIds));
       if(failureMode==='rate')return Response.json({error:{message:'sensitive provider fixture text'}},{status:429});
       if(failureMode==='truncated')return Response.json({choices:[{finish_reason:'length',message:{content:'partial fixture output'}}]});
-      if(failureMode==='bad-json')return Response.json({choices:[{finish_reason:'stop',message:{content:'private invalid output'}}]});
+      if(failureMode==='bad-json'||failureMode==='json-once'){
+        if(failureMode==='json-once')failureMode='json-recovered';
+        return Response.json({choices:[{finish_reason:'stop',message:{content:'private invalid output'}}]});
+      }
       if(failureMode==='unauthorized-patch')return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({patches:[{id:'f1',value:{...anchoredSample().comparison,questionZh:'Unapproved question rewrite'}}]})}}]});
       if(failureMode==='invalid-evidence'){const invalid=anchoredSample();invalid.dimensions[0].cells[0].quoteIds=['p1.fabricated'];return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(invalid)}}]});}
       if(failureMode==='recover-evidence')assert.match(input.recovery,/unlocated_workbook_evidence/);
@@ -307,6 +310,16 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       await sql([{sql:'UPDATE research_comparison_workbooks SET retry_at=0 WHERE id=?',values:[failed.id]}]);failureMode='recover-evidence';
       const repaired=(await post({action:'advance',workbookId:failed.id})).workbook;assert.equal(repaired.status,'verifying');assert.equal(repaired.content,null);
       failureMode='';assert.equal((await finishReview(repaired)).status,'ready');
+    });
+    await t.test('one protocol retry persists safe diagnostics, counts both calls and leaves review mandatory',async()=>{
+      failureMode='json-once';const before=calls;
+      const pilot=(await post({action:'prepare',paperIds:workbookSources.map(s=>s.id),focusQuestion:'Automatic protocol recovery acceptance',allowRepair:true})).workbook;
+      assert.equal(calls-before,2);assert.equal(pilot.status,'verifying');assert.equal(pilot.content,null);assert.equal(pilot.protocolRecoveries,1);
+      assert.equal(pilot.reviewProgress.completed,0);assert.equal(pilot.failure,null);
+      const attempts=(await sql([{sql:'SELECT code FROM research_workbook_attempts WHERE workbook_id=? ORDER BY rowid',values:[pilot.id]}]))[0].results;
+      assert.deepEqual(attempts.map(row=>row.code),['invalid_json_response','protocol_retry_succeeded']);
+      assert.doesNotMatch(JSON.stringify(attempts),/private invalid output/);
+      failureMode='';assert.equal((await finishReview(pilot)).status,'ready');
     });
     await t.test('invalid JSON is persisted as a safe diagnostic and the same graph resumes with protocol feedback',async()=>{
       failureMode='bad-json';

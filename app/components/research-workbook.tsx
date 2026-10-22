@@ -199,18 +199,20 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     <header className="pi-workbook-heading"><p>{zh ? "研究工作台" : "RESEARCH WORKSPACE"}</p><h1>{zh ? "论文比较" : "Paper comparison"}</h1><p>{zh ? "对齐研究条件，核对每条结论的依据。" : "Align the conditions and check the evidence behind each conclusion."}</p></header>
     {content && <section className="pi-comparison-question"><small>{zh ? "本次研究问题" : "RESEARCH QUESTION"}</small><p><MathText>{text(content,"question")}</MathText></p></section>}
     <section className="pi-workbook-progress" aria-label={zh?"比较进度与恢复":"Comparison progress and recovery"}>
-      <ol aria-label={zh?"比较步骤":"Comparison steps"}>{([['sources','选材','Sources'],['draft','生成','Draft'],['review','核对','Review'],['record','记录判断','Judgment']] as const).map(([phase,zhLabel,enLabel])=><li key={phase} aria-current={progress.phase===phase?'step':undefined}>{zh?zhLabel:enLabel}</li>)}</ol>
+      <ol aria-label={zh?"比较步骤":"Comparison steps"}>{([['sources','选材','Sources'],['draft','生成','Draft'],['review','核对','Review'],...(state?.revisionFlow?[['repair','按需修订','Correct if needed'] as const]:[]),['record','记录判断','Judgment']] as const).map(([phase,zhLabel,enLabel])=><li key={phase} aria-current={progress.phase===phase?'step':undefined}>{zh?zhLabel:enLabel}</li>)}</ol>
       <strong role="status">{progress.title}</strong>
+      {progress.reviewLabel&&<p className="pi-workbook-round" role="status">{progress.reviewLabel}</p>}
+      {progress.preservation&&<p className="pi-workbook-preservation">{progress.preservation}</p>}
+      {!!state?.protocolRecoveries&&<p>{zh?`已自动恢复 ${state.protocolRecoveries} 次格式异常；仍需通过完整证据核对。`:`Automatically recovered ${state.protocolRecoveries} format errors; full evidence review is still required.`}</p>}
       <details className="pi-progress-explanation" open={state?.status!=='ready'||Boolean(error)||busy==='save'}><summary>{zh?'保留内容与下一步':'Preserved content and next steps'}</summary>
       <p><b>{zh?'已保留：':'Preserved: '}</b>{progress.retained}</p>
       {progress.failure&&<p role="alert">{progress.failure}</p>}
       <p><b>{zh?'下一步：':'Next: '}</b>{progress.next}</p>
-      {Boolean(state?.reviewProgress?.total)&&<p>{zh?'已核对比较项：':'Reviewed fields: '}{state!.reviewProgress!.completed} / {state!.reviewProgress!.total}</p>}
       </details>
       {error&&<div role="alert"><p>{saveConflict?(zh?'保存版本有变化，本地输入已保留。请核对最新保存内容后恢复草稿。':'The saved version changed. Local input is retained; check the latest saved content before restoring your draft.'):(zh?'本次操作未完成，输入仍保留在当前页。':'The action did not complete; input is retained on this page.')}</p><details><summary>{zh?'查看错误详情':'Error details'}</summary><p>{error}</p></details></div>}
       {state?.failure?.detail&&<details><summary>{zh?'查看连接或格式详情':'Connection or format details'}</summary><p>{workbookResponseDetailText(state.failure.detail,zh)}</p></details>}
       {!busy&&(error||state&&['draft','verifying','retryable'].includes(state.status))&&<div className="pi-workbook-recovery-actions">
-        {state?.id&&!error&&<button type="button" disabled={state.stale||dirty||questionDirty||state.retryAt>now||(state.busyUntil||0)>now} onClick={()=>void prepare(true)}>{state.revisionFlow?.next==='repair'?(zh?'修订并重新核对':'Correct and review again'):state.stage==='draft'?(zh?'继续生成':'Continue generation'):(zh?'继续核对':'Continue review')}</button>}
+        {state?.id&&!error&&<button type="button" disabled={state.stale||dirty||questionDirty||state.retryAt>now||(state.busyUntil||0)>now} onClick={()=>void prepare(true)}>{progress.resumeLabel}</button>}
         <button type="button" disabled={dirty||Boolean(state&&questionDirty)} onClick={refreshProgress}>{zh?'刷新进度':'Refresh progress'}</button>
         {Boolean(state?.busyUntil&&state.busyUntil>now)&&<small>{zh?'已有请求正在处理，请刷新进度确认结果。':'A request is in progress. Refresh to check its result.'}</small>}
         {Boolean(state?.retryAt&&state.retryAt>now)&&<small>{zh?'可继续时间：':'Continue after: '}{new Date(state!.retryAt).toLocaleTimeString(zh?'zh-CN':'en-US')}</small>}

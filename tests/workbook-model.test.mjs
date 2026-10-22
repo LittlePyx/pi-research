@@ -61,3 +61,35 @@ test('protocol diagnostics use fixed codes without retaining model content or un
   assert.equal(e.detail,detail);assert.doesNotMatch(JSON.stringify(e),/private provider text/);return true;
  });
 });
+
+test('one malformed response is retried with serialization feedback, the same deadline and combined usage',async()=>{
+ let calls=0,signal;const diagnostics=[];
+ const result=await requestWorkbookModel('fixture','source',false,async(_url,init)=>{
+  const body=JSON.parse(init.body);calls++;
+  assert.match(body.messages[0].content,/JSON-escape every literal backslash/);
+  if(calls===1)signal=init.signal;
+  else {assert.equal(init.signal,signal);assert.match(body.messages[2].content,/preserve the original source/);}
+  return Response.json({choices:[{finish_reason:'stop',message:{content:calls===1?'bad JSON':'{"valid":true}'}}],usage:{prompt_tokens:10,completion_tokens:20}});
+ },async error=>{diagnostics.push(error.detail);});
+ assert.equal(calls,2);assert.equal(result.requests,2);assert.deepEqual(result.raw,{valid:true});
+ assert.deepEqual(result.usage,{prompt_tokens:20,completion_tokens:40});assert.deepEqual(diagnostics,['invalid_json_response']);
+});
+
+test('automatic protocol recovery is bounded and never retries provider limits, authentication or truncated output',async()=>{
+ for(const [reply,expectedCalls] of [
+  [()=>Response.json({choices:[{finish_reason:'stop',message:{content:'bad JSON'}}]}),2],
+  [()=>Response.json({choices:[{finish_reason:'length',message:{content:'partial'}}]}),1],
+  [()=>new Response('',{status:429}),1],[()=>new Response('',{status:401}),1],
+ ]){
+  let calls=0;await assert.rejects(requestWorkbookModel('fixture','source',true,async()=>{calls++;return reply();}));assert.equal(calls,expectedCalls);
+ }
+});
+
+test('automatic reviewer recovery remains audit-only and cannot ask for patches or approve evidence',async()=>{
+ let calls=0;
+ await requestWorkbookModel('fixture','source',true,async(_url,init)=>{
+  const body=JSON.parse(init.body);calls++;
+  if(calls===2){assert.match(body.messages[2].content,/REVIEW ONLY/);assert.match(body.messages[2].content,/never approve unsupported content/);}
+  return Response.json({choices:[{finish_reason:'stop',message:{content:calls===1?'bad JSON':'{}'}}]});
+ });assert.equal(calls,2);
+});

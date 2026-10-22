@@ -457,3 +457,29 @@
 @media (prefers-reduced-motion: reduce) {
   .v2-app.pi-workspace.pi-product *, .v2-app.pi-workspace.pi-product *::before, .v2-app.pi-workspace.pi-product *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* Task disclosure keeps browsing space available; all drafts remain accessible. */
+.v2-app.pi-workspace.pi-product .pi-route-selection-bar { display:block; padding:10px 14px; }
+.v2-app.pi-workspace.pi-product .pi-selection-summary { display:flex; gap:16px; align-items:center; }
+.v2-app.pi-workspace.pi-product .pi-selection-summary > div:first-child { flex:1; min-width:0; }
+.v2-app.pi-workspace.pi-product .pi-selection-summary strong { font-size:12px; }
+.v2-app.pi-workspace.pi-product .pi-selection-summary span { margin-left:12px; color:var(--ui-secondary); font-size:11px; }
+.v2-app.pi-workspace.pi-product .pi-selection-summary p { margin:2px 0 0; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.v2-app.pi-workspace.pi-product .pi-selection-summary-actions { display:flex; gap:8px; flex-shrink:0; }
+.v2-app.pi-workspace.pi-product .pi-selection-details { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 20px; max-height:45vh; overflow:auto; margin-top:10px; padding-top:10px; border-top:1px solid var(--ui-border); }
+.v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar) .v2-main,
+.v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar) .v2-library-page { padding-bottom:120px; }
+.v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar.is-expanded) .v2-main,
+.v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar.is-expanded) .v2-library-page { padding-bottom:55vh; }
+@media(max-width:600px) {
+ .v2-app.pi-workspace.pi-product .pi-selection-summary { flex-wrap:wrap; gap:6px; }
+ .v2-app.pi-workspace.pi-product .pi-selection-summary > div:first-child { flex-basis:100%; }
+ .v2-app.pi-workspace.pi-product .pi-selection-summary-actions { width:100%; }
+ .v2-app.pi-workspace.pi-product .pi-selection-summary-actions button:first-child { flex:1; }
+ .v2-app.pi-workspace.pi-product .pi-selection-details { display:block; }
+ .v2-app.pi-workspace.pi-product .pi-selection-details > * { margin-bottom:8px; }
+ .v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar) .v2-main,
+ .v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar) .v2-library-page { padding-bottom:160px; }
+ .v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar.is-expanded) .v2-main,
+ .v2-app.pi-workspace.pi-product:has(.pi-route-selection-bar.is-expanded) .v2-library-page { padding-bottom:65vh; }
+}

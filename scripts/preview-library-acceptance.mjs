@@ -18,7 +18,7 @@ resolveAnchoredWorkbook(anchored,sources);
 const root=fileURLToPath(new URL('../dist/server/',import.meta.url)),modules=[];
 for await(const path of glob('**/*.js',{cwd:root}))modules.push({type:'ESModule',path:root+path});
 const owner='browser-acceptance-owner-001',space='acceptance-library',track='acceptance-quantum';
-let mode='',failed=false,counts={draft:0,review:0};
+let mode='',failed=false,corrected=false,counts={draft:0,review:0,repair:0};
 const mf=new Miniflare({host:'127.0.0.1',port:8146,cf:false,d1Databases:['DB'],compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],bindings:{DEEPSEEK_API_KEY:'sk-isolated-browser-fixture-no-provider-access'},modulesRoot:root,assets:{directory:fileURLToPath(new URL('../dist/client/',import.meta.url)),binding:'ASSETS',routerConfig:{has_user_worker:true,invoke_user_worker_ahead_of_assets:true}},modules:[{type:'ESModule',path:root+'browser-acceptance-entry.js',contents:`import app from './index.js';export default{async fetch(r,e,c){const u=new URL(r.url);
 if(u.pathname==='/__acceptance/start')return new Response(null,{status:302,headers:{Location:'/#library?space=${space}&q=erasure','Set-Cookie':'pi_anonymous_workspace=${owner}; Path=/; SameSite=Lax'}});
 if(u.pathname==='/__acceptance/reset'){await e.DB.batch(['DELETE FROM research_comparison_artifacts','DELETE FROM research_workbook_attempts','DELETE FROM research_comparison_workbooks'].map(sql=>e.DB.prepare(sql)));return new Response('reset');}
@@ -32,13 +32,20 @@ return app.fetch(r,e,c)}}`},...modules],outboundService:async request=>{
   const body=await request.json();
   if(body.messages?.length===1&&body.messages[0].content==='Reply OK.')return Response.json({choices:[{finish_reason:'stop',message:{content:'OK'}}]});
   const input=JSON.parse(body.messages?.[1]?.content||'{}');
-  if(!input.requiredCheckIds&&!input.contract?.dimensions)return new Response('Unrelated model work disabled in browser acceptance',{status:503});
+  if(!input.requiredCheckIds&&!input.contract?.dimensions&&!input.correction)return new Response('Unrelated model work disabled in browser acceptance',{status:503});
   if(input.requiredCheckIds){
     counts.review++;
     if(mode==='review-rate-limit'&&!failed){failed=true;return Response.json({error:{message:'Isolated provider rate limit'}},{status:429});}
-    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({verdict:'supported',checks:input.requiredCheckIds.map(id=>({id,verdict:'supported',paperIds:sources.map(s=>s.id),reason:'Deterministic browser regression reply, not a live academic audit.'}))})}}],usage:{prompt_tokens:1,completion_tokens:1}});
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({verdict:mode==='repair'&&!corrected&&input.requiredCheckIds.includes('comparison')?'unsupported':'supported',checks:input.requiredCheckIds.map(id=>({id,verdict:mode==='repair'&&!corrected&&id==='comparison'?'unsupported':'supported',...(mode==='repair'&&!corrected&&id==='comparison'?{issueType:'repairable'}:{}),paperIds:sources.map(s=>s.id),reason:'Deterministic browser regression reply, not a live academic audit.'}))})}}],usage:{prompt_tokens:1,completion_tokens:1}});
+  }
+  if(input.correction){
+    counts.repair++;corrected=true;
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({patches:[{id:'f1',value:{...anchored.comparison,textEn:'The abstracts do not provide enough shared conditions for a direct comparison.'}}]})}}]});
   }
   counts.draft++;
+  if((mode==='draft-json-once'&&!failed)||mode==='draft-json-always'){
+    failed=true;return Response.json({choices:[{finish_reason:'stop',message:{content:'invalid JSON fixture'}}]});
+  }
   return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(anchored)}}],usage:{prompt_tokens:1,completion_tokens:1}});
 }});
 const call=path=>mf.dispatchFetch('http://localhost'+path,{headers:{cookie:'pi_anonymous_workspace='+owner}});
@@ -69,7 +76,7 @@ await db.batch(Array.from({length:61},(_,index)=>[
 // The fixture has an explicit control plane outside the deployed application.
 const {createServer}=await import('node:http');
 // Separate local-only port keeps test controls out of application requests.
-const controls=createServer(async(req,res)=>{const url=new URL(req.url,'http://127.0.0.1:8147');if(url.pathname==='/scenario'){mode=url.searchParams.get('mode')||'';failed=false;counts={draft:0,review:0};res.end('ok');}else if(url.pathname==='/counts'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(counts));}else{res.statusCode=404;res.end();}});
+const controls=createServer(async(req,res)=>{const url=new URL(req.url,'http://127.0.0.1:8147');if(url.pathname==='/scenario'){mode=url.searchParams.get('mode')||'';failed=false;corrected=false;counts={draft:0,review:0,repair:0};res.end('ok');}else if(url.pathname==='/counts'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(counts));}else{res.statusCode=404;res.end();}});
 await new Promise(resolve=>controls.listen(8147,'127.0.0.1',resolve));
 await mf.ready;console.log('Isolated browser acceptance: http://127.0.0.1:8146/__acceptance/start');
 for(const signal of ['SIGINT','SIGTERM'])process.once(signal,async()=>{controls.close();await mf.dispose();process.exit(0);});

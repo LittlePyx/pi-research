@@ -39,7 +39,7 @@ export function workbookReviewPrompt(question: string, sources: WorkbookSource[]
     batchRule: 'Return checks for ONLY the supplied requiredCheckIds. Keep each reason to one short sentence. Other fields are reviewed in separate saved batches.' });
 }
 
-/** At most one paid model call per invocation; the route commits the result under its evidence/lease guard. */
+/** One graph step per invocation; the model may retry serialization once within its shared deadline. The route guards every commit. */
 export async function advanceWorkbookGraph(question: string, sources: WorkbookSource[], snapshot: Snapshot, model: Model): Promise<Snapshot> {
   const State = Annotation.Root({ checkpoint: Annotation<Snapshot>() });
   const graph = new StateGraph(State)
