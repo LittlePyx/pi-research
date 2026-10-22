@@ -323,3 +323,15 @@ test('repair and round two are explicit and only the failed field changes',async
  expect(unchanged).toEqual(expected);expect(comparison.textEn).not.toBe(original.textEn);
  expect((await (await request.get(controls+'/counts')).json()).repair).toBe(1);
 });
+
+test('invalid task references explain the cause and resume the same comparison without relaxing evidence validation',async({page,request})=>{
+ await request.get(controls+'/scenario?mode=draft-invalid-reference-once');await enterComparison(page);
+ const progress=page.getByRole('region',{name:'比较进度与恢复',exact:true});
+ await expect(progress).toContainText('引用了不存在或缺少出处的比较项');
+ await progress.locator('summary').filter({hasText:'查看具体原因'}).click();
+ await expect(progress).toContainText('继续时将重新生成并核对引用');
+ const origin=page.url();await page.reload();await checkQuestion(page,question);
+ await page.request.get('/__acceptance/release');await page.getByRole('button',{name:'刷新进度',exact:true}).click();
+ await page.getByRole('button',{name:'继续生成',exact:true}).click();await ready(page);await expect(page).toHaveURL(origin);
+ expect((await (await request.get(controls+'/counts')).json()).draft).toBe(2);
+});

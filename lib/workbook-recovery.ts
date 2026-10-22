@@ -12,7 +12,18 @@ export function workbookResponseDetailText(value: unknown, zh: boolean): string 
     unexpected_finish_reason: ['模型没有正常完成本次输出，请继续当前步骤。', 'The model did not finish normally. Continue the current step.'],
     invalid_provider_response: ['模型服务返回格式异常，请稍后继续。', 'The provider returned an invalid response envelope. Continue shortly.'],
   };
-  return detail ? messages[detail][zh ? 0 : 1] : '';
+  if(detail)return messages[detail][zh ? 0 : 1];
+  const validation=workbookValidationCode(value);
+  if(!validation)return '';
+  const reasons:Record<string,[string,string]>={
+    untraceable_workbook_instruction:['比较结论或研究步骤引用了不存在或缺少出处的比较项。材料和问题已保留；继续时将重新生成并核对引用。','A conclusion or task step references a missing or unsupported comparison cell. Sources and question are preserved; continue to regenerate and validate references.'],
+    unlocated_workbook_evidence:['部分引文无法定位到所选论文摘要。继续时会重新选择原文片段，出处核对仍须通过。','Some quotations could not be located in the selected abstracts. Continuing selects source passages again; evidence validation remains required.'],
+    invalid_workbook_patch:['修订未符合指定字段范围，修改未保存，已通过内容保持不变。请继续当前修订步骤。','The correction exceeded its allowed field contract. No changes were saved; approved content remains unchanged. Continue the correction step.'],
+    overlong_workbook_field:['部分内容超出长度限制。继续时会要求精简表达，保留证据与适用条件。','Some fields exceed their length limits. Continuing requests concise wording while retaining evidence and qualifications.'],
+    incomplete_workbook_review:['本轮核对返回项目不完整；之前保存的核对进度保留，请继续核对。','This review batch is incomplete. Previously saved checks are retained; continue review.'],
+    untraceable_workbook_review:['本轮核对的论文引用未对应所选材料；之前保存的核对进度保留，请继续核对。','This review batch references papers outside the selected sources. Previously saved checks are retained; continue review.'],
+  };
+  return reasons[validation]?.[zh?0:1]||(zh?'生成内容未符合比较结构要求。已保存内容保留；继续时会按具体校验反馈重新处理当前步骤。':'The output did not meet the comparison contract. Saved content is retained; continuing retries this step using the validation feedback.');
 }
 export function workbookValidationCode(value: unknown): string | null {
   const code = value instanceof Error ? value.message : value;
@@ -24,6 +35,7 @@ export function workbookRecoveryHint(code: string, reviewer = false): string {
   if (code === 'workbook_channel_uses_translation') return 'Preserve channel uses as repetitions, never as qubit counts. For example, four uses of the qubit erasure channel means 量子比特擦除信道使用四次, not 四比特擦除信道 or four-qubit erasure channel. Fix the affected bilingual observation without changing its evidence or any approved field.';
   if (code === 'internal_workbook_instruction') return 'Reader-facing tasks, criteria and ALL learning fields must never request catalog identifiers, source-passage IDs, quote IDs or evidence IDs. Those machine identifiers are not displayed. Instead ask readers to name P1/P2 and quote the exact displayed words. Keep quoteIds/evidenceIds only in their required structured JSON properties, never in prose. Preserve all evidence checks.';
   if (code === 'invalid_workbook_patch') return 'Return only the patches array. Include each correction.targets id exactly once and only its listed valueKeys. Never return a full workbook or edit approved fields. Use the supplied quoteIds array and short source keys. All evidence validation and independent review still apply.';
+  if (code === 'untraceable_workbook_instruction') return 'Rebuild comparison.evidenceIds and EVERY task.steps[].evidenceIds from the actual dimensions in this response. Each array must be NONEMPTY. Each reference is exactly actualDimensionId:p1 (or p2/p3), with one colon, using an existing cell with status=supported and valid quoteIds. Never reference missing cells, quote IDs, paper titles, bare source keys, invented dimensions or the illustrative contract placeholder. Dimension IDs must match exactly, including case. Narrow the task to supported cells rather than inventing evidence. Preserve all evidence validation and independent review.';
   if (code === 'overlong_workbook_field') return 'The previous workbook exceeded the supplied characterLimits. Rewrite the overlong fields concisely within those limits in BOTH languages. Preserve mathematical qualifications and complete sentences; never truncate a sentence or a verbatim quotation to fit. Choose a shorter complete source passage if necessary. All evidence and review checks still apply.';
   if (code === 'invalid_response' || workbookResponseDetail(code)) return 'The previous response could not be used. Return one complete JSON object matching the supplied contract, with no Markdown fences or surrounding text. JSON-escape quotation marks, newlines and every literal backslash in mathematical text and verbatim quotes; escaping must preserve the original source text when decoded. Do not invent or change evidence to fix serialization.';
   if (!workbookValidationCode(code) && code !== 'invalid_evidence') return '';

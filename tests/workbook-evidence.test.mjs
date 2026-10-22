@@ -90,6 +90,9 @@ test('anchored generation restores only server-owned quotes and canonical source
 test('a comparison patch preserves the independently approved question and every other field exactly',()=>{
  const before=resolvedSample(), issues=[issue('comparison')];
  const prompt=JSON.parse(workbookPatchPrompt('question',workbookSources,before,issues));
+ assert.match(prompt.referenceProtocol.rule,/previousWorkbook/);
+ assert.match(prompt.referenceProtocol.rule,/only the supplied patches envelope/);
+ assert.doesNotMatch(prompt.referenceProtocol.rule,/actual dimensions in this response/);
  assert.equal(prompt.correction.targets[0].id,'f1');assert.equal(prompt.contract,undefined);
  assert.deepEqual(Object.keys(prompt.output.patches[0].value),prompt.correction.targets[0].valueKeys);
  assert.equal(prompt.output.patches[0].id,'f1');

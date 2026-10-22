@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {requestWorkbookModel} from '../lib/workbook-model.ts';
-import {workbookFailure, workbookRetryDelay, workbookFailureText, workbookValidationCode, workbookRecoveryHint} from '../lib/workbook-recovery.ts';
+import {workbookFailure, workbookRetryDelay, workbookFailureText, workbookValidationCode, workbookRecoveryHint,workbookResponseDetailText} from '../lib/workbook-recovery.ts';
 test('comparison calls classify provider and response failures without forwarding error bodies',async()=>{
  const cases=[
   [()=>Response.json({error:'secret-key-and-prompt'}, {status:401}),'model_auth'],
@@ -92,4 +92,13 @@ test('automatic reviewer recovery remains audit-only and cannot ask for patches 
   if(calls===2){assert.match(body.messages[2].content,/REVIEW ONLY/);assert.match(body.messages[2].content,/never approve unsupported content/);}
   return Response.json({choices:[{finish_reason:'stop',message:{content:calls===1?'bad JSON':'{}'}}]});
  });assert.equal(calls,2);
+});
+
+test('structural and evidence failures have useful safe explanations and exact reference recovery',()=>{
+ assert.match(workbookResponseDetailText('untraceable_workbook_instruction',true),/不存在或缺少出处/);
+ for(const code of ['unlocated_workbook_evidence','invalid_workbook_patch','overlong_workbook_field','incomplete_workbook_review','untraceable_workbook_review','inconsistent_workbook_layout'])for(const zh of [true,false])assert.ok(workbookResponseDetailText(code,zh));
+ assert.equal(workbookResponseDetailText('private provider body',true),'');
+ assert.match(workbookRecoveryHint('untraceable_workbook_instruction'),/NONEMPTY/);
+ assert.match(workbookRecoveryHint('untraceable_workbook_instruction'),/Never reference missing cells/);
+ assert.match(workbookRecoveryHint('untraceable_workbook_instruction',true),/REVIEW ONLY/);
 });

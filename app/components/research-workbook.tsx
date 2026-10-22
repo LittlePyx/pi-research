@@ -210,7 +210,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       <p><b>{zh?'下一步：':'Next: '}</b>{progress.next}</p>
       </details>
       {error&&<div role="alert"><p>{saveConflict?(zh?'保存版本有变化，本地输入已保留。请核对最新保存内容后恢复草稿。':'The saved version changed. Local input is retained; check the latest saved content before restoring your draft.'):(zh?'本次操作未完成，输入仍保留在当前页。':'The action did not complete; input is retained on this page.')}</p><details><summary>{zh?'查看错误详情':'Error details'}</summary><p>{error}</p></details></div>}
-      {state?.failure?.detail&&<details><summary>{zh?'查看连接或格式详情':'Connection or format details'}</summary><p>{workbookResponseDetailText(state.failure.detail,zh)}</p></details>}
+      {state?.failure?.detail&&<details><summary>{zh?'查看具体原因':'Failure details'}</summary><p>{workbookResponseDetailText(state.failure.detail,zh)}</p></details>}
       {!busy&&(error||state&&['draft','verifying','retryable'].includes(state.status))&&<div className="pi-workbook-recovery-actions">
         {state?.id&&!error&&<button type="button" disabled={state.stale||dirty||questionDirty||state.retryAt>now||(state.busyUntil||0)>now} onClick={()=>void prepare(true)}>{progress.resumeLabel}</button>}
         <button type="button" disabled={dirty||Boolean(state&&questionDirty)} onClick={refreshProgress}>{zh?'刷新进度':'Refresh progress'}</button>
