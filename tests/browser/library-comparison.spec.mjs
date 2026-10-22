@@ -344,3 +344,14 @@ test('a single invalid task reference recovers automatically before independent 
  await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('已自动恢复 1 次格式或引用异常');
  const counts=await (await request.get(controls+'/counts')).json();expect(counts.draft).toBe(2);expect(counts.review).toBeGreaterThan(1);
 });
+
+test('resuming a failed generation announces active work while the request is pending',async({page,request})=>{
+ await request.get(controls+'/scenario?mode=draft-invalid-reference-always');await enterComparison(page);
+ const progress=page.getByRole('region',{name:'比较进度与恢复',exact:true});await expect(progress).toContainText('引用了不存在');
+ await request.get(controls+'/scenario');await page.request.get('/__acceptance/release');await page.getByRole('button',{name:'刷新进度',exact:true}).click();
+ let release;const held=new Promise(resolve=>{release=resolve;});let waiting=false;
+ await page.route('**/api/research-workbook',async routed=>{if(routed.request().method()==='POST'&&routed.request().postDataJSON().action==='advance'&&!waiting){waiting=true;await held;}await routed.continue();});
+ try {await page.getByRole('button',{name:'继续生成',exact:true}).click();await expect(progress.getByRole('status').first()).toHaveText('正在重新生成有据的比较');}
+ finally {release();}
+ await ready(page);
+});

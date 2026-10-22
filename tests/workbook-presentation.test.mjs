@@ -19,3 +19,11 @@ test('correction has its own phase and a second review round explains preserved 
  shown=workbookPresentation({...base,reviewProgress:{completed:6,total:19},revisionFlow:{repairs:1,next:'review',revisedFields:1,preservedFields:18}},'verify','',true);
  assert.equal(shown.phase,'review');assert.match(shown.reviewLabel,/第 2 轮核对 · 6 \/ 19/);assert.match(shown.preservation,/保留 18 个字段/);
 });
+
+test('a request resuming an interrupted step shows active work rather than its previous failure title',()=>{
+ const state={id:'same',status:'retryable',stage:'draft',failure:{code:'invalid_evidence'}};
+ assert.match(workbookPresentation(state,'verify','',true).title,/正在重新生成/);
+ assert.match(workbookPresentation({...state,stage:'review'},'verify','',true).title,/正在继续第 1 轮核对/);
+ assert.match(workbookPresentation({...state,stage:'review',revisionFlow:{next:'repair',repairs:0}},'verify','',true).title,/正在重试修订/);
+ assert.match(workbookPresentation(state,'','',true).title,/比较暂未完成/);
+});
