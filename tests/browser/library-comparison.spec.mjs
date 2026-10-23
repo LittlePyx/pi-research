@@ -380,6 +380,7 @@ test('evidence switches papers and dimensions in place, restores drafts and retu
  await inspector.screenshot({path:info.outputPath('inspector-navigation.png')});
  await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();
  await expect(origin).toBeFocused();expect(await origin.getAttribute('data-evidence-origin')).toBe(originAnchor);await expect(origin).toBeInViewport();
+ await expect.poll(()=>origin.evaluate(node=>node.getBoundingClientRect().bottom-document.querySelector('.pi-workbook-savebar').getBoundingClientRect().top)).toBeLessThanOrEqual(0);
  const bar=page.locator('.pi-workbook-savebar');
  await expect(bar).toHaveAttribute('data-mode','saved');await expect(bar.getByRole('button',{name:'保存记录',exact:true})).toHaveCount(0);
  await origin.click();await expect(note).toHaveValue('A：原维度第一篇的草稿。');await paperButton(other).click();await expect(note).toHaveValue('B：原维度第二篇的草稿。');

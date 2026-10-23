@@ -117,7 +117,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     requestAnimationFrame(() => {
       const trigger = inspectorTrigger.current?.isConnected ? inspectorTrigger.current : (origin?.anchor?Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-origin]')).find(node=>node.dataset.evidenceOrigin===origin.anchor):null)||Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-id]')).find(node => node.dataset.evidenceId === (origin?.id||focus));
       trigger?.focus({ preventScroll: true });
-      trigger?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      trigger?.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
       clearInspectorOrigin(originKey);
     });
   };
