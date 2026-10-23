@@ -389,7 +389,8 @@ test('evidence switches papers and dimensions in place, restores drafts and retu
   await page.setViewportSize({width:1440,height:1000});await expect(inspector).not.toHaveAttribute('aria-modal','true');await expect(note).toHaveValue('D：下一维度第一篇的草稿。');
   expect(await page.evaluate(()=>document.body.style.overflow)).not.toBe('hidden');
   await paperButton(other).click();await expect(note).toHaveValue('C：下一维度第二篇的草稿。');
-  const edges=await inspector.evaluate(node=>({bottom:node.getBoundingClientRect().bottom,bar:document.querySelector('.pi-workbook-savebar').getBoundingClientRect().top}));expect(edges.bottom).toBeLessThanOrEqual(edges.bar);
+  await inspector.evaluate(node=>node.scrollIntoView({block:'start',behavior:'instant'}));
+  await expect.poll(()=>inspector.evaluate(node=>node.getBoundingClientRect().bottom-document.querySelector('.pi-workbook-savebar').getBoundingClientRect().top)).toBeLessThanOrEqual(0);
   await inspector.screenshot({path:info.outputPath('inspector-wide.png')});
  }
  await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();
