@@ -4,6 +4,7 @@ import type {WorkbookArtifact,WorkbookContent,WorkbookSource} from '../../lib/re
 import {practiceProgress,workbookPracticeTasks,type WorkbookPractice} from '../../lib/workbook-practice';
 import {workbookCheckFocus,workbookResultState} from '../../lib/workbook-followup';
 import {MathText} from './math-text';
+import {workbookTaskPresentation} from '../../lib/workbook-interface';
 
 export function WorkbookFollowup({content,sources,artifact,savedArtifact,practice,locale,disabled,dirty,active,reveal,onOpenPaper,onStartPractice,onAppend}:{
   content:WorkbookContent;sources:WorkbookSource[];artifact:Pick<WorkbookArtifact,'decision'|'unresolved'>;savedArtifact?:Pick<WorkbookArtifact,'decision'|'unresolved'>;practice?:WorkbookPractice;locale:'zh'|'en';disabled:boolean;dirty:boolean;active:boolean;reveal:boolean;
@@ -26,6 +27,7 @@ export function WorkbookFollowup({content,sources,artifact,savedArtifact,practic
     {question.trim()&&<section aria-label={zh?'继续核查待查问题':'Continue checking open questions'}><h3>{zh?'继续核查':'Continue checking'}</h3><p>{zh?'选择论文，带着当前待查问题阅读；完整问题和草稿保留在本比较中。':'Choose a paper to read with the current question. The full question and draft remain in this comparison.'}</p><div className="pi-workbook-followup-actions">{sources.map(source=><button type="button" key={source.id} disabled={disabled} onClick={()=>onOpenPaper(source,workbookCheckFocus('',question))}>{zh?'核查论文：':'Check paper: '}{source.title} →</button>)}</div>{onStartPractice&&<button type="button" disabled={disabled||dirty} onClick={()=>onStartPractice(progress.active.id)}>{progress.allCompleted?(zh?'回顾核查记录':'Review check records'):(zh?'继续核查并记录成果':'Continue checking and record a result')} →</button>}{dirty&&<small>{zh?'先保存判断与待查问题，再进入核查记录。':'Save your judgment and open questions before entering the check record.'}</small>}</section>}
     {visible&&<section ref={target} tabIndex={-1} aria-label={zh?'已保存核查成果':'Saved check results'}><details open={reveal}><summary>{zh?`${saved.length} 项已保存核查记录`:`${saved.length} saved check records`}</summary><p>{zh?'以下为你保存的核查记录。选择补入后仍需核对、保存原判断。':'These are your saved check records. After adding one, review and save the original judgment.'}</p>{saved.map(task=>{
       const entry=practice!.entries[task.id];
+      const shown=workbookTaskPresentation(entry,zh);
       const labelZh=task.id==='learning'?'学习核查':`研究核查 ${Number(task.id.slice(5))+1}`;
       const labelEn=task.id==='learning'?'Learning check':`Research check ${Number(task.id.slice(5))+1}`;
       const label=zh?labelZh:labelEn;
@@ -36,7 +38,7 @@ export function WorkbookFollowup({content,sources,artifact,savedArtifact,practic
       const decisionState=workbookResultState(artifact.decision,savedArtifact?.decision||'',labels,entry.result);
       const questionState=workbookResultState(question,savedArtifact?.unresolved||'',labels,entry.unresolved);
       return <article key={task.id}>
-        <h4>{label} · {entry.completed?(zh?'已确认完成':'Confirmed complete'):(zh?'已保存，待继续':'Saved, in progress')}</h4>
+        <h4>{label} · {shown.status}</h4>
         <p><MathText>{zh?task.goalZh:task.goalEn}</MathText></p>
         {entry.result&&<>
           <h5>{zh?'成果与依据':'Result and evidence'}</h5><p className="pi-workbook-followup-note">{entry.result}</p>
@@ -48,7 +50,7 @@ export function WorkbookFollowup({content,sources,artifact,savedArtifact,practic
         </>}
         {dirty&&<small>{zh?'先保存当前判断，再返回这项核查。':'Save your current judgment before returning to this check.'}</small>}
         <div className="pi-workbook-followup-actions">
-          {onStartPractice&&<button type="button" disabled={disabled||dirty} onClick={()=>onStartPractice(task.id)}>{entry.completed?(zh?'回顾这项核查':'Review this check'):(zh?'继续这项核查':'Continue this check')} →</button>}
+          {onStartPractice&&<button type="button" disabled={disabled||dirty} onClick={()=>onStartPractice(task.id)}>{shown.recordAction} →</button>}
           {papers.map(source=><button key={source.id} type="button" disabled={disabled} onClick={()=>onOpenPaper(source,workbookCheckFocus(zh?task.goalZh:task.goalEn,entry.unresolved||question))}>{zh?'回看材料：':'Revisit source: '}{source.title}</button>)}
         </div>
       </article>;

@@ -26,7 +26,6 @@
 .pi-workbook th, .pi-workbook td { border-bottom: 1px solid #d4ddd5; padding: 12px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 .pi-workbook thead th { background: #edf1eb; }
 .pi-workbook td button { display: block; width: 100%; border-color: transparent; padding: 8px; background: transparent; }
-.pi-workbook-inspector { position: sticky; top: 20px; border-left: 1px solid #d4ddd5; padding-left: 22px; overflow-wrap: anywhere; }
 .pi-workbook blockquote { margin: 18px 0; padding: 14px; background: #edf1eb; font-size: 14px; line-height: 1.8; }
 .pi-workbook cite { display: block; margin-top: 10px; font-size: 12px; }
 .pi-workbook label { line-height: 1.7; }
@@ -49,7 +48,6 @@
   .pi-workbook-layout { grid-template-columns: minmax(0, 1fr); }
   .pi-workbook-layout > div { display: contents; }
   .pi-workbook-artifact { order: 3; }
-  .pi-workbook-inspector { order: 2; position: static; border-left: 0; border-top: 1px solid #d4ddd5; padding: 16px 0; scroll-margin-top: 76px; }
   .pi-workbook table { min-width: 570px; }
 }
 

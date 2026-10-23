@@ -29,11 +29,7 @@
 .v2-app.pi-workspace .v2-modal[data-pi-dialog="import"] { padding:16px; }
 .v2-app.pi-workspace .v2-modal[data-pi-dialog="import"]>div { width:min(1040px,100%); }
 .v2-app.pi-workspace .v2-ask-panel h2 { font:600 24px/1.4 var(--font-geist-sans,Arial),sans-serif; }
-@media(min-width:1101px) {
- .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-layout.inspecting { display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,34%); gap:24px; align-items:start; }
- .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-layout.inspecting>div { min-width:0; }
- .v2-app.pi-workspace .pi-comparison-workspace .inspecting .pi-workbook-inspector { position:sticky; top:28px; margin:0; max-height:calc(100dvh - 56px); overflow-y:auto; }
-}
+
 @media(max-width:600px) {
  .v2-app.pi-workspace .v2-route-workspace nav.pi-route-navigation { gap:22px; }
  .v2-app.pi-workspace .v2-route-workspace nav.pi-route-navigation button { font-size:13px; }

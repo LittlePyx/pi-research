@@ -16,7 +16,11 @@ import {appendWorkbookResult} from '../../lib/workbook-followup';
 import {WorkbookFollowup} from './workbook-followup';
 import {WorkbookEvidenceLinks} from './workbook-evidence-links';
 import {WorkbookTaskPanel} from './workbook-task-panel';
+import {WorkbookEvidenceNavigation} from './workbook-evidence-navigation';
+import {workbookSavePresentation} from '../../lib/workbook-interface';
+import {workbookEvidenceSelection,inspectorOriginKey,rememberInspectorOrigin,readInspectorOrigin,clearInspectorOrigin} from '../../lib/workbook-inspector';
 import "./research-workbook.css";
+import './workbook-controls.css';
 
 const emptyArtifact = (): WorkbookArtifact => ({ observations: {}, decision: "", unresolved: "" });
 function reviewIssueLabel(id: string, zh: boolean) {
@@ -51,6 +55,10 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const [now, setNow] = useState(() => Date.now());
   const zh = locale === "zh";
   const content = state?.content;
+  const focused=workbookEvidenceSelection(content,state?.sources||[],focus);
+  const source=focused?.source;
+  const hasEvidence=Boolean(focused);
+  const originKey=inspectorOriginKey(userId,spaceId,trackId,state?.id||initialWorkbookId);
   const text = (value: { [key: string]: unknown }, key: string) => String(value[`${key}${zh ? "Zh" : "En"}`] || "");
   const draftKey = sessionDraftKey(userId, spaceId, `workbook:${trackId}:${state?.id || ""}:${state?.revision || ""}`);
   const questionDraftKey = comparisonQuestionKey(userId,spaceId,trackId,state?.id||initialWorkbookId);
@@ -104,11 +112,13 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const inspectorTrigger = useRef<HTMLElement | null>(null);
   const [inspectorModal, setInspectorModal] = useState(false);
   const closeInspector = () => {
+    const origin=readInspectorOrigin(originKey);
     setFocus(""); onViewChange?.(panel, "");
     requestAnimationFrame(() => {
-      const trigger = inspectorTrigger.current?.isConnected ? inspectorTrigger.current : Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-id]')).find(node => node.dataset.evidenceId === focus);
+      const trigger = inspectorTrigger.current?.isConnected ? inspectorTrigger.current : (origin?.anchor?Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-origin]')).find(node=>node.dataset.evidenceOrigin===origin.anchor):null)||Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-id]')).find(node => node.dataset.evidenceId === (origin?.id||focus));
       trigger?.focus({ preventScroll: true });
       trigger?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      clearInspectorOrigin(originKey);
     });
   };
   useEffect(() => {
@@ -119,22 +129,24 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     const previousOverflow = document.body.style.overflow;
     const sync = () => {
       dialog.close();
-      const validFocus = content?.dimensions.some(d => d.cells.some(c => `${d.id}:${c.paperId}` === focus));
+      const validFocus = hasEvidence;
       const modal = active && media.matches && Boolean(validFocus);
       setInspectorModal(modal);
       document.body.style.overflow = modal ? "hidden" : previousOverflow;
       if (active && modal) dialog.showModal();
-      else if (active && !media.matches) dialog.show();
+      else if (active && !media.matches && validFocus) dialog.show();
       if (validFocus && dialog.open) dialog.focus({ preventScroll: true });
     };
     sync(); media.addEventListener("change", sync);
     return () => { media.removeEventListener("change", sync); dialog.close(); document.body.style.overflow = previousOverflow; };
-  }, [focus, panel, state?.id, Boolean(content), spaceId, trackId, active]);
+  }, [hasEvidence, panel, state?.id, spaceId, trackId, active]);
   const inspect = (id: string) => {
     inspectorTrigger.current = document.activeElement as HTMLElement;
+    rememberInspectorOrigin(originKey,id,inspectorTrigger.current?.dataset?.evidenceOrigin||'');
     setFocus(id);
     onViewChange?.(panel,id);
   };
+  const switchEvidence=(id:string)=>{setFocus(id);onViewChange?.(panel,id);};
 
   const request = async (body: Record<string, unknown>) => {
     const response = await fetch("/api/research-workbook", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spaceId, trackId, ...body }) });
@@ -148,7 +160,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       const data = await request({ action: "save-artifact", workbookId: state.id, sourceRevision: state.revision, baseRevision: state.artifact?.revision || 0, value: artifact });
       if (generation.current !== epoch) return;
       clearSessionDraft(draftKey, JSON.stringify(artifact));
-      setState(data.workbook); setNotice(zh ? "比较记录已保存。" : "Comparison notes saved.");
+      setState(data.workbook); setArtifact(data.workbook.artifact?.value||emptyArtifact()); setNotice(zh ? "比较记录已保存。" : "Comparison notes saved.");
       if(returnAfter)onBack();
     } catch (e) { if (generation.current === epoch) {setSaveConflict((e as {status?:number}).status===409);setError(e instanceof Error ? e.message : "Save failed");} }
     finally { if (generation.current === epoch) setBusy(""); }
@@ -187,13 +199,12 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     } catch (e) { if (generation.current === epoch) setError(e instanceof Error ? e.message : "Load failed"); }
     finally { if (generation.current === epoch) setBusy(""); }
   };
-  const focused = content?.dimensions.flatMap(d => d.cells.map(c => ({ dimension: d, cell: c, id: `${d.id}:${c.paperId}` }))).find(c => c.id === focus);
-  const source = state?.sources.find(s => s.id === focused?.cell.paperId);
   const storedDraft=readSessionDraft(draftKey);
   const pendingDraft=!dirty&&storedDraft&&storedDraft.value!==JSON.stringify(artifact)&&storedDraft.value!==JSON.stringify(state?.artifact?.value||emptyArtifact());
-  const saveStatus=busy==='save'?(zh?'正在保存到工作区…':'Saving to workspace…'):state?.stale?(zh?'依据已变化 · 当前版本仅供回顾':'Evidence changed · historical version'):saveConflict?(zh?'保存版本有变化 · 本地输入已保留':'Saved version changed · local input retained'):error?(zh?'操作未完成 · 输入保留在本页':'Action incomplete · input retained here'):dirty?(draftStored?(zh?'未提交 · 草稿已暂存在本标签页':'Not submitted · draft saved in this tab'):(zh?'未提交 · 无法暂存，请先保存':'Not submitted · draft storage failed; save now')):pendingDraft?(zh?'有本地草稿待恢复':'Local draft available to restore'):state?.artifact?(zh?`已保存到工作区 · 版本 ${state.artifact.revision}`:`Saved to workspace · revision ${state.artifact.revision}`):(zh?'尚未保存判断':'No judgment saved yet');
+  const saveUI=workbookSavePresentation({busy,stale:Boolean(state?.stale),conflict:saveConflict,error:Boolean(error),dirty,draftStored,pendingDraft:Boolean(pendingDraft),revision:state?.artifact?.revision||0,zh});
+  const saveStatus=saveUI.status;
   const artifactRecovery = !dirty && <DraftRecovery key={draftKey} storageKey={draftKey} current={JSON.stringify(artifact)} base={JSON.stringify(state?.artifact?.value || emptyArtifact())} locale={locale} onRestore={value => { try { const restored = JSON.parse(value); if (typeof restored.decision === "string" && typeof restored.unresolved === "string" && restored.observations && typeof restored.observations === "object") setArtifact(restored); } catch { setError(zh ? "草稿无法读取，已保存内容不受影响。" : "Draft unavailable; saved content is unchanged."); } }} />;
-  const jumpToRecord=()=>{const element=document.querySelector<HTMLElement>(pendingDraft?'.pi-workbook-artifact .pi-draft-recovery button':'.pi-workbook-artifact textarea');element?.scrollIntoView({block:'center',behavior:'auto'});element?.focus({preventScroll:true});};
+  const jumpToRecord=()=>{const element=pendingDraft?(document.querySelector<HTMLElement>('.pi-workbook-inspector[open] .pi-draft-recovery button')||document.querySelector<HTMLElement>('.pi-workbook-artifact .pi-draft-recovery button')):document.querySelector<HTMLElement>('.pi-workbook-artifact textarea');element?.scrollIntoView({block:'center',behavior:'auto'});element?.focus({preventScroll:true});};
 
   const progress=workbookPresentation(state,busy,error,zh);
   const refreshProgress=()=>{if(dirty||state&&questionDirty)return;if(state?.id)void openVersion(state.id);else setLoadRetry(n=>n+1);};
@@ -205,7 +216,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     <section className="pi-workbook-progress" aria-label={zh?"比较进度与恢复":"Comparison progress and recovery"}>
       <ol aria-label={zh?"比较步骤":"Comparison steps"}>{([['sources','选材','Sources'],['draft','生成','Draft'],['review','核对','Review'],...(state?.revisionFlow?[['repair','按需修订','Correct if needed'] as const]:[]),['record','记录判断','Judgment']] as const).map(([phase,zhLabel,enLabel])=><li key={phase} aria-current={progress.phase===phase?'step':undefined}>{zh?zhLabel:enLabel}</li>)}</ol>
       <strong role="status">{progress.title}</strong>
-      {progress.reviewLabel&&<p className="pi-workbook-round" role="status">{progress.reviewLabel}</p>}
+      {progress.reviewLabel&&<p className="pi-workbook-round" role="status">{zh?'系统核对：':'System review: '}{progress.reviewLabel}</p>}
       {progress.preservation&&<p className="pi-workbook-preservation">{progress.preservation}</p>}
       {!!state?.protocolRecoveries&&<p>{zh?`已自动恢复 ${state.protocolRecoveries} 次格式或引用异常；仍需通过完整证据核对。`:`Automatically recovered ${state.protocolRecoveries} format or reference errors; full evidence review is still required.`}</p>}
       <details className="pi-progress-explanation" open={state?.status!=='ready'||Boolean(error)||busy==='save'}><summary>{zh?'保留内容与下一步':'Preserved content and next steps'}</summary>
@@ -247,14 +258,28 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       <nav className="pi-workbook-tabs" aria-label={zh ? "比较工作视角" : "Workbook view"}>{(["evidence", "relations", "task"] as const).map(p => <button type="button" key={p} aria-pressed={panel === p} onClick={() => {setPanel(p);onViewChange?.(p,focus);}}>{p === "evidence" ? zh ? "条件与证据" : "Conditions & evidence" : p === "relations" ? zh ? "关系与可比性" : "Relationships & comparability" : zh ? "研究练习" : "Research exercise"}</button>)}</nav>
 
       <div className={`pi-workbook-layout${focused ? " inspecting" : ""}`}><div>
-        {panel === "evidence" && <section><h2>{zh ? "条件比较表" : "Condition comparison"}</h2><p>{zh ? "点选比较项，查看摘要出处并记录自己的核查。摘要缺少的信息会明确标注。" : "Select a cell to inspect its abstract evidence and record your check. Missing means not provided in the abstract."}</p><div className="pi-workbook-table-scroll"><table><thead><tr><th>{zh ? "比较维度" : "Dimension"}</th>{state.sources.map(s => <th key={s.id}><MathText inline>{s.title}</MathText></th>)}</tr></thead><tbody>{content.dimensions.map(d => <tr key={d.id}><th><strong>{text(d, "label")}</strong><small>{text(d, "purpose")}</small></th>{state.sources.map(s => { const c = d.cells.find(c => c.paperId === s.id)!; const id = `${d.id}:${s.id}`; return <td key={s.id}><button type="button" data-evidence-id={id} aria-pressed={focus === id} onClick={() => inspect(id)}><MathText>{c.status === "missing" ? zh ? "摘要未提供" : "Not provided in abstract" : text(c, "text")}</MathText>{artifact.observations[id] && <small>{zh ? "已有核查笔记" : "Check recorded"}</small>}</button></td>; })}</tr>)}</tbody></table></div></section>}
+        {panel === "evidence" && <section><h2>{zh ? "条件比较表" : "Condition comparison"}</h2><p>{zh ? "点选比较项，查看摘要出处并记录自己的核查。摘要缺少的信息会明确标注。" : "Select a cell to inspect its abstract evidence and record your check. Missing means not provided in the abstract."}</p><div className="pi-workbook-table-scroll"><table><thead><tr><th>{zh ? "比较维度" : "Dimension"}</th>{state.sources.map(s => <th key={s.id}><MathText inline>{s.title}</MathText></th>)}</tr></thead><tbody>{content.dimensions.map(d => <tr key={d.id}><th><strong>{text(d, "label")}</strong><small>{text(d, "purpose")}</small></th>{state.sources.map(s => { const c = d.cells.find(c => c.paperId === s.id)!; const id = `${d.id}:${s.id}`; return <td key={s.id}><button type="button" data-evidence-id={id} data-evidence-origin={`table:${id}`} aria-pressed={focus === id} onClick={() => inspect(id)}><MathText>{c.status === "missing" ? zh ? "摘要未提供" : "Not provided in abstract" : text(c, "text")}</MathText>{artifact.observations[id] && <small>{zh ? "已有核查笔记" : "Check recorded"}</small>}</button></td>; })}</tr>)}</tbody></table></div></section>}
         {panel === "relations" && <section><h2>{zh ? "这些结果能否直接比较？" : "Can these results be compared directly?"}</h2><div className="pi-workbook-relation" role="group" aria-label={zh ? "材料与比较关系" : "Sources and comparison"}>{state.sources.map(s => <div key={s.id}><span>{workbookPaperLabel(s.id,state.sources)}</span><MathText inline>{s.title}</MathText></div>)}<strong>{content.comparison.status === "comparable" ? zh ? "当前证据支持比较" : "Comparable in current evidence" : content.comparison.status === "conditional" ? zh ? "需区分适用条件" : "Conditional comparison" : zh ? "信息不足，关系待核查" : "Insufficient evidence; relationship unresolved"}</strong></div><p><MathText>{text(content.comparison, "text")}</MathText></p><p>{zh ? "选择下方论文摘要，核对这项判断的出处。" : "Choose a paper abstract below to inspect the evidence for this judgment."}</p><WorkbookEvidenceLinks content={content} sources={state.sources} evidenceIds={content.comparison.evidenceIds} locale={locale} focus={focus} onInspect={inspect} /></section>}
-        {panel === "task" && <WorkbookTaskPanel content={content} sources={state.sources} locale={locale} focus={focus} disabled={Boolean(busy)||dirty||state.stale} dirty={dirty} onInspect={inspect} onStartPractice={onStartPractice} />}
+        {panel === "task" && <WorkbookTaskPanel content={content} sources={state.sources} practice={state.artifact?.value.practice} locale={locale} focus={focus} disabled={saveUI.taskBlocked} dirty={dirty} onInspect={inspect} onStartPractice={onStartPractice} />}
 
-      </div><dialog id="workbook-evidence-inspector" tabIndex={-1} className="pi-workbook-inspector" aria-modal={inspectorModal || undefined} onCancel={event => { event.preventDefault(); closeInspector(); }} aria-label={zh ? "证据与核查笔记" : "Evidence and check notes"}>{focused && source ? <><div className="pi-inspector-heading"><h2>{text(focused.dimension, "label")}</h2><button type="button" onClick={closeInspector}>{zh ? "关闭依据" : "Close evidence"} ×</button></div><h3><MathText inline>{source.title}</MathText></h3>{focused.cell.quote ? <>{(focused.cell.quotes || [focused.cell.quote]).map((quote,index) => <blockquote key={index}><MathText>{quote}</MathText><cite>{zh ? "来源：该论文摘要" : "Source: paper abstract"} · {index+1}</cite></blockquote>)}</> : <p>{zh ? "摘要未提供这项信息，不能用推测补全。" : "The abstract does not provide this information; do not fill it by inference."}</p>}<button type="button" onClick={() => onOpenPaper(source, text(focused.dimension, "purpose"))}>{zh ? "带着这项核查打开论文" : "Open paper for this check"} →</button>{inspectorModal && artifactRecovery}<label>{zh ? "这一项的核查笔记" : "Check note for this cell"}<textarea value={artifact.observations[focus] || ""} maxLength={2500} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, observations: { ...a.observations, [focus]: e.target.value } }))} /></label><small>{zh ? "核查笔记与下方判断一并保存。" : "This note is saved with the comparison artifact."}</small></> : <><h2>{zh ? "证据侧栏" : "Evidence inspector"}</h2><p>{zh ? "选择表格中的比较项或任务中的依据，即可查看具体出处。" : "Select a comparison cell or task reference to inspect its source."}</p></>}</dialog></div>
-        <section className="pi-workbook-artifact">{!inspectorModal && artifactRecovery}<h2>{zh ? "我的判断与记录" : "My judgment and notes"}</h2><p>{zh ? "记录自己的判断；这不会自动确认研究路线、已读或掌握。" : "Record your judgment. This does not confirm a research route, reading status or mastery."}</p><label>{zh ? "目前的判断及依据" : "Current judgment and evidence"}<textarea value={artifact.decision} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, decision: e.target.value }))} /></label><label>{zh ? "仍缺的条件或待解决问题" : "Missing conditions or unresolved questions"}<textarea value={artifact.unresolved} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, unresolved: e.target.value }))} /></label></section>
+      </div><dialog id="workbook-evidence-inspector" tabIndex={-1} className="pi-workbook-inspector" aria-modal={inspectorModal || undefined} onCancel={event => { event.preventDefault(); closeInspector(); }} aria-label={zh ? "证据与核查笔记" : "Evidence and check notes"}>{focused && source ? <>
+        <div className="pi-inspector-toolbar"><div className="pi-inspector-heading"><h2>{text(focused.dimension, "label")}</h2><button type="button" onClick={closeInspector}>{zh ? "关闭依据" : "Close evidence"} ×</button></div>
+          <WorkbookEvidenceNavigation content={content} sources={state.sources} focus={focus} locale={locale} onChange={switchEvidence} />
+        </div>
+        <h3><MathText inline>{source.title}</MathText></h3>
+        {focused.cell.quote ? <>{(focused.cell.quotes || [focused.cell.quote]).map((quote,index) => <blockquote key={index}><MathText>{quote}</MathText><cite>{zh ? "来源：该论文摘要" : "Source: paper abstract"} · {index+1}</cite></blockquote>)}</> : <p>{zh ? "摘要未提供这项信息，不能用推测补全。" : "The abstract does not provide this information; do not fill it by inference."}</p>}
+        <button type="button" onClick={() => onOpenPaper(source, text(focused.dimension, "purpose"))}>{zh ? "带着这项核查打开论文" : "Open paper for this check"} →</button>
+        {artifactRecovery}
+        <label>{zh ? "这一项的核查笔记" : "Check note for this cell"}<textarea value={artifact.observations[focus] || ""} maxLength={2500} disabled={Boolean(busy)} aria-describedby="workbook-inspector-note-hint" onChange={e => editArtifact(a => ({ ...a, observations: { ...a.observations, [focus]: e.target.value } }))} /></label>
+        <small id="workbook-inspector-note-hint">{zh ? "每篇论文、每个维度分别保留笔记；保存时与整体判断一并提交。" : "Each paper and dimension keeps its own note. Saving submits all notes with your judgment."}</small>
+        <footer className="pi-inspector-save" aria-label={zh?'依据笔记保存':'Save evidence notes'}><span role="status">{saveStatus}</span><button type="button" disabled={!saveUI.canSave} onClick={()=>void save()}>{zh?'保存笔记与判断':'Save notes and judgment'}</button></footer>
+      </> : <><h2>{zh ? "证据侧栏" : "Evidence inspector"}</h2><p>{zh ? "选择表格中的比较项或任务中的依据，即可查看具体出处。" : "Select a comparison cell or task reference to inspect its source."}</p></>}</dialog></div>
+        <section className="pi-workbook-artifact">{!focused && artifactRecovery}<h2>{zh ? "我的判断与记录" : "My judgment and notes"}</h2><p>{zh ? "记录自己的判断；这不会自动确认研究路线、已读或掌握。" : "Record your judgment. This does not confirm a research route, reading status or mastery."}</p><label>{zh ? "目前的判断及依据" : "Current judgment and evidence"}<textarea value={artifact.decision} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, decision: e.target.value }))} /></label><label>{zh ? "仍缺的条件或待解决问题" : "Missing conditions or unresolved questions"}<textarea value={artifact.unresolved} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, unresolved: e.target.value }))} /></label></section>
         <WorkbookFollowup content={content} sources={state.sources} artifact={artifact} savedArtifact={state.artifact?.value} practice={state.artifact?.value.practice} locale={locale} disabled={Boolean(busy)||state.stale||Boolean(pendingDraft)} dirty={dirty} active={active} reveal={focus==='practice-results'} onOpenPaper={onOpenPaper} onStartPractice={onStartPractice} onAppend={(field,labels,value)=>{const next=appendWorkbookResult(artifact[field],labels,value);if(next===null)return false;editArtifact(current=>({...current,[field]:next}));return true;}} />
-      <footer className="pi-workbook-savebar" aria-label={zh?'比较记录保存':'Save comparison notes'}><div><strong role="status">{saveStatus}</strong>{dirty&&<small>{zh?'证据笔记、整体判断和待查问题一并保存':'Cell notes, judgment and unresolved questions are saved together'}</small>}</div><div className="pi-savebar-actions"><button type="button" onClick={jumpToRecord}>{pendingDraft?(zh?'恢复本地草稿':'Restore local draft'):(zh?'编辑判断':'Edit judgment')}</button><button type="button" disabled={Boolean(busy) || !dirty || state.stale} onClick={() => void save()}>{zh ? "保存记录" : "Save notes"}</button><button type="button" className="pi-savebar-primary" disabled={Boolean(busy) || !dirty || state.stale} onClick={() => void save(true)}>{zh ? "保存并返回原任务" : "Save & return to task"}</button></div></footer>
+      <footer className="pi-workbook-savebar" data-mode={saveUI.mode} aria-label={zh?'比较记录保存':'Save comparison notes'}><div><strong role="status">{saveStatus}</strong>{dirty&&<small>{zh?'证据笔记、整体判断和待查问题一并保存':'Cell notes, judgment and unresolved questions are saved together'}</small>}</div><div className="pi-savebar-actions">
+        <button type="button" disabled={Boolean(busy)} onClick={jumpToRecord}>{saveUI.editorLabel}</button>
+        {dirty&&!state.stale?<><button type="button" disabled={!saveUI.canSave} onClick={() => void save()}>{zh ? "保存记录" : "Save notes"}</button><button type="button" className="pi-savebar-primary" disabled={!saveUI.canSave} onClick={() => void save(true)}>{zh ? "保存并返回原任务" : "Save & return to task"}</button></>:<button type="button" className="pi-savebar-primary" disabled={!saveUI.canLeave} onClick={onBack}>{zh?'返回原任务':'Return to original task'}</button>}
+      </div></footer>
     </>}
   </main>;
 }

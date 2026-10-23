@@ -1,0 +1,57 @@
+/* Comparison controls own their drawer, task status and save bar at every width. */
+.v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector { display:none; position:static; width:auto; max-width:none; max-height:none; margin:0; padding:20px; border:1px solid #e1e6ed; border-radius:12px; background:#f8f9fb; color:var(--ui-text,#202124); overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector[open] { display:block; }
+.v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector::backdrop { background:rgb(20 28 40 / 35%); }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-toolbar { position:sticky; top:-20px; padding-top:8px; background:#f8f9fb; z-index:2; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-heading { display:flex; align-items:start; justify-content:space-between; gap:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-heading h2 { margin:0; font-size:18px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-heading button { flex-shrink:0; min-height:44px; border:0; background:none; color:#62666d; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-inspector h3 { font:500 16px/1.65 var(--ui-font,system-ui); }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-inspector label { display:block; margin-top:18px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-navigation { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; padding:12px 0 16px; border-bottom:1px solid #e1e6ed; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-navigation label { min-width:0; margin:0; color:#667181; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-navigation select { display:block; min-width:0; width:100%; min-height:44px; margin-top:6px; padding:8px; border:1px solid #d5dde7; border-radius:7px; background:#fff; font:inherit; color:#273449; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-dimension-actions { display:flex; gap:5px; align-items:center; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-dimension-actions button { min-height:44px; padding:8px 10px; border:1px solid #d5dde7; border-radius:7px; background:#fff; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-dimension-actions span { font-size:11px; color:#667181; white-space:nowrap; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-paper-switch { grid-column:1/-1; display:grid; grid-template-columns:repeat(auto-fit,minmax(80px,1fr)); gap:8px; min-width:0; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-paper-switch button { display:flex; align-items:center; gap:8px; min-width:0; min-height:44px; padding:8px 10px; border:1px solid #d5dde7; border-radius:7px; background:#fff; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-paper-switch b { flex:0 0 auto; white-space:nowrap; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-paper-switch span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-paper-switch button[aria-pressed=true] { border-color:#92afd6; background:#edf3fc; color:#245dc1; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-save { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:16px 0 0; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-save span { flex:1 1 150px; font-size:12px; line-height:1.7; color:#627083; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-save button { min-height:44px; border:1px solid #d5dde7; border-radius:7px; background:#fff; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-task-state { display:inline-block; margin-top:6px; font-size:12px; color:#707986; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-task-state[data-state=saved] { color:#426697; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-task-state[data-state=complete] { color:#347158; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-task-progress { font-size:12px; color:#667181; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-lesson summary .pi-workbook-task-state { margin:0 0 0 10px; font-weight:400; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar { position:fixed; left:256px; right:24px; bottom:16px; z-index:35; display:flex; align-items:center; gap:16px; padding:12px 18px; background:#fff; border:1px solid #dce2e9; border-radius:12px; box-shadow:0 6px 28px #18223014; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar[data-mode=saved] { padding-block:10px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar>div:first-child { flex:1; min-width:0; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar strong { font:500 13px/1.7 var(--ui-font,system-ui); }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar small { margin:2px 0 0; font-size:11px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-savebar-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar button { margin:0; padding:8px 12px; border:1px solid #dce2e9; border-radius:7px; background:#fff; color:#455268; font:500 12px/1.5 var(--ui-font,system-ui); text-decoration:none; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar button.pi-savebar-primary { background:var(--ui-primary,#303740); border-color:var(--ui-primary,#303740); color:#fff; }
+.v2-app.pi-workspace .pi-comparison-workspace:has(.pi-workbook-savebar) { padding-bottom:180px; }
+@media(min-width:1400px) {
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-layout.inspecting { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,34%); gap:24px; align-items:start; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-layout>div { min-width:0; }
+ .v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector[open] { position:sticky; top:88px; max-height:calc(100dvh - 220px); overflow-y:auto; }
+}
+@media(max-width:1399px) {
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-layout.inspecting { display:block; }
+ .v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector[open] { position:fixed; inset:0 0 0 auto; width:min(560px,100vw); height:100dvh; max-height:100dvh; overflow-y:auto; overscroll-behavior:contain; border-radius:12px 0 0 12px; padding:24px 24px max(24px,env(safe-area-inset-bottom)); margin:0; box-shadow:-12px 0 48px rgb(20 28 40 / 12%); }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-toolbar { top:-24px; padding-top:12px; }
+}
+@media(max-width:1100px) { .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar { left:234px; } }
+@media(max-width:800px) { .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar { left:12px; right:12px; bottom:12px; } }
+@media(max-width:600px) {
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar { flex-direction:column; align-items:stretch; gap:8px; padding:12px; bottom:max(8px,env(safe-area-inset-bottom)); }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-savebar button { min-height:44px; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-savebar-actions button { flex:1; padding:8px; }
+ .v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector[open] { padding:18px 18px max(18px,env(safe-area-inset-bottom)); border-radius:0; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-toolbar { top:-18px; }
+}

@@ -31,8 +31,7 @@
 }
 .pi-product [hidden] { display: none !important; }
 .pi-product:has(.pi-route-selection-bar) .v2-main { padding-bottom: 240px; }
-.v2-app.pi-workspace.pi-product .pi-route-selection-bar,
-.v2-app.pi-workspace.pi-product .pi-workbook-savebar { position: fixed; left: 256px; right: 24px; bottom: 16px; z-index: 35; display: flex; align-items: center; gap: 16px; padding: 14px 18px; background: #fff; border: 1px solid #dce2e9; border-radius: 12px; box-shadow: 0 6px 28px #18223014; }
+.v2-app.pi-workspace.pi-product .pi-route-selection-bar { position: fixed; left: 256px; right: 24px; bottom: 16px; z-index: 35; display: flex; align-items: center; gap: 16px; padding: 14px 18px; background: #fff; border: 1px solid #dce2e9; border-radius: 12px; box-shadow: 0 6px 28px #18223014; }
 .v2-app.pi-workspace.pi-product .pi-route-selection-bar { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px 20px; }
 .v2-app.pi-workspace.pi-product .pi-selection-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; grid-column: 1/-1; font-size: 12px; }
 .v2-app.pi-workspace.pi-product .pi-selection-heading span { color: #647083; }
@@ -40,28 +39,22 @@
 .v2-app.pi-workspace.pi-product .pi-route-selection-bar li { display: grid; grid-template-columns: minmax(0,1fr) auto 28px; align-items: center; gap: 10px; margin: 0; font-size: 12px; }
 .v2-app.pi-workspace.pi-product .pi-route-selection-bar li > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .v2-app.pi-workspace.pi-product .pi-route-selection-bar small { color: #647083; font-size: 11px; }
-.v2-app.pi-workspace.pi-product .pi-selection-actions,.v2-app.pi-workspace.pi-product .pi-savebar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.v2-app.pi-workspace.pi-product :is(.pi-route-selection-bar,.pi-workbook-savebar) button { margin: 0; padding: 8px 12px; border: 1px solid #dce2e9; border-radius: 7px; background: #fff; color: #455268; font: 500 12px/1.5 var(--ui-font); text-decoration: none; }
+.v2-app.pi-workspace.pi-product .pi-selection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.v2-app.pi-workspace.pi-product .pi-route-selection-bar button { margin: 0; padding: 8px 12px; border: 1px solid #dce2e9; border-radius: 7px; background: #fff; color: #455268; font: 500 12px/1.5 var(--ui-font); text-decoration: none; }
 .v2-app.pi-workspace.pi-product .pi-route-selection-bar li button { border: 0; padding: 4px; min-height: 28px; }
-.v2-app.pi-workspace.pi-product .pi-route-selection-bar button.pi-selection-compare,
-.v2-app.pi-workspace.pi-product .pi-workbook-savebar button.pi-savebar-primary { background: var(--ui-primary); color: #fff; border-color: var(--ui-primary); }
-.v2-app.pi-workspace.pi-product :is(.pi-route-selection-bar,.pi-workbook-savebar) button:disabled { opacity: .45; cursor: not-allowed; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace:has(.pi-workbook-savebar) { padding-bottom: 180px; }
-.v2-app.pi-workspace.pi-product .pi-workbook-savebar > div:first-child { flex: 1; min-width: 0; }
-.v2-app.pi-workspace.pi-product .pi-workbook-savebar strong { font: 500 13px/1.7 var(--ui-font); }
-.v2-app.pi-workspace.pi-product .pi-workbook-savebar small { margin: 2px 0 0; font-size: 11px; }
+.v2-app.pi-workspace.pi-product .pi-route-selection-bar button.pi-selection-compare { background: var(--ui-primary); color: #fff; border-color: var(--ui-primary); }
+.v2-app.pi-workspace.pi-product .pi-route-selection-bar button:disabled { opacity: .45; cursor: not-allowed; }
 .v2-app.pi-workspace.pi-product .pi-route-start .pi-route-eligibility,.v2-app.pi-workspace.pi-product .pi-catalog-eligibility { margin: 6px 0; color: #66758b; font: 400 12px/1.6 var(--ui-font); }
 .v2-app.pi-workspace.pi-product .pi-route-start .pi-route-choose { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; color: #52627a; font-size: 12px; }
 .v2-app.pi-workspace.pi-product .pi-route-choose input { width: 16px; height: 16px; }
-@media(max-width:1100px) { .v2-app.pi-workspace.pi-product :is(.pi-route-selection-bar,.pi-workbook-savebar) { left: 234px; } }
-@media(max-width:800px) { .v2-app.pi-workspace.pi-product :is(.pi-route-selection-bar,.pi-workbook-savebar) { left: 12px; right: 12px; bottom: 12px; } }
+@media(max-width:1100px) { .v2-app.pi-workspace.pi-product .pi-route-selection-bar { left: 234px; } }
+@media(max-width:800px) { .v2-app.pi-workspace.pi-product .pi-route-selection-bar { left: 12px; right: 12px; bottom: 12px; } }
 @media(max-width:600px) {
-  .v2-app.pi-workspace.pi-product :is(.pi-route-selection-bar,.pi-workbook-savebar) { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; bottom: max(8px,env(safe-area-inset-bottom)); }
+  .v2-app.pi-workspace.pi-product .pi-route-selection-bar { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; bottom: max(8px,env(safe-area-inset-bottom)); }
   .v2-app.pi-workspace.pi-product .pi-route-selection-bar li { grid-template-columns: minmax(0,1fr) 32px; min-height: 44px; }
   .v2-app.pi-workspace.pi-product .pi-route-selection-bar li small { grid-column: 1; grid-row: 2; }
   .v2-app.pi-workspace.pi-product .pi-route-selection-bar li button { grid-column: 2; grid-row: 1/3; min-height: 44px; }
-  .v2-app.pi-workspace.pi-product :is(.pi-route-selection-bar,.pi-workbook-savebar) button { min-height: 44px; }
-  .v2-app.pi-workspace.pi-product .pi-savebar-actions button { flex: 1; padding: 8px; }
+  .v2-app.pi-workspace.pi-product .pi-route-selection-bar button { min-height: 44px; }
   .v2-app.pi-workspace.pi-product .pi-selection-actions { justify-content: space-between; }
   .pi-product:has(.pi-route-selection-bar) .v2-main { padding-bottom: 290px; }
 }
@@ -385,29 +378,12 @@
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace td { padding: 12px; border-color: #edf0f3; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace td button { border-radius: 7px; font-size: 13px; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace td button:hover { background: #f5f7fa; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-inspector { padding: 20px; background: #f8f9fb; border: 1px solid #e7eaee; border-radius: 12px; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace dialog.pi-workbook-inspector { color: var(--ui-text); width: auto; max-width: none; max-height: none; margin: 0; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace dialog.pi-workbook-inspector[open] { display: block; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace dialog.pi-workbook-inspector:not([open]) { display: none; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace dialog.pi-workbook-inspector::backdrop { background: rgb(20 28 40 / 35%); }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-inspector-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-inspector-heading h2 { margin-top: 0; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-inspector-heading button { flex-shrink: 0; min-height: 44px; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-artifact { padding: 24px 0; border: 0; border-top: 1px solid #e7eaee; margin-top: 32px; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-artifact h2 { font: 600 18px/1.6 var(--ui-font); }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-artifact > button { margin-right: 8px; margin-top: 16px; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-artifact > button:first-of-type { background: #fff; color: #555d69; border-color: #dce0e5; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-artifact > button:first-of-type:hover { background: #f2f4f7; }
 
-@media (min-width: 1400px) {
-  .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-layout { display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 24px; }
-  .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-inspector { position: sticky; top: 88px; margin-top: 0; }
-}
-@media (max-width: 1399px) {
-  .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-layout.inspecting { display: block; }
-  .v2-app.pi-workspace.pi-product .pi-comparison-workspace dialog.pi-workbook-inspector[open] { position: fixed; inset: 0 0 0 auto; width: min(520px,100vw); height: 100dvh; max-height: 100dvh; overflow-y: auto; overscroll-behavior: contain; border-radius: 12px 0 0 12px; padding: 24px 24px max(24px,env(safe-area-inset-bottom)); margin: 0; box-shadow: -12px 0 48px rgb(20 28 40 / 12%); }
-  .v2-app.pi-workspace.pi-product .pi-comparison-workspace dialog .pi-inspector-heading { position: sticky; top: -24px; padding-block: 12px; background: #f8f9fb; z-index: 1; }
-}
 @media (max-width: 1100px) {
   .v2-app.pi-workspace.pi-product .v2-sidebar { width: 210px; }
   .v2-app.pi-workspace.pi-product .v2-main { margin-left: 210px; }
