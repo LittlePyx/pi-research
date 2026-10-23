@@ -356,6 +356,38 @@ test('resuming a failed generation announces active work while the request is pe
  await ready(page);
 });
 
+test('task evidence groups each dimension once and opens the correct paper without mixing check notes',async({page},info)=>{
+ await enterComparison(page);await ready(page);
+ await page.getByRole('button',{name:'研究练习',exact:true}).click();
+ const panel=page.getByRole('region',{name:'研究核查任务',exact:true}),card=panel.locator('.pi-workbook-task-card').first();
+ const step=sample.content.task.steps[0],dimensions=sample.content.dimensions.filter(d=>step.evidenceIds.some(id=>id.startsWith(d.id+':')));
+ await expect(card.locator('.pi-workbook-evidence-group')).toHaveCount(dimensions.length);
+ const dimension=dimensions.find(d=>sample.sources.every(s=>step.evidenceIds.includes(`${d.id}:${s.id}`)));
+ const group=card.getByRole('group',{name:dimension.labelZh,exact:true});
+ await expect(group.locator('.pi-workbook-evidence-dimension')).toHaveCount(1);
+ await expect(group.getByRole('button')).toHaveCount(2);
+ const first=group.getByRole('button').first(),second=group.getByRole('button').nth(1);
+ const firstId=await first.getAttribute('data-evidence-id'),secondId=await second.getAttribute('data-evidence-id');expect(firstId).not.toBe(secondId);
+ const sourceFor=id=>sample.sources.find(s=>id===`${dimension.id}:${s.id}`);
+ expect(await first.getAttribute('aria-label')).toContain(sourceFor(firstId).title);
+ await first.click();const inspector=page.getByRole('dialog',{name:'证据与核查笔记',exact:true});
+ await expect(inspector.getByRole('heading',{name:sourceFor(firstId).title,exact:true})).toBeVisible();
+ await inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true}).fill('第一篇论文的独立依据笔记。');
+ await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();
+ await second.click();await expect(inspector.getByRole('heading',{name:sourceFor(secondId).title,exact:true})).toBeVisible();
+ await expect(inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true})).toHaveValue('');
+ await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();
+ await expect(panel.locator('.pi-workbook-task-standard')).not.toHaveAttribute('open');
+ await panel.locator('.pi-workbook-task-standard summary').click();await expect(panel.locator('.pi-workbook-task-standard')).toContainText(sample.content.task.criterionZh);
+ await expect(panel.locator('.pi-workbook-lesson')).not.toHaveAttribute('open');
+ await panel.locator('.pi-workbook-lesson summary').click();await expect(panel.getByRole('button',{name:'开始这项学习练习 →',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'保存记录',exact:true}).click();await page.reload();
+ await first.click();await expect(inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true})).toHaveValue('第一篇论文的独立依据笔记。');
+ await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await panel.screenshot({path:info.outputPath('comparison-tasks.png')});
+});
+
 test('open question, source reading, saved check and explicit judgment append form one recoverable task',async({page})=>{
  await enterComparison(page);await ready(page);
  const judgment='保留原判断：不同任务的性能界暂不排序。',pending='全文中反馈与编码器限制的条件、定理编号尚待核对。';
