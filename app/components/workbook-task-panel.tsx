@@ -14,7 +14,7 @@ export function WorkbookTaskPanel({content,sources,practice,locale,focus,disable
     <header className="pi-workbook-task-intro">
       <h2><MathText>{zh?content.task.titleZh:content.task.titleEn}</MathText></h2>
       <p>{zh?'对照摘要依据，记录每项结论的适用条件。选择 P1、P2 等论文编号查看对应出处。':'Check the abstract evidence and record the conditions of each claim. Choose a paper label, such as P1 or P2, to inspect its source.'}</p>
-      <p className="pi-workbook-task-progress">{progress.completed}/{progress.total} {zh?'项由你确认完成 · 含配套学习练习':'tasks confirmed complete by you · includes the learning exercise'}</p>
+      <p className="pi-workbook-task-progress">{zh?'研究核查：':'Research checks: '}{progress.completed}/{progress.total} {zh?'项由你确认完成':'confirmed by you'}{progress.allCompleted?(zh?' · 研究核查已完成':' · Research checks complete'):''}</p>
     </header>
     <ol className="pi-workbook-task-list">{content.task.steps.map((step,index)=>{const id=`task-${index}`,shown=workbookTaskPresentation(practice?.entries[id],zh);return <li key={id}>
       <article className="pi-workbook-task-card">
@@ -24,7 +24,7 @@ export function WorkbookTaskPanel({content,sources,practice,locale,focus,disable
       </article>
     </li>;})}</ol>
     <details className="pi-workbook-task-standard"><summary>{zh?'完成标准':'Completion criteria'}</summary><p><MathText>{zh?content.task.criterionZh:content.task.criterionEn}</MathText></p></details>
-    <details className="pi-workbook-lesson"><summary>{zh?'配套学习练习':'Supporting learning exercise'} <span className="pi-workbook-task-state" data-state={learning.kind}>{learning.status}</span></summary><div>
+    <details className="pi-workbook-lesson"><summary>{zh?'配套学习练习（可选）':'Supporting learning exercise (optional)'} <span className="pi-workbook-task-state" data-state={learning.kind}>{learning.status}</span></summary><div>
       <h3><MathText>{zh?content.learning.goalZh:content.learning.goalEn}</MathText></h3>
       <dl><dt>{zh?'需要的基础':'Prerequisites'}</dt><dd><MathText>{zh?content.learning.prerequisiteZh:content.learning.prerequisiteEn}</MathText></dd>
         <dt>{zh?'练习内容':'Exercise'}</dt><dd><MathText>{zh?content.learning.exerciseZh:content.learning.exerciseEn}</MathText></dd>

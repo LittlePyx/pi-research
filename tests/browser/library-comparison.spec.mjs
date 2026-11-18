@@ -58,7 +58,7 @@ async function enterComparison(page){
   await checkQuestion(page,question);
   await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();
 }
-async function ready(page){await expect(page.getByRole('textbox',{name:'目前的判断及依据',exact:true})).toBeVisible();}
+async function ready(page){await expect(page.getByRole('region',{name:'比较成果概览',exact:true})).toBeVisible();const editor=page.locator('details.pi-workbook-artifact');if(await editor.getAttribute('open')===null)await editor.locator('summary').click();await expect(page.getByRole('textbox',{name:'目前的判断及依据',exact:true})).toBeVisible();}
 async function assertSearchRestored(page){
   await expect(page).toHaveURL(/#library\?/);
   await expect(query(page)).toHaveValue('erasure');
@@ -293,6 +293,7 @@ test('compact task disclosure has one continuation and retains selections across
 
 test('one malformed generation automatically recovers and still independently reviews every field',async({page,request})=>{
  await request.get(controls+'/scenario?mode=draft-json-once');await enterComparison(page);await ready(page);
+ await page.locator('.pi-workbook-processing > summary').click();
  await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('已自动恢复 1 次格式或引用异常');
  const counts=await (await request.get(controls+'/counts')).json();expect(counts.draft).toBe(2);expect(counts.review).toBeGreaterThan(1);
  await page.reload();await ready(page);await expect(page.locator('.pi-workbook-round')).toContainText('第 1 轮核对');
@@ -341,6 +342,7 @@ test('a single invalid task reference recovers automatically before independent 
  await request.get(controls+'/scenario?mode=draft-invalid-reference-once');await selectFromSearch(page);
  await taskClick(page,{name:'开始新比较 →',exact:true});await page.getByRole('checkbox',{name:/允许根据评审反馈修订一次/}).check();
  await page.getByRole('button',{name:'准备有据的比较与任务',exact:true}).click();await ready(page);
+ await page.locator('.pi-workbook-processing > summary').click();
  await expect(page.getByRole('region',{name:'比较进度与恢复',exact:true})).toContainText('已自动恢复 1 次格式或引用异常');
  const counts=await (await request.get(controls+'/counts')).json();expect(counts.draft).toBe(2);expect(counts.review).toBeGreaterThan(1);
 });
@@ -357,7 +359,7 @@ test('resuming a failed generation announces active work while the request is pe
 });
 
 test('evidence switches papers and dimensions in place, restores drafts and returns to the original trigger after refresh',async({page},info)=>{
- await enterComparison(page);await ready(page);await page.getByRole('button',{name:'研究练习',exact:true}).click();
+ await enterComparison(page);await ready(page);await page.getByRole('button',{name:'研究核查',exact:true}).click();
  const card=page.locator('.pi-workbook-task-card').first(),origin=card.locator('button[data-evidence-id]').first();
  const originId=await origin.getAttribute('data-evidence-id'),originAnchor=await origin.getAttribute('data-evidence-origin');
  const firstSource=sample.sources.find(s=>originId.endsWith(':'+s.id)),other=sample.sources.find(s=>s.id!==firstSource.id);
@@ -398,21 +400,26 @@ test('evidence switches papers and dimensions in place, restores drafts and retu
 });
 
 test('task cards and saved results share confirmed progress while the clean save bar exposes no disabled save actions',async({page})=>{
- await enterComparison(page);await ready(page);await page.getByRole('button',{name:'研究练习',exact:true}).click();
+ await enterComparison(page);await ready(page);await page.getByRole('button',{name:'研究核查',exact:true}).click();
  const panel=page.getByRole('region',{name:'研究核查任务',exact:true}),first=panel.locator('.pi-workbook-task-card').first(),bar=page.locator('.pi-workbook-savebar');
- await expect(first).toContainText('未开始');await expect(panel.locator('.pi-workbook-task-progress')).toContainText('0/3');await expect(bar.getByRole('button',{name:'保存记录',exact:true})).toHaveCount(0);
+ await expect(first).toContainText('未开始');await expect(panel.locator('.pi-workbook-task-progress')).toContainText('0/2');await expect(bar.getByRole('button',{name:'保存记录',exact:true})).toHaveCount(0);
  await first.getByRole('button',{name:'开始核查 →',exact:true}).click();await page.getByRole('textbox',{name:'本项成果与依据',exact:true}).fill('摘要核查记录：条件待全文确认，尚未完成。');
- await page.getByRole('button',{name:'保存成果并返回原判断',exact:true}).click();await expect(first).toContainText('已保存，待继续');await expect(first.getByRole('button',{name:'继续核查 →',exact:true})).toBeEnabled();await expect(panel.locator('.pi-workbook-task-progress')).toContainText('0/3');
+ await page.getByRole('button',{name:'保存成果并返回原判断',exact:true}).click();await expect(first).toContainText('已保存，待继续');await expect(first.getByRole('button',{name:'继续核查 →',exact:true})).toBeEnabled();await expect(panel.locator('.pi-workbook-task-progress')).toContainText('0/2');
  await first.getByRole('button',{name:'继续核查 →',exact:true}).click();await page.getByRole('button',{name:'保存并确认完成，继续下一项',exact:true}).click();
- await expect(page.getByRole('main',{name:'比较练习',exact:true})).toContainText('1/3');await page.getByRole('button',{name:'← 返回原比较',exact:true}).click();
- await expect(first).toContainText('已确认完成');await expect(first.getByRole('button',{name:'查看成果 →',exact:true})).toBeEnabled();await expect(panel.locator('.pi-workbook-task-progress')).toContainText('1/3');
+ await expect(page.getByRole('main',{name:'比较练习',exact:true})).toContainText('1/2');await page.getByRole('button',{name:'← 返回原比较',exact:true}).click();
+ await expect(first).toContainText('已确认完成');await expect(first.getByRole('button',{name:'查看成果 →',exact:true})).toBeEnabled();await expect(panel.locator('.pi-workbook-task-progress')).toContainText('1/2');
  await page.reload();await expect(first.getByRole('button',{name:'查看成果 →',exact:true})).toBeEnabled();await expect(panel.locator('.pi-workbook-task-card').nth(1)).toContainText('未开始');
  await expect(bar.getByRole('button',{name:'返回原任务',exact:true})).toBeEnabled();await expect(bar.getByRole('button',{name:'保存并返回原任务',exact:true})).toHaveCount(0);
+ await panel.locator('.pi-workbook-task-card').nth(1).getByRole('button',{name:'开始核查 →',exact:true}).click();
+ await page.getByRole('textbox',{name:'本项成果与依据',exact:true}).fill('第二项的有据核查记录，配套学习仍未开始。');await page.getByRole('button',{name:'保存并确认完成',exact:true}).click();
+ await expect(page.getByRole('main',{name:'比较练习',exact:true})).toContainText('研究核查已完成');await expect(page.getByRole('navigation',{name:'练习任务',exact:true}).getByRole('button',{name:/研究核查 2$/})).toHaveAttribute('aria-current','step');
+ await page.getByRole('button',{name:'← 返回原比较',exact:true}).click();await expect(panel.locator('.pi-workbook-task-progress')).toContainText('2/2');await expect(panel.locator('.pi-workbook-lesson')).toContainText('未开始');
+ await page.reload();await expect(page.getByRole('region',{name:'比较成果概览',exact:true})).toContainText('已确认完成 · 回顾成果');await expect(panel.locator('.pi-workbook-lesson')).toContainText('未开始');
 });
 
 test('task evidence groups each dimension once and opens the correct paper without mixing check notes',async({page},info)=>{
  await enterComparison(page);await ready(page);
- await page.getByRole('button',{name:'研究练习',exact:true}).click();
+ await page.getByRole('button',{name:'研究核查',exact:true}).click();
  const panel=page.getByRole('region',{name:'研究核查任务',exact:true}),card=panel.locator('.pi-workbook-task-card').first();
  const step=sample.content.task.steps[0],dimensions=sample.content.dimensions.filter(d=>step.evidenceIds.some(id=>id.startsWith(d.id+':')));
  await expect(card.locator('.pi-workbook-evidence-group')).toHaveCount(dimensions.length);
@@ -463,7 +470,7 @@ test('open question, source reading, saved check and explicit judgment append fo
  await expect(page.getByRole('textbox',{name:'本项成果与依据',exact:true})).toHaveValue(result);
  await page.getByRole('button',{name:'保存成果并返回原判断',exact:true}).click();
  await expect(page).toHaveURL(/#workbook\//);const results=page.getByRole('region',{name:'已保存核查成果',exact:true});
- await expect(results).toBeFocused();await expect(results).toContainText(result);await expect(results).toContainText('已保存，待继续');
+ await expect(results).toBeFocused();await expect(results).toContainText(result);await expect(results).toContainText('已保存，待继续');await ready(page);
  await expect(decision).toHaveValue(judgment);
  await results.getByRole('button',{name:'补入当前判断',exact:true}).click();
  await expect(results.getByRole('button',{name:'已补入判断，待保存',exact:true})).toBeDisabled();
@@ -479,7 +486,7 @@ test('open question, source reading, saved check and explicit judgment append fo
  await expect(page.getByRole('region',{name:'Saved check results',exact:true}).getByRole('button',{name:'Added to open questions; save pending',exact:true})).toBeDisabled();
  await page.getByRole('button',{name:'中文',exact:true}).click();await expect(decision).toHaveValue(appended);
  await page.reload();await page.getByRole('button',{name:'恢复到编辑区',exact:true}).click();await expect(decision).toHaveValue(appended);
- await page.getByRole('button',{name:'保存记录',exact:true}).click();await page.reload();await expect(decision).toHaveValue(appended);
+ await page.getByRole('button',{name:'保存记录',exact:true}).click();await page.reload();await ready(page);await expect(decision).toHaveValue(appended);
  await expect(results.getByRole('button',{name:'已保存到判断',exact:true})).toBeDisabled();
  await expect(results.getByRole('button',{name:'已保存到待查问题',exact:true})).toBeDisabled();
  await expect(page.getByRole('textbox',{name:'仍缺的条件或待解决问题',exact:true})).toHaveValue(appendedQuestion);
@@ -496,4 +503,52 @@ test('open question, source reading, saved check and explicit judgment append fo
  await expect(page.getByRole('textbox',{name:'本项成果与依据',exact:true})).toHaveValue(result);
  await page.reload();await expect(page.getByRole('textbox',{name:'本项成果与依据',exact:true})).toHaveValue(result);
  await expect(page.getByRole('navigation',{name:'练习任务',exact:true}).getByRole('button',{name:/^01 ·/})).toHaveAttribute('aria-current','step');
+});
+
+
+test('result-first overview keeps processing and editing secondary and restores the judgment draft',async({page},info)=>{
+ await enterComparison(page);
+ const overview=page.getByRole('region',{name:'比较成果概览',exact:true});await expect(overview).toBeVisible();
+ await expect(overview).toContainText(sample.content.comparison.textZh);await expect(overview).toContainText('研究核查 0/2');await expect(overview).toContainText('配套学习（可选） · 未开始');
+ await expect(page.locator('.pi-workbook-processing')).not.toHaveAttribute('open');await expect(page.locator('details.pi-workbook-artifact')).not.toHaveAttribute('open');
+ expect(await overview.evaluate(node=>node.getBoundingClientRect().top)).toBeLessThan(await page.locator('.pi-workbook-processing').evaluate(node=>node.getBoundingClientRect().top));
+ await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await expect.poll(()=>page.evaluate(()=>window.scrollY)).toBe(0);await page.screenshot({path:info.outputPath('comparison-overview.png'),fullPage:false});
+ await overview.getByRole('button',{name:'记录我的判断',exact:true}).click();
+ const decision=page.getByRole('textbox',{name:'目前的判断及依据',exact:true});const text='用户判断：摘要设定不同，尚不能直接排序；全文定义仍待核查。';await decision.fill(text);
+ await expect(overview).toContainText('编辑区有未保存修改');await page.reload();await expect(overview.getByRole('button',{name:'查看本地草稿',exact:true})).toBeVisible();
+ await overview.getByRole('button',{name:'查看本地草稿',exact:true}).click();await page.getByRole('button',{name:'恢复到编辑区',exact:true}).click();await expect(decision).toHaveValue(text);
+ await page.locator('.pi-workbook-savebar').getByRole('button',{name:'保存记录',exact:true}).click();await expect(overview).toContainText('已保存 · 版本 1');await expect(overview.locator('.pi-overview-judgment')).toContainText(text);
+ await page.reload();await expect(overview.locator('.pi-overview-judgment')).toContainText(text);await expect(page.locator('details.pi-workbook-artifact')).not.toHaveAttribute('open');
+});
+
+test('evidence switches replace history so one Back restores the original cell after refresh',async({page})=>{
+ await enterComparison(page);await ready(page);
+ const original=page.url(),origin=page.locator('button[data-evidence-id]').first(),anchor=await origin.getAttribute('data-evidence-origin');
+ await origin.click();const inspector=page.getByRole('dialog',{name:'证据与核查笔记',exact:true}),note=inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true});
+ const originalId=await origin.getAttribute('data-evidence-id');await note.fill('原比较项：刷新、切换和后退后保留的核查草稿。');
+ const papers=inspector.getByRole('group',{name:'依据论文',exact:true}).getByRole('button');
+ for(let i=0;i<3;i++){
+  await papers.nth(1).click();await inspector.getByRole('button',{name:'下一个比较维度',exact:true}).click();
+  await papers.nth(0).click();await inspector.getByRole('button',{name:'上一个比较维度',exact:true}).click();
+ }
+ await expect(note).toHaveValue('原比较项：刷新、切换和后退后保留的核查草稿。');
+ await papers.nth(1).click();const last=page.url();await page.reload();await expect(inspector).toBeVisible();await inspector.getByRole('button',{name:'恢复到编辑区',exact:true}).click();
+ await page.goBack();await expect(page).toHaveURL(original);await expect(inspector).not.toBeVisible();
+ await expect.poll(()=>page.evaluate(()=>document.activeElement?.getAttribute('data-evidence-origin'))).toBe(anchor);await expect(origin).toBeInViewport();
+ await page.goForward();await expect(page).toHaveURL(last);await expect(inspector).toBeVisible();await expect(note).toHaveValue('');
+ await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();await expect(page).toHaveURL(original);await expect(origin).toBeFocused();
+ await origin.click();await expect(note).toHaveValue('原比较项：刷新、切换和后退后保留的核查草稿。');await expect(page).toHaveURL(new RegExp('workbookFocus='+encodeURIComponent(originalId)));await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();
+ await page.goBack();await expect(page).toHaveURL(/#library\?/);await expect(tray(page)).toContainText('2/3');
+});
+
+
+test('closing evidence opened from saved results restores its task trigger instead of jumping back to the results',async({page})=>{
+ await enterComparison(page);await ready(page);await page.getByRole('button',{name:'研究核查',exact:true}).click();
+ const panel=page.getByRole('region',{name:'研究核查任务',exact:true});await panel.locator('.pi-workbook-task-card').first().getByRole('button',{name:'开始核查 →',exact:true}).click();
+ await page.getByRole('textbox',{name:'本项成果与依据',exact:true}).fill('已保存但尚未确认完成的研究核查成果。');await page.getByRole('button',{name:'保存成果并返回原判断',exact:true}).click();
+ await expect(page.getByRole('region',{name:'已保存核查成果',exact:true})).toBeFocused();const original=page.url();expect(original).toContain('workbookFocus=practice-results');
+ const origin=panel.locator('button[data-evidence-origin]').first(),anchor=await origin.getAttribute('data-evidence-origin');await origin.click();
+ const inspector=page.getByRole('dialog',{name:'证据与核查笔记',exact:true});await inspector.getByRole('button',{name:'下一个比较维度',exact:true}).click();await page.reload();await expect(inspector).toBeVisible();
+ await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();await expect(page).toHaveURL(original);await expect(origin).toBeFocused();await expect(origin).toBeInViewport();
+ await origin.click();await page.goBack();await expect(page).toHaveURL(original);await expect.poll(()=>page.evaluate(()=>document.activeElement?.getAttribute('data-evidence-origin'))).toBe(anchor);
 });

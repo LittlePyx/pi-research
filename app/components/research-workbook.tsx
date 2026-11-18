@@ -17,8 +17,10 @@ import {WorkbookFollowup} from './workbook-followup';
 import {WorkbookEvidenceLinks} from './workbook-evidence-links';
 import {WorkbookTaskPanel} from './workbook-task-panel';
 import {WorkbookEvidenceNavigation} from './workbook-evidence-navigation';
+import {WorkbookOverview} from './workbook-overview';
+import type {WorkbookHistoryMode} from '../../lib/workbook-history';
 import {workbookSavePresentation} from '../../lib/workbook-interface';
-import {workbookEvidenceSelection,inspectorOriginKey,rememberInspectorOrigin,readInspectorOrigin,clearInspectorOrigin} from '../../lib/workbook-inspector';
+import {workbookEvidenceSelection,inspectorOriginKey,rememberInspectorOrigin,readInspectorOrigin} from '../../lib/workbook-inspector';
 import "./research-workbook.css";
 import './workbook-controls.css';
 
@@ -35,7 +37,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   onOpenPaper: (source: WorkbookSource, focus: string) => void;
   onBack: () => void;
   initialWorkbookId?: string; onWorkbookChange?: (id: string) => void;
-  initialPanel?:WorkbookPanel;initialFocus?:string;onViewChange?:(panel:WorkbookPanel,focus:string)=>void; onStartPractice?:(id:string)=>void; refreshKey?:number;
+  initialPanel?:WorkbookPanel;initialFocus?:string;onViewChange?:(panel:WorkbookPanel,focus:string,history?:WorkbookHistoryMode)=>boolean|void; onStartPractice?:(id:string)=>void; refreshKey?:number;
 }) {
   const [state, setState] = useState<WorkbookState | null>(null);
   const [versions, setVersions] = useState<Array<{ id: string; status: string; created_at: string }>>([]);
@@ -46,6 +48,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const [panel, setPanel] = useState<WorkbookPanel>(initialPanel);
   const [focus, setFocus] = useState(initialFocus);
   const [restoredView, setRestoredView] = useState({spaceId,trackId,panel:initialPanel,focus:initialFocus});
+  const [artifactEditing,setArtifactEditing]=useState(false);
   const [artifact, setArtifact] = useState<WorkbookArtifact>(emptyArtifact);
   const [busy, setBusy] = useState("load"); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [draftStored,setDraftStored]=useState(true);
@@ -90,7 +93,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     if(refreshOnly&&(dirty || questionDirty))return;
     const readId = refreshOnly && state?.id ? state.id : initialWorkbookId;
     const abort = new AbortController(); const epoch = ++generation.current;
-    setBusy("load"); setError(""); setSaveConflict(false); setDraftStored(true); setState(null); setArtifact(emptyArtifact()); setMissing([]);
+    setBusy("load"); setError(""); setSaveConflict(false); setDraftStored(true); setState(null); setArtifact(emptyArtifact()); setArtifactEditing(false); setMissing([]);
     if (!refreshOnly) setComparisonQuestion(taskContext?.question || '');
     fetch(`/api/research-workbook?spaceId=${encodeURIComponent(spaceId)}&trackId=${encodeURIComponent(trackId)}&workbookId=${encodeURIComponent(readId)}&selection=${taskContext ? "1" : "0"}&canonicalIds=${encodeURIComponent(taskContext?.papers.map(p=>p.canonicalId).join(",") || "")}&focus=${encodeURIComponent(taskContext?.question || "")}`, { signal: AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]) })
       .then(async r => { const data = await r.json() as WorkbookResponse; if (!r.ok) throw new Error(data.error || "Unable to load workbook"); return data; })
@@ -111,16 +114,26 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
 
   const inspectorTrigger = useRef<HTMLElement | null>(null);
   const [inspectorModal, setInspectorModal] = useState(false);
-  const closeInspector = () => {
-    const origin=readInspectorOrigin(originKey);
-    setFocus(""); onViewChange?.(panel, "");
+  const inspectorView=useRef({key:originKey,open:false,focus:""});
+  const restoreInspector=(key:string,previousFocus:string)=>{
+    const origin=readInspectorOrigin(key);
     requestAnimationFrame(() => {
-      const trigger = inspectorTrigger.current?.isConnected ? inspectorTrigger.current : (origin?.anchor?Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-origin]')).find(node=>node.dataset.evidenceOrigin===origin.anchor):null)||Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-id]')).find(node => node.dataset.evidenceId === (origin?.id||focus));
+      const trigger = inspectorTrigger.current?.isConnected ? inspectorTrigger.current : (origin?.anchor?Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-origin]')).find(node=>node.dataset.evidenceOrigin===origin.anchor):null)||Array.from(document.querySelectorAll<HTMLElement>('[data-evidence-id]')).find(node => node.dataset.evidenceId === (origin?.id||previousFocus));
       trigger?.focus({ preventScroll: true });
       trigger?.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
-      clearInspectorOrigin(originKey);
+      // Retain the scoped origin for browser Forward; a new inspection replaces it.
     });
   };
+  const closeInspector = () => {
+    // A history close restores focus after popstate, when result auto-focus has finished.
+    if(onViewChange?.(panel,"","close-evidence")===true)return;
+    setFocus("");
+  };
+  useEffect(()=>{
+    const previous=inspectorView.current;
+    if(active&&!hasEvidence&&previous.open&&previous.key===originKey)restoreInspector(originKey,previous.focus);
+    inspectorView.current={key:originKey,open:active&&hasEvidence,focus};
+  });
   useEffect(() => {
     if (typeof window === "undefined") return;
     const dialog = document.getElementById("workbook-evidence-inspector") as HTMLDialogElement | null;
@@ -144,9 +157,9 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     inspectorTrigger.current = document.activeElement as HTMLElement;
     rememberInspectorOrigin(originKey,id,inspectorTrigger.current?.dataset?.evidenceOrigin||'');
     setFocus(id);
-    onViewChange?.(panel,id);
+    onViewChange?.(panel,id,"open-evidence");
   };
-  const switchEvidence=(id:string)=>{setFocus(id);onViewChange?.(panel,id);};
+  const switchEvidence=(id:string)=>{setFocus(id);onViewChange?.(panel,id,"replace");};
 
   const request = async (body: Record<string, unknown>) => {
     const response = await fetch("/api/research-workbook", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spaceId, trackId, ...body }) });
@@ -204,7 +217,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
   const saveUI=workbookSavePresentation({busy,stale:Boolean(state?.stale),conflict:saveConflict,error:Boolean(error),dirty,draftStored,pendingDraft:Boolean(pendingDraft),revision:state?.artifact?.revision||0,zh});
   const saveStatus=saveUI.status;
   const artifactRecovery = !dirty && <DraftRecovery key={draftKey} storageKey={draftKey} current={JSON.stringify(artifact)} base={JSON.stringify(state?.artifact?.value || emptyArtifact())} locale={locale} onRestore={value => { try { const restored = JSON.parse(value); if (typeof restored.decision === "string" && typeof restored.unresolved === "string" && restored.observations && typeof restored.observations === "object") setArtifact(restored); } catch { setError(zh ? "草稿无法读取，已保存内容不受影响。" : "Draft unavailable; saved content is unchanged."); } }} />;
-  const jumpToRecord=()=>{const element=pendingDraft?(document.querySelector<HTMLElement>('.pi-workbook-inspector[open] .pi-draft-recovery button')||document.querySelector<HTMLElement>('.pi-workbook-artifact .pi-draft-recovery button')):document.querySelector<HTMLElement>('.pi-workbook-artifact textarea');element?.scrollIntoView({block:'center',behavior:'auto'});element?.focus({preventScroll:true});};
+  const jumpToRecord=()=>{setArtifactEditing(true);requestAnimationFrame(()=>{const element=pendingDraft?(document.querySelector<HTMLElement>('.pi-workbook-inspector[open] .pi-draft-recovery button')||document.querySelector<HTMLElement>('.pi-workbook-artifact .pi-draft-recovery button')):document.querySelector<HTMLElement>('.pi-workbook-artifact textarea');element?.scrollIntoView({block:'center',behavior:'auto'});element?.focus({preventScroll:true});});};
 
   const progress=workbookPresentation(state,busy,error,zh);
   const refreshProgress=()=>{if(dirty||state&&questionDirty)return;if(state?.id)void openVersion(state.id);else setLoadRetry(n=>n+1);};
@@ -213,6 +226,8 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     <button type="button" className="v2-back" onClick={onBack}>← {zh ? "返回原任务" : "Return to original task"}</button>
     <header className="pi-workbook-heading"><p>{zh ? "研究工作台" : "RESEARCH WORKSPACE"}</p><h1>{zh ? "论文比较" : "Paper comparison"}</h1><p>{zh ? "对齐研究条件，核对每条结论的依据。" : "Align the conditions and check the evidence behind each conclusion."}</p></header>
     {content && <section className="pi-comparison-question"><small>{zh ? "本次研究问题" : "RESEARCH QUESTION"}</small><p><MathText>{text(content,"question")}</MathText></p></section>}
+    {content&&state&&<WorkbookOverview content={content} artifact={artifact} revision={state.artifact?.revision||0} dirty={dirty} pendingDraft={Boolean(pendingDraft)} locale={locale} onEdit={jumpToRecord} onEvidence={()=>{setPanel('evidence');onViewChange?.('evidence',focus);requestAnimationFrame(()=>document.querySelector('.pi-workbook-tabs')?.scrollIntoView({block:'start'}));}} onTasks={()=>{setPanel('task');onViewChange?.('task',focus);requestAnimationFrame(()=>document.querySelector('.pi-workbook-tabs')?.scrollIntoView({block:'start'}));}} />}
+    <details className="pi-workbook-processing" open={!content||state?.status!=='ready'||Boolean(busy)||Boolean(error)||Boolean(state?.stale)}><summary>{zh?'处理记录':'Processing record'}</summary>
     <section className="pi-workbook-progress" aria-label={zh?"比较进度与恢复":"Comparison progress and recovery"}>
       <ol aria-label={zh?"比较步骤":"Comparison steps"}>{([['sources','选材','Sources'],['draft','生成','Draft'],['review','核对','Review'],...(state?.revisionFlow?[['repair','按需修订','Correct if needed'] as const]:[]),['record','记录判断','Judgment']] as const).map(([phase,zhLabel,enLabel])=><li key={phase} aria-current={progress.phase===phase?'step':undefined}>{zh?zhLabel:enLabel}</li>)}</ol>
       <strong role="status">{progress.title}</strong>
@@ -235,6 +250,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
       </div>}
       {state?.revisionFlow&&<details><summary>{zh?'修订与保留记录':'Correction and preservation record'}</summary><p>{zh?'反馈修订：':'Feedback corrections: '}{state.revisionFlow.repairs} / {state.revisionFlow.limit}{state.revisionFlow.revisedFields!==undefined?(zh?` · 仅修改 ${state.revisionFlow.revisedFields} 个未通过字段，保留 ${state.revisionFlow.preservedFields} 个字段；全部重新核对。`:` · Changed only ${state.revisionFlow.revisedFields} failed fields; preserved ${state.revisionFlow.preservedFields} fields. All fields are reviewed again.`):''}</p></details>}
     </section>
+    </details>
     {notice&&<p role="status">{notice}</p>}
     {taskContext && <details className="pi-graph-handoff" open={missing.length>0}><summary>{zh ? "来源任务与初始选材" : "Original task and starting papers"}</summary><p>{taskContext.question}</p><ul>{taskContext.papers.map(p=><li key={p.canonicalId}>{p.title}{missing.includes(p.canonicalId.toLowerCase()) ? (zh ? " · 尚未通过摘要评审，未用于正式比较" : " · not yet eligible for reviewed comparison") : ""}</li>)}</ul>{missing.length>0&&<p>{zh ? "保留了你的选择，不会换成其他论文。可以返回原任务查看原文或完成材料评审后重试。" : "Your selection is preserved; other papers will not be substituted. Return to the task to inspect originals or retry after review."}</p>}</details>}
     <details className="pi-workbook-picker" open={!content}>
@@ -255,7 +271,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
     </section>}
     {content && <>
       <div className="pi-comparison-sources">{state.sources.map(source => <div key={source.id}><span>{workbookPaperLabel(source.id,state.sources)}</span><p><MathText inline>{source.title}</MathText></p></div>)}</div>
-      <nav className="pi-workbook-tabs" aria-label={zh ? "比较工作视角" : "Workbook view"}>{(["evidence", "relations", "task"] as const).map(p => <button type="button" key={p} aria-pressed={panel === p} onClick={() => {setPanel(p);onViewChange?.(p,focus);}}>{p === "evidence" ? zh ? "条件与证据" : "Conditions & evidence" : p === "relations" ? zh ? "关系与可比性" : "Relationships & comparability" : zh ? "研究练习" : "Research exercise"}</button>)}</nav>
+      <nav className="pi-workbook-tabs" aria-label={zh ? "比较工作视角" : "Workbook view"}>{(["evidence", "relations", "task"] as const).map(p => <button type="button" key={p} aria-pressed={panel === p} onClick={() => {setPanel(p);onViewChange?.(p,focus);}}>{p === "evidence" ? zh ? "条件与证据" : "Conditions & evidence" : p === "relations" ? zh ? "关系与可比性" : "Relationships & comparability" : zh ? "研究核查" : "Research checks"}</button>)}</nav>
 
       <div className={`pi-workbook-layout${focused ? " inspecting" : ""}`}><div>
         {panel === "evidence" && <section><h2>{zh ? "条件比较表" : "Condition comparison"}</h2><p>{zh ? "点选比较项，查看摘要出处并记录自己的核查。摘要缺少的信息会明确标注。" : "Select a cell to inspect its abstract evidence and record your check. Missing means not provided in the abstract."}</p><div className="pi-workbook-table-scroll"><table><thead><tr><th>{zh ? "比较维度" : "Dimension"}</th>{state.sources.map(s => <th key={s.id}><MathText inline>{s.title}</MathText></th>)}</tr></thead><tbody>{content.dimensions.map(d => <tr key={d.id}><th><strong>{text(d, "label")}</strong><small>{text(d, "purpose")}</small></th>{state.sources.map(s => { const c = d.cells.find(c => c.paperId === s.id)!; const id = `${d.id}:${s.id}`; return <td key={s.id}><button type="button" data-evidence-id={id} data-evidence-origin={`table:${id}`} aria-pressed={focus === id} onClick={() => inspect(id)}><MathText>{c.status === "missing" ? zh ? "摘要未提供" : "Not provided in abstract" : text(c, "text")}</MathText>{artifact.observations[id] && <small>{zh ? "已有核查笔记" : "Check recorded"}</small>}</button></td>; })}</tr>)}</tbody></table></div></section>}
@@ -274,7 +290,7 @@ export function ResearchWorkbook({ userId, spaceId, trackId, locale, onOpenPaper
         <small id="workbook-inspector-note-hint">{zh ? "每篇论文、每个维度分别保留笔记；保存时与整体判断一并提交。" : "Each paper and dimension keeps its own note. Saving submits all notes with your judgment."}</small>
         <footer className="pi-inspector-save" aria-label={zh?'依据笔记保存':'Save evidence notes'}><span role="status">{saveStatus}</span><button type="button" disabled={!saveUI.canSave} onClick={()=>void save()}>{zh?'保存笔记与判断':'Save notes and judgment'}</button></footer>
       </> : <><h2>{zh ? "证据侧栏" : "Evidence inspector"}</h2><p>{zh ? "选择表格中的比较项或任务中的依据，即可查看具体出处。" : "Select a comparison cell or task reference to inspect its source."}</p></>}</dialog></div>
-        <section className="pi-workbook-artifact">{!focused && artifactRecovery}<h2>{zh ? "我的判断与记录" : "My judgment and notes"}</h2><p>{zh ? "记录自己的判断；这不会自动确认研究路线、已读或掌握。" : "Record your judgment. This does not confirm a research route, reading status or mastery."}</p><label>{zh ? "目前的判断及依据" : "Current judgment and evidence"}<textarea value={artifact.decision} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, decision: e.target.value }))} /></label><label>{zh ? "仍缺的条件或待解决问题" : "Missing conditions or unresolved questions"}<textarea value={artifact.unresolved} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, unresolved: e.target.value }))} /></label></section>
+        <details className="pi-workbook-artifact" open={artifactEditing||dirty||Boolean(pendingDraft)} onToggle={event=>setArtifactEditing(event.currentTarget.open)}><summary>{zh ? "我的判断与记录" : "My judgment and notes"}</summary><div>{!focused && artifactRecovery}<p>{zh ? "记录自己的判断；这不会自动确认研究路线、已读或掌握。" : "Record your judgment. This does not confirm a research route, reading status or mastery."}</p><label>{zh ? "目前的判断及依据" : "Current judgment and evidence"}<textarea value={artifact.decision} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, decision: e.target.value }))} /></label><label>{zh ? "仍缺的条件或待解决问题" : "Missing conditions or unresolved questions"}<textarea value={artifact.unresolved} maxLength={4000} disabled={Boolean(busy)} onChange={e => editArtifact(a => ({ ...a, unresolved: e.target.value }))} /></label></div></details>
         <WorkbookFollowup content={content} sources={state.sources} artifact={artifact} savedArtifact={state.artifact?.value} practice={state.artifact?.value.practice} locale={locale} disabled={Boolean(busy)||state.stale||Boolean(pendingDraft)} dirty={dirty} active={active} reveal={focus==='practice-results'} onOpenPaper={onOpenPaper} onStartPractice={onStartPractice} onAppend={(field,labels,value)=>{const next=appendWorkbookResult(artifact[field],labels,value);if(next===null)return false;editArtifact(current=>({...current,[field]:next}));return true;}} />
       <footer className="pi-workbook-savebar" data-mode={saveUI.mode} aria-label={zh?'比较记录保存':'Save comparison notes'}><div><strong role="status">{saveStatus}</strong>{dirty&&<small>{zh?'证据笔记、整体判断和待查问题一并保存':'Cell notes, judgment and unresolved questions are saved together'}</small>}</div><div className="pi-savebar-actions">
         <button type="button" disabled={Boolean(busy)} onClick={jumpToRecord}>{saveUI.editorLabel}</button>

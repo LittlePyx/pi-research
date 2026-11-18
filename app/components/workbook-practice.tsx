@@ -8,6 +8,7 @@ import { DraftRecovery } from './draft-recovery';
 import { mergePractice, type PracticeConflict } from '../../lib/practice-merge';
 import { MathText } from './math-text';
 import {workbookCheckFocus} from '../../lib/workbook-followup';
+import {workbookTaskPresentation} from '../../lib/workbook-interface';
 import './workbook-practice.css';
 
 export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practiceId = '', locale, onSelect, onOpenPaper, onBack, onSaved }: {
@@ -95,6 +96,8 @@ export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practic
   const tasks = state?.content ? workbookPracticeTasks(state.content) : [], task = tasks.find(item => item.id === practice?.activeId);
   const entry = practice?.entries[practice.activeId] || { result: '', unresolved: '', completed: false };
   const progress = state?.content && practice ? practiceProgress(state.content, practice) : null;
+  const learningStatus=workbookTaskPresentation(practice?.entries.learning,zh).status;
+  const hasNextResearch=tasks.some(item=>item.id!=='learning'&&item.id!==task?.id&&!practice?.entries[item.id]?.completed);
   const disabled = Boolean(busy) || Boolean(conflicts.length) || !state || state.stale || state.status !== 'ready';
   return <main className="pi-practice" aria-label={zh ? '比较练习' : 'Comparison exercise'}>
     <button type="button" onClick={()=>onBack()}>← {zh ? '返回原比较' : 'Back to the comparison'}</button>
@@ -112,7 +115,7 @@ export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practic
     {state?.stale && <p role="alert">{zh ? '来源或研究问题已变化。本页可回顾旧成果，请回到比较更新材料后再继续。' : 'Sources or the research question changed. Review past results here; update evidence in the comparison before continuing.'}</p>}
     {state?.artifact?.value.unresolved&&<aside className="pi-practice-open-question" aria-label={zh?'原判断中的待查问题':'Open questions from the judgment'}><strong>{zh?'原判断中待查的问题':'Open questions from your judgment'}</strong><p>{state.artifact.value.unresolved}</p><small>{zh?'选择适用的核查任务，成果中注明论文、页码或章节与原文依据；仅依据摘要时请明确写出。':'Choose the relevant check. Record the paper, page or section and source evidence; state explicitly when using only the abstract.'}</small></aside>}
     {task && practice && <>
-      <p className="pi-practice-progress">{progress!.completed}/{progress!.total} {zh ? '项由你确认完成' : 'tasks confirmed complete by you'}{progress!.allCompleted ? (zh ? ' · 全部完成，可回顾成果' : ' · All complete; revisit your results') : ''} · {state?.artifact ? (zh ? `已保存版本 ${state.artifact.revision}` : `Saved revision ${state.artifact.revision}`) : (zh ? '尚未保存' : 'Not saved yet')}</p>
+      <p className="pi-practice-progress">{zh?'研究核查：':'Research checks: '}{progress!.completed}/{progress!.total} {zh ? '项由你确认完成' : 'confirmed by you'}{progress!.allCompleted ? (zh ? ' · 研究核查已完成，可回顾成果' : ' · Research checks complete; revisit your results') : ''} · {zh?'配套学习（可选）：':'Optional learning: '}{learningStatus} · {state?.artifact ? (zh ? `已保存版本 ${state.artifact.revision}` : `Saved revision ${state.artifact.revision}`) : (zh ? '尚未保存' : 'Not saved yet')}</p>
       <div className="pi-practice-layout"><nav aria-label={zh ? '练习任务' : 'Exercise tasks'}>{tasks.map((item, index) => <button type="button" key={item.id} aria-current={item.id === task.id ? 'step' : undefined} disabled={Boolean(busy) || Boolean(conflicts.length)} onClick={() => { edit({ ...practice, activeId: item.id }); onSelect(item.id); }}>{practice.entries[item.id]?.completed ? '✓' : String(index + 1).padStart(2, '0')} · {item.id === 'learning' ? (zh ? '学习练习' : 'Learning exercise') : (zh ? `研究核查 ${index + 1}` : `Research check ${index + 1}`)}</button>)}</nav>
       <section><h2><MathText inline>{zh ? task.titleZh : task.titleEn}</MathText></h2><p><MathText>{zh ? task.goalZh : task.goalEn}</MathText></p>
         {task.id === 'learning' && <p><strong>{zh ? '需要的基础：' : 'Prerequisites: '}</strong><MathText>{zh ? state!.content!.learning.prerequisiteZh : state!.content!.learning.prerequisiteEn}</MathText></p>}
@@ -121,7 +124,7 @@ export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practic
         {!conflicts.length && <DraftRecovery key={draftKey} storageKey={draftKey} current={JSON.stringify(practice)} base={base} locale={locale} onRestore={(value, draftBase) => { try { const restored = validateWorkbookPractice(JSON.parse(value), state!.content!); const original = JSON.parse(draftBase) as Practice | null; if (original) validateWorkbookPractice(original, state!.content!); reconcile(state!, restored, original); onSelect(restored.activeId); } catch { setError(zh ? '草稿无法读取，已保存记录保留。' : 'Draft unavailable; saved records preserved.'); } }} />}
         <label>{zh ? '本项成果与依据' : 'Result and supporting evidence'}<textarea rows={6} maxLength={4000} value={entry.result} disabled={disabled} onChange={event => edit({ ...practice, entries: { ...practice.entries, [task.id]: { ...entry, result: event.target.value, completed: false } } })} /></label>
         <label>{zh ? '仍需查证的问题' : 'Questions still to verify'}<textarea rows={3} maxLength={2500} value={entry.unresolved} disabled={disabled} onChange={event => edit({ ...practice, entries: { ...practice.entries, [task.id]: { ...entry, unresolved: event.target.value, completed: false } } })} /></label>
-        <footer><button type="button" disabled={disabled || !entry.result.trim()} onClick={()=>void save(false,true)}>{zh?'保存成果并返回原判断':'Save result and return to judgment'}</button><button type="button" disabled={disabled || !dirty} onClick={() => void save()}>{zh ? '保存成果' : 'Save result'}</button><button className="primary" type="button" disabled={disabled || !entry.result.trim() || entry.completed} onClick={() => void save(true)}>{entry.completed ? (zh ? '本项已完成' : 'Task complete') : (zh ? '保存并确认完成，继续下一项' : 'Save, mark complete & continue')}</button></footer>
+        <footer><button type="button" disabled={disabled || !entry.result.trim()} onClick={()=>void save(false,true)}>{zh?'保存成果并返回原判断':'Save result and return to judgment'}</button><button type="button" disabled={disabled || !dirty} onClick={() => void save()}>{zh ? '保存成果' : 'Save result'}</button><button className="primary" type="button" disabled={disabled || !entry.result.trim() || entry.completed} onClick={() => void save(true)}>{entry.completed ? (zh ? '本项已完成' : 'Task complete') :task.id==='learning'||!hasNextResearch?(zh?'保存并确认完成':'Save and confirm complete'):(zh ? '保存并确认完成，继续下一项' : 'Save, mark complete & continue')}</button></footer>
         <p className="pi-practice-caption">{zh ? '这是你的练习与自查记录，不代表模型已证明结论，也不会自动标记论文已读或掌握。' : 'These are your exercise and self-check records, not a model-verified proof. Papers are not automatically marked read or mastered.'}</p>
       </section></div>
     </>}

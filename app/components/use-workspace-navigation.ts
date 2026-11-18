@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { readWorkspaceLocation, workspaceHash, type WorkspaceLocation } from "../../lib/workspace-navigation";
 import { rememberComparison } from '../../lib/workbook-continuation';
+import {workbookInspectorReturn,type WorkbookHistoryMode} from '../../lib/workbook-history';
 
 export function useWorkspaceNavigation(activeSpaceId: string, userId: string) {
   const workbookScrollRef = useRef(0);
@@ -19,7 +20,10 @@ export function useWorkspaceNavigation(activeSpaceId: string, userId: string) {
     setNavigationRevision((revision) => revision + 1);
   }, [rememberCurrentLocation]);
 
-  const updateWorkspaceHash = useCallback((patch: Partial<WorkspaceLocation>, history: "push" | "replace" = "push") => {
+  const updateWorkspaceHash = useCallback((patch: Partial<WorkspaceLocation>, history: WorkbookHistoryMode = "push") => {
+    if(history==='close-evidence'&&workbookInspectorReturn(window.history.state,window.location.hash)){
+      window.history.back();return true;
+    }
     const current = readWorkspaceLocation(window.location.hash);
     const hash = workspaceHash({
       ...current,
@@ -27,8 +31,8 @@ export function useWorkspaceNavigation(activeSpaceId: string, userId: string) {
       ...patch,
     });
     if (hash === window.location.hash) return;
-    if (history === "replace") window.history.replaceState(window.history.state, "", hash);
-    else window.history.pushState({ piView: current.view }, "", hash);
+    if (history === "replace"||history==='close-evidence') window.history.replaceState(window.history.state, "", hash);
+    else window.history.pushState({ piView: current.view,...(history==='open-evidence'?{piWorkbookInspectorFrom:window.location.hash}:{}) }, "", hash);
     restoredLocation.current = activeSpaceId + hash;
     rememberCurrentLocation(hash);
   }, [activeSpaceId, rememberCurrentLocation]);

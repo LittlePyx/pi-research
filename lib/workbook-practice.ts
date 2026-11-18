@@ -19,17 +19,21 @@ export function validateWorkbookPractice(raw: unknown, content: WorkbookContent)
   return { activeId: value.activeId, entries };
 }
 export function practiceProgress(content: WorkbookContent, practice: WorkbookPractice) {
-  const tasks = workbookPracticeTasks(content);
+  const tasks = workbookPracticeTasks(content).filter(task=>task.id!=='learning');
   const completed = tasks.filter(task => practice.entries[task.id]?.completed).length;
-  const selected = tasks.find(task => task.id === practice.activeId) || tasks[0];
+  const recorded=tasks.filter(task=>practice.entries[task.id]?.result.trim()||practice.entries[task.id]?.unresolved.trim()).length;
+  const selected = tasks.find(task => task.id === practice.activeId) || tasks.find(task=>!practice.entries[task.id]?.completed) || tasks[0];
   const active = completed < tasks.length && practice.entries[selected.id]?.completed ? tasks.find(task => !practice.entries[task.id]?.completed)! : selected;
-  return { active, completed, total: tasks.length, allCompleted: completed === tasks.length };
+  const learning=practice.entries.learning;
+  return { active, completed, recorded, total: tasks.length, allCompleted: completed === tasks.length,
+    learning:{completed:Boolean(learning?.completed),started:Boolean(learning?.result.trim()||learning?.unresolved.trim())} };
 }
 export function completePractice(content: WorkbookContent, practice: WorkbookPractice): WorkbookPractice {
   const current = practice.entries[practice.activeId];
   if (!current?.result.trim()) throw Error('practice_result_required');
   const entries = { ...practice.entries, [practice.activeId]: { ...current, completed: true } };
-  const tasks = workbookPracticeTasks(content), index = tasks.findIndex(task => task.id === practice.activeId);
+  if(practice.activeId==='learning')return validateWorkbookPractice({...practice,entries},content);
+  const tasks = workbookPracticeTasks(content).filter(task=>task.id!=='learning'), index = tasks.findIndex(task => task.id === practice.activeId);
   const next = [...tasks.slice(index + 1), ...tasks.slice(0, index)].find(task => !entries[task.id]?.completed);
   return validateWorkbookPractice({ activeId: next?.id || practice.activeId, entries }, content);
 }

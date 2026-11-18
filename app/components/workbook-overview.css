@@ -1,0 +1,29 @@
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-overview { margin:20px 0; border:1px solid #dce3ea; border-radius:14px; background:#fff; overflow:hidden; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-result { padding:22px 24px; background:#f6f8fb; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-result>small { color:#64748b; font-size:11px; letter-spacing:.06em; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-result h2 { margin:8px 0 10px; font:600 20px/1.5 var(--ui-font,system-ui); }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-result p { margin:0 0 10px; color:#465366; font-size:14px; line-height:1.9; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-overview button { min-height:44px; margin:0; padding:8px 0; border:0; background:none; color:#245dc1; font:500 13px/1.6 var(--ui-font,system-ui); cursor:pointer; text-align:left; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-judgment { padding:18px 24px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-label { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-label h3 { margin:0; font-size:14px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-label>span,.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-empty { color:#6b7686; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-text { margin:10px 0; border:0; padding:0; color:#465366; font-size:13px; line-height:1.8; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-text>summary { display:flex; gap:12px; align-items:start; cursor:pointer; list-style:none; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-text>summary>span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; flex:1; min-width:0; white-space:pre-line; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-text>summary>small { flex-shrink:0; color:#65748a; font-size:11px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-text[open]>summary>span { display:none; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-text[open]>p { margin:8px 0; white-space:pre-line; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-progress { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:10px 24px; border-top:1px solid #e7ebf0; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-progress button { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-progress button span,.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-progress>span { color:#6b7686; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-processing { margin:12px 0; border:1px solid #e4e8ee; border-radius:8px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-processing>summary,.v2-app.pi-workspace .pi-comparison-workspace details.pi-workbook-artifact>summary { padding:12px 16px; cursor:pointer; font-size:13px; font-weight:500; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-processing .pi-workbook-progress { margin:0; border:0; }
+.v2-app.pi-workspace .pi-comparison-workspace details.pi-workbook-artifact { padding:0; }
+.v2-app.pi-workspace .pi-comparison-workspace details.pi-workbook-artifact>div { padding:0 20px 20px; }
+@media(max-width:600px) {
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-overview-result,.v2-app.pi-workspace .pi-comparison-workspace .pi-overview-judgment { padding:16px; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-overview-progress { padding:10px 16px; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-overview-result h2 { font-size:18px; }
+}

@@ -6,6 +6,16 @@ import {validateWorkbookArtifact} from '../lib/research-workbook.ts';
 import {workspaceHash,readWorkspaceLocation} from '../lib/workspace-navigation.ts';
 import {comparisonLocation} from '../lib/workbook-continuation.ts';
 const content=workbookSample();
+
+test('research completion excludes optional learning and never automatically enters it',()=>{
+ let value={activeId:'task-0',entries:{learning:{result:'Existing learning result',unresolved:'Learning gap',completed:false}}};
+ for(const task of workbookPracticeTasks(content).filter(t=>t.id!=='learning')){
+  value={...value,activeId:task.id,entries:{...value.entries,[task.id]:{result:'Cited research check',unresolved:'',completed:false}}};value=completePractice(content,value);
+ }
+ const progress=practiceProgress(content,value);assert.equal(progress.completed,content.task.steps.length);assert.equal(progress.total,content.task.steps.length);assert.equal(progress.allCompleted,true);assert.notEqual(value.activeId,'learning');assert.equal(value.entries.learning.result,'Existing learning result');assert.equal(progress.learning.completed,false);
+ const learningOnly=completePractice(content,{activeId:'learning',entries:{learning:value.entries.learning}});
+ assert.equal(learningOnly.activeId,'learning');assert.equal(practiceProgress(content,learningOnly).completed,0);assert.equal(practiceProgress(content,learningOnly).learning.completed,true);
+});
 test('practice uses only reviewed task steps and exercise, and completion advances to the next unfinished item',()=>{
  const tasks=workbookPracticeTasks(content);assert.equal(tasks.length,content.task.steps.length+1);assert.equal(tasks[0].goalEn,content.task.steps[0].textEn);assert.equal(tasks.at(-1).checkpointZh,content.learning.checkpointZh);
  const initial={activeId:tasks[0].id,entries:{[tasks[0].id]:{result:'A sourced result under explicit assumptions',unresolved:'Check full text',completed:false}}};

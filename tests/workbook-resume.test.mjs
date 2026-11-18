@@ -13,9 +13,9 @@ function harness(extra={}){
  const cells=[],effects=[],requests=[],versions=[],views=[];let index=0,tree;
  const hooks={useState(initial){const i=index++;cells[i]??={value:typeof initial==='function'?initial():initial};return[cells[i].value,v=>{cells[i].value=typeof v==='function'?v(cells[i].value):v}]},
   useRef(initial){const i=index++;cells[i]??={current:initial};return cells[i]},
-  useEffect(fn,deps){const i=index++,old=cells[i];if(!old||deps.some((v,n)=>v!==old.deps[n]))effects.push(()=>{old?.cleanup?.();cells[i]={deps,cleanup:fn()}})}};
+  useEffect(fn,deps){const i=index++,old=cells[i];if(!old||!deps||deps.some((v,n)=>v!==old.deps?.[n]))effects.push(()=>{old?.cleanup?.();cells[i]={deps,cleanup:fn()}})}};
  const mod={exports:{}};
- new Function('require','exports',code)(name=>name==='react'?hooks:name.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true,status=ok?200:422)=>resolve({ok,status,json:async()=>data})}))}:name.endsWith('.css')?{}:name==='./math-text'?{MathText:({children})=>children}:name==='./draft-recovery'?{DraftRecovery:()=>null}:name==='./workbook-followup'?{WorkbookFollowup:()=>null}:name==='./workbook-evidence-links'?{WorkbookEvidenceLinks:()=>null}:name==='./workbook-task-panel'?{WorkbookTaskPanel:()=>null}:name==='./workbook-evidence-navigation'?{WorkbookEvidenceNavigation:()=>null}:name.startsWith('../../lib/')?require('../lib/'+name.split('/').at(-1)+'.ts'):require(name),mod.exports);
+ new Function('require','exports',code)(name=>name==='react'?hooks:name.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true,status=ok?200:422)=>resolve({ok,status,json:async()=>data})}))}:name.endsWith('.css')?{}:name==='./math-text'?{MathText:({children})=>children}:name==='./draft-recovery'?{DraftRecovery:()=>null}:name==='./workbook-followup'?{WorkbookFollowup:()=>null}:name==='./workbook-evidence-links'?{WorkbookEvidenceLinks:()=>null}:name==='./workbook-task-panel'?{WorkbookTaskPanel:()=>null}:name==='./workbook-overview'?{WorkbookOverview:()=>null}:name==='./workbook-evidence-navigation'?{WorkbookEvidenceNavigation:()=>null}:name.startsWith('../../lib/')?require('../lib/'+name.split('/').at(-1)+'.ts'):require(name),mod.exports);
  const props={userId:'u',spaceId:'s',trackId:'t',locale:'en',onBack(){},onOpenPaper(){},onWorkbookChange:id=>versions.push(id),onViewChange:(...v)=>views.push(v),...extra};
  const render=()=>{index=0;tree=mod.exports.ResearchWorkbook(props);effects.splice(0).forEach(fn=>fn());return tree};
  const nodes=()=>{const list=[];function walk(n){if(Array.isArray(n))n.forEach(walk);else if(n&&typeof n==='object'){list.push(n);walk(n.props?.children)}}walk(tree);return list};
@@ -52,11 +52,12 @@ test('evidence uses a modal below 1400px, returns focus to its cell and preserve
 });
 
 test('a cold evidence URL restores its panel but an invalid cell never opens an empty modal',async()=>{
- const before={window:globalThis.window,document:globalThis.document};
+ const before={window:globalThis.window,document:globalThis.document,requestAnimationFrame:globalThis.requestAnimationFrame};
  try{
   const dialog={open:false,close(){this.open=false},showModal(){this.open=true},focus(){}};
   globalThis.window={matchMedia:()=>({matches:true,addEventListener(){},removeEventListener(){}})};
   globalThis.document={body:{style:{overflow:''}},getElementById:()=>dialog};
+  globalThis.requestAnimationFrame=fn=>fn();globalThis.document.querySelectorAll=()=>[];
   const data=ready('cold'),focus=`${data.workbook.content.dimensions[0].id}:${data.workbook.sources[0].id}`;
   const h=harness({initialFocus:focus});h.requests.shift().resolve(data);await settle();h.render();assert.equal(dialog.open,true);
   h.props.initialFocus='missing-cell';h.render();h.render();assert.equal(dialog.open,false);assert.equal(globalThis.document.body.style.overflow,'');
@@ -75,7 +76,7 @@ test('switching evidence inside an open inspector does not close it or replace t
   const nav=()=>h.nodes().find(n=>n.props.sources&&n.props.focus&&n.props.onChange);
   nav().props.onChange(`${workbookSample().dimensions[0].id}:${workbookSources[1].id}`);h.render();h.render();
   assert.equal(calls.filter(x=>x==='open').length,opened);assert.equal(calls.filter(x=>x==='close').length,closed);assert.equal(dialog.open,true);
-  h.nodes().find(n=>n.type==='dialog').props.onCancel({preventDefault(){}});assert.equal(calls.at(-1),'return');
+  h.nodes().find(n=>n.type==='dialog').props.onCancel({preventDefault(){}});h.render();h.render();assert.equal(calls.filter(x=>x==='return').length,1);assert.equal(dialog.open,false);
  }finally{for(const [k,v] of Object.entries(before)){if(v===undefined)delete globalThis[k];else globalThis[k]=v;}}
 });
 
