@@ -3,18 +3,23 @@
 import { useCallback, useRef, useState } from "react";
 import { readWorkspaceLocation, workspaceHash, type WorkspaceLocation } from "../../lib/workspace-navigation";
 import { rememberComparison } from '../../lib/workbook-continuation';
-import {workbookInspectorReturn,type WorkbookHistoryMode} from '../../lib/workbook-history';
+import {isWorkbookInspectorReturn,workbookInspectorReturn,type WorkbookHistoryMode} from '../../lib/workbook-history';
 
 export function useWorkspaceNavigation(activeSpaceId: string, userId: string) {
   const workbookScrollRef = useRef(0);
   const navigationScroll = useRef(new Map<string, number>());
   const restoredLocation = useRef("");
+  const lastHash=useRef(typeof window==='undefined'?'':window.location.hash);
+  const inspectorReturnHash=useRef('');
   const [navigationRevision, setNavigationRevision] = useState(0);
   const rememberCurrentLocation = useCallback((hash = window.location.hash) => {
     rememberComparison(userId, activeSpaceId, hash);
   }, [userId, activeSpaceId]);
 
   const requestLocationRestore = useCallback(() => {
+    const hash=window.location.hash;
+    // popstate and hashchange may describe the same transition. Keep its scroll owner.
+    if(lastHash.current!==hash){inspectorReturnHash.current=isWorkbookInspectorReturn(lastHash.current,hash)?hash:'';lastHash.current=hash;}
     rememberCurrentLocation();
     restoredLocation.current = "";
     setNavigationRevision((revision) => revision + 1);
@@ -34,6 +39,7 @@ export function useWorkspaceNavigation(activeSpaceId: string, userId: string) {
     if (history === "replace"||history==='close-evidence') window.history.replaceState(window.history.state, "", hash);
     else window.history.pushState({ piView: current.view,...(history==='open-evidence'?{piWorkbookInspectorFrom:window.location.hash}:{}) }, "", hash);
     restoredLocation.current = activeSpaceId + hash;
+    lastHash.current=hash;inspectorReturnHash.current='';
     rememberCurrentLocation(hash);
   }, [activeSpaceId, rememberCurrentLocation]);
 
@@ -41,6 +47,7 @@ export function useWorkspaceNavigation(activeSpaceId: string, userId: string) {
     workbookScrollRef,
     navigationScroll,
     restoredLocation,
+    inspectorReturnHash,
     navigationRevision,
     requestLocationRestore,
     updateWorkspaceHash,

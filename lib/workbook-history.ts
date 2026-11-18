@@ -2,6 +2,13 @@ import {readWorkspaceLocation} from './workspace-navigation.ts';
 
 export type WorkbookHistoryMode = 'push'|'replace'|'open-evidence'|'close-evidence';
 
+export function isWorkbookInspectorReturn(previousHash:string,currentHash:string){
+  const previous=readWorkspaceLocation(previousHash),current=readWorkspaceLocation(currentHash);
+  return previous.view==='workbook'&&current.view==='workbook'&&Boolean(previous.workbookId)&&
+    previous.space===current.space&&previous.id===current.id&&previous.workbookId===current.workbookId&&
+    Boolean(previous.workbookFocus&&previous.workbookFocus!=='practice-results')&&(!current.workbookFocus||current.workbookFocus==='practice-results');
+}
+
 /** Only consume an inspector entry that this workbook opened itself. Deep links close in place. */
 export function workbookInspectorReturn(state:unknown,hash:string):string|null{
   const from=state&&typeof state==='object'?(state as Record<string,unknown>).piWorkbookInspectorFrom:null;

@@ -2257,7 +2257,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [comparisonPractice, setComparisonPractice] = useState<WorkspaceLocation | null>(null);
   const [workbookRefreshKey, setWorkbookRefreshKey] = useState(0);
   const [libraryViewState,setLibraryViewState]=useState({query:"",scope:"related" as "related"|"all",page:1,focusId:""});
-  const { workbookScrollRef, navigationScroll, restoredLocation: restoredLocationRef, navigationRevision, requestLocationRestore, updateWorkspaceHash, rememberCurrentLocation } = useWorkspaceNavigation(activeSpaceId, user.userId);
+  const { workbookScrollRef, navigationScroll, inspectorReturnHash, restoredLocation: restoredLocationRef, navigationRevision, requestLocationRestore, updateWorkspaceHash, rememberCurrentLocation } = useWorkspaceNavigation(activeSpaceId, user.userId);
   const [navigationIssue, setNavigationIssue] = useState<"space" | "missing" | "paper" | null>(null);
   const [requestedLocation, setRequestedLocation] = useState<WorkspaceLocation | null>(null);
   useEffect(() => {
@@ -3051,7 +3051,10 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       else setWorkbookTask(readComparisonInput(comparisonInputKey(user.userId,activeSpace.id,comparisonLocation.id!),activeSpace.id));
     }
     if (location.view === "workbook") { setWorkbookTrackId(location.id!); setWorkbookReturnView(location.from || "threads");setWorkbookViewState({panel:location.workbookPanel||'evidence',focus:location.workbookFocus||''}); }
-    const restoreScroll = () => requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top: navigationScroll.current.get(hash) || 0, behavior: "auto" })));
+    const restoreScroll = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+      // The inspector owns its original trigger and scroll position on close.
+      if(inspectorReturnHash.current!==hash)window.scrollTo({ top: navigationScroll.current.get(hash) || 0, behavior: "auto" });
+    }));
     if (location.view === "today" || location.from === "today") setTodaySurface(location.panel || "home");
     if (location.view !== "paper-detail") { setView(location.view); restoreScroll(); return; }
     setPaperReturnView(location.from || "today");
@@ -3074,7 +3077,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     let cleanup: (() => void) | undefined;
     const frame = requestAnimationFrame(() => { cleanup = restore(); });
     return () => { cancelAnimationFrame(frame); cleanup?.(); };
-  }, [activeSpace.id, researchMap.tracks, mapLoading, mapReadSpaceId, navigationRevision, locale, selectedMonitorPaper?.id, view, navigationScroll, restoredLocationRef, restorePaperNetworkNavigation, setSelectedNetworkPaperId]);
+  }, [activeSpace.id, researchMap.tracks, mapLoading, mapReadSpaceId, navigationRevision, locale, selectedMonitorPaper?.id, view, navigationScroll, inspectorReturnHash, restoredLocationRef, restorePaperNetworkNavigation, setSelectedNetworkPaperId]);
 
   useEffect(() => {
     if (!recoveryFocusRequested || view !== "today" || todaySurface !== "discovery" || monitor?.status !== "error") return;

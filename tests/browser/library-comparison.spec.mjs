@@ -542,13 +542,15 @@ test('evidence switches replace history so one Back restores the original cell a
 });
 
 
-test('closing evidence opened from saved results restores its task trigger instead of jumping back to the results',async({page})=>{
+test('closing evidence opened from saved results restores its task trigger instead of jumping back to the results',async({page},info)=>{
+ if(info.project.name==='desktop')await page.setViewportSize({width:633,height:871});
  await enterComparison(page);await ready(page);await page.getByRole('button',{name:'研究核查',exact:true}).click();
  const panel=page.getByRole('region',{name:'研究核查任务',exact:true});await panel.locator('.pi-workbook-task-card').first().getByRole('button',{name:'开始核查 →',exact:true}).click();
  await page.getByRole('textbox',{name:'本项成果与依据',exact:true}).fill('已保存但尚未确认完成的研究核查成果。');await page.getByRole('button',{name:'保存成果并返回原判断',exact:true}).click();
  await expect(page.getByRole('region',{name:'已保存核查成果',exact:true})).toBeFocused();const original=page.url();expect(original).toContain('workbookFocus=practice-results');
+ await page.locator('.pi-workbook-savebar').getByRole('button',{name:'编辑判断',exact:true}).click();await page.getByRole('textbox',{name:'目前的判断及依据',exact:true}).fill('临时判断草稿仍保留。');
  const origin=panel.locator('button[data-evidence-origin]').first(),anchor=await origin.getAttribute('data-evidence-origin');await origin.click();
- const inspector=page.getByRole('dialog',{name:'证据与核查笔记',exact:true});await inspector.getByRole('button',{name:'下一个比较维度',exact:true}).click();await page.reload();await expect(inspector).toBeVisible();
- await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();await expect(page).toHaveURL(original);await expect(origin).toBeFocused();await expect(origin).toBeInViewport();
- await origin.click();await page.goBack();await expect(page).toHaveURL(original);await expect.poll(()=>page.evaluate(()=>document.activeElement?.getAttribute('data-evidence-origin'))).toBe(anchor);
+ const inspector=page.getByRole('dialog',{name:'证据与核查笔记',exact:true});await inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true}).fill('本论文原维度的笔记草稿。');await inspector.getByRole('button',{name:'下一个比较维度',exact:true}).click();await page.reload();await expect(inspector).toBeVisible();await inspector.getByRole('button',{name:'恢复到编辑区',exact:true}).click();
+ await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();await expect(page).toHaveURL(original);await expect(origin).toBeFocused();await expect(origin).toBeInViewport();await expect.poll(()=>origin.evaluate(node=>node.getBoundingClientRect().bottom-document.querySelector('.pi-workbook-savebar').getBoundingClientRect().top)).toBeLessThanOrEqual(0);
+ await origin.click();await expect(inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true})).toHaveValue('本论文原维度的笔记草稿。');await page.goBack();await expect(page).toHaveURL(original);await expect.poll(()=>page.evaluate(()=>document.activeElement?.getAttribute('data-evidence-origin'))).toBe(anchor);
 });
