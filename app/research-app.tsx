@@ -5779,9 +5779,12 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             onOpen={openMonitorPaper}
             onExploreGraph={(paper) => {
               setLibraryGraphPaperId(paper.id);
+              setLibraryViewState(current=>({...current,focusId:paper.id}));
+              setGraphSurface("library");
+              setPaperNetworkMode("citations");
               setGraphReturnView("library");
               setResearchMapMode("papers");
-              navigate("threads", workbookTrackId, { graph: paper.id, graphFrom: "library" });
+              navigate("threads", workbookTrackId, { graph: paper.id, graphMode: "citations", graphSurface: undefined, graphFrom: "library", libraryFocus: paper.id, returnTo: window.location.hash });
             }}
             onReadingStatus={(paper, status) => void updateReadingProgress(paper, status)}
             onRelevant={(paper) => requestPaperDecision(paper, "relevant")}

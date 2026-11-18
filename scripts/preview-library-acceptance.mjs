@@ -73,6 +73,15 @@ await db.batch([
     insert('research_track_papers',{id:'acceptance-route-'+index,space_id:space,track_id:track,canonical_id:source.canonicalId,title:source.title,authors:source.authors,url:source.url,role:'background',summary_zh:'',summary_en:'',rationale_zh:'自动验收的公开论文摘要。',rationale_en:'Public abstract for browser regression.'}),
   ]),
 ]);
+const graphNeighbor=(source,kind)=>({canonicalId:source.canonicalId,title:source.title,authors:source.authors,url:source.url,year:'2021',kind,provider:'Semantic Scholar'});
+const references=[graphNeighbor(sources[1],'reference'),...Array.from({length:3},(_,index)=>({
+  canonicalId:'fixture:reference-'+index,title:'External reference '+(index+1),authors:'Fixture author',url:'https://example.test/reference/'+index,year:'2020',kind:'reference',provider:'Semantic Scholar',
+}))];
+const storedGraph=(source,items)=>insert('library_graph_checks',{
+  paper_id:source.id,space_id:space,status:'ready',checked_at:'2026-10-20T00:00:00.000Z',
+  result_json:JSON.stringify({items,offsets:{references:-1,citations:-1},errors:[],limited:false}),
+});
+await db.batch([storedGraph(sources[0],[...references,{...references[1],canonicalId:'fixture:later-study',title:'Later citing study',kind:'citation',year:'2024'}]),storedGraph(sources[1],[graphNeighbor(sources[0],'citation')])]);
 await db.batch(Array.from({length:61},(_,index)=>[
   insert('monitored_papers',{id:'acceptance-filler-'+String(index).padStart(3,'0'),space_id:space,canonical_id:'fixture:filler-'+index,title:'Erasure pagination fixture '+index,authors:'Regression fixture',venue:'Synthetic pagination record',url:'https://example.test/'+index,horizon:'years',discovered_at:'2026-06-01'}),
   insert('paper_reading_progress',{id:'filler-progress-'+index,space_id:space,paper_id:'acceptance-filler-'+String(index).padStart(3,'0'),status:'queued',note:'erasure pagination fixture'}),

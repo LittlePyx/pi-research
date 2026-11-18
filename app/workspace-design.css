@@ -23,15 +23,11 @@
 .pi-workspace .pi-library-selection article { margin-top:14px; padding-top:14px; border-top:1px solid var(--pi-line); }
 .pi-workspace .pi-library-controls input[type="search"] { display:block; width:100%; margin-top:6px; padding:10px 12px; border:1px solid var(--pi-line); border-radius:6px; font-size:16px; }
 .pi-workspace .pi-library-rows article { border-top:1px solid var(--pi-line); padding:20px 0; }
-.pi-workspace .pi-library-rows h3,.pi-workspace .pi-library-focus h3 { font-family:inherit; font-size:17px; line-height:1.65; margin:8px 0; overflow-wrap:anywhere; }
-.pi-workspace .pi-library-rows span,.pi-workspace .pi-library-rows small,.pi-workspace .pi-library-focus article > span { color:var(--pi-muted); font-size:13px; }
+.pi-workspace .pi-library-rows h3 { font-family:inherit; font-size:17px; line-height:1.65; margin:8px 0; overflow-wrap:anywhere; }
+.pi-workspace .pi-library-rows span,.pi-workspace .pi-library-rows small { color:var(--pi-muted); font-size:13px; }
 .pi-workspace .pi-library-explorer footer,.pi-workspace .pi-library-explorer nav { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:12px; }
 .pi-workspace .pi-library-explorer :is(button,select),.pi-workspace .pi-email-settings button { font:inherit; font-size:14px; min-height:40px; padding:8px 12px; color:var(--pi-accent); background:#f2f7f9; border:1px solid var(--pi-line); border-radius:5px; cursor:pointer; }
 .pi-workspace .pi-library-explorer button:disabled,.pi-workspace .pi-email-settings button:disabled { opacity:.55; cursor:default; }
-.pi-workspace .pi-library-focus { border-top:2px solid var(--pi-accent); margin-top:28px; padding-top:20px; scroll-margin-top:20px; }
-.pi-workspace .pi-library-focus article { margin:12px 0; padding:16px; border:1px solid var(--pi-line); border-radius:6px; }
-.pi-workspace .pi-library-focus article h4 { font-size:16px; line-height:1.65; margin:8px 0; overflow-wrap:anywhere; }
-.pi-workspace .pi-library-focus :is(a,button) { margin-right:10px; }
 .pi-workspace .pi-route-graph-legacy > summary { padding:18px 0; color:var(--pi-accent); font-size:16px; cursor:pointer; }
 .pi-workspace .pi-email-settings { margin:0 0 24px; border:1px solid var(--pi-line); border-radius:8px; background:#fff; }
 .pi-workspace .pi-email-settings > summary { cursor:pointer; padding:16px 20px; font-size:15px; }
@@ -468,7 +464,7 @@
 .v2-app.pi-workspace :is(.pi-unread-recommendations,.pi-research-start,.pi-lead-row,.pi-current-path,.pi-study-session,.pi-memory-focus,.pi-memory-notebook,.pi-graph-desk,.pi-library-explorer,.v2-paper-detail-grid,.v2-route-workspace-panel,.v2-research-synthesis,.v2-research-problem.pi-problem-reading) {
  border:0; border-bottom:1px solid var(--pi-line); border-radius:0; box-shadow:none; background:transparent; padding:24px 0;
 }
-.v2-app.pi-workspace :is(.v2-ai-daily-brief,.v2-today-more,.v2-library-paper,.pi-route-start-papers article,.pi-library-focus article) { border:0; border-bottom:1px solid var(--pi-line); border-radius:0; box-shadow:none; background:transparent; }
+.v2-app.pi-workspace :is(.v2-ai-daily-brief,.v2-today-more,.v2-library-paper,.pi-route-start-papers article) { border:0; border-bottom:1px solid var(--pi-line); border-radius:0; box-shadow:none; background:transparent; }
 .v2-app.pi-workspace .v2-library-paper { padding:24px 0; }
 .v2-app.pi-workspace :is(.v2-daily-brief-lead,.v2-daily-paper-queue > header,.v2-daily-paper-queue > details) { padding-inline:0; background:transparent; }
 .v2-app.pi-workspace :is(.pi-section-navigation button,.v2-library-tabs button,.v2-route-workspace-tabs button) { border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:var(--pi-muted); }

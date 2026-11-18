@@ -183,3 +183,13 @@ test('a saved comparison retains the memory search, route, page and exact record
  assert.equal(readWorkspaceLocation('#library?q=Gaussian&record=s%3Ar%3Aolder').memoryFocus,undefined);
  assert.equal(readWorkspaceLocation('#memory?section=preferences&route=r&record=s%3Ar%3Aolder').memoryTrack,undefined);
 });
+
+test('citation exploration returns to the originating library page through a paper refresh',()=>{
+ const library=workspaceHash({view:'library',space:'s',libraryQuery:'rate distortion',libraryPage:3,libraryTag:'notes'});
+ const graph=workspaceHash({view:'threads',space:'s',graph:'p1',graphFrom:'library',graphMode:'citations',libraryFocus:'p2',returnTo:library});
+ const paper=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p2',space:'s',from:'threads',returnTo:graph}));
+ const restored=readWorkspaceLocation(paper.returnTo);
+ assert.equal(restored.libraryFocus,'p2');
+ assert.equal(restored.returnTo,library);
+ assert.equal(readWorkspaceLocation(workspaceHash({view:'threads',space:'other',graph:'p1',graphFrom:'library',returnTo:library})).returnTo,undefined);
+});
