@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {associateWorkbookResult} from '../lib/workbook-result-links.ts';
 import { glob, mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
@@ -250,6 +251,25 @@ test("built workbook API checkpoints review, isolates owners and versions artifa
       assert.deepEqual(state.artifact.value.practice,practice);assert.equal(state.artifact.value.decision,notes.decision);
       const reload=(await request(path+'&workbookId='+encodeURIComponent(state.id))).workbook;assert.deepEqual(reload.artifact,state.artifact);
       const rows=await sql([{sql:'SELECT COUNT(*) n FROM paper_reading_progress'},{sql:'SELECT COUNT(*) n FROM learning_paths'}]);assert.deepEqual(rows.map(row=>row.results[0].n),[0,0]);assert.equal(calls,beforeCalls,'practice saves never call the model');
+    });
+    await t.test('linked results survive practice revisions and legacy saves without rewriting judgments',async()=>{
+      const original=structuredClone(state.artifact.value),beforeCalls=calls;
+      const practice={...original.practice,activeId:'task-0',entries:{...original.practice.entries,'task-0':{result:'Saved abstract check.',unresolved:'Original definitions pending.',completed:false}}};
+      state=(await post({action:'save-practice',workbookId:state.id,sourceRevision:state.revision,baseRevision:state.artifact.revision,value:practice})).workbook;
+      const linked=associateWorkbookResult(state.artifact.value,state.content,practice,state.artifact.revision,'task-0','decision');
+      const save={action:'save-artifact',workbookId:state.id,sourceRevision:state.revision,baseRevision:state.artifact.revision,value:linked};
+      state=(await post(save)).workbook;assert.equal(state.artifact.value.decision,original.decision);assert.equal(state.artifact.value.links.length,1);
+      await post(save,409);
+      const revision={...practice,entries:{...practice.entries,'task-0':{...practice.entries['task-0'],result:'Revised saved abstract check.'}}};
+      state=(await post({action:'save-practice',workbookId:state.id,sourceRevision:state.revision,baseRevision:state.artifact.revision,value:revision})).workbook;
+      assert.equal(state.artifact.value.links[0].snapshot,'Saved abstract check.');
+      const oldClient={observations:state.artifact.value.observations,decision:original.decision,unresolved:original.unresolved};
+      state=(await post({...save,baseRevision:state.artifact.revision,value:oldClient})).workbook;assert.equal(state.artifact.value.links[0].snapshot,'Saved abstract check.','an old client does not erase links');
+      await post({...save,baseRevision:state.artifact.revision,value:{...state.artifact.value,links:[{...state.artifact.value.links[0],taskId:'foreign-task'}]}},422);
+      await post({...save,baseRevision:state.artifact.revision,value:{...state.artifact.value,links:[{...state.artifact.value.links[0],snapshot:'Unlocated invented result.'}]}},422);
+      const updated=associateWorkbookResult(state.artifact.value,state.content,revision,state.artifact.revision,'task-0','decision');
+      state=(await post({...save,baseRevision:state.artifact.revision,value:updated})).workbook;assert.equal(state.artifact.value.links[0].snapshot,revision.entries['task-0'].result);
+      assert.equal((await request(path+'&workbookId='+encodeURIComponent(state.id))).workbook.artifact.value.links.length,1);assert.equal(calls,beforeCalls);
     });
     await t.test("graph question is carried into a separate comparison and survives independent review", async () => {
       const question = "Which assumptions differ for my selected Gaussian research task?";

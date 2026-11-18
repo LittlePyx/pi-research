@@ -16,6 +16,16 @@ function harness(){
  const nodes=()=>{const list=[];function visit(n){if(Array.isArray(n))n.forEach(visit);else if(n&&typeof n==='object'){list.push(n);visit(n.props?.children)}}visit(tree);return list};
  render();return{props,requests,selected,opened,returned,render,nodes,text:()=>JSON.stringify(tree),input(value){nodes().find(n=>n.type==='textarea'&&n.props.maxLength===4000).props.onChange({target:{value}});render()},button(label){return nodes().find(n=>n.type==='button'&&n.props.children===label)}};
 }
+test('reentering a clean task reloads the shared revision after judgment or association saves',async()=>{
+ const h=harness(),initial=ready();initial.workbook.artifact.value.practice={activeId:'task-0',entries:{'task-0':{result:'Saved result',unresolved:'',completed:false}}};h.requests.shift().resolve(initial);await settle();h.render();h.render();
+ h.props.active=false;h.render();h.props.active=true;h.render();const latest=structuredClone(initial);latest.workbook.artifact.revision=5;h.requests.shift().resolve(latest);await settle();h.render();h.render();
+ h.input('A revised result');h.button('Save result').props.onClick();assert.equal(JSON.parse(h.requests.shift().init.body).baseRevision,5);
+});
+
+test('reentering with unsaved practice input retains it instead of replacing it with a server read',async()=>{
+ const h=harness();h.requests.shift().resolve(ready());await settle();h.render();h.render();h.input('Unsaved task draft');h.props.active=false;h.render();h.props.active=true;h.render();h.render();assert.equal(h.requests.length,0);assert.match(h.text(),/Unsaved task draft/);assert.equal(h.button('Save result').props.disabled,false);
+});
+
 test('practice saves preserve inputs on conflict and submit no comparison-note or reading-status changes',async()=>{
  const h=harness();h.requests.shift().resolve(ready());await settle();h.render();h.render();
  assert.equal(h.button('Save, mark complete & continue').props.disabled,true);

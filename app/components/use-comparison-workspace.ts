@@ -9,7 +9,7 @@ export function useComparisonWorkspace(userId:string,spaceId:string){
   const [workbookVersionId,setWorkbookVersionId]=useState('');
   const [workbookTrackId,setWorkbookTrackId]=useState<string|null>(null);
   const [workbookReturnView,setWorkbookReturnView]=useState<WorkspaceView>('threads');
-  const [workbookViewState,setWorkbookViewState]=useState({panel:'evidence' as 'evidence'|'relations'|'task',focus:''});
+  const [workbookViewState,setWorkbookViewState]=useState({panel:'evidence' as 'evidence'|'relations'|'task',focus:'',dimension:''});
   const loadedWorkbookRef=useRef('');
   const rememberVersion=(trackId:string,id:string)=>{
     loadedWorkbookRef.current=`${spaceId}:${trackId}:${id}`;
@@ -17,7 +17,7 @@ export function useComparisonWorkspace(userId:string,spaceId:string){
   };
   const beginComparison=(trackId:string,task:GraphTaskContext|undefined,versionId:string,from:WorkspaceView)=>{
     loadedWorkbookRef.current='';setWorkbookTask(task);setWorkbookVersionId(versionId);
-    setWorkbookTrackId(trackId);setWorkbookReturnView(from);setWorkbookViewState({panel:'evidence',focus:''});
+    setWorkbookTrackId(trackId);setWorkbookReturnView(from);setWorkbookViewState({panel:'evidence',focus:'',dimension:''});
     const key=comparisonInputKey(userId,spaceId,trackId);
     if(task)return writeComparisonInput(key,task);
     if(!versionId)clearComparisonInput(key);

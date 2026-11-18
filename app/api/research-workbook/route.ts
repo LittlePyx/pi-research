@@ -1,3 +1,4 @@
+import {bindResultLinks} from '../../../lib/workbook-result-links';
 import { focusedWorkbookQuestion, storedWorkbookQuestion, workbookFocus, graphSelection } from "../../../lib/graph-task";
 import { ensureSchema, getApiUser, getDatabase } from "../../../db/repository";
 import { resolveDeepSeekCredential } from "../../../lib/model-credentials";
@@ -223,11 +224,13 @@ export async function POST(request: Request) {
       const selected = live.filter(s => ids.includes(s.id));
       if (body.sourceRevision !== row.source_revision || selected.length !== ids.length || await workbookRevision(ctx.question, selected) !== row.source_revision) return Response.json({ error: "Evidence changed; open the current workbook before saving" }, { status: 409 });
       if (!Number.isInteger(body.baseRevision) || Number(body.baseRevision) < 0) return Response.json({ error: "Artifact revision required" }, { status: 400 });
-      const previous = await ctx.database.prepare('SELECT value_json FROM research_comparison_artifacts WHERE workbook_id=? AND space_id=? ORDER BY revision DESC LIMIT 1').bind(row.id, ctx.spaceId).first<{value_json:string}>();
+      const previous = await ctx.database.prepare('SELECT value_json,revision FROM research_comparison_artifacts WHERE workbook_id=? AND space_id=? ORDER BY revision DESC LIMIT 1').bind(row.id, ctx.spaceId).first<{value_json:string;revision:number}>();
       const savedValue = parse(previous?.value_json || '') || { observations: {}, decision: '', unresolved: '' };
       if (action === 'save-practice' && body.value === undefined) return Response.json({ error: 'Practice result required' }, { status: 400 });
       // Each editor changes only its own fields; the shared revision still guards concurrent edits.
-      const value = validateWorkbookArtifact(action === 'save-practice' ? { ...savedValue, practice: body.value } : { ...(body.value as object), practice: savedValue.practice }, validateWorkbook(parse(row.content_json), selected));
+      const input=action==='save-practice'?{...savedValue,practice:body.value}:{...savedValue,...(body.value as object),practice:savedValue.practice};
+      const validated=validateWorkbookArtifact(input,validateWorkbook(parse(row.content_json), selected));
+      const value=action==='save-practice'?validated:bindResultLinks(validated,savedValue,previous?.revision||0);
       const next = Number(body.baseRevision) + 1;
       const guard = evidenceGuard(ctx, selected);
       const saved = await ctx.database.prepare(`INSERT OR IGNORE INTO research_comparison_artifacts (id, workbook_id, space_id, revision, value_json)

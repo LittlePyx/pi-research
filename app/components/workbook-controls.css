@@ -1,5 +1,5 @@
 /* Comparison controls own their drawer, task status and save bar at every width. */
-.v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector { display:none; position:static; width:auto; max-width:none; max-height:none; margin:0; padding:20px; border:1px solid #e1e6ed; border-radius:12px; background:#f8f9fb; color:var(--ui-text,#202124); overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector { display:none; position:static; width:auto; max-width:none; max-height:none; margin:0; padding:20px; border:1px solid #e1e6ed; border-radius:12px; background:#f8f9fb; color:var(--ui-text,#202124); overflow-wrap:anywhere; scroll-margin-top:88px; }
 .v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector[open] { display:block; }
 .v2-app.pi-workspace .pi-comparison-workspace dialog.pi-workbook-inspector::backdrop { background:rgb(20 28 40 / 35%); }
 .v2-app.pi-workspace .pi-comparison-workspace .pi-inspector-toolbar { position:sticky; top:-20px; padding-top:8px; background:#f8f9fb; z-index:2; }

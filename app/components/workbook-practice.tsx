@@ -11,8 +11,8 @@ import {workbookCheckFocus} from '../../lib/workbook-followup';
 import {workbookTaskPresentation} from '../../lib/workbook-interface';
 import './workbook-practice.css';
 
-export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practiceId = '', locale, onSelect, onOpenPaper, onBack, onSaved }: {
-  userId: string; spaceId: string; trackId: string; workbookId: string; practiceId?: string; locale: 'zh' | 'en';
+export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practiceId = '', locale, onSelect, onOpenPaper, onBack, onSaved,active=true }: {
+  active?:boolean;userId: string; spaceId: string; trackId: string; workbookId: string; practiceId?: string; locale: 'zh' | 'en';
   onSelect: (id: string) => void; onOpenPaper: (source: WorkbookSource, focus: string) => void; onBack: (focusResults?:boolean) => void; onSaved?: () => void;
 }) {
   const zh = locale === 'zh', [state, setState] = useState<WorkbookState | null>(null), [practice, setPractice] = useState<Practice | null>(null);
@@ -21,8 +21,13 @@ export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practic
   const generation = useRef(0), selection = useRef(practiceId);
   useEffect(()=>{selection.current=practiceId;},[practiceId]);
   useEffect(() => {
+    if(!active)return;
+    // Unsaved entries and unresolved merge choices stay local when returning to this task.
+    if(state?.id===workbookId&&practice&&JSON.stringify(practice.entries)!==JSON.stringify(state.artifact?.value.practice?.entries||{})){
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Release the interrupted request when returning to its retained input.
+      setBusy('');return;
+    }
     const abort = new AbortController(), epoch = ++generation.current;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the scoped external read while retaining session drafts under their own workbook key.
     setBusy('load'); setError(''); setState(null); setPractice(null); setConflicts([]);
     fetch('/api/research-workbook?' + new URLSearchParams({ spaceId, trackId, workbookId }), { signal: abort.signal })
       .then(async response => { if (!response.ok) throw Error(); const data = await response.json() as { workbook: WorkbookState }; if (data.workbook.id !== workbookId || !data.workbook.content) throw Error(); return data.workbook; })
@@ -33,7 +38,8 @@ export function WorkbookPractice({ userId, spaceId, trackId, workbookId, practic
       }).catch(() => { if (!abort.signal.aborted && generation.current === epoch) setError(zh ? '练习暂未载入，请重试。原记录保留。' : 'Exercise could not load. Retry; saved records are preserved.'); })
       .finally(() => { if (generation.current === epoch) setBusy(''); });
     return () => { abort.abort(); generation.current = epoch + 1; };
-  }, [spaceId, trackId, workbookId, reload]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- External activation reloads clean records; editing entries must not trigger a read.
+  }, [spaceId, trackId, workbookId, reload,active]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- The URL selection is external navigation state, including browser back/forward.
     if (state?.content && workbookPracticeTasks(state.content).some(task => task.id === practiceId)) setPractice(value => value ? { ...value, activeId: practiceId } : value);

@@ -3,6 +3,14 @@ import test from 'node:test';
 import { focusWorkspaceSection } from '../lib/workspace-section-navigation.ts';
 import { readWorkspaceLocation, workspaceHash } from '../lib/workspace-navigation.ts';
 
+test('dimension navigation stays inside its pinned comparison and survives reading return chains',()=>{
+ const origin=workspaceHash({view:'workbook',id:'route',space:'s',workbookId:'v1',workbookDimension:'conditions',from:'library',returnTo:'#library?space=s&page=2'});
+ assert.equal(readWorkspaceLocation(origin).workbookDimension,'conditions');
+ const paper=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'workbook',returnTo:origin}));assert.equal(readWorkspaceLocation(paper.returnTo).workbookDimension,'conditions');
+ assert.equal(readWorkspaceLocation('#library?space=s&workbookDimension=conditions').workbookDimension,undefined);
+ assert.equal(readWorkspaceLocation('#workbook/route?space=s&workbookDimension=%3Cscript%3E').workbookDimension,undefined);
+});
+
 test('workspace links preserve paper identity, route subpage, scope and return destination', () => {
   const location = {view:'paper-detail', id:'paper-1', space:'space-1', from:'thread-detail', track:'route-2', tab:'evidence'};
   assert.deepEqual(readWorkspaceLocation(workspaceHash(location)), {...location, graph:undefined, step:undefined, path:undefined});

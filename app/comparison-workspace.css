@@ -22,8 +22,6 @@
 .v2-app.pi-workspace .pi-comparison-workspace blockquote { max-width:85ch; padding:16px 20px; margin:16px 0; border:0; border-left:2px solid #9baebe; background:#f6f8fa; font-size:15px; line-height:1.8; }
 .v2-app.pi-workspace .pi-comparison-workspace textarea { background:white; color:#202124; border:1px solid #cbd0d8; border-radius:5px; font-size:15px; min-height:120px; max-width:850px; }
 .v2-app.pi-workspace .pi-comparison-workspace label { font-size:13px; font-weight:500; }
-.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-artifact { margin-top:28px; padding-top:24px; border-top:1px solid #dce0e5; }
-.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-artifact>button { background:#245dc1; color:white; border:0; font-size:13px; }
 .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-relation>div { border:0; padding:10px 0; border-bottom:1px solid #e0e2e6; font-size:14px; }
 .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-relation>strong { margin:6px 0 0; padding:12px 16px; border:0; background:#edf3f8; font-size:15px; font-weight:500; }
 .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-evidence-groups { display:grid; margin:16px 0 0; }

@@ -1,5 +1,12 @@
 /* This component owns both table and card presentation; identities never change with layout. */
 .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-comparison { container:workbook-comparison / inline-size; min-width:0; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-dimension-navigation { position:sticky; top:64px; z-index:5; display:flex; align-items:end; flex-wrap:wrap; gap:10px; padding:12px 0; background:#fff; border-bottom:1px solid #e2e8ef; margin:12px 0; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-dimension-navigation label { flex:1 1 220px; min-width:0; font-size:11px; color:#68778b; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-dimension-navigation select { display:block; width:100%; min-height:40px; padding:6px 8px; border:1px solid #dce3ed; border-radius:7px; background:white; color:#344258; font:inherit; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-dimension-navigation button { min-height:40px; margin:0; padding:8px 10px; border:1px solid #dce3ed; border-radius:7px; background:white; color:#526a8b; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-dimension-shortcuts { flex-basis:100%; display:flex; flex-wrap:wrap; gap:8px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-dimension-shortcuts button { border:0; padding:4px 8px; min-height:32px; background:#f5f7fa; font-size:11px; }
+.v2-app.pi-workspace .pi-comparison-workspace [data-comparison-dimension] { scroll-margin-top:200px; }
 .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-comparison .pi-workbook-table-scroll { max-width:100%; max-height:72dvh; overflow:auto; border:1px solid #e1e6ed; border-radius:12px; background:#fff; scroll-padding-top:100px; }
 .v2-app.pi-workspace .pi-comparison-workspace table.pi-comparison-table { width:100%; min-width:0; border-collapse:separate; border-spacing:0; table-layout:fixed; font:400 13px/1.8 var(--ui-font,system-ui); }
 .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table th,.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table td { text-align:left; vertical-align:top; overflow-wrap:anywhere; border-bottom:1px solid #e8edf2; }

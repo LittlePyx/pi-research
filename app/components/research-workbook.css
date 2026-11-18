@@ -25,8 +25,6 @@
 .pi-workbook cite { display: block; margin-top: 10px; font-size: 12px; }
 .pi-workbook label { line-height: 1.7; }
 .pi-workbook textarea { display: block; width: 100%; min-height: 110px; margin: 8px 0 18px; border: 1px solid #becdc2; border-radius: 3px; padding: 12px; font: inherit; color: inherit; background: #fffefa; resize: vertical; }
-.pi-workbook-artifact { border-top: 1px solid #d4ddd5; margin-top: 32px; padding-top: 10px; }
-.pi-workbook-artifact small { margin-top: 8px; }
 .pi-workbook-lesson { border-block: 1px solid #d4ddd5; padding: 16px 0; margin: 28px 0; }
 .pi-workbook dt { font-weight: 600; margin-top: 14px; }
 .pi-workbook dd { margin: 4px 0 12px; }
@@ -42,7 +40,6 @@
 @media (max-width: 850px) {
   .pi-workbook-layout { grid-template-columns: minmax(0, 1fr); }
   .pi-workbook-layout > div { display: contents; }
-  .pi-workbook-artifact { order: 3; }
 }
 
 .pi-workbook-followup { margin:24px 0; }
