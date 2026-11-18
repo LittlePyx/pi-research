@@ -1,27 +1,29 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { LibraryGraphNeighbor, LibraryGraphResult } from '../../lib/library-graph';
 import { MathText } from './math-text';
+import {GraphPaperChoice} from './graph-paper-choice';
+import type {RouteSelection} from './use-route-selection';
 import './library-citation-neighborhood.css';
 
 export type LibraryCitationSnapshot = LibraryGraphResult & {
-  focusTitle?: string; status: 'pending' | 'ready' | 'empty' | 'partial' | 'error' | 'missing_id';
+  focusTitle?: string; focusCanonicalId?:string; status: 'pending' | 'ready' | 'empty' | 'partial' | 'error' | 'missing_id';
   checkedAt: string | null; retryAt: number; busy: boolean;
 };
 
 const neighborKey = (paper: LibraryGraphNeighbor) => `${paper.kind}:${paper.canonicalId}`;
 const graphLimit = 3;
 
-export function LibraryCitationNeighborhood({ paper, graph, locale, checking, loading, cooling, error, onCheck, onRetry, onOpen, onFocus }: {
+export function LibraryCitationNeighborhood({ paper, graph, locale, checking, loading, cooling, error, onCheck, onRetry, onOpen, onFocus, mode, selected, onSelect, onMode, selection, active }: {
   paper: { id: string; title: string }; graph: LibraryCitationSnapshot | null; locale: 'zh' | 'en';
   checking: boolean; loading: boolean; cooling: boolean; error: string;
   onCheck: () => void; onRetry: () => void; onOpen: (id: string) => void; onFocus: (paper: { id: string; title: string }) => void;
+  mode:'graph'|'list';selected:string;onSelect:(id:string)=>void;onMode:(mode:'graph'|'list')=>void;selection?:RouteSelection;active:boolean;
 }) {
   const zh = locale === 'zh';
-  const [mode, setMode] = useState<'graph' | 'list'>('graph');
-  const [selected, setSelected] = useState('');
   const inspector = useRef<HTMLElement>(null);
+  const restored=useRef('');
   const items = graph?.items || [];
   const selectedPaper = items.find(item => neighborKey(item) === selected);
   const title = graph?.focusTitle || paper.title;
@@ -39,9 +41,12 @@ export function LibraryCitationNeighborhood({ paper, graph, locale, checking, lo
     missing_id: zh ? '这篇论文缺少可查询的 DOI、arXiv 或 Semantic Scholar 标识。' : 'This paper has no supported DOI, arXiv or Semantic Scholar identifier.',
   };
 
-  const pick = (item: LibraryGraphNeighbor) => {
-    setSelected(neighborKey(item));
-    requestAnimationFrame(() => {
+  const selectedKey=selectedPaper?neighborKey(selectedPaper):'';
+  useEffect(()=>{
+    if(!active||!selectedKey){restored.current='';return;}
+    if(restored.current===selectedKey)return;
+    restored.current=selectedKey;
+    const frame=requestAnimationFrame(() => {
       const panel = inspector.current;
       if (!panel) return;
       const { top, bottom } = panel.getBoundingClientRect();
@@ -50,7 +55,8 @@ export function LibraryCitationNeighborhood({ paper, graph, locale, checking, lo
         panel.scrollIntoView({ block: 'nearest' });
       }
     });
-  };
+    return()=>cancelAnimationFrame(frame);
+  },[active,selectedKey,mode]);
 
   const detail = selectedPaper && <section ref={inspector} tabIndex={-1} className="pi-citation-neighbor" aria-label={zh ? '关系详情' : 'Citation details'}>
     <div>
@@ -60,6 +66,7 @@ export function LibraryCitationNeighborhood({ paper, graph, locale, checking, lo
     </div>
     <div className="pi-citation-actions">
       {selectedPaper.paperId && <>
+        <GraphPaperChoice paper={selectedPaper} selection={selection} locale={locale}/>
         <button type="button" onClick={() => onOpen(selectedPaper.paperId!)}>{zh ? '阅读论文' : 'Read paper'}</button>
         <button type="button" onClick={() => onFocus({ id: selectedPaper.paperId!, title: selectedPaper.title })}>{zh ? '以此为起点' : 'Explore from here'}</button>
       </>}
@@ -75,8 +82,8 @@ export function LibraryCitationNeighborhood({ paper, graph, locale, checking, lo
       </div>
       <div className="pi-citation-actions">
         {items.length > 0 && <div role="group" aria-label={zh ? '引用展示方式' : 'Citation display'} className="pi-citation-display">
-          <button type="button" aria-pressed={mode === 'graph'} onClick={() => setMode('graph')}>{zh ? '网络图' : 'Network'}</button>
-          <button type="button" aria-pressed={mode === 'list'} onClick={() => setMode('list')}>{zh ? '列表' : 'List'}</button>
+          <button type="button" aria-pressed={mode === 'graph'} onClick={() => onMode('graph')}>{zh ? '网络图' : 'Network'}</button>
+          <button type="button" aria-pressed={mode === 'list'} onClick={() => onMode('list')}>{zh ? '列表' : 'List'}</button>
         </div>}
         {graph && graph.status !== 'missing_id' && !graph.limited && <button type="button" disabled={!canCheck} onClick={onCheck}>
           {checking || graph.busy ? (zh ? '查询中…' : 'Checking…') : cooling ? (zh ? '等待再次查询' : 'Waiting to retry') : graph.status === 'partial' ? (zh ? '查询下一批' : 'Check next batch') : (zh ? '查询引用' : 'Check citations')}
@@ -89,18 +96,19 @@ export function LibraryCitationNeighborhood({ paper, graph, locale, checking, lo
       <div className="pi-citation-origin" data-has-references={groups[0].items.length > 0} data-has-citations={groups[1].items.length > 0}>
         <span>{zh ? '当前论文' : 'Starting paper'}</span>
         <h3><MathText inline>{title}</MathText></h3>
-        <button type="button" onClick={() => onOpen(paper.id)}>{zh ? '阅读起点论文' : 'Read starting paper'}</button>
+        <div className="pi-citation-actions"><button type="button" onClick={() => onOpen(paper.id)}>{zh ? '阅读起点论文' : 'Read starting paper'}</button>
+          {graph?.focusCanonicalId&&<GraphPaperChoice paper={{canonicalId:graph.focusCanonicalId,title}} selection={selection} locale={locale}/>}</div>
       </div>
       {groups.map(group => <section key={group.kind} className="pi-citation-group" data-kind={group.kind}>
         <h3>{group.title}{graph && <span>{group.items.length}</span>}</h3>
         <ul>{(mode === 'graph' ? group.items.slice(0, graphLimit) : group.items).map(item => <li key={neighborKey(item)}>
-          <button type="button" aria-pressed={selected === neighborKey(item)} onClick={() => pick(item)}>
+          <button type="button" aria-pressed={selected === neighborKey(item)} onClick={() => onSelect(neighborKey(item))}>
             <span className="pi-citation-node-title"><MathText inline>{item.title}</MathText></span>
             <small>{[item.year, item.paperId ? (zh ? '库内' : 'In library') : (zh ? '库外' : 'External')].filter(Boolean).join(' · ')}</small>
           </button>
         </li>)}</ul>
         {graph && !group.items.length && <p>{zh ? '当前无可显示记录' : 'No links to show'}</p>}
-        {mode === 'graph' && group.items.length > graphLimit && <button type="button" className="pi-citation-show-all" onClick={() => setMode('list')}>{zh ? `查看全部 ${group.items.length} 篇` : `See all ${group.items.length}`} →</button>}
+        {mode === 'graph' && group.items.length > graphLimit && <button type="button" className="pi-citation-show-all" onClick={() => onMode('list')}>{zh ? `查看全部 ${group.items.length} 篇` : `See all ${group.items.length}`} →</button>}
       </section>)}
     </div>
     {mode === 'graph' && detail}

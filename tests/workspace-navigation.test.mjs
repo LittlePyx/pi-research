@@ -3,6 +3,17 @@ import test from 'node:test';
 import { focusWorkspaceSection } from '../lib/workspace-section-navigation.ts';
 import { readWorkspaceLocation, workspaceHash } from '../lib/workspace-navigation.ts';
 
+test('the graph comparison returns to its route, starting paper and selected neighbor',()=>{
+  const graph=workspaceHash({view:'threads',space:'s',graph:'p1',graphMode:'similarity',graphCompareTrack:'route',libraryFocus:'p2',libraryNeighbor:'similar:p3',libraryDisplay:'list'});
+  const workbook=readWorkspaceLocation(workspaceHash({view:'workbook',space:'s',id:'route',from:'threads',returnTo:graph}));
+  assert.equal(workbook.returnTo,graph);
+  assert.equal(readWorkspaceLocation(workbook.returnTo).graphCompareTrack,'route');
+  assert.equal(readWorkspaceLocation(workbook.returnTo).libraryNeighbor,'similar:p3');
+  assert.equal(readWorkspaceLocation(workbook.returnTo).libraryFocus,'p2');
+  assert.equal(readWorkspaceLocation(workbook.returnTo).libraryDisplay,'list');
+  assert.equal(readWorkspaceLocation('#library?space=s&graphCompareTrack=route').graphCompareTrack,undefined);
+});
+
 test('dimension navigation stays inside its pinned comparison and survives reading return chains',()=>{
  const origin=workspaceHash({view:'workbook',id:'route',space:'s',workbookId:'v1',workbookDimension:'conditions',from:'library',returnTo:'#library?space=s&page=2'});
  assert.equal(readWorkspaceLocation(origin).workbookDimension,'conditions');

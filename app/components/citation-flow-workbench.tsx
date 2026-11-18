@@ -8,6 +8,8 @@ import { researchPaperYear, researchRoleLabel } from "../../lib/research-workspa
 import { focusWorkspaceSection } from "../../lib/workspace-section-navigation";
 import { MathText } from "./math-text";
 import { buildNetworkPaperNodes, citationEvidenceProviderLabel, type NetworkPaperNode } from "./paper-network-graph";
+import { GraphPaperChoice } from "./graph-paper-choice";
+import type { RouteSelection } from "./use-route-selection";
 
 type Locale = "zh" | "en";
 
@@ -21,6 +23,8 @@ export function CitationFlowWorkbench({
   onOpenFocus,
   onAskFocus,
   expanding,
+  selection,
+  onRead,
 }: {
   map: ResearchMapState;
   trackFilter: string;
@@ -31,6 +35,8 @@ export function CitationFlowWorkbench({
   onOpenFocus: (node: NetworkPaperNode) => void;
   onAskFocus: (node: NetworkPaperNode) => void;
   expanding: boolean;
+  selection?: RouteSelection;
+  onRead?: (id: string) => void;
 }) {
   const model = useMemo(() => {
     const nodes = buildNetworkPaperNodes(map).filter((node) => trackFilter === "all" || node.trackIds.includes(trackFilter));
@@ -44,10 +50,10 @@ export function CitationFlowWorkbench({
       degree.set(edge.sourcePaperId, (degree.get(edge.sourcePaperId) || 0) + 1);
       degree.set(edge.targetPaperId, (degree.get(edge.targetPaperId) || 0) + 1);
     }
-    const focus = selectedPaperId && connectedIds.has(selectedPaperId)
+    const focus = selectedPaperId && nodeById.has(selectedPaperId)
       ? nodeById.get(selectedPaperId) || null
       : [...connectedNodes].sort((left, right) => (degree.get(right.paper.id) || 0) - (degree.get(left.paper.id) || 0)
-        || right.paper.citationCount - left.paper.citationCount)[0] || null;
+        || right.paper.citationCount - left.paper.citationCount)[0] || nodes[0] || null;
     const rankRelations = (relations: ResearchPaperEdge[], otherId: (edge: ResearchPaperEdge) => string) => relations
       .map((edge) => ({ edge, node: nodeById.get(otherId(edge)) }))
       .filter((item): item is { edge: ResearchPaperEdge; node: NetworkPaperNode } => Boolean(item.node))
@@ -91,10 +97,9 @@ export function CitationFlowWorkbench({
 
   if (!model.focus) return <div className="v2-specialized-network-empty citation"><span>↗</span><div><strong>{locale === "zh" ? "当前范围还没有可核验的引用链" : "No verified citation chain in this scope"}</strong><p>{locale === "zh" ? "先核验已有论文关系。没有数据库证据时，Pi 不会用推断连线代替真实引用。" : "Verify saved paper links first. Pi will not replace missing database evidence with inferred citations."}</p></div></div>;
 
-  const relationCard = (item: { edge: ResearchPaperEdge; node: NetworkPaperNode }, side: "prior" | "later") => <button
+  const relationCard = (item: { edge: ResearchPaperEdge; node: NetworkPaperNode }, side: "prior" | "later") => <div className="pi-citation-route-choice" key={item.edge.id}><button
     type="button"
     className="v2-citation-paper-card"
-    key={item.edge.id}
     onClick={() => onSelect(item.node.paper.id)}
   >
     <small>{side === "prior" ? (locale === "zh" ? "本论文引用" : "Cited by focus") : (locale === "zh" ? "后续引用本论文" : "Cites the focus")}</small>
@@ -102,7 +107,7 @@ export function CitationFlowWorkbench({
     <span className="authors">{item.node.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span>
     <span>{[researchPaperYear(item.node.paper), item.node.paper.venue, `${item.node.paper.citationCount} ${locale === "zh" ? "次被引" : "citations"}`].filter(Boolean).join(" · ")}</span>
     <em>{locale === "zh" ? `直接引用 · ${citationEvidenceProviderLabel(item.edge.evidenceSource)} 核验` : `Direct citation · verified by ${citationEvidenceProviderLabel(item.edge.evidenceSource)}`}</em>
-  </button>;
+  </button><GraphPaperChoice paper={item.node.paper} selection={selection} locale={locale} /></div>;
 
   return <section className="v2-citation-workbench" aria-label={locale === "zh" ? "知识引用流工作台" : "Citation flow workbench"}>
     <header className="v2-specialized-network-head"><div><p>{locale === "zh" ? "数据库核验的引用关系" : "DATABASE-VERIFIED CITATIONS"}</p><h3>{locale === "zh" ? "查看它引用的论文，以及引用它的后续论文" : "Explore references and later citations"}</h3><span>{locale === "zh" ? "选择任意节点作为焦点；这里只展示当前论文库内已确认的直接引用。" : "Choose any node as the focus. Only direct citations verified inside the current library are shown."}</span></div><dl><div><dt>{locale === "zh" ? "真实引用" : "Verified links"}</dt><dd>{model.ledger.length}</dd></div><div><dt>{locale === "zh" ? "链上论文" : "Papers in flow"}</dt><dd>{model.connectedNodes.length}</dd></div><div><dt>{locale === "zh" ? "时间跨度" : "Coverage"}</dt><dd>{model.yearStart && model.yearEnd ? `${model.yearStart}–${model.yearEnd}` : "—"}</dd></div><div><dt>{locale === "zh" ? "核验来源" : "Providers"}</dt><dd>{model.providers.length}</dd></div></dl></header>
@@ -112,6 +117,12 @@ export function CitationFlowWorkbench({
       <article id="citation-focus-paper" className="v2-citation-focus-card"><span>{locale === "zh" ? "当前焦点" : "CURRENT FOCUS"}</span><em>{researchRoleLabel(model.focus.paper.role, locale)} · {researchPaperYear(model.focus.paper)}</em><h4><MathText inline>{model.focus.paper.title}</MathText></h4><div className="v2-citation-focus-meta"><span>{model.focus.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span><small>{model.focus.paper.venue || (locale === "zh" ? "来源待核对" : "Venue unavailable")}</small></div><p>{locale === "zh" ? model.focus.paper.rationaleZh : model.focus.paper.rationaleEn}</p><dl><div><dt>{locale === "zh" ? "参考文献" : "Prior"}</dt><dd>{model.priorAll.length}</dd></div><div><dt>{locale === "zh" ? "后续引用" : "Later"}</dt><dd>{model.laterAll.length}</dd></div><div><dt>{locale === "zh" ? "总被引" : "Citations"}</dt><dd>{model.focus.paper.citationCount}</dd></div></dl><div className="v2-citation-focus-actions"><a href={model.focus.paper.url || (model.focus.paper.doi ? `https://doi.org/${model.focus.paper.doi}` : "#")} target="_blank" rel="noreferrer" onClick={() => onOpenFocus(model.focus!)}>{locale === "zh" ? "打开原文" : "Open original"} ↗</a><button type="button" onClick={() => onAskFocus(model.focus!)}>{locale === "zh" ? "让 Pi 解释" : "Ask Pi"}</button></div><button type="button" disabled={expanding} onClick={() => onExpandFocus(model.focus!)}>{expanding ? (locale === "zh" ? "正在寻找前后论文…" : "Discovering nearby papers…") : (locale === "zh" ? "展开外部引用邻居" : "Expand external citation neighbors")} →</button><small>{locale === "zh" ? "扩展候选会进入共享质量评估；只有评审通过才可能出现在今日，只有你收录确认后才进入正式路线与引用流。" : "Expanded candidates enter the shared quality review. Only papers that pass can reach Today, and only your explicit addition confirms formal route and citation-flow evidence."}</small></article>
       <section className="later"><header><span>03</span><div><h4>{locale === "zh" ? "后续发展" : "Later development"}</h4><small>{locale === "zh" ? "直接引用焦点论文的工作" : "Work that directly cites the focus"}</small></div><b>{model.laterAll.length > model.later.length ? `${model.later.length}/${model.laterAll.length}` : model.laterAll.length}</b></header><div>{model.later.length ? <>{model.later.map((item) => relationCard(item, "later"))}{model.laterAll.length > model.later.length && <details className="v2-citation-more"><summary>{locale === "zh" ? `展开其余 ${model.laterAll.length - model.later.length} 篇` : `Show ${model.laterAll.length - model.later.length} more`}</summary><div>{model.laterAll.slice(model.later.length).map((item) => relationCard(item, "later"))}</div></details>}</> : <p className="v2-citation-gap">{locale === "zh" ? "当前库内尚未核验到后续引用。" : "No later citation has been verified in the current library."}</p>}</div></section>
     </div>
+    <div className="pi-route-evidence-actions">
+      <GraphPaperChoice paper={model.focus.paper} selection={selection} locale={locale} />
+      {onRead&&<button type="button" onClick={()=>onRead(model.focus!.paper.id)}>{locale==="zh"?"阅读焦点论文":"Read focus paper"}</button>}
+    </div>
+    {model.ledger.length>0&&<details className="pi-graph-secondary">
+      <summary>{locale==="zh"?"查看引用关系清单":"View citation ledger"}</summary>
     <section className="pi-citation-ledger" aria-label={locale === "zh" ? "已核验引用关系" : "Verified citation links"}>
       <header className="pi-citation-ledger-heading">
         <div><h4>{locale === "zh" ? "当前焦点的直接引用清单" : "Direct citations of the current focus"}</h4><p>{locale === "zh" ? `只显示与当前焦点直接相连的关系；本范围另有 ${model.otherRelationCount} 条关系未混入此处。点击其他论文可切换焦点。` : `Only direct links to this focus are shown; ${model.otherRelationCount} other links are outside this view. Select another paper to change focus.`}</p></div>
@@ -137,6 +148,6 @@ export function CitationFlowWorkbench({
         </article>;
       })}</div>
       {([model.indirect, model.otherRelations] as ResearchPaperEdge[][]).map((relations, index) => relations.length > 0 && <details className="pi-citation-other" key={index}><summary>{index === 0 ? (locale === "zh" ? "经由中间论文相连（不代表发展顺序）" : "Connected through an intermediate paper, not a development sequence") : (locale === "zh" ? "本方向其他引用关系" : "Other citations in this direction")} · {relations.length}</summary>{relations.map(edge => { const prior=model.nodeById.get(edge.targetPaperId),later=model.nodeById.get(edge.sourcePaperId);if(!prior||!later)return null;const via=[prior,later].filter(n=>model.priorAll.some(p=>p.node.paper.id===n.paper.id)||model.laterAll.some(p=>p.node.paper.id===n.paper.id));return <article key={edge.id}>{index===0&&<p>{locale === "zh" ? "经由" : "Via"}：{via.map(n=>n.paper.title).join(" / ")}</p>}<button type="button" onClick={()=>onSelect(prior.paper.id)}>{prior.paper.title}</button><span> → </span><button type="button" onClick={()=>onSelect(later.paper.id)}>{later.paper.title}</button><small>{citationEvidenceProviderLabel(edge.evidenceSource)}</small></article>;})}</details>)}
-    </section>
+    </section></details>}
   </section>;
 }

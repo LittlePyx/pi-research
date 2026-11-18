@@ -1,0 +1,37 @@
+.pi-workspace .pi-similarity-network { min-width: 0; color:#25384f; }
+.pi-workspace .pi-similarity-network > header h2 { margin:0 0 4px; font-size:18px; }
+.pi-workspace .pi-similarity-network > header p { margin:0 0 12px; font-size:13px; color:#586b83; }
+.pi-workspace .pi-similarity-canvas { position:relative; min-height:260px; height:clamp(260px,32vw,390px); background:#f6f9fc; border:1px solid #dce6f1; border-radius:12px; overflow:hidden; }
+.pi-workspace .pi-similarity-canvas svg { position:absolute; width:100%; height:100%; inset:0; stroke:#a6b7cb; pointer-events:none; }
+.pi-workspace .pi-similarity-canvas svg .is-focused { stroke:#50749a; }
+.pi-workspace .pi-similarity-canvas .pi-similarity-node { position:absolute; display:grid; place-items:center; transform:translate(-50%,-50%); width:36px; height:36px; min-height:0; padding:0; border:1px solid transparent; border-radius:50%; background:transparent; color:inherit; z-index:1; }
+.pi-workspace .pi-similarity-node i { width:17px; height:17px; border:2px solid white; border-radius:50%; background:currentColor; }
+.pi-workspace .pi-similarity-node[data-pivot="true"] i { width:24px; height:24px; }
+.pi-workspace .pi-similarity-canvas .pi-similarity-node[aria-pressed="true"] { border-color:currentColor; background:#e9f0f9; z-index:2; }
+.pi-workspace .pi-similarity-node span { position:absolute; top:100%; left:50%; transform:translateX(-50%); max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; line-height:1.4; color:#324962; }
+.pi-workspace .pi-similarity-legend { margin:8px 0 0; font-size:12px; color:#586b83; }
+.pi-workspace .pi-similarity-list summary { cursor:pointer; padding:6px 0; color:#406180; }
+.pi-workspace .pi-similarity-list ul { display:grid; gap:4px; margin:6px 0; padding:0; list-style:none; }
+.pi-workspace .pi-similarity-list li button { text-align:left; }
+.pi-workspace .pi-similarity-list button[aria-pressed="true"] { color:#224e7b; background:#eaf1fa; }
+.pi-workspace .pi-route-evidence-map { padding:16px; border:1px solid #e2e7ef; border-radius:12px; margin-block:16px; min-width:0; background:white; scroll-margin-top:84px; }
+.pi-workspace .pi-route-evidence-map .pi-route-evidence-picker { display:flex; flex-wrap:wrap; gap:10px 16px; margin-bottom:12px; }
+.pi-workspace .pi-route-evidence-picker label { display:grid; gap:4px; flex:1 1 210px; min-width:0; max-width:100%; font-size:13px; color:#526781; }
+.pi-workspace .pi-route-evidence-picker select { width:100%; min-height:42px; padding:6px 8px; border:1px solid #dce5ef; border-radius:6px; color:#2e4867; background:white; }
+.pi-workspace .pi-route-evidence-map :is(button,a) { min-height:36px; }
+.pi-workspace .pi-route-evidence-map .pi-citation-actions button { padding:6px 10px; border:1px solid #dce5ef; border-radius:6px; background:#f5f8fb; color:#2e4867; }
+.pi-workspace .pi-route-evidence-actions { display:flex; flex-wrap:wrap; gap:8px; margin-block:12px; }
+.pi-workspace .pi-route-evidence-actions button, .pi-workspace .pi-citation-route-choice > .pi-graph-paper-choice { padding:6px 12px; border:1px solid #dce5ef; border-radius:8px; background:#f5f8fb; color:#2e4867; }
+.pi-workspace .pi-citation-route-choice { min-width:0; }
+.pi-workspace .pi-citation-route-choice .v2-citation-paper-card { width:100%; }
+.pi-workspace .pi-graph-mode-tabs { display:flex; flex-wrap:wrap; gap:4px; margin-block:8px 14px; }
+.pi-workspace .pi-graph-mode-tabs button { min-height:40px; padding:7px 14px; border:1px solid transparent; border-radius:8px; color:#435c78; background:transparent; }
+.pi-workspace .pi-graph-mode-tabs button[aria-pressed="true"] { color:#235884; background:#eaf2fa; border-color:#d6e6f5; }
+.pi-workspace .pi-graph-secondary { margin:12px 0; border-top:1px solid #dfe6ef; }
+.pi-workspace .pi-graph-secondary > summary { color:#4b617d; cursor:pointer; padding:12px 0; }
+.v2-app.pi-workspace.pi-product .pi-graph-explorer-page:has(.pi-route-selection-bar) { padding-bottom:260px; }
+@media(max-width:650px){
+  .pi-workspace .pi-similarity-node:not([aria-pressed="true"]):not([data-pivot="true"]) span { display:none; }
+  .pi-workspace .pi-similarity-node span { max-width:95px; }
+  .v2-app.pi-workspace.pi-product .pi-graph-explorer-page:has(.pi-route-selection-bar) { padding-bottom:340px; }
+}

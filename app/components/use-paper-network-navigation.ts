@@ -11,6 +11,12 @@ export function usePaperNetworkNavigation(updateWorkspaceHash: UpdateWorkspaceHa
   const [scope, setScopeState] = useState<GraphScope>("all");
   const [trackId, setTrackIdState] = useState("all");
   const [focusId, setFocusIdState] = useState<string | null>(null);
+  const [compareTrack, setCompareTrack] = useState('');
+
+  const changeCompareTrack = useCallback((next: string) => {
+    setCompareTrack(next);
+    updateWorkspaceHash({ graphCompareTrack: next || undefined }, 'push');
+  }, [updateWorkspaceHash]);
 
   const changeSurface = useCallback((next: "library" | "routes") => {
     setSurfaceState(next);
@@ -41,15 +47,17 @@ export function usePaperNetworkNavigation(updateWorkspaceHash: UpdateWorkspaceHa
       graphTrack: next === "all" ? undefined : next,
       graphFocus: undefined,
       graphScope: undefined,
+      libraryNeighbor: undefined,
     }, "push");
   }, [updateWorkspaceHash]);
 
-  const restore = useCallback((location: WorkspaceLocation, validTrackIds: Set<string>) => {
+  const restore = useCallback((location: WorkspaceLocation) => {
     setSurfaceState(location.graphSurface || "library");
     setModeState(location.graphMode || "similarity");
     setScopeState(location.graphScope || "all");
-    setTrackIdState(location.graphTrack && validTrackIds.has(location.graphTrack) ? location.graphTrack : "all");
+    setTrackIdState(location.graphTrack || "all");
     setFocusIdState(location.graphFocus || null);
+    setCompareTrack(location.graphCompareTrack || '');
   }, []);
 
   return {
@@ -58,6 +66,9 @@ export function usePaperNetworkNavigation(updateWorkspaceHash: UpdateWorkspaceHa
     scope,
     trackId,
     focusId,
+    compareTrack,
+    setCompareTrack,
+    changeCompareTrack,
     setSurface: setSurfaceState,
     setMode: setModeState,
     setScope: setScopeState,

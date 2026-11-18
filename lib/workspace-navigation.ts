@@ -7,7 +7,7 @@ export type GraphScope='all'|'one-hop'|'multi-seed';
 export type WorkbookPanel='evidence'|'relations'|'task';
 export type MemorySection='comparisons'|'reading'|'insights'|'preferences';
 export type MemoryLocation={memorySection?:MemorySection;memoryTrack?:string;memoryQuery?:string;memoryPage?:number;memoryFocus?:string};
-export type WorkspaceLocation = MemoryLocation & { practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string;workbookDimension?:string };
+export type WorkspaceLocation = MemoryLocation & { graphCompareTrack?:string; libraryNeighbor?:string; libraryDisplay?:'list'; practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string;workbookDimension?:string };
 const views = new Set<WorkspaceView>(["today", "threads", "thread-detail", "learn", "library", "memory", "paper-detail", "workbook"]);
 const tabs = new Set(["start", "evidence", "problem", "agenda"]);
 const identifier = (value: string | null | undefined) => value && /^[a-zA-Z0-9_-]{1,120}$/.test(value) ? value : undefined;
@@ -51,6 +51,9 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     ...(graphRoute&&['all','one-hop','multi-seed'].includes(params.get('graphScope')||'')?{graphScope:params.get('graphScope') as GraphScope}:{}),
     ...(graphRoute&&identifier(params.get('graphTrack'))?{graphTrack:identifier(params.get('graphTrack'))}:{}),
     ...(graphRoute&&identifier(params.get('graphFocus'))?{graphFocus:identifier(params.get('graphFocus'))}:{}),
+    ...(graphRoute&&identifier(params.get('graphCompareTrack'))?{graphCompareTrack:identifier(params.get('graphCompareTrack'))}:{}),
+    ...(graphRoute&&text(params.get('libraryNeighbor'),260)?{libraryNeighbor:text(params.get('libraryNeighbor'),260)}:{}),
+    ...(graphRoute&&params.get('libraryDisplay')==='list'?{libraryDisplay:'list' as const}:{}),
     ...((workbookRoute||practiceRoute)&&text(params.get('workbookId'),240)?{workbookId:text(params.get('workbookId'),240)}:{}),
     ...(workbookRoute&&['evidence','relations','task'].includes(params.get('workbookPanel')||'')?{workbookPanel:params.get('workbookPanel') as WorkbookPanel}:{}),
     ...(workbookRoute&&identifier(params.get('workbookDimension'))?{workbookDimension:identifier(params.get('workbookDimension'))}:{}),
@@ -114,6 +117,9 @@ export function workspaceHash(location: WorkspaceLocation): string {
     if(location.graphScope&&location.graphScope!=='all')params.set('graphScope',location.graphScope);
     if(location.graphTrack&&location.graphTrack!=='all')params.set('graphTrack',location.graphTrack);
     if(location.graphFocus)params.set('graphFocus',location.graphFocus);
+    if(identifier(location.graphCompareTrack))params.set('graphCompareTrack',location.graphCompareTrack!);
+    if(text(location.libraryNeighbor||null,260))params.set('libraryNeighbor',location.libraryNeighbor!);
+    if(location.libraryDisplay==='list')params.set('libraryDisplay','list');
   }
   if(location.view==='learn'&&location.workbookId&&location.track){params.set('workbookId',location.workbookId);if(location.practiceId&&/^(learning|task-[0-9]{1,2})$/.test(location.practiceId))params.set('practice',location.practiceId);}
   if(location.view==='memory'){

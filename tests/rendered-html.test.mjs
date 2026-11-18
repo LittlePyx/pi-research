@@ -272,9 +272,10 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /相似论文/);
   assert.match(client, /前置奠基/);
   assert.match(client, /后续发展/);
-  assert.match(client, /节点大小：被引量/);
-  assert.match(client, /颜色：发表年份/);
-  assert.match(client, /发现更多论文/);
+  assert.match(clientSource, /<RouteSimilarityExplorer/);
+  const routeSimilarity = await readFile(new URL("../app/components/route-similarity-explorer.tsx", import.meta.url), "utf8");
+  assert.match(routeSimilarity, /edge\.kind==='similarity'&&edge\.relationKind==='bibliographic_coupling'/);
+  assert.match(client, /检索更多论文/);
   assert.match(client, /expandResearchNetwork\(undefined, true\)/);
   assert.match(client, /以此生成新图/);
   assert.match(client, /candidateId: candidate\.id/);
@@ -285,7 +286,6 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /本批使用过期缓存，建议刷新/);
   assert.match(client, /verified_discovery/);
   assert.match(client, /recommendation_discovery/);
-  assert.match(client, /中性虚线：引用或推荐发现线索（非耦合）/);
   assert.match(client, /networkEvidenceLabel/);
   assert.doesNotMatch(client, /\{edge\.confidence\}%/);
   assert.doesNotMatch(client, /formatNetworkScore/);
@@ -407,7 +407,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /className="unavailable"/);
   assert.doesNotMatch(client, /href=\{resource\.url \|\| "#"\}/);
   assert.doesNotMatch(client, /本路径中的衔接/);
-  assert.match(client, /paperNetworkMode === "similarity" \? <>/);
+  assert.match(clientSource, /paperNetworkMode\s*===\s*"similarity"\s*\?\s*<RouteSimilarityExplorer[\s\S]*?paperNetworkMode === "citations" \? <CitationFlowWorkbench/);
   assert.match(css, /separate citation lineage and executable reading-plan workbenches/);
   assert.match(css, /\.v2-citation-lineage-grid/);
   assert.match(css, /\.v2-reading-stage-list/);
