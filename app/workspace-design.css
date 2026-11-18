@@ -295,9 +295,6 @@
 .v2-app.pi-workspace .v2-library-paper h2 { font:20px/1.55 Georgia,serif; color:var(--pi-ink); }
 .v2-app.pi-workspace .v2-library-paper-why { font-size:14px !important; line-height:1.75 !important; -webkit-line-clamp:3; }
 .v2-app.pi-workspace .v2-library-paper-meta { font-size:13px !important; color:var(--pi-muted); }
-.v2-app.pi-workspace .v2-library-paper-actions > summary { padding:8px 12px; border:1px solid var(--pi-line); border-radius:6px; background:#f8fafb; font-size:13px; }
-.v2-app.pi-workspace .v2-library-paper-actions > div { min-width:200px; z-index:5; background:#fff; }
-.v2-app.pi-workspace .v2-library-paper-actions > div button { font-size:13px !important; }
 .v2-app.pi-workspace .v2-paper-detail { max-width:960px; }
 .v2-app.pi-workspace .v2-paper-head { padding:0 0 22px; }
 .v2-app.pi-workspace .v2-paper-head h1 { font:clamp(24px,2.4vw,30px)/1.5 Georgia,serif; letter-spacing:-.2px; margin:14px 0; }
@@ -392,7 +389,6 @@
  .v2-app.pi-workspace .v2-route-evidence-chain > section { grid-template-columns:minmax(0,1fr); gap:14px; }
  .v2-app.pi-workspace .pi-graph-desk { grid-template-columns:minmax(0,1fr); }
  .v2-app.pi-workspace .v2-library-paper { grid-template-columns:minmax(0,1fr); gap:14px; }
- .v2-app.pi-workspace .v2-library-paper-actions { justify-self:start; }
  .v2-app.pi-workspace .v2-action-inbox-list article { grid-template-columns:24px minmax(0,1fr); }
  .v2-app.pi-workspace .v2-action-inbox-list article > button { grid-column:2; justify-self:start; }
  .v2-app.pi-workspace .pi-workbook { width:calc(100% - 32px); padding-top:24px; }

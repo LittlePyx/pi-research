@@ -555,13 +555,14 @@ test("imports public research materials into reviewed, space-isolated profile me
 });
 
 test("keeps a durable, view-aware paper inbox with reversible decisions", async () => {
-  const [monitor, feedback, ask, spaces, client, css] = await Promise.all([
+  const [monitor, feedback, ask, spaces, client, css, library] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/feedback/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ask/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/spaces/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/research-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/primary-library.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(monitor, /seen: known\?\.seen/);
@@ -579,8 +580,7 @@ test("keeps a durable, view-aware paper inbox with reversible decisions", async 
   assert.match(ask, /const model = credential\.model/);
   assert.match(spaces, /modelConfigured \? "deepseek-flash"/);
   assert.match(css, /Pi Research V7 — durable reading inbox and calmer navigation/);
-  assert.match(css, /\.v2-library-paper-actions/);
-  assert.match(css, /\.v2-library-paper-actions/);
+  assert.match(library, /onClick=\{\(\) => props\.onReturnInbox\(paper\)\}/);
 });
 
 test("uses the official Pi Research and P&I Lab logos across product surfaces", async () => {

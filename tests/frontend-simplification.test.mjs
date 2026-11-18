@@ -81,7 +81,8 @@ test("library and paper detail keep reading primary while management and audit s
   assert.match(library, /<LibraryExport /);
   assert.match(app, /<PrimaryLibrary/);
   assert.match(await readFile(new URL("../app/components/library-export.tsx",import.meta.url),"utf8"), /<details className="v2-library-export">/);
-  assert.match(library, /<details className="v2-library-paper-actions">/);
+  assert.match(library, /className="pi-library-manage-button" aria-expanded=\{managing\} aria-controls=\{managementId\}/);
+  assert.match(library, /className="pi-library-management" id=\{managementId\} hidden=\{!managing\}/);
   assert.match(toolbar, /PaperPanelNavigation[\s\S]*v2-paper-primary-actions/);
   assert.match(toolbar, /<details className="v2-paper-more-actions">/);
   assert.doesNotMatch(paperHead, /askAboutMonitorPaper/);

@@ -59,7 +59,11 @@
 .v2-app.pi-workspace .pi-library-workspace .v2-library-paper-main footer { display:none; }
 .v2-app.pi-workspace .pi-library-row-actions { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
 .v2-app.pi-workspace .pi-library-row-actions > button { border:0; background:transparent; color:#245dc1; font-size:14px; padding:6px 0; }
-.v2-app.pi-workspace .pi-library-row-actions .v2-library-paper-actions > summary { border:0; background:transparent; padding:6px 0; color:#62666d; font-size:14px; }
+.v2-app.pi-workspace .pi-library-row-actions > .pi-library-manage-button { min-height:36px; color:var(--pi-muted); }
+.v2-app.pi-workspace .pi-library-row-actions > .pi-library-manage-button[aria-expanded="true"] { color:var(--pi-accent); }
+.v2-app.pi-workspace .pi-library-management:not([hidden]) { grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; padding:12px; border:1px solid var(--pi-line); border-radius:8px; background:var(--pi-canvas); }
+.v2-app.pi-workspace .pi-library-management :is(select,button) { min-height:40px; min-width:0; max-width:100%; padding:6px 12px; border:1px solid var(--pi-line); border-radius:6px; background:var(--pi-surface); color:var(--pi-ink); font:inherit; font-size:13px; }
+.v2-app.pi-workspace .pi-library-management :is(select,button):hover { border-color:var(--pi-accent); }
 .v2-app.pi-workspace .pi-library-context { grid-column:1/-1; min-width:0; }
 .v2-app.pi-workspace .pi-library-context > summary { width:fit-content; cursor:pointer; font-size:13px; color:#62666d; padding:6px 0; }
 .v2-app.pi-workspace .pi-library-context .v2-library-paper-why { display:block; -webkit-line-clamp:unset; overflow:visible; font-size:16px !important; line-height:1.8 !important; max-width:850px; margin:12px 0; }
@@ -77,23 +81,20 @@
  .v2-app.pi-workspace .pi-library-workspace .v2-library-tabs { gap:16px; }
  .v2-app.pi-workspace .pi-library-workspace .v2-library-list { padding:0 16px; }
  .v2-app.pi-workspace .pi-library-workspace .v2-library-paper { grid-template-columns:minmax(0,1fr); gap:8px; }
- .v2-app.pi-workspace .pi-library-row-actions { grid-row:3; flex-direction:row; justify-content:flex-start; align-items:center; gap:24px; }
- .v2-app.pi-workspace .pi-library-context { grid-row:2; }
+ .v2-app.pi-workspace .pi-library-row-actions { flex-direction:row; flex-wrap:wrap; align-items:center; gap:16px; }
+ .v2-app.pi-workspace .pi-library-management :is(select,button) { min-height:44px; }
+ .v2-app.pi-workspace .pi-library-management select { width:100%; }
  .v2-app.pi-workspace .pi-library-workspace .v2-library-toolbar > label { min-width:0; flex-basis:100%; }
 }
 /* Title buttons must retain heading typography over the legacy button scale. */
 .v2-app.pi-workspace .pi-editorial-today .pi-reading-list h3 > button { font-size:20px !important; }
 .v2-app.pi-workspace .pi-editorial-today .pi-reading-list > article:first-child h3 > button { font-size:28px !important; }
 .v2-app.pi-workspace .pi-library-workspace .v2-library-paper-main { padding:0; }
-.v2-app.pi-workspace .pi-library-row-actions .v2-library-paper-actions { position:relative; padding:0; margin:0; border:0; background:transparent; }
-.v2-app.pi-workspace .pi-library-row-actions .v2-library-paper-actions > summary { min-height:36px; height:auto; display:flex; align-items:center; }
-.v2-app.pi-workspace .pi-library-row-actions .v2-library-paper-actions > div { position:absolute; top:100%; right:0; min-width:220px; width:max-content; max-width:calc(100vw - 64px); border:1px solid #d9dce1; border-radius:8px; box-shadow:0 8px 24px #20212418; background:white; }
 .v2-app.pi-workspace .pi-library-context .v2-library-paper-why { padding:0; background:transparent; font-family:inherit !important; }
 .v2-app.pi-workspace .pi-editorial-today .pi-email-settings { background:transparent; border:0; border-top:1px solid #e0e2e6; border-radius:0; margin-top:24px; }
 .v2-app.pi-workspace .pi-editorial-today .pi-email-settings > summary { padding:16px 0; }
 @media(max-width:760px) {
  .v2-app.pi-workspace .pi-editorial-today .pi-reading-list > article:first-child h3 > button { font-size:23px !important; }
- .v2-app.pi-workspace .pi-library-row-actions .v2-library-paper-actions > div { right:auto; left:0; min-width:0; width:200px; }
 }
 /* News brief: compact masthead, article headlines and readable standfirsts. */
 .v2-app.pi-workspace .pi-editorial-today .v2-daily-brief-lead { display:block; padding:20px 28px; min-height:0; }

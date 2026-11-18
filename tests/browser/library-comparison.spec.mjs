@@ -78,6 +78,32 @@ test.beforeEach(async({page,request})=>{
   await page.route('**/*',async routed=>{const url=new URL(routed.request().url());if(['127.0.0.1','localhost'].includes(url.hostname))await routed.continue();else await routed.abort();});
 });
 test.afterEach(async({page})=>{expect(pageErrors.get(page)||[],'browser must not report unhandled application errors').toEqual([]);});
+test('library management expands inside the paper card and every action is reachable',async({page})=>{
+  await page.goto('/__acceptance/start');
+  const cards=page.locator('[data-library-paper]');
+  const first=cards.first(),next=cards.nth(1);
+  const manage=card=>card.getByRole('button',{name:'管理',exact:true});
+  const actions=card=>card.getByRole('group',{name:'论文管理操作',exact:true});
+  await manage(first).press('Enter');
+  await expect(manage(first)).toHaveAttribute('aria-expanded','true');
+  await expect(actions(first).getByRole('combobox',{name:'阅读状态',exact:true})).toBeVisible();
+  const layout=await actions(first).evaluate(panel=>{
+    const rect=panel.getBoundingClientRect();
+    const card=panel.closest('[data-library-paper]').getBoundingClientRect();
+    const rationale=panel.nextElementSibling.getBoundingClientRect();
+    return rect.left>=card.left&&rect.right<=card.right&&rect.bottom<=rationale.top&&rationale.bottom<=card.bottom;
+  });
+  expect(layout).toBe(true);
+  const buttons=await actions(first).getByRole('button').all();
+  expect(buttons.length).toBeGreaterThan(1);
+  for(const button of buttons)await button.click({trial:true});
+  await manage(next).click();
+  await expect(manage(first)).toHaveAttribute('aria-expanded','false');
+  await expect(actions(first)).toBeHidden();
+  await expect(actions(next)).toBeVisible();
+  await manage(next).press('Space');
+  await expect(actions(next)).toBeHidden();
+});
 test('search, filters, pagination, exact selections and drafts survive reading, refresh, save and route switches',async({page},info)=>{
   await selectFromSearch(page);
   const card=await page.locator('.v2-library-paper').first().evaluate(node=>({width:node.getBoundingClientRect().width,titleWidth:node.querySelector('.v2-library-paper-main').getBoundingClientRect().width}));
