@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import ts from 'typescript';
+import {workbookComponent} from './helpers/workbook-components.mjs';
+const comparison=workbookComponent('workbook-comparison');
 import {workbookSample,workbookSources} from './fixtures/research-workbook.mjs';
 const require=createRequire(import.meta.url);
 const code=ts.transpileModule(readFileSync(new URL('../app/components/research-workbook.tsx',import.meta.url),'utf8'),{
@@ -15,11 +17,11 @@ function harness(extra={}){
   useRef(initial){const i=index++;cells[i]??={current:initial};return cells[i]},
   useEffect(fn,deps){const i=index++,old=cells[i];if(!old||!deps||deps.some((v,n)=>v!==old.deps?.[n]))effects.push(()=>{old?.cleanup?.();cells[i]={deps,cleanup:fn()}})}};
  const mod={exports:{}};
- new Function('require','exports',code)(name=>name==='react'?hooks:name.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true,status=ok?200:422)=>resolve({ok,status,json:async()=>data})}))}:name.endsWith('.css')?{}:name==='./math-text'?{MathText:({children})=>children}:name==='./draft-recovery'?{DraftRecovery:()=>null}:name==='./workbook-followup'?{WorkbookFollowup:()=>null}:name==='./workbook-evidence-links'?{WorkbookEvidenceLinks:()=>null}:name==='./workbook-task-panel'?{WorkbookTaskPanel:()=>null}:name==='./workbook-overview'?{WorkbookOverview:()=>null}:name==='./workbook-evidence-navigation'?{WorkbookEvidenceNavigation:()=>null}:name.startsWith('../../lib/')?require('../lib/'+name.split('/').at(-1)+'.ts'):require(name),mod.exports);
+ new Function('require','exports',code)(name=>name==='react'?hooks:name.includes('workspace-request')?{workspaceFetch:(url,init)=>new Promise(resolve=>requests.push({url,init,resolve:(data,ok=true,status=ok?200:422)=>resolve({ok,status,json:async()=>data})}))}:name.endsWith('.css')?{}:name==='./math-text'?{MathText:({children})=>children}:name==='./draft-recovery'?{DraftRecovery:()=>null}:name==='./workbook-followup'?{WorkbookFollowup:()=>null}:name==='./workbook-evidence-links'?{WorkbookEvidenceLinks:()=>null}:name==='./workbook-task-panel'?{WorkbookTaskPanel:()=>null}:name==='./workbook-comparison'?comparison:name==='./workbook-evidence-context'?{WorkbookEvidenceContext:()=>null}:name==='./workbook-overview'?{WorkbookOverview:()=>null}:name==='./workbook-evidence-navigation'?{WorkbookEvidenceNavigation:()=>null}:name.startsWith('../../lib/')?require('../lib/'+name.split('/').at(-1)+'.ts'):require(name),mod.exports);
  const props={userId:'u',spaceId:'s',trackId:'t',locale:'en',onBack(){},onOpenPaper(){},onWorkbookChange:id=>versions.push(id),onViewChange:(...v)=>views.push(v),...extra};
  const render=()=>{index=0;tree=mod.exports.ResearchWorkbook(props);effects.splice(0).forEach(fn=>fn());return tree};
- const nodes=()=>{const list=[];function walk(n){if(Array.isArray(n))n.forEach(walk);else if(n&&typeof n==='object'){list.push(n);walk(n.props?.children)}}walk(tree);return list};
- render();return{props,render,nodes,requests,versions,views,text:()=>JSON.stringify(tree)};
+ const nodes=()=>{const list=[];function walk(n){if(Array.isArray(n))n.forEach(walk);else if(n&&typeof n==='object'){list.push(n);if(n.type===comparison.WorkbookComparison)walk(n.type(n.props));else walk(n.props?.children)}}walk(tree);return list};
+ render();return{props,render,nodes,requests,versions,views,text:()=>JSON.stringify(nodes())};
 }
 const ready=id=>({workbook:{id,revision:'rev',status:'ready',stale:false,sources:workbookSources,candidates:workbookSources,content:workbookSample(),artifact:{revision:1,value:{observations:{},decision:'Saved decision',unresolved:'Check assumptions'}},retryAt:0},versions:[{id:'old',status:'ready',created_at:'yesterday'},{id:'new',status:'ready',created_at:'today'}]});
 

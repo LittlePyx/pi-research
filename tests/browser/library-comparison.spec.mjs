@@ -455,7 +455,7 @@ test('open question, source reading, saved check and explicit judgment append fo
  const decision=page.getByRole('textbox',{name:'目前的判断及依据',exact:true});
  await decision.fill(judgment);await page.getByRole('textbox',{name:'仍缺的条件或待解决问题',exact:true}).fill(pending);
  await page.getByRole('button',{name:'保存记录',exact:true}).click();
- await page.getByRole('region',{name:'继续核查待查问题',exact:true}).getByRole('button',{name:'继续核查并记录成果 →',exact:true}).click();
+ await page.getByRole('region',{name:'继续核查待查问题',exact:true}).getByRole('button',{name:'开始核查 01 →',exact:true}).click();
  await expect(page).toHaveURL(/#learn\?/);await expect(page.getByRole('complementary',{name:'原判断中的待查问题',exact:true})).toContainText(pending);
  const result='原文位置：摘要。已核对量子擦除信道与通用编码的设定；定理编号仍待全文补证。';
  await page.getByRole('textbox',{name:'本项成果与依据',exact:true}).fill(result);
@@ -553,4 +553,68 @@ test('closing evidence opened from saved results restores its task trigger inste
  const inspector=page.getByRole('dialog',{name:'证据与核查笔记',exact:true});await inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true}).fill('本论文原维度的笔记草稿。');await inspector.getByRole('button',{name:'下一个比较维度',exact:true}).click();await page.reload();await expect(inspector).toBeVisible();await inspector.getByRole('button',{name:'恢复到编辑区',exact:true}).click();
  await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();await expect(page).toHaveURL(original);await expect(origin).toBeFocused();await expect(origin).toBeInViewport();await expect.poll(()=>origin.evaluate(node=>node.getBoundingClientRect().bottom-document.querySelector('.pi-workbook-savebar').getBoundingClientRect().top)).toBeLessThanOrEqual(0);
  await origin.click();await expect(inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true})).toHaveValue('本论文原维度的笔记草稿。');await page.goBack();await expect(page).toHaveURL(original);await expect.poll(()=>page.evaluate(()=>document.activeElement?.getAttribute('data-evidence-origin'))).toBe(anchor);
+});
+
+
+test('dimension cards and the wide table share exact notes, context and return anchors',async({page},info)=>{
+ if(info.project.name==='desktop')await page.setViewportSize({width:633,height:871});
+ await enterComparison(page);await ready(page);
+ const comparison=page.getByRole('region',{name:'条件比较',exact:true}),table=comparison.locator('table'),row=comparison.locator('tbody tr').first(),cells=row.locator('button[data-evidence-id]');
+ await expect(cells).toHaveCount(2);await expect.poll(()=>row.evaluate(node=>getComputedStyle(node).display)).toBe('grid');
+ const widths=await comparison.locator('.pi-workbook-table-scroll').evaluate(node=>({client:node.clientWidth,scroll:node.scrollWidth}));expect(widths.scroll).toBeLessThanOrEqual(widths.client+1);
+ for(const cell of await cells.all()){
+  const rect=await cell.boundingBox();expect(rect.x).toBeGreaterThanOrEqual(0);expect(rect.x+rect.width).toBeLessThanOrEqual(page.viewportSize().width);await expect(cell.locator('.pi-cell-paper')).toBeVisible();
+ }
+ await comparison.scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath('dimension-cards.png'),fullPage:false});
+ const origin=cells.first(),originId=await origin.getAttribute('data-evidence-id'),anchor=await origin.getAttribute('data-evidence-origin');
+ const dimension=sample.content.dimensions.find(d=>d.cells.some(c=>`${d.id}:${c.paperId}`===originId)),source=sample.sources.find(s=>originId===`${dimension.id}:${s.id}`),other=sample.sources.find(s=>s.id!==source.id);
+ await origin.click();const inspector=page.getByRole('dialog',{name:'证据与核查笔记',exact:true}),statement=inspector.getByRole('region',{name:'本项比较陈述',exact:true}),quotes=inspector.getByRole('region',{name:'对应摘要依据',exact:true}),note=inspector.getByRole('textbox',{name:'这一项的核查笔记',exact:true});
+ const current=dimension.cells.find(c=>c.paperId===source.id);await expect(statement).toContainText(current.textZh);await expect(quotes).toContainText(current.quote);await expect(statement).toContainText(dimension.purposeZh);
+ await note.fill('原论文、原维度的本地核查笔记。');
+ const papers=inspector.getByRole('group',{name:'依据论文',exact:true}).getByRole('button');await papers.nth(1).click();await expect(statement).toContainText(dimension.cells.find(c=>c.paperId===other.id).textZh);await expect(note).toHaveValue('');await note.fill('另一篇论文的独立笔记。');
+ await page.reload();await inspector.getByRole('button',{name:'恢复到编辑区',exact:true}).click();await expect(note).toHaveValue('另一篇论文的独立笔记。');await papers.nth(0).click();await expect(note).toHaveValue('原论文、原维度的本地核查笔记。');
+ await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();await expect(origin).toBeFocused();await expect(origin).toHaveAttribute('data-evidence-origin',anchor);await expect(origin).toBeInViewport();
+ if(info.project.name==='desktop'){
+  await page.setViewportSize({width:1440,height:1000});await expect.poll(()=>table.evaluate(node=>getComputedStyle(node).display)).toBe('table');await expect.poll(()=>row.evaluate(node=>getComputedStyle(node).display)).toBe('table-row');
+  await origin.click();await expect(note).toHaveValue('原论文、原维度的本地核查笔记。');await page.setViewportSize({width:390,height:844});await expect(inspector).toHaveAttribute('aria-modal','true');await expect(note).toHaveValue('原论文、原维度的本地核查笔记。');
+  await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();await expect(origin).toBeFocused();await expect(origin).toBeInViewport();
+ }
+ await page.locator('.pi-workbook-savebar').getByRole('button',{name:'保存记录',exact:true}).click();await page.reload();await origin.click();await expect(note).toHaveValue('原论文、原维度的本地核查笔记。');await expect(statement).toContainText(current.textZh);
+ await inspector.getByRole('button',{name:'关闭依据 ×',exact:true}).click();
+});
+
+test('overview and open-question continuation go straight to the same saved or next research check',async({page})=>{
+ await enterComparison(page);await ready(page);
+ const overview=page.getByRole('region',{name:'比较成果概览',exact:true});await overview.getByRole('button',{name:'开始核查 01 →',exact:true}).click();await expect(page).toHaveURL(/#learn\?/);await expect(page).toHaveURL(/practice=task-0/);
+ const result='摘要中的对象和限定条件已记录，全文仍待核对。';await page.getByRole('textbox',{name:'本项成果与依据',exact:true}).fill(result);await page.getByRole('button',{name:'保存成果并返回原判断',exact:true}).click();
+ await expect(overview.getByRole('button',{name:'继续核查 01 →',exact:true})).toBeEnabled();await overview.getByRole('button',{name:'继续核查 01 →',exact:true}).click();await expect(page.getByRole('textbox',{name:'本项成果与依据',exact:true})).toHaveValue(result);
+ await page.getByRole('button',{name:'保存并确认完成，继续下一项',exact:true}).click();await expect(page).toHaveURL(/practice=task-1/);await page.getByRole('button',{name:'← 返回原比较',exact:true}).click();
+ await expect(overview).toContainText('研究核查 1/2');await expect(overview.getByRole('button',{name:'开始核查 02 →',exact:true})).toBeEnabled();await ready(page);
+ const decision=page.getByRole('textbox',{name:'目前的判断及依据',exact:true});await decision.fill('保留判断草稿，不能绕过保存进入下一项。');await expect(overview.getByRole('button',{name:'开始核查 02 →',exact:true})).toBeDisabled();await expect(overview).toContainText('先保存当前判断与笔记');
+ await page.reload();await expect(overview).toContainText('先恢复或保留已保存内容');await expect(overview.getByRole('button',{name:'开始核查 02 →',exact:true})).toBeDisabled();await overview.getByRole('button',{name:'查看本地草稿',exact:true}).click();await page.getByRole('button',{name:'恢复到编辑区',exact:true}).click();await expect(decision).toHaveValue('保留判断草稿，不能绕过保存进入下一项。');
+ await page.getByRole('textbox',{name:'仍缺的条件或待解决问题',exact:true}).fill('下一项需要核对的原文条件。');await page.locator('.pi-workbook-savebar').getByRole('button',{name:'保存记录',exact:true}).click();
+ const followup=page.getByRole('region',{name:'继续核查待查问题',exact:true});await expect(followup.getByRole('button',{name:'开始核查 02 →',exact:true})).toBeEnabled();await followup.getByRole('button',{name:'开始核查 02 →',exact:true}).click();await expect(page).toHaveURL(/practice=task-1/);await expect(page.getByRole('textbox',{name:'本项成果与依据',exact:true})).toHaveValue('');
+ await page.getByRole('button',{name:'← 返回原比较',exact:true}).click();await expect(overview.locator('.pi-overview-judgment')).toContainText('保留判断草稿，不能绕过保存进入下一项。');await expect(overview).toContainText('研究核查 1/2');
+});
+
+
+test('three-paper layout replay keeps every long statement readable in dimension cards',async({page},info)=>{
+ await enterComparison(page);await ready(page);
+ // Layout-only replay after the real two-source fixture has passed. No replay data is saved.
+ await page.route('**/api/research-workbook?**',async routed=>{
+  const response=await routed.fetch(),data=await response.json();if(data.workbook?.content){
+   const third={...data.workbook.sources[0],id:'ui-third-layout',title:'UI layout replay · '+sample.sources[0].title+' · A long title for the third paper'};data.workbook.sources.push(third);
+   for(const dimension of data.workbook.content.dimensions)dimension.cells.push({...dimension.cells[0],paperId:third.id,textZh:'三篇布局验收内容。'+dimension.cells[0].textZh.repeat(3)});
+  }await routed.fulfill({response,json:data});
+ });
+ await page.reload();const comparison=page.getByRole('region',{name:'条件比较',exact:true});await expect(comparison.locator('tbody tr').first().locator('td')).toHaveCount(3);
+ for(const width of [633,390]){
+  await page.setViewportSize({width,height:871});const row=comparison.locator('tbody tr').first();await expect.poll(()=>row.evaluate(node=>getComputedStyle(node).display)).toBe('grid');
+  const sizes=await comparison.locator('.pi-workbook-table-scroll').evaluate(node=>({scroll:node.scrollWidth,client:node.clientWidth}));expect(sizes.scroll).toBeLessThanOrEqual(sizes.client+1);
+  for(const button of await row.locator('button').all()){
+   await expect(button.locator('.pi-cell-paper')).toBeVisible();const bounds=await button.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width);
+   const claim=await button.locator('.pi-cell-claim').evaluate(node=>({scroll:node.scrollWidth,client:node.clientWidth,clamp:getComputedStyle(node).webkitLineClamp}));expect(claim.scroll).toBeLessThanOrEqual(claim.client+1);expect(claim.clamp).toBe('none');
+  }
+ }
+ if(info.project.name==='desktop'){await page.setViewportSize({width:1440,height:1000});await expect.poll(()=>comparison.locator('table').evaluate(node=>getComputedStyle(node).display)).toBe('table');await expect(comparison.locator('thead th')).toHaveCount(4);}
 });

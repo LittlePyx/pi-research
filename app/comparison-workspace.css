@@ -19,16 +19,6 @@
 .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-tabs button { padding:12px 0; border:0; border-bottom:2px solid transparent; border-radius:0; background:none; font-size:14px; color:#62666d; }
 .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-tabs button[aria-pressed="true"] { color:#245dc1; border-bottom-color:#245dc1; }
 .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-layout { display:block; }
-.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-table-scroll { background:white; border:1px solid #e0e2e6; border-radius:6px; }
-.v2-app.pi-workspace .pi-comparison-workspace table { min-width:650px; font:400 14px/1.75 var(--font-geist-sans,Arial),sans-serif; }
-.v2-app.pi-workspace .pi-comparison-workspace th { padding:16px; font-weight:500; }
-.v2-app.pi-workspace .pi-comparison-workspace thead th { background:#f0f3f6; font-size:13px; }
-.v2-app.pi-workspace .pi-comparison-workspace th:first-child { width:21%; }
-.v2-app.pi-workspace .pi-comparison-workspace th small { margin-top:6px; font-weight:400; }
-.v2-app.pi-workspace .pi-comparison-workspace td { padding:8px; }
-.v2-app.pi-workspace .pi-comparison-workspace td button { min-height:60px; padding:10px; font-size:14px; line-height:1.75; color:#34383e; }
-.v2-app.pi-workspace .pi-comparison-workspace td button:hover { background:#f4f7fa; }
-.v2-app.pi-workspace .pi-comparison-workspace td button[aria-pressed="true"] { background:#edf3fc; border-color:#91b1de; }
 .v2-app.pi-workspace .pi-comparison-workspace blockquote { max-width:85ch; padding:16px 20px; margin:16px 0; border:0; border-left:2px solid #9baebe; background:#f6f8fa; font-size:15px; line-height:1.8; }
 .v2-app.pi-workspace .pi-comparison-workspace textarea { background:white; color:#202124; border:1px solid #cbd0d8; border-radius:5px; font-size:15px; min-height:120px; max-width:850px; }
 .v2-app.pi-workspace .pi-comparison-workspace label { font-size:13px; font-weight:500; }

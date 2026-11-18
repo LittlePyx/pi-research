@@ -372,12 +372,6 @@
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-picker { border-color: #e7eaee; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-picker label { padding: 12px 8px; border-radius: 6px; font-size: 13px; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-picker label:has(input:checked) { background: #f5f7fa; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-table-scroll { border: 1px solid #e5e8ed; border-radius: 12px; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace table { font: 400 13px/1.8 var(--ui-font); }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace thead th { background: #f7f8fa; padding: 16px; color: #606b7b; font-size: 12px; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace td { padding: 12px; border-color: #edf0f3; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace td button { border-radius: 7px; font-size: 13px; }
-.v2-app.pi-workspace.pi-product .pi-comparison-workspace td button:hover { background: #f5f7fa; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-artifact { padding: 24px 0; border: 0; border-top: 1px solid #e7eaee; margin-top: 32px; }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-artifact h2 { font: 600 18px/1.6 var(--ui-font); }
 .v2-app.pi-workspace.pi-product .pi-comparison-workspace .pi-workbook-artifact > button { margin-right: 8px; margin-top: 16px; }

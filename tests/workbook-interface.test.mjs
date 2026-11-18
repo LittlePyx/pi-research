@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {workbookTaskPresentation,workbookSavePresentation} from '../lib/workbook-interface.ts';
+import {workbookTaskPresentation,workbookSavePresentation,workbookResearchContinuation} from '../lib/workbook-interface.ts';
 import {workbookEvidenceSelection,inspectorOriginKey,rememberInspectorOrigin,readInspectorOrigin,clearInspectorOrigin} from '../lib/workbook-inspector.ts';
 import {workbookSample,workbookSources} from './fixtures/research-workbook.mjs';
+
+test('all continuation surfaces select the next research check and preserve optional learning independently',()=>{
+ const content=workbookSample(),entry={result:'Recorded abstract check',unresolved:'Full-text check pending',completed:false};
+ let next=workbookResearchContinuation(content,undefined,true);assert.equal(next.taskId,'task-0');assert.equal(next.label,'开始核查 01');
+ next=workbookResearchContinuation(content,{activeId:'task-0',entries:{'task-0':entry}},true);assert.equal(next.label,'继续核查 01');
+ next=workbookResearchContinuation(content,{activeId:'task-0',entries:{'task-0':{...entry,completed:true},learning:entry}},true);assert.equal(next.taskId,'task-1');assert.equal(next.label,'开始核查 02');
+ next=workbookResearchContinuation(content,{activeId:'learning',entries:{'task-0':{...entry,completed:true},'task-1':{...entry,completed:true},learning:entry}},true);assert.equal(next.allCompleted,true);assert.notEqual(next.taskId,'learning');assert.equal(next.label,'回顾核查成果');assert.equal(next.learning.completed,false);
+});
 
 test('saved text never completes a check without explicit confirmation and actions follow the same state',()=>{
  assert.equal(workbookTaskPresentation(undefined,true).action,'开始核查');
@@ -19,6 +27,8 @@ test('save controls permit exactly the durable, editable or recoverable actions 
  view=workbookSavePresentation({...base,dirty:true});assert.equal(view.canSave,true);assert.equal(view.canLeave,false);assert.equal(view.taskBlocked,true);
  view=workbookSavePresentation({...base,pendingDraft:true});assert.equal(view.editorLabel,'恢复本地草稿');assert.equal(view.canSave,false);assert.equal(view.taskBlocked,true);assert.equal(view.canLeave,false);
  for(const extra of [{busy:'save'},{stale:true}])assert.equal(workbookSavePresentation({...base,dirty:true,...extra}).canSave,false);
+ assert.match(workbookSavePresentation({...base,dirty:true,stale:true}).taskBlockReason,/仅供回顾/);
+ assert.match(workbookSavePresentation({...base,dirty:true,busy:'save'}).taskBlockReason,/当前操作完成/);
  view=workbookSavePresentation({...base,dirty:true,conflict:true,error:true});assert.equal(view.mode,'conflict');assert.match(view.status,/本地输入已保留/);assert.equal(view.canLeave,false);
  assert.match(workbookSavePresentation({...base,dirty:true,draftStored:false}).status,/无法暂存/);
 });

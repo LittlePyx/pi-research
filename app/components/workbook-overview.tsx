@@ -1,14 +1,13 @@
 import type {WorkbookArtifact,WorkbookContent} from '../../lib/research-workbook';
-import {practiceProgress} from '../../lib/workbook-practice';
-import {workbookTaskPresentation} from '../../lib/workbook-interface';
+import {workbookResearchContinuation,workbookTaskPresentation} from '../../lib/workbook-interface';
 import {MathText} from './math-text';
 import './workbook-overview.css';
 
-export function WorkbookOverview({content,artifact,revision,dirty,pendingDraft,locale,onEdit,onEvidence,onTasks}:{
+export function WorkbookOverview({content,artifact,revision,dirty,pendingDraft,locale,onEdit,onEvidence,onTasks,onContinue,taskBlocked,taskBlockReason}:{
   content:WorkbookContent;artifact:WorkbookArtifact;revision:number;dirty:boolean;pendingDraft:boolean;locale:'zh'|'en';
-  onEdit:()=>void;onEvidence:()=>void;onTasks:()=>void;
+  onEdit:()=>void;onEvidence:()=>void;onTasks:()=>void;onContinue?:(id:string)=>void;taskBlocked:boolean;taskBlockReason:string;
 }){
-  const zh=locale==='zh',progress=practiceProgress(content,artifact.practice||{activeId:'task-0',entries:{}});
+  const zh=locale==='zh',progress=workbookResearchContinuation(content,artifact.practice,zh);
   const learning=workbookTaskPresentation(artifact.practice?.entries.learning,zh);
   const verdict=content.comparison.status==='comparable'?(zh?'当前摘要支持比较':'Current abstracts support comparison'):content.comparison.status==='conditional'?(zh?'需要区分适用条件':'Conditions must be distinguished'):(zh?'现有依据不足以直接比较':'Insufficient evidence for direct comparison');
   return <section className="pi-workbook-overview" aria-label={zh?'比较成果概览':'Comparison overview'}>
@@ -18,6 +17,11 @@ export function WorkbookOverview({content,artifact,revision,dirty,pendingDraft,l
       {artifact.unresolved.trim()&&<details className="pi-overview-text pi-overview-unresolved"><summary><span>{zh?'待查：':'Unresolved: '}<MathText inline>{artifact.unresolved}</MathText></span><small>{zh?'展开待查问题':'Expand unresolved questions'}</small></summary><p><MathText>{artifact.unresolved}</MathText></p></details>}
       <button type="button" onClick={onEdit}>{pendingDraft?(zh?'查看本地草稿':'View local draft'):artifact.decision.trim()?(zh?'编辑我的判断':'Edit my judgment'):(zh?'记录我的判断':'Record my judgment')}</button>
     </div>
-    <div className="pi-overview-progress"><button type="button" onClick={onTasks}><strong>{zh?'研究核查':'Research checks'} {progress.completed}/{progress.total}</strong><span>{progress.allCompleted?(zh?'已确认完成 · 回顾成果':'Confirmed complete · review results'):progress.recorded?(zh?`${progress.recorded} 项有保存记录 · 继续核查`:`${progress.recorded} recorded · continue checks`):(zh?'查看核查任务':'View check tasks')} →</span></button><span>{zh?'配套学习（可选）':'Supporting learning (optional)'} · {learning.status}</span></div>
+    <div className="pi-overview-progress">
+      <div className="pi-overview-check-count"><strong>{zh?'研究核查':'Research checks'} {progress.completed}/{progress.total}</strong><span>{progress.allCompleted?(zh?'已确认完成 · 回顾成果':'Confirmed complete · review results'):progress.recorded?(zh?`${progress.recorded} 项有保存记录`:`${progress.recorded} recorded`):(zh?'尚未开始':'Not started')}</span></div>
+      <div className="pi-overview-check-actions">{onContinue&&<button type="button" className="pi-overview-continue" disabled={taskBlocked} aria-describedby={taskBlocked?'workbook-overview-task-hint':undefined} title={progress.goal} onClick={()=>onContinue(progress.taskId)}>{progress.label} →</button>}<button type="button" onClick={onTasks}>{zh?'查看全部核查':'View all checks'}</button></div>
+      {taskBlocked&&<small id="workbook-overview-task-hint" className="pi-overview-task-hint">{taskBlockReason}</small>}
+      <span className="pi-overview-learning">{zh?'配套学习（可选）':'Supporting learning (optional)'} · {learning.status}</span>
+    </div>
   </section>;
 }

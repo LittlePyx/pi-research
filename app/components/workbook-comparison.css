@@ -1,0 +1,31 @@
+/* This component owns both table and card presentation; identities never change with layout. */
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-comparison { container:workbook-comparison / inline-size; min-width:0; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-comparison .pi-workbook-table-scroll { max-width:100%; max-height:72dvh; overflow:auto; border:1px solid #e1e6ed; border-radius:12px; background:#fff; scroll-padding-top:100px; }
+.v2-app.pi-workspace .pi-comparison-workspace table.pi-comparison-table { width:100%; min-width:0; border-collapse:separate; border-spacing:0; table-layout:fixed; font:400 13px/1.8 var(--ui-font,system-ui); }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table th,.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table td { text-align:left; vertical-align:top; overflow-wrap:anywhere; border-bottom:1px solid #e8edf2; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table th { padding:16px; font-weight:500; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table thead th { position:sticky; top:0; z-index:2; background:#f6f8fb; color:#606d7e; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table thead b { display:block; color:#344258; margin-bottom:4px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table th:first-child { width:21%; position:sticky; left:0; background:#fff; z-index:1; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table thead th:first-child { z-index:3; background:#f6f8fb; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table th small { display:block; margin-top:6px; color:#748092; font-weight:400; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table td { padding:8px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table td button { display:block; width:100%; min-height:60px; padding:12px; margin:0; border:1px solid transparent; border-radius:8px; background:#fff; color:#3d4a5c; font:inherit; line-height:1.9; text-align:left; cursor:pointer; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table td button:hover { background:#f5f8fc; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table td button[aria-pressed=true] { background:#edf3fc; border-color:#a5bddc; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table .pi-cell-paper { display:none; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table .pi-cell-claim { display:block; min-width:0; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table .pi-cell-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:10px; color:#245dc1; font-size:12px; }
+.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table .pi-cell-actions small { display:inline; margin:0; color:#667b6e; font-size:11px; }
+@container workbook-comparison (max-width:740px) {
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-workbook-comparison .pi-workbook-table-scroll { max-height:none; overflow:visible; border:0; border-radius:0; background:none; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table,.v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table tbody { display:block; width:100%; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table thead { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table tbody tr { display:grid; grid-template-columns:minmax(0,1fr); gap:0; margin-bottom:18px; border:1px solid #e1e6ed; border-radius:12px; overflow:hidden; background:#fff; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table tbody th:first-child { position:static; width:auto; padding:16px; background:#f6f8fb; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table tbody td { display:block; min-width:0; padding:4px; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table tbody td:last-child { border-bottom:0; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table .pi-cell-paper { display:flex; align-items:baseline; gap:10px; margin-bottom:10px; font-size:12px; color:#66758a; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table .pi-cell-paper>b { flex-shrink:0; color:#245dc1; }
+ .v2-app.pi-workspace .pi-comparison-workspace .pi-comparison-table .pi-cell-paper>span { min-width:0; overflow-wrap:anywhere; }
+}

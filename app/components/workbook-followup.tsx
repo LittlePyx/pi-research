@@ -1,10 +1,10 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
 import type {WorkbookArtifact,WorkbookContent,WorkbookSource} from '../../lib/research-workbook';
-import {practiceProgress,workbookPracticeTasks,type WorkbookPractice} from '../../lib/workbook-practice';
+import {workbookPracticeTasks,type WorkbookPractice} from '../../lib/workbook-practice';
 import {workbookCheckFocus,workbookResultState} from '../../lib/workbook-followup';
 import {MathText} from './math-text';
-import {workbookTaskPresentation} from '../../lib/workbook-interface';
+import {workbookResearchContinuation,workbookTaskPresentation} from '../../lib/workbook-interface';
 
 export function WorkbookFollowup({content,sources,artifact,savedArtifact,practice,locale,disabled,dirty,active,reveal,onOpenPaper,onStartPractice,onAppend}:{
   content:WorkbookContent;sources:WorkbookSource[];artifact:Pick<WorkbookArtifact,'decision'|'unresolved'>;savedArtifact?:Pick<WorkbookArtifact,'decision'|'unresolved'>;practice?:WorkbookPractice;locale:'zh'|'en';disabled:boolean;dirty:boolean;active:boolean;reveal:boolean;
@@ -13,7 +13,7 @@ export function WorkbookFollowup({content,sources,artifact,savedArtifact,practic
   const zh=locale==='zh';
   const question=artifact.unresolved;
   const tasks=workbookPracticeTasks(content);
-  const progress=practiceProgress(content,practice||{activeId:tasks[0].id,entries:{}});
+  const progress=workbookResearchContinuation(content,practice,zh);
   const saved=tasks.filter(task=>practice?.entries[task.id]?.result.trim()||practice?.entries[task.id]?.unresolved.trim());
   const target=useRef<HTMLElement|null>(null);
   const [notice,setNotice]=useState<'added'|'limit'|''>('');
@@ -24,7 +24,7 @@ export function WorkbookFollowup({content,sources,artifact,savedArtifact,practic
     setNotice(added?'added':'limit');
   };
   return <div className="pi-workbook-followup">
-    {question.trim()&&<section aria-label={zh?'继续核查待查问题':'Continue checking open questions'}><h3>{zh?'继续核查':'Continue checking'}</h3><p>{zh?'选择论文，带着当前待查问题阅读；完整问题和草稿保留在本比较中。':'Choose a paper to read with the current question. The full question and draft remain in this comparison.'}</p><div className="pi-workbook-followup-actions">{sources.map(source=><button type="button" key={source.id} disabled={disabled} onClick={()=>onOpenPaper(source,workbookCheckFocus('',question))}>{zh?'核查论文：':'Check paper: '}{source.title} →</button>)}</div>{onStartPractice&&<button type="button" disabled={disabled||dirty} onClick={()=>onStartPractice(progress.active.id)}>{progress.allCompleted?(zh?'回顾核查记录':'Review check records'):(zh?'继续核查并记录成果':'Continue checking and record a result')} →</button>}{dirty&&<small>{zh?'先保存判断与待查问题，再进入核查记录。':'Save your judgment and open questions before entering the check record.'}</small>}</section>}
+    {question.trim()&&<section aria-label={zh?'继续核查待查问题':'Continue checking open questions'}><h3>{zh?'继续核查':'Continue checking'}</h3><p>{zh?'选择论文，带着当前待查问题阅读；完整问题和草稿保留在本比较中。':'Choose a paper to read with the current question. The full question and draft remain in this comparison.'}</p><div className="pi-workbook-followup-actions">{sources.map(source=><button type="button" key={source.id} disabled={disabled} onClick={()=>onOpenPaper(source,workbookCheckFocus('',question))}>{zh?'核查论文：':'Check paper: '}{source.title} →</button>)}</div>{onStartPractice&&<button type="button" disabled={disabled||dirty} onClick={()=>onStartPractice(progress.taskId)}>{progress.label} →</button>}{dirty&&<small>{zh?'先保存判断与待查问题，再进入核查记录。':'Save your judgment and open questions before entering the check record.'}</small>}</section>}
     {visible&&<section ref={target} tabIndex={-1} aria-label={zh?'已保存核查成果':'Saved check results'}><details open={reveal}><summary>{zh?`${saved.length} 项已保存核查记录`:`${saved.length} saved check records`}</summary><p>{zh?'以下为你保存的核查记录。选择补入后仍需核对、保存原判断。':'These are your saved check records. After adding one, review and save the original judgment.'}</p>{saved.map(task=>{
       const entry=practice!.entries[task.id];
       const shown=workbookTaskPresentation(entry,zh);
