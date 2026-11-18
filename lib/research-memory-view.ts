@@ -1,3 +1,5 @@
+import { workbookFocus } from './graph-task.ts';
+
 export type MemoryRow = { paperId: string; title: string; venue: string; note: string; updatedAt: string; readingStatus: string;
   analysisStatus: string | null; noteHash: string | null; takeawayZh: string | null; takeawayEn: string | null;
   methodsZh: string | null; methodsEn: string | null; questionsZh: string | null; questionsEn: string | null; analyzedAt: string | null };
@@ -21,6 +23,23 @@ export const MEMORY_JOIN_SQL = `FROM paper_reading_progress r JOIN monitored_pap
  AND (m.takeaway_zh LIKE ? ESCAPE '\\' OR m.takeaway_en LIKE ? ESCAPE '\\' OR m.methods_zh LIKE ? ESCAPE '\\'
  OR m.methods_en LIKE ? ESCAPE '\\' OR m.questions_zh LIKE ? ESCAPE '\\' OR m.questions_en LIKE ? ESCAPE '\\')))`;
 export function memorySearchBindings(spaceId: string, query: string) {
-  const escaped = `%${query.replace(/[\\%_]/g, "\\$&")}%`;
+  const escaped = memorySearchPattern(query);
   return [spaceId, query, ...Array(8).fill(escaped)];
 }
+
+export const memorySearchPattern = (query: string) => `%${query.replace(/[\\%_]/g, '\\$&')}%`;
+export const SAVED_COMPARISON_PAGE_SIZE = 12;
+
+export type SavedComparisonRow = {
+  workbookId: string; trackId: string; routeZh: string; routeEn: string; question: string;
+  questionZh: string | null; questionEn: string | null; decision: string | null; unresolved: string | null;
+  savedAt: string; revision: number;
+};
+
+export function savedComparison({ question, questionZh, questionEn, decision, unresolved, ...row }: SavedComparisonRow) {
+  const focus = workbookFocus(question);
+  return { ...row, questionZh: focus || questionZh || question, questionEn: focus || questionEn || question,
+    decision: decision || '', unresolved: unresolved || '' };
+}
+
+export type SavedComparison = ReturnType<typeof savedComparison>;

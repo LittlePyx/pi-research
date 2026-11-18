@@ -59,16 +59,9 @@
   .v2-app.pi-workspace .pi-memory-workspace :is(p,li,strong,h3,h4,small) { overflow-wrap: anywhere; }
 }
 .v2-app.pi-workspace .pi-memory-settings { display:block; margin: -8px 0 16px auto; border:0; background:none; color:#647084; cursor:pointer; }
-.v2-app.pi-workspace .pi-memory-resume { padding:28px 32px; background:white; border:1px solid #dce1e8; border-radius:8px; margin:24px 0 36px; }
-.v2-app.pi-workspace .pi-memory-resume header { display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; }
-.v2-app.pi-workspace .pi-memory-resume select { max-width:100%; margin-left:12px; }
-.v2-app.pi-workspace .pi-memory-route { color:#647084; font-size:13px; }
-.v2-app.pi-workspace .pi-memory-resume button { margin-top:16px; padding:10px 16px; background:#2459c5; color:white; border:0; border-radius:5px; cursor:pointer; }
-.v2-app.pi-workspace .pi-memory-resume details { border-top:1px solid #e1e6ec; padding:14px 0; }
 .v2-app.pi-workspace .pi-memory-paper-link { text-align:left; font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; }
 .v2-app.pi-workspace .pi-memory-calendar { margin:20px 0; }
 .v2-app.pi-workspace .pi-memory-workspace summary { cursor:pointer; }
-@media(max-width:700px) { .v2-app.pi-workspace .pi-memory-resume {padding:20px;} .v2-app.pi-workspace .pi-memory-resume label {min-width:0;max-width:100%;} }
 
 /* Research memory uses one reading column and quiet, grouped rows. */
 .v2-app.pi-workspace .v2-page.pi-memory-workspace { max-width:1000px; padding:40px 40px 28px; color:#25313b; }
@@ -158,13 +151,24 @@
 .v2-app.pi-workspace .pi-memory-workspace .pi-memory-empty p { margin:0 auto; font-size:13px; color:#7a858d; }
 .v2-app.pi-workspace .pi-memory-calendar { margin:22px 0 0; color:#70838c; font-size:12px; }
 .v2-app.pi-workspace .pi-memory-calendar>summary { width:fit-content; padding:6px 0; }
-.v2-app.pi-workspace .pi-memory-resume { padding:26px; margin:0; border-color:#e1e6e9; border-radius:12px; }
-.v2-app.pi-workspace .pi-memory-resume header h2 { font-size:20px; font-weight:600; }
-.v2-app.pi-workspace .pi-memory-resume .pi-memory-route { margin:0 0 24px; font-size:12px; color:#7a8890; }
-.v2-app.pi-workspace .pi-memory-resume h3 { font-size:14px; font-weight:600; margin-bottom:8px; }
-.v2-app.pi-workspace .pi-memory-resume p { font-size:14px; line-height:1.85; color:#627079; }
-.v2-app.pi-workspace .pi-memory-resume details { border-color:#edf0f2; font-size:13px; color:#637983; }
-.v2-app.pi-workspace .pi-memory-resume button { background:#365f6c; font-size:13px; border-radius:6px; padding:10px 16px; }
+.v2-app.pi-workspace .pi-memory-resume { padding:24px; background:#fff; border:1px solid #e1e6e9; border-radius:12px; }
+.v2-app.pi-workspace .pi-memory-resume h2 { margin:0 0 16px; font-size:20px; font-weight:600; }
+.v2-app.pi-workspace .pi-memory-comparison-filters, .v2-app.pi-workspace .pi-memory-comparison-filters form { display:flex; flex-wrap:wrap; align-items:end; gap:8px; }
+.v2-app.pi-workspace .pi-memory-comparison-filters { gap:12px 20px; margin-bottom:16px; }
+.v2-app.pi-workspace .pi-memory-comparison-filters form { flex:1 1 320px; min-width:0; }
+.v2-app.pi-workspace .pi-memory-comparison-filters label { display:grid; gap:4px; min-width:0; font-size:13px; color:#536771; }
+.v2-app.pi-workspace .pi-memory-comparison-filters form label { flex:1 1 184px; }
+.v2-app.pi-workspace .pi-memory-comparison-filters select { max-width:100%; }
+.v2-app.pi-workspace .pi-memory-resume :is(input,select,button) { min-height:40px; min-width:0; padding:6px 12px; border:1px solid #dce1e8; border-radius:6px; background:#fff; color:#25313b; font:inherit; font-size:14px; }
+.v2-app.pi-workspace .pi-memory-comparison-filters button[type="submit"] { background:#365f6c; border-color:#365f6c; color:white; }
+.v2-app.pi-workspace .pi-memory-comparisons>article { border-top:1px solid #e1e6e9; padding:16px 0; }
+.v2-app.pi-workspace .pi-memory-comparison-meta { display:flex; flex-wrap:wrap; gap:6px 12px; margin:0 0 4px; color:#586b77; font-size:13px; }
+.v2-app.pi-workspace .pi-memory-comparisons h3 { margin:0 0 6px; font-size:16px; line-height:1.55; overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-memory-comparisons h3 a { color:#264f65; text-underline-offset:3px; }
+.v2-app.pi-workspace .pi-memory-comparisons h3 a:focus-visible { outline:2px solid #245dc1; outline-offset:4px; }
+.v2-app.pi-workspace .pi-memory-comparisons details { color:#566c79; font-size:13px; }
+.v2-app.pi-workspace .pi-memory-comparisons details h4 { margin:10px 0 4px; font-size:13px; }
+.v2-app.pi-workspace .pi-memory-comparison-text { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
 .v2-app.pi-workspace .pi-memory-synthesis { margin:16px 0; padding:18px; background:#f5f7f8; border-radius:8px; }
 .v2-app.pi-workspace .pi-memory-pagination { margin-top:20px; }
 @media(max-width:700px) {
@@ -174,6 +178,7 @@
  .v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry>h3 { font-size:16px; }
  .v2-app.pi-workspace .pi-memory-note-list .pi-memory-entry>header { flex-wrap:wrap; }
  .v2-app.pi-workspace .pi-memory-resume { padding:20px; }
+ .v2-app.pi-workspace .pi-memory-comparison-filters>label { width:100%; }
 }
 .v2-app.pi-workspace .pi-recommendation-memory { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:start; margin:14px 0; font-size:12px; }
 .v2-app.pi-workspace .pi-recommendation-memory button { background:none; border:0; padding:3px 0; font-size:12px; color:#557780; cursor:pointer; }

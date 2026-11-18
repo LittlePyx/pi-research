@@ -28,7 +28,7 @@ import { sessionDraftKey, writeSessionDraft, clearSessionDraft } from "../lib/se
 import { ImportProfileReview } from "./components/import-profile-review";
 import "./dialog-workspace.css";
 import "./navigation-workspace.css";
-import { readWorkspaceLocation, workspaceHash, type WorkspaceLocation } from "../lib/workspace-navigation";
+import { memoryLocation, readWorkspaceLocation, workspaceHash, type MemoryLocation, type MemorySection, type WorkspaceLocation } from "../lib/workspace-navigation";
 import { SectionNavigation } from "./components/section-navigation";
 import { ResearchMaintenance } from "./components/research-maintenance";
 import { EmailSubscription } from "./components/email-subscription";
@@ -2210,7 +2210,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const openTodaySurface=(surface:typeof todaySurface)=>navigate("today",undefined,{panel:surface});
   const [memoryRouteError, setMemoryRouteError] = useState(false);
   const [memoryRouteRetry, setMemoryRouteRetry] = useState(0);
-  const [memorySection, setMemorySection] = useState<"continue" | "reading" | "insights" | "preferences">("preferences");
+  const [memoryView, setMemoryView] = useState<MemoryLocation>({});
+  const memorySection = memoryView.memorySection || 'comparisons';
   const [spaces, setSpaces] = useState<Space[]>(fallbackSpaces);
   const [deletedSpaces,setDeletedSpaces]=useState<Space[]>([]);
   const [spaceDeletionEnabled,setSpaceDeletionEnabled]=useState(false);
@@ -3036,6 +3037,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     updateResearchRouteTab((location.tab || "start") as ResearchRouteTab);
     setPaperPanel(location.paperPanel||"reading");
     setRecoveryFocusRequested(location.focus === "recovery");
+    if(location.view==='memory')setMemoryView(memoryLocation(location));
     if(location.view==='library'||location.view==='thread-detail'||location.view==='threads'&&Boolean(location.graph))setLibraryViewState({query:location.libraryQuery||'',scope:location.libraryScope||'related',page:location.libraryPage||1,focusId:location.libraryFocus||''});
     if(location.view==='library'){setLibraryComparisonScope({spaceId:activeSpace.id,trackId:location.track||''});setLibrarySearch(location.libraryQuery||'');setLibraryFilter(location.libraryFilter||'all');setLibraryStageFilter(location.libraryStage||'all');setInboxFilter(location.libraryInbox||'all');setLibrarySort(location.librarySort||'priority');setLibraryTag(location.libraryTag||'all');setLibraryPageNumber(location.libraryPage||1);}
     if (location.graph) { setResearchMapMode("papers"); setLibraryGraphPaperId(location.graph === "all" ? "" : location.graph); setGraphReturnView(location.graphFrom === "library" ? "library" : "threads");restorePaperNetworkNavigation(location,new Set(researchMap.tracks.map(track=>track.id)));setGraphDetailsOpen(Boolean(location.graphFocus)); }
@@ -3053,7 +3055,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if (location.view === "workbook") { setWorkbookTrackId(location.id!); setWorkbookReturnView(location.from || "threads");setWorkbookViewState({panel:location.workbookPanel||'evidence',focus:location.workbookFocus||'',dimension:location.workbookDimension||''}); }
     const restoreScroll = () => requestAnimationFrame(() => requestAnimationFrame(() => {
       // The inspector owns its original trigger and scroll position on close.
-      if(inspectorReturnHash.current!==hash&&!(location.view==='workbook'&&(!location.workbookPanel||location.workbookPanel==='evidence')&&location.workbookDimension))window.scrollTo({ top: navigationScroll.current.get(hash) || 0, behavior: "auto" });
+      if(inspectorReturnHash.current!==hash&&!(location.view==='workbook'&&(!location.workbookPanel||location.workbookPanel==='evidence')&&location.workbookDimension)&&!(location.view==='memory'&&location.memoryFocus))window.scrollTo({ top: navigationScroll.current.get(hash) || 0, behavior: "auto" });
     }));
     if (location.view === "today" || location.from === "today") setTodaySurface(location.panel || "home");
     if (location.view !== "paper-detail") { setView(location.view); restoreScroll(); return; }
@@ -3715,12 +3717,19 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if (window.location.hash !== hash) window.history.pushState({ piView: next }, "", hash);
     restoredLocationRef.current = returnLocation ? "" : activeSpace.id + hash;
     if(next === "today") setTodaySurface(location.panel || "home");
+    if(next === 'memory')setMemoryView(memoryLocation(location));
     setRecoveryFocusRequested(location.focus === "recovery");
     setView(next); setMobileNav(false);
     const top = preserveScroll ? window.scrollY : returning ? navigationScroll.current.get(hash) || (next === "workbook" ? workbookScrollRef.current : 0) : 0;
     navigationScroll.current.set(hash, top);
-    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top, behavior: "auto" })));
+    if(!(next==='memory'&&location.memoryFocus))requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top, behavior: "auto" })));
   };
+
+  const changeMemoryLocation = (patch: MemoryLocation) => {
+    setMemoryView(current => ({...current,...patch}));
+    updateWorkspaceHash(patch, 'push');
+  };
+  const selectMemorySection = (memorySection: MemorySection) => changeMemoryLocation({memorySection,memoryTrack:undefined,memoryQuery:undefined,memoryPage:undefined,memoryFocus:undefined});
 
   const navigatePrimary = (next: View) => {
     if (next === "threads") {
@@ -4141,7 +4150,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       const data = await response.json() as {monitor?:MonitorState};
       if (!data.monitor) throw new Error();
       if (paperNetworkSpaceRef.current !== spaceId) return;
-      setMonitor(data.monitor); setMemorySection("preferences"); navigate("memory"); setFeedbackReceipt(null);
+      setMonitor(data.monitor); navigate("memory", undefined, {memorySection:'preferences'}); setFeedbackReceipt(null);
     } catch { if (paperNetworkSpaceRef.current === spaceId) {
       const message = locale === "zh" ? "偏向暂未读取，请重试。已保存的反馈仍然保留。" : "Could not load interests. Your saved feedback is retained; please retry.";
       setToast(message); setFeedbackReceipt(current => current ? {...current,error:message} : current);
@@ -5787,13 +5796,13 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           <main className="v2-page pi-memory-workspace">
             <section className="v2-page-head"><div><h1>{locale === "zh" ? "研究记忆" : "Research memory"}</h1><p className="pi-page-purpose">{locale === "zh" ? "让每一次阅读，成为下一次发现的线索。" : "Let every reading guide your next discovery."}</p></div><div className="pi-memory-tools"><button type="button" onClick={openResearchImport}>{locale === "zh" ? "补充资料" : "Add context"}</button><button type="button" onClick={openSourceSettings} disabled={!monitor?.preferences}>{locale === "zh" ? "关注来源" : "Sources"}</button></div></section>
             <nav className="pi-memory-nav" aria-label={locale === "zh" ? "研究记忆分类" : "Research memory sections"}>
-              <button type="button" aria-current={memorySection === "preferences" ? "page" : undefined} onClick={() => setMemorySection("preferences")}>{locale === "zh" ? "研究偏向" : "Research interests"}</button>
-              <button type="button" aria-current={memorySection !== "preferences" ? "page" : undefined} onClick={() => setMemorySection("reading")}>{locale === "zh" ? "研究记录" : "Research records"}</button>
+              <button type="button" aria-current={memorySection !== "preferences" ? "page" : undefined} onClick={() => {if(memorySection==='preferences')selectMemorySection('comparisons');}}>{locale === "zh" ? "研究记录" : "Research records"}</button>
+              <button type="button" aria-current={memorySection === "preferences" ? "page" : undefined} onClick={() => selectMemorySection('preferences')}>{locale === "zh" ? "研究偏向" : "Research interests"}</button>
             </nav>
-            {memorySection !== "preferences" && <nav className="pi-memory-record-nav" aria-label={locale === "zh" ? "研究记录分类" : "Record categories"}>{(["reading", "continue", "insights"] as const).map(section => <button key={section} aria-current={memorySection === section ? "page" : undefined} onClick={() => setMemorySection(section)}>{section === "reading" ? (locale === "zh" ? "阅读笔记" : "Reading notes") : section === "continue" ? (locale === "zh" ? "比较记录" : "Comparisons") : (locale === "zh" ? "笔记整理" : "Note insights")}</button>)}</nav>}
+            {memorySection !== "preferences" && <nav className="pi-memory-record-nav" aria-label={locale === "zh" ? "研究记录分类" : "Record categories"}>{(["comparisons", "reading", "insights"] as const).map(section => <button key={section} aria-current={memorySection === section ? "page" : undefined} onClick={() => {if(memorySection!==section)selectMemorySection(section);}}>{section === "reading" ? (locale === "zh" ? "阅读笔记" : "Reading notes") : section === "comparisons" ? (locale === "zh" ? "比较记录" : "Comparisons") : (locale === "zh" ? "笔记整理" : "Note insights")}</button>)}</nav>}
 
             {memorySection !== "preferences" && memoryRouteError && <p role="alert">{locale === "zh" ? "路线关联暂未载入，笔记仍可阅读。" : "Route links are unavailable; your notes remain accessible."}<button onClick={() => setMemoryRouteRetry(n => n + 1)}>{locale === "zh" ? "重试" : "Retry"}</button></p>}
-            {memorySection === "continue" && <MemoryResume key={activeSpace.id} spaceId={activeSpace.id} locale={locale} routes={researchMap.tracks.map(track => ({ id:track.id,title:locale === "zh" ? track.titleZh : track.titleEn }))} onCompare={id => openWorkbook(id)} />}
+            {memorySection === "comparisons" && <MemoryResume key={activeSpace.id} spaceId={activeSpace.id} locale={locale} routes={researchMap.tracks.map(track => ({ id:track.id,title:locale === "zh" ? track.titleZh : track.titleEn }))} location={memoryView} onLocationChange={changeMemoryLocation} />}
             {(memorySection === "reading" || memorySection === "insights") && <DeferredWorkspacePanel locale={locale}><ResearchMemoryNotebook key={`${activeSpace.id}:${memorySection}`} routes={researchMap.tracks.map(track => ({title:locale === "zh" ? track.titleZh : track.titleEn,paperIds:track.papers.map(paper => paper.id)}))} mode={memorySection === "reading" ? "notes" : "insights"} spaceId={activeSpace.id} locale={locale} onOpenPaper={id => void openRoutePaper(id, "memory")} onLibrary={() => navigate("library")} onQuestion={(title, followup) => { setQuestion(locale === "zh" ? `基于论文“${title}”的阅读笔记，我想继续研究：${followup}。请区分已有依据和待验证假设。` : `From my reading note on “${title}”, explore: ${followup}. Separate evidence from hypotheses.`); setAskOpen(true); }} /></DeferredWorkspacePanel>}
             {memorySection === "reading" && <details className="pi-memory-calendar"><summary>{locale === "zh" ? "按日期回看阅读" : "Browse reading dates"}</summary><DeferredWorkspacePanel locale={locale}><ReadingCalendar key={`memory-calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "memory")} /></DeferredWorkspacePanel></details>}
             {memorySection === "insights" && confirmedProfile && <section className="pi-memory-profile">
@@ -5806,7 +5815,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               </> : <p className="pi-memory-empty">{locale === "zh" ? "可以导入已有论文、项目或研究记录，确认后用于整理研究背景。" : "Import papers, projects or research notes and confirm the extracted context."}</p>}
             </section>}
             {memorySection === "preferences" && <div className="pi-memory-preferences">
-<ResearchPreferencesPanel key={activeSpace.id} spaceId={activeSpace.id} locale={locale} demo={demo} onToggle={updateMemorySignal} onRecords={() => setMemorySection("reading")} onPaper={id => void openRoutePaper(id, "memory")} />
+<ResearchPreferencesPanel key={activeSpace.id} spaceId={activeSpace.id} locale={locale} demo={demo} onToggle={updateMemorySignal} onRecords={() => selectMemorySection('reading')} onPaper={id => void openRoutePaper(id, "memory")} />
               <p className="pi-memory-scope">{locale === "zh" ? "这些记录仅用于当前研究空间。" : "These records belong to this research space."}<button type="button" onClick={() => setSpaceDialog(true)}>{t.switchSpace} →</button></p>
             </div>}
             <footer className="v2-lab-attribution"><span>{locale === "zh" ? "研究团队" : "Research team"}</span><Image src="/pi-lab-logo.png" width={78} height={25} alt="P&amp;I Lab" /></footer>

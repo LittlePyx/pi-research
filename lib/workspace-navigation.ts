@@ -5,12 +5,16 @@ export type LibraryScope='related'|'all';
 export type GraphMode='similarity'|'citations'|'path';
 export type GraphScope='all'|'one-hop'|'multi-seed';
 export type WorkbookPanel='evidence'|'relations'|'task';
-export type WorkspaceLocation = { practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string;workbookDimension?:string };
+export type MemorySection='comparisons'|'reading'|'insights'|'preferences';
+export type MemoryLocation={memorySection?:MemorySection;memoryTrack?:string;memoryQuery?:string;memoryPage?:number;memoryFocus?:string};
+export type WorkspaceLocation = MemoryLocation & { practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string;workbookDimension?:string };
 const views = new Set<WorkspaceView>(["today", "threads", "thread-detail", "learn", "library", "memory", "paper-detail", "workbook"]);
 const tabs = new Set(["start", "evidence", "problem", "agenda"]);
 const identifier = (value: string | null | undefined) => value && /^[a-zA-Z0-9_-]{1,120}$/.test(value) ? value : undefined;
 const text = (value:string|null,max:number) => value && value.length<=max && !Array.from(value).some(character=>character.charCodeAt(0)<32||character.charCodeAt(0)===127) ? value : undefined;
 const positiveInteger = (value:string|null) => { const parsed=Number(value); return Number.isInteger(parsed)&&parsed>=1&&parsed<=10000?parsed:undefined; };
+const memorySections = new Set<MemorySection>(['comparisons','reading','insights','preferences']);
+export const memoryLocation = ({memorySection,memoryTrack,memoryQuery,memoryPage,memoryFocus}:MemoryLocation):MemoryLocation=>({memorySection,memoryTrack,memoryQuery,memoryPage,memoryFocus});
 export function readWorkspaceLocation(hash: string): WorkspaceLocation {
   return parseWorkspaceLocation(hash, 0);
 }
@@ -52,6 +56,16 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     ...(workbookRoute&&identifier(params.get('workbookDimension'))?{workbookDimension:identifier(params.get('workbookDimension'))}:{}),
     ...(workbookRoute&&text(params.get('workbookFocus'),260)?{workbookFocus:text(params.get('workbookFocus'),260)}:{}) };
   if(practiceRoute&&/^(learning|task-[0-9]{1,2})$/.test(params.get('practice')||''))location.practiceId=params.get('practice')!;
+  if(view==='memory'){
+    const section=params.get('section') as MemorySection;
+    if(memorySections.has(section))location.memorySection=section;
+    if(!location.memorySection||location.memorySection==='comparisons'){
+      location.memoryTrack=identifier(params.get('route'));
+      location.memoryQuery=text(params.get('q'),160);
+      location.memoryPage=positiveInteger(params.get('page'));
+      location.memoryFocus=text(params.get('record'),240);
+    }
+  }
   const returnTo = validatedReturnHash({ ...location, returnTo: params.get('returnTo') || undefined }, depth);
   if(returnTo&&view==='paper-detail'&&from==='learn'){const origin=parseWorkspaceLocation(returnTo,depth+1);if(origin.workbookId&&origin.track&&text(params.get('readingFocus'),600))location.readingFocus=text(params.get('readingFocus'),600);}
   return returnTo ? { ...location, returnTo } : location;
@@ -101,6 +115,15 @@ export function workspaceHash(location: WorkspaceLocation): string {
     if(location.graphFocus)params.set('graphFocus',location.graphFocus);
   }
   if(location.view==='learn'&&location.workbookId&&location.track){params.set('workbookId',location.workbookId);if(location.practiceId&&/^(learning|task-[0-9]{1,2})$/.test(location.practiceId))params.set('practice',location.practiceId);}
+  if(location.view==='memory'){
+    if(location.memorySection&&memorySections.has(location.memorySection))params.set('section',location.memorySection);
+    if(!location.memorySection||location.memorySection==='comparisons'){
+      if(identifier(location.memoryTrack))params.set('route',location.memoryTrack!);
+      if(text(location.memoryQuery||null,160))params.set('q',location.memoryQuery!);
+      if(location.memoryPage&&location.memoryPage>1&&location.memoryPage<=8334)params.set('page',String(location.memoryPage));
+      if(text(location.memoryFocus||null,240))params.set('record',location.memoryFocus!);
+    }
+  }
   if(location.view==='workbook'){
     if(text(location.workbookId||null,240))params.set('workbookId',location.workbookId!);
     if(location.workbookPanel&&location.workbookPanel!=='evidence')params.set('workbookPanel',location.workbookPanel);

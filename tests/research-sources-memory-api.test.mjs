@@ -33,6 +33,26 @@ test('source and notebook APIs isolate owners, paginate raw notes, expose real s
     const next=await request('/api/research-memory?spaceId=mine&offset=24');assert.equal(next.items.length,2);assert.equal(next.nextOffset,null);
     const search=await request('/api/research-memory?spaceId=mine&q=unique100%25');assert.equal(search.total,1);assert.equal(search.items[0].paperId,'p0');
     await request('/api/research-memory?spaceId=mine&offset=-1',null,400);
+    const compareRows=[
+      insert('research_tracks',{id:'route-a',space_id:'mine',title_zh:'可核对的旧路线',title_en:'Older route'}),
+      insert('research_tracks',{id:'route-b',space_id:'mine',title_zh:'另一条路线',title_en:'Other route'}),
+      insert('research_comparison_workbooks',{id:'new-draft',track_id:'route-a',space_id:'mine',question:'New unsaved comparison',status:'draft',source_revision:'source',source_ids_json:'[]',policy:'evidence-workbook-v1',created_at:'2026-11-18 09:00:00'}),
+    ];
+    for(let n=0;n<14;n++){
+      const workbookId='record-'+n, trackId=n===13?'route-b':'route-a';
+      compareRows.push(insert('research_comparison_workbooks',{id:workbookId,track_id:trackId,space_id:'mine',question:n===0?'PI_GRAPH_FOCUS_V1:{"base":"Route A","focus":"校对旧研究问题"}':'Saved comparison '+n,status:'ready',source_revision:'source',source_ids_json:'[]',policy:'evidence-workbook-v1'}));
+      compareRows.push(insert('research_comparison_artifacts',{id:'artifact-'+n,workbook_id:workbookId,space_id:'mine',revision:1,value_json:JSON.stringify({decision:n===0?'Literal 100% original':'Saved judgment '+n}),created_at:'2026-11-16 08:00:00'}));
+    }
+    compareRows.push(insert('research_comparison_artifacts',{id:'artifact-latest',workbook_id:'record-0',space_id:'mine',revision:2,value_json:'{"decision":"Literal 100% revised","unresolved":"待查原文条件"}',created_at:'2026-11-17 08:00:00'}));
+    await sql(compareRows);
+    const comparisons='/api/research-memory?spaceId=mine&kind=comparisons';
+    const saved=await request(comparisons);assert.equal(saved.total,14);assert.equal(saved.nextOffset,12);assert.equal(saved.items[0].workbookId,'record-0');
+    assert.deepEqual([saved.items[0].revision,saved.items[0].questionZh,saved.items[0].decision,saved.items[0].unresolved],[2,'校对旧研究问题','Literal 100% revised','待查原文条件']);
+    assert.ok(!saved.items.some(item=>item.workbookId==='new-draft'));
+    const later=await request(comparisons+'&offset=12');assert.equal(later.items.length,2);assert.equal(later.nextOffset,null);
+    const found=await request(comparisons+'&q=100%25');assert.deepEqual(found.items.map(item=>item.workbookId),['record-0']);
+    const filtered=await request(comparisons+'&trackId=route-b');assert.deepEqual(filtered.items.map(item=>item.workbookId),['record-13']);
+    await request(comparisons,null,404,'another-owner-fixture-00002');
     const sources=await request('/api/research-sources?spaceId=mine');assert.equal(sources.plan.directionKey,'quantum_timing');
     const ol=sources.activity.find(a=>a.venue==='Optics Letters');assert.equal(ol.discovered,26);assert.equal(ol.recommended,1);assert.equal(ol.papers.length,2);
     // The normal reader refreshes untouched automatic defaults; manual choices survive.

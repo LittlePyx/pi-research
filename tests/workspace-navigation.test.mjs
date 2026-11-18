@@ -172,3 +172,14 @@ test('a comparison reading retains its specific check across refresh without lea
  const workbook=workspaceHash({view:'workbook',id:'r',space:'s',from:'library',returnTo:library});
  assert.equal(readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'workbook',returnTo:workbook})).returnTo,workbook);
 });
+
+test('a saved comparison retains the memory search, route, page and exact record through nested reading',()=>{
+ const memory=workspaceHash({view:'memory',space:'s',memorySection:'comparisons',memoryTrack:'r',memoryQuery:'Gaussian 100%',memoryPage:3,memoryFocus:'s:r:older'});
+ const workbook=workspaceHash({view:'workbook',id:'r',space:'s',workbookId:'s:r:older',from:'memory',returnTo:memory});
+ const paper=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'p',space:'s',from:'workbook',returnTo:workbook}));
+ assert.equal(paper.returnTo,workbook);
+ const restored=readWorkspaceLocation(readWorkspaceLocation(paper.returnTo).returnTo);
+ assert.deepEqual([restored.memorySection,restored.memoryTrack,restored.memoryQuery,restored.memoryPage,restored.memoryFocus],['comparisons','r','Gaussian 100%',3,'s:r:older']);
+ assert.equal(readWorkspaceLocation('#library?q=Gaussian&record=s%3Ar%3Aolder').memoryFocus,undefined);
+ assert.equal(readWorkspaceLocation('#memory?section=preferences&route=r&record=s%3Ar%3Aolder').memoryTrack,undefined);
+});

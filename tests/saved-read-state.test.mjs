@@ -17,7 +17,7 @@ function harness(entry='hook',props={scope:'a',url:'/api/preference-signals?spac
   useEffect(fn,deps){const i=index++,old=cells[i];if(!same(old?.deps,deps)){cells[i]={deps,cleanup:old?.cleanup};pending.push(()=>{cells[i].cleanup?.();cells[i].cleanup=fn()})}}
  };
  const timer=(fn,ms)=>{const id=++timerId;timers.set(id,{fn,at:clock+ms});return id};
- const files={'../../lib/saved-read':'lib/saved-read.ts','./saved-read':'lib/saved-read.ts','./use-saved-read':'app/components/use-saved-read.ts','../../lib/saved-memory-response':'lib/saved-memory-response.ts','./research-preferences':'app/components/research-preferences.tsx'};
+ const files={'../../lib/saved-read':'lib/saved-read.ts','./saved-read':'lib/saved-read.ts','./use-saved-read':'app/components/use-saved-read.ts','../../lib/saved-memory-response':'lib/saved-memory-response.ts','../../lib/research-memory-view':'lib/research-memory-view.ts','./graph-task.ts':'lib/graph-task.ts','../../lib/workspace-navigation':'lib/workspace-navigation.ts','./research-preferences':'app/components/research-preferences.tsx'};
  function load(file){
   if(modules.has(file))return modules.get(file);const mod={exports:{}};modules.set(file,mod.exports);
   const code=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
@@ -100,10 +100,14 @@ test('an emptied last page preserves the workspace count and offers access to th
 });
 
 test('comparison route changes clear another route while a failed refresh retains the current saved comparison',async()=>{
- const h=harness('resume',{spaceId:'owned',locale:'en',routes:[{id:'a',title:'Route A'},{id:'b',title:'Route B'}],onCompare:()=>{}});
- h.requests.shift().resolve({workbook:{artifact:{value:{unresolved:'Saved question A'}}}});await settle();h.render();h.nodes().find(n=>n.type==='select').props.onChange({target:{value:'b'}});h.render();
- assert.doesNotMatch(h.text(),/Saved question A/);h.requests.shift().resolve({workbook:{artifact:{value:{unresolved:'Saved question B'}}}});await settle();h.render();
- h.nodes().find(n=>n.type==='button'&&n.props.className==='pi-saved-refresh').props.onClick();h.render();h.requests.shift().reject(Error('offline'));await settle();h.render();
- assert.match(h.text(),/Saved question B/);assert.match(h.text(),/Previously loaded comparison/);assert.doesNotMatch(h.text(),/No saved comparison/);
- h.nodes().find(n=>n.type==='button'&&n.props.children==='Retry').props.onClick();h.render();h.requests.shift().resolve({workbook:{artifact:{value:{unresolved:'Refreshed question B'}}}});await settle();h.render();assert.match(h.text(),/Refreshed question B/);h.unmount();
+ const row=(id,question)=>({items:[{workbookId:'saved:'+id,trackId:id,routeZh:id,routeEn:id,questionZh:question,questionEn:question,decision:'',unresolved:'',savedAt:'2026-10-13',revision:1}],total:1,offset:0,nextOffset:null});
+ const h=harness('resume',{spaceId:'owned',locale:'en',routes:[{id:'a',title:'Route A'},{id:'b',title:'Route B'}],location:{memoryTrack:'a'},onLocationChange:patch=>{h.props.location={...h.props.location,...patch}}});
+ h.requests.shift().resolve(row('a','Saved question A'));await settle();h.render();
+ h.nodes().find(n=>n.type==='select').props.onChange({target:{value:'b'}});h.render();
+ assert.doesNotMatch(h.text(),/Saved question A/);h.requests.shift().resolve(row('b','Saved question B'));await settle();h.render();
+ const link=h.nodes().find(n=>n.type==='a').props.href;
+ assert.match(link,/workbook\/b.*workbookId=saved%3Ab/);
+ h.props.location={memoryTrack:'b',memoryQuery:'updated'};h.render();h.requests.shift().reject(Error('offline'));await settle();h.render();
+ assert.match(h.text(),/Saved question B/);assert.match(h.text(),/Previously loaded records/);assert.doesNotMatch(h.nodes().find(n=>n.type==='a').props.href,/updated/);
+ h.nodes().find(n=>n.type==='button'&&n.props.children==='Retry').props.onClick();h.render();h.requests.shift().resolve(row('b','Refreshed question B'));await settle();h.render();assert.match(h.text(),/Refreshed question B/);h.unmount();
 });

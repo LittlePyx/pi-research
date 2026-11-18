@@ -1,6 +1,5 @@
 import type {PreferenceSignal} from './preference-memory';
-import type {ResearchMemoryItem} from './research-memory-view';
-import type {WorkbookState} from './research-workbook';
+import type {ResearchMemoryItem,SavedComparison} from './research-memory-view';
 import {SavedReadError} from './saved-read';
 
 const record=(value:unknown):value is Record<string,unknown>=>typeof value==='object'&&value!==null&&!Array.isArray(value);
@@ -15,8 +14,8 @@ export function memoryResponse(value:unknown):MemoryResponse{
   if(!record(value)||!Array.isArray(value.items)||!Number.isSafeInteger(value.total)||Number(value.total)<0||!Number.isSafeInteger(value.offset)||Number(value.offset)<0||!(value.nextOffset===null||Number.isSafeInteger(value.nextOffset)&&Number(value.nextOffset)>Number(value.offset))||!value.items.every(item=>record(item)&&['paperId','title','note','updatedAt','status','takeawayZh','takeawayEn'].every(key=>typeof item[key]==='string')&&['methodsZh','methodsEn','questionsZh','questionsEn'].every(key=>strings(item[key]))))throw new SavedReadError('invalid');
   return value as MemoryResponse;
 }
-export function workbookResponse(value:unknown):{workbook:WorkbookState|null}{
-  if(!record(value)||!(value.workbook===null||record(value.workbook)))throw new SavedReadError('invalid');
-  if(record(value.workbook)&&value.workbook.artifact!=null){const artifact=value.workbook.artifact;if(!record(artifact)||!record(artifact.value))throw new SavedReadError('invalid');const fields=artifact.value;if(['unresolved','decision'].some(key=>fields[key]!=null&&typeof fields[key]!=='string'))throw new SavedReadError('invalid')}
-  return value as {workbook:WorkbookState|null};
+export type ComparisonMemoryResponse={items:SavedComparison[];total:number;offset:number;nextOffset:number|null};
+export function comparisonMemoryResponse(value:unknown):ComparisonMemoryResponse{
+  if(!record(value)||!Array.isArray(value.items)||!Number.isSafeInteger(value.total)||Number(value.total)<0||!Number.isSafeInteger(value.offset)||Number(value.offset)<0||!(value.nextOffset===null||Number.isSafeInteger(value.nextOffset)&&Number(value.nextOffset)>Number(value.offset))||!value.items.every(item=>record(item)&&Number.isSafeInteger(item.revision)&&Number(item.revision)>0&&['workbookId','trackId','routeZh','routeEn','questionZh','questionEn','decision','unresolved','savedAt'].every(key=>typeof item[key]==='string')))throw new SavedReadError('invalid');
+  return value as ComparisonMemoryResponse;
 }
