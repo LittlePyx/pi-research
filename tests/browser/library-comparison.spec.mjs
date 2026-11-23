@@ -208,6 +208,13 @@ test('route paper list filters, reads and compares without choosing the route tw
   await expect(search).toHaveValue('universality');
   await expect(result).toBeInViewport();
   await expect(tray(page)).toContainText('2/3');
+  const questionEditor=page.locator('.pi-materials-edit-question');
+  await questionEditor.locator('summary').click();
+  const editor=questionEditor.getByRole('textbox',{name:'本次比较问题'});
+  await editor.fill('');
+  await editor.pressSequentially('Compare both');
+  await expect(editor).toHaveValue('Compare both');
+  await editor.fill(sample.content.questionZh);
   await taskClick(page,{name:/^(开始新比较|继续这次比较) →$/});
   await expect(page).toHaveURL(/#workbook\/acceptance-quantum/);
   await checkQuestion(page,sample.content.questionZh);

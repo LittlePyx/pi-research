@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ResearchTrack } from '../../lib/research-map';
 import type { LibraryPaper } from '../../lib/library-catalog';
 import { comparisonEligibilityText } from '../../lib/comparison-eligibility';
@@ -45,7 +45,12 @@ export function RouteMaterialsContext({spaceId,track,tracks,locale,selection,onT
   const {data,error,reload}=useSavedRead(key,'/api/research-problem?'+new URLSearchParams({spaceId,trackId:track.id}),decodeQuestion);
   const problem=data?.problemState.problem;
   const question=problem?.status==='active'?problem.question:'';
+  const questionEditor=useRef<HTMLDetailsElement>(null);
+  const needsQuestion=showEditor&&!selection.value.question&&selection.value.papers.length>0;
   useEffect(()=>{if(question)selection.seedQuestion(question,true);},[key,question,selection]);
+  useEffect(()=>{
+    if(needsQuestion&&questionEditor.current)questionEditor.current.open=true;
+  },[needsQuestion]);
 
   return <div className="pi-materials-context">
     <label>{zh?'当前路线':'Current route'}
@@ -55,7 +60,7 @@ export function RouteMaterialsContext({spaceId,track,tracks,locale,selection,onT
     </label>
     {question&&<div className="pi-materials-question"><small>{zh?'研究问题':'Research question'}</small><p><MathText inline>{question}</MathText></p></div>}
     {error&&<p className="pi-materials-notice" role="status">{zh?'研究问题暂未载入。':'Could not load the research question.'} <button type="button" onClick={reload}>{zh?'重试':'Retry'}</button></p>}
-    {showEditor&&<details className="pi-materials-edit-question" open={!selection.value.question&&selection.value.papers.length>0||undefined}>
+    {showEditor&&<details className="pi-materials-edit-question" ref={questionEditor}>
       <summary>{selection.value.question&&selection.value.question!==question?(zh?'查看本次比较问题':'View the comparison question'):(zh?'设置本次比较问题':'Set the comparison question')}</summary>
       <label>{zh?'本次比较问题':'Comparison question'}<textarea maxLength={1000} rows={2}
         value={selection.value.question} onChange={event=>selection.change({...selection.value,question:event.target.value})}
