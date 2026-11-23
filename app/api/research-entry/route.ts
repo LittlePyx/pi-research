@@ -36,7 +36,11 @@ export async function GET(request: Request) {
   if (!db) return Response.json({error:'Space not found'}, {status:404});
   const goalId = new URL(request.url).searchParams.get('goalId') || '';
   const result = await read(db, spaceId, goalId);
-  if (goalId && !result.goal) return Response.json({error:'Saved question could not be found in this space'}, {status:404,headers:{'Cache-Control':'private, no-store'}});
+  if (goalId && !result.goal) {
+    const removed = await db.prepare('SELECT 1 FROM research_entry_removals WHERE space_id=? AND problem_id=?').bind(spaceId,goalId).first();
+    if (removed) return Response.json({removedGoalId:goalId}, {status:410,headers:{'Cache-Control':'private, no-store'}});
+    return Response.json({error:'Saved question could not be found in this space'}, {status:404,headers:{'Cache-Control':'private, no-store'}});
+  }
   return Response.json(result, {headers:{'Cache-Control':'private, no-store'}});
 }
 
@@ -95,8 +99,8 @@ export async function DELETE(request: Request) {
   if (!goal) return Response.json({error:'Question not found'}, {status:404});
   await db.batch([
     db.prepare('INSERT OR IGNORE INTO research_entry_removals(space_id,problem_id) VALUES(?,?)').bind(spaceId,goalId),
-    db.prepare("UPDATE research_problems SET status='paused',updated_at=CURRENT_TIMESTAMP WHERE id=? AND space_id=?").bind(goalId,spaceId),
-    db.prepare("UPDATE research_tracks SET monitoring_status='paused',updated_at=CURRENT_TIMESTAMP WHERE id=? AND space_id=?").bind(goal.track_id,spaceId),
+    db.prepare("UPDATE research_problems SET status='paused',updated_at=CURRENT_TIMESTAMP WHERE id=? AND space_id=? AND status='active'").bind(goalId,spaceId),
+    db.prepare("UPDATE research_tracks SET monitoring_status='paused',updated_at=CURRENT_TIMESTAMP WHERE id=? AND space_id=? AND monitoring_status='active'").bind(goal.track_id,spaceId),
     db.prepare("DELETE FROM monitor_query_plans WHERE space_id=? AND plan_date>=date('now')").bind(spaceId),
   ]);
   return Response.json({removed:true,goal:null,papers:[]},{headers:{'Cache-Control':'private, no-store'}});

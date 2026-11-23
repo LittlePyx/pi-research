@@ -64,8 +64,8 @@
 .v2-app.pi-workspace .pi-question-entry :is(.pi-entry-actions button,footer>button:not(.primary),[role=alert]>button,.pi-first-read,.pi-discovery-link,.pi-home-next header>button):hover:not(:disabled),
 .v2-app.pi-workspace .pi-discovery-brief :is(header>button,section>button):hover:not(:disabled),
 .v2-app.pi-workspace .pi-discovery-brief>button:hover:not(:disabled) { background:#edf3f8; border-color:#8da6bc; }
-.v2-app.pi-workspace .pi-question-entry .pi-entry-actions .pi-action-remove { color:#92504d; border-color:#dfc7c5; background:#fffafa; }
-.v2-app.pi-workspace .pi-question-entry .pi-entry-actions .pi-action-remove:hover:not(:disabled) { background:#faeeed; border-color:#bb8580; }
+.v2-app.pi-workspace .pi-question-entry .pi-entry-actions .pi-action-remove { color:#734b46; border-color:transparent; background:transparent; }
+.v2-app.pi-workspace .pi-question-entry .pi-entry-actions .pi-action-remove:hover:not(:disabled) { background:#faeeed; border-color:#dfc7c5; }
 .pi-question-remove { margin:16px 0 20px; }
 .pi-question-remove [role="group"] { padding:18px 20px; border:1px solid #dfc7c5; border-radius:8px; background:#fffafa; }
 .v2-app.pi-workspace .pi-question-remove p { margin:0 0 14px; font-size:14px; color:#604e4d; }
@@ -77,3 +77,39 @@
 .v2-app.pi-workspace .pi-question-entry button:disabled { cursor:not-allowed; opacity:.5; }
 @media(max-width:620px) { .pi-entry-actions { width:100%; } .pi-entry-actions button { flex:1 1 auto; } }
 @media(prefers-reduced-motion:reduce) { .pi-entry-actions button { transition:none!important; } }
+
+.v2-app.pi-workspace.pi-product .pi-question-entry:has(.pi-today-question) { padding:0; border:0; background:transparent; }
+.v2-app.pi-workspace .pi-today-question { border:1px solid #e0e6ed; background:#f7f9fc; border-radius:12px; padding:16px 20px; margin-bottom:20px; }
+.v2-app.pi-workspace .pi-today-question > header { align-items:start; gap:10px 16px; }
+.v2-app.pi-workspace .pi-today-question > header > div:first-child { flex:1 1 300px; min-width:0; }
+.v2-app.pi-workspace .pi-today-question > header h2 { font-size:14px; line-height:1.55; font-weight:650; color:#52647b; }
+.v2-app.pi-workspace .pi-today-question .pi-question-title { font-size:clamp(16px,1.6vw,19px); line-height:1.5; font-weight:600; color:#24374e; margin:5px 0 0; overflow-wrap:anywhere; }
+.v2-app.pi-workspace .pi-today-question .pi-entry-actions { gap:6px; }
+.v2-app.pi-workspace .pi-today-question .pi-entry-actions > button { min-height:38px; padding:5px 10px; font-size:13px; }
+.v2-app.pi-workspace .pi-today-question .pi-question-feedback { font-size:13px; color:#3e6656; margin:8px 0 0; }
+.v2-app.pi-workspace .pi-today-question .pi-question-remove { margin:12px 0 0; }
+.v2-app.pi-workspace .pi-today-question .pi-question-remove [role="group"] { padding:12px 14px; }
+.v2-app.pi-workspace .pi-today-question .pi-confirm-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.v2-app.pi-workspace .pi-today-question .pi-confirm-actions button { margin:0; }
+.v2-app.pi-workspace .pi-today-question .pi-question-remove [role="alert"] { margin:10px 0 0; color:#973b35; }
+.v2-app.pi-workspace .pi-today-question form { margin-top:12px; gap:12px; }
+.v2-app.pi-workspace .pi-today-question form p { font-size:13px; margin:0; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-research-digest { margin-top:18px; padding:0; border:0; background:transparent; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-heading { margin:0 0 12px; padding:0 0 10px; border-bottom:1px solid #e2e7ee; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-heading h3 { font-size:24px !important; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-heading p { margin:0 0 2px; }
+.v2-app.pi-workspace .pi-home-entry .pi-digest-heading > span { font-size:12px; color:#566c82; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-scope { margin:0 0 10px; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-grid { gap:14px; margin-bottom:14px; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-grid > article { background:#fff; border:1px solid #e2e7ee; border-radius:12px; padding:14px 16px; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-grid > article > footer { justify-content:flex-start; gap:8px; padding-top:8px; }
+.v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-grid .pi-digest-read { background:#eef5fe; border-color:#ccdcef; color:#254c78; }
+.v2-app.pi-workspace .pi-home-entry .pi-today-overview > summary { padding:12px 0; border-top:1px solid #e2e7ee; color:#315573; font-size:14px; cursor:pointer; }
+.v2-app.pi-workspace .pi-home-entry .pi-today-overview { margin-top:12px; }
+.v2-app.pi-workspace .pi-home-entry .pi-today-overview .pi-digest-overview { margin-bottom:12px; max-width:100%; }
+@media(max-width:620px) {
+ .v2-app.pi-workspace .pi-today-question { padding:12px; }
+ .v2-app.pi-workspace .pi-today-question .pi-entry-actions { width:auto; }
+ .v2-app.pi-workspace .pi-today-question .pi-entry-actions button { flex:0 1 auto; min-height:44px; }
+ .v2-app.pi-workspace.pi-product .pi-home-entry .pi-digest-grid > article { padding:14px; }
+}

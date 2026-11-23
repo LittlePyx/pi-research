@@ -65,7 +65,8 @@ test('Question entry persists an owned idempotent problem and exposes only verif
   assert.equal((await remove(owner,'other-entry')).status,404);
   assert.equal((await remove()).body.removed,true);assert.equal((await remove()).status,200);
   assert.deepEqual(await request('/api/research-entry?spaceId=entry'),{goal:null,papers:[]},'do not resurrect an older question');
-  await request('/api/research-entry?spaceId=entry&goalId='+newer.goal.id,null,404);
+  assert.deepEqual(await request('/api/research-entry?spaceId=entry&goalId='+newer.goal.id,null,410),{removedGoalId:newer.goal.id});
+  await request('/api/research-entry?spaceId=other-entry&goalId='+newer.goal.id,null,404);
   const kept=await sql([{sql:'SELECT status FROM research_problems WHERE id=?',values:[newer.goal.id]},{sql:'SELECT monitoring_status FROM research_tracks WHERE id=?',values:[newer.goal.trackId]},{sql:"SELECT note FROM paper_reading_progress WHERE paper_id='related'"},{sql:"SELECT saved FROM paper_feedback WHERE paper_id='related'"}]);
   assert.equal(kept[0].results[0].status,'paused');assert.equal(kept[1].results[0].monitoring_status,'paused');assert.match(kept[2].results[0].note,/Isolated reading note/);assert.equal(kept[3].results[0].saved,1);
   const restored=await request('/api/research-entry',{...body,question:newer.goal.question});

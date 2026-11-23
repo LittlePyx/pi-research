@@ -91,6 +91,15 @@ test('without a question the field brief keeps multiple readings and a compact c
  assert.match(html,/YOUR RESEARCH FIELD/);assert.match(html,/Finite blocklength coding/);assert.match(html,/pi-digest-grid/);assert.match(html,/Field recommendation/);assert.match(html,/Next field reading/);assert.match(html,/Continue reading: /);
  assert.doesNotMatch(html,/<form|Empty placeholder/);assert.equal(html.split('Field recommendation').length-1,1);
 });
+
+test('a cancelled question cannot keep its task-only cards or evidence button on the home page',()=>{
+ const taskBrief={snapshotId:'old',summary:{briefDate:'2026-10-16'},scope:{problemId:'g'},
+  records:[{paperId:'old',selected:true,title:'Old task paper',review:{whyReadEn:'Old task reason'}}],
+  currentStates:[{paperId:'old',recommended:true,readingStatus:'unread',feedback:null}]};
+ const html=render({goal:null,papers:[]},null,[],false,'home',[paper('Field recommendation')],{taskBrief});
+ assert.match(html,/Field recommendation/);
+ assert.doesNotMatch(html,/Old task paper|Old task reason|View abstract evidence/);
+});
 test('question mode never borrows unrelated field recommendations to fill a missing match',()=>{
  const html=render({goal,papers:[]},null,[],false,'home',[paper('Unrelated field paper')]);
  assert.doesNotMatch(html,/Unrelated field paper|FIELD BRIEF/);
@@ -132,6 +141,8 @@ test('an empty home offers a concrete next action and waiting never starts anoth
  const waiting=render({goal,papers:[]},null,[],false,'home',[],{scanStatus:'Reviewing candidates',blocked:'Scan already running'});
  assert.match(waiting,/View progress &amp; recovery/);
  assert.doesNotMatch(waiting,/>Find related papers</);
+ const bannerAlreadyVisible=render({goal,papers:[]},null,[],false,'home',[],{scanStatus:'Reviewing candidates',discoveryNoticeVisible:true});
+ assert.doesNotMatch(bannerAlreadyVisible,/pi-home-next-action/);
  const loading=render(null,null,[],false,'home');
  assert.doesNotMatch(loading,/pi-home-next-action/);
 });

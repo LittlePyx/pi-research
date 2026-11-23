@@ -9,8 +9,6 @@
 .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-home-entry { border:0; background:transparent; border-radius:0; padding:0; margin:28px 0 40px; }
 .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-home-entry>header h2 { font-size:14px; font-weight:600; color:#63727c; }
 .pi-home-entry>header>button { font-size:14px; color:#63727c; }
-.v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-home-entry .pi-home-question { display:flex; justify-content:space-between; gap:16px; width:100%; color:#34434e; font-size:17px; margin-bottom:20px; }
-.pi-home-question>span:first-child { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-home-lead,.v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-home-entry .pi-question-resume { display:block; margin:0 0 32px; padding:30px 32px; border:1px solid #dce3e8; border-radius:12px; background:#fff; }
 .pi-home-entry .pi-entry-eyebrow { font-size:13px; letter-spacing:.06em; color:#687e8b; margin:0 0 14px; }
 .v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-home-lead h3,.v2-app.pi-workspace .pi-focus-today.pi-today-home .pi-home-entry .pi-question-resume h4 { font-size:26px; line-height:1.4; font-weight:600; margin:0 0 16px; color:#202e38; overflow-wrap:anywhere; }

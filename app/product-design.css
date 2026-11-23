@@ -251,10 +251,6 @@
 .v2-app.pi-workspace.pi-product .v2-learn-page .pi-goal-planner { border-color: #e7eaee; border-radius: 12px; box-shadow: none; }
 .v2-app.pi-workspace.pi-product .v2-modal { border: 1px solid #e7eaee; border-radius: 16px; background: #fff; box-shadow: 0 24px 80px #18223026; }
 .v2-app.pi-workspace.pi-product .v2-modal > header { border-color: #edf0f3; }
-.v2-app.pi-workspace.pi-product .pi-entry-more { position: relative; margin: 0; }
-.v2-app.pi-workspace.pi-product .pi-entry-more > summary { display: grid; place-items: center; list-style: none; width: 36px; min-height: 36px; border: 1px solid #e0e4e9; border-radius: 7px; color: #687180; background: #fff; font-size: 20px; }
-.v2-app.pi-workspace.pi-product .pi-entry-more summary::-webkit-details-marker { display: none; }
-.v2-app.pi-workspace.pi-product .pi-entry-more > button { position: absolute; right: 0; top: calc(100% + 6px); z-index: 8; width: max-content; padding: 10px 16px; background: #fff; border: 1px solid #e0e4e9; border-radius: 8px; box-shadow: 0 8px 24px #18223014; }
 .v2-app.pi-workspace.pi-product .v2-route-management { border: 1px solid #e7eaee; border-radius: 10px; background: #fafbfc; }
 .v2-app.pi-workspace.pi-product .v2-route-management > summary { padding: 16px 20px; }
 .v2-app.pi-workspace.pi-product .v2-route-management > summary strong { font: 500 13px/1.7 var(--ui-font); }
