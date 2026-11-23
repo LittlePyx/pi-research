@@ -112,6 +112,8 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
   if(event.key!=='Escape')return;
   event.preventDefault();event.stopPropagation();cancel();
  };
+ const closeConfirmationOnEscape=(event:React.KeyboardEvent)=>handleEscape(event,keepQuestion);
+ const discardDraftOnEscape=(event:React.KeyboardEvent)=>handleEscape(event,discardDraft);
  const goal=result?.goal;
  const inactive=Boolean(goal&&(goal.status!=='active'||goal.monitoringStatus!=='active'));
  const currentBrief=result&&taskBrief&&(!demo||!goal||goal.trackId)&&(taskBrief.scope.problemId||'')===(goal?.id||'')?taskBrief:null;
@@ -154,25 +156,25 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
       </div>}
     </header>
     {removed&&!goal&&!editing&&<p className="pi-question-feedback" role="status">{zh?'已取消跟踪。论文和笔记可继续阅读。':'Tracking stopped. Your papers and notes remain available.'}</p>}
-    {goal&&!editing&&removing&&<div className="pi-question-remove" onKeyDown={event=>handleEscape(event,keepQuestion)}>
+    {goal&&!editing&&removing&&<div className="pi-question-remove">
       <div role="group" aria-label={zh?'确认取消跟踪':'Confirm stopping tracking'} aria-busy={busy}>
         <p>{zh?'取消后，未来的检索将停止跟踪此问题。已有论文、收藏、笔记和研究记录都会保留。':'Stop tracking this question in future searches? Papers, saves, notes and research history will be kept.'}</p>
         <div className="pi-confirm-actions">
-          <button ref={keepButton} type="button" disabled={busy} onClick={keepQuestion}>{error?(zh?'关闭确认':'Close confirmation'):(zh?'保留问题':'Keep question')}</button>
-          <button className="pi-action-remove-confirm" type="button" disabled={busy} onClick={()=>void remove()}>{busy?(zh?'正在取消跟踪…':'Stopping…'):(zh?'确认取消跟踪':'Confirm stop tracking')}</button>
+          <button ref={keepButton} type="button" disabled={busy} onClick={keepQuestion} onKeyDown={closeConfirmationOnEscape}>{error?(zh?'关闭确认':'Close confirmation'):(zh?'保留问题':'Keep question')}</button>
+          <button className="pi-action-remove-confirm" type="button" disabled={busy} onClick={()=>void remove()} onKeyDown={closeConfirmationOnEscape}>{busy?(zh?'正在取消跟踪…':'Stopping…'):(zh?'确认取消跟踪':'Confirm stop tracking')}</button>
         </div>
         {error&&<p role="alert">{error}</p>}
       </div>
     </div>}
   {readError&&<p role="alert">{zh?'研究问题暂未载入，已有内容保留。':'Could not load the research question; saved content is preserved.'} <button type="button" onClick={()=>setRetry(n=>n+1)}>{zh?'重试':'Retry'}</button></p>}
   {!result&&!readError&&<p role="status">{zh?'正在读取研究问题…':'Loading your question…'}</p>}
-  {editing&&<form onSubmit={event=>void submit(event)} onKeyDown={event=>handleEscape(event,discardDraft)}>
+  {editing&&<form onSubmit={event=>void submit(event)}>
    {spaceName&&<p className="pi-question-status">{zh?'保存到：':'Save to: '}{spaceName}</p>}
-   <label>{zh?'你想弄清什么问题？':'What do you want to understand?'}<textarea ref={questionInput} rows={3} minLength={10} maxLength={520} required disabled={busy} value={question} onChange={e=>setQuestion(e.target.value)} placeholder={zh?'例如：随机局部化中的协方差控制如何影响 KLS 谱隙界？':'For example: how does covariance control in stochastic localization affect KLS bounds?'}/></label>
-   <label>{zh?'起点论文（选填）':'Starting paper (optional)'}<input maxLength={300} disabled={busy} value={seed} onChange={e=>setSeed(e.target.value)} placeholder={zh?'论文题名或 DOI，作为待核对线索':'Title or DOI, used as an unverified lead'}/></label>
+   <label>{zh?'你想弄清什么问题？':'What do you want to understand?'}<textarea ref={questionInput} rows={3} minLength={10} maxLength={520} required disabled={busy} value={question} onChange={e=>setQuestion(e.target.value)} onKeyDown={discardDraftOnEscape} placeholder={zh?'例如：随机局部化中的协方差控制如何影响 KLS 谱隙界？':'For example: how does covariance control in stochastic localization affect KLS bounds?'}/></label>
+   <label>{zh?'起点论文（选填）':'Starting paper (optional)'}<input maxLength={300} disabled={busy} value={seed} onChange={e=>setSeed(e.target.value)} onKeyDown={discardDraftOnEscape} placeholder={zh?'论文题名或 DOI，作为待核对线索':'Title or DOI, used as an unverified lead'}/></label>
    <p>{demo?(zh?'演示可保存本次体验的问题，不执行检索；自定义问题不会套用预设阅读结果。':'The demo keeps your question for this session without searching. Custom questions do not inherit preset results.'):(zh?'确认后加入本空间研究目标，用于后续检索与评审；先找文献，再核对假设、方法与局限。':'Confirm to add a research goal for future discovery and review, then check papers’ assumptions, methods and limitations.')}</p>
    {error&&<p role="alert">{error}</p>}
-   <footer><button className="primary" disabled={busy||question.trim().length<10} type="submit">{busy?(zh?'正在保存…':'Saving…'):demo?(zh?'保存演示问题':'Save demo question'):blocked?(zh?'确认问题':'Confirm question'):(zh?'确认问题并查找文献':'Confirm & find papers')}</button><button type="button" disabled={busy} onClick={discardDraft}>{zh?'放弃输入':'Discard input'}</button></footer>
+   <footer><button className="primary" disabled={busy||question.trim().length<10} type="submit" onKeyDown={discardDraftOnEscape}>{busy?(zh?'正在保存…':'Saving…'):demo?(zh?'保存演示问题':'Save demo question'):blocked?(zh?'确认问题':'Confirm question'):(zh?'确认问题并查找文献':'Confirm & find papers')}</button><button type="button" disabled={busy} onClick={discardDraft} onKeyDown={discardDraftOnEscape}>{zh?'放弃输入':'Discard input'}</button></footer>
   </form>}
   </div>
   {mode!=='home'&&(editing||!goal)&&continuation}

@@ -36,21 +36,20 @@ export function focusSimilarity(origin:SimilarityPaper,papers:SimilarityPaper[],
 }
 
 export function buildCitationSimilarity(seed:ProfiledPaper,candidates:ProfiledPaper[]):SimilarityMap {
-  const paperRecords=[seed,...candidates];
-  const profiles=paperRecords.map(paper=>citationProfile(paper.links));
+  const paperRecords=[seed,...candidates].map(({links,...paper})=>({paper,profile:citationProfile(links)}));
   const edges:SimilarityEdge[]=[];
   for(let i=0;i<paperRecords.length;i++)for(let j=i+1;j<paperRecords.length;j++){
-    const a=profiles[i],b=profiles[j];
+    const {paper:first,profile:a}=paperRecords[i],{paper:second,profile:b}=paperRecords[j];
     const references=[...a.references].filter(([id])=>b.references.has(id));
     const citing=[...a.citing].filter(([id])=>b.citing.has(id));
     const common=references.length+citing.length;
     if(common<2)continue;
     const sizeA=a.references.size+a.citing.size,sizeB=b.references.size+b.citing.size;
     const weight=common/Math.sqrt(sizeA*sizeB);
-    edges.push({from:paperRecords[i].id,to:paperRecords[j].id,weight,references:references.length,citing:citing.length,
+    edges.push({from:first.id,to:second.id,weight,references:references.length,citing:citing.length,
       examples:[...references,...citing].map(([,title])=>title).slice(0,6),source:'Semantic Scholar'});
   }
-  const papers=paperRecords.map(({links,...paper})=>paper);
+  const papers=paperRecords.map(({paper})=>paper);
   return focusSimilarity(papers[0],papers.slice(1),edges);
 }
 

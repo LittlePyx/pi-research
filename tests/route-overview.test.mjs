@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 function overviewHarness(){
  const calls=[];
  const snapshots=new Map();
- const module={exports:{}};
+ const exports={};
  const code=ts.transpileModule(readFileSync(new URL('../app/components/route-start.tsx',import.meta.url),'utf8'),
   {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  new Function('require','exports',code)(name=>{
@@ -19,11 +19,11 @@ function overviewHarness(){
   if(name.endsWith('.css'))return {};
   if(name.startsWith('../../lib/'))return require('../lib/'+name.split('/').at(-1)+'.ts');
   return require(name);
- },module.exports);
+ },exports);
  const props={userId:'user',spaceId:'s',trackId:'r',active:true,locale:'zh',selection:{value:{question:'',papers:[]},seedQuestion(){}},
   onResume:(...args)=>calls.push(args),onCompare:(...args)=>calls.push(args)};
  function render(){
-  const tree=module.exports.RouteStart(props),buttons=[];
+  const tree=exports.RouteStart(props),buttons=[];
   function walk(node){if(Array.isArray(node))node.forEach(walk);else if(node&&typeof node==='object'){if(node.type==='button')buttons.push(node);walk(node.props?.children)}}
   walk(tree);
   return {buttons,text:JSON.stringify(tree)};

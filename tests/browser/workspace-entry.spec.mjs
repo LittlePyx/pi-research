@@ -83,6 +83,9 @@ test('the route task is the only route learning entry and restores its origin af
   const current=page.getByRole('region',{name:'当前任务',exact:true});
   await expect(current.getByRole('button')).toHaveCount(1);
   await expect(page.getByRole('button',{name:'补充基础阅读',exact:true})).toHaveCount(0);
+  await page.locator('.v2-route-management > summary').click();
+  await expect(page.locator('.v2-route-management')).toHaveAttribute('open','');
+  await expect(page.locator('.v2-research-decision-next')).toHaveCount(0);
   await page.getByRole('navigation',{name:'路线工作区'}).getByRole('button',{name:'任务',exact:true}).click();
   await expect(page).toHaveURL(/#thread\/acceptance-quantum\/agenda/);
   const origin=new URL(page.url()).hash;
