@@ -45,21 +45,12 @@ test("focus and origin rings remain visually distinct on desktop and narrow scre
   assert.match(styles, /@media \(max-width: 840px\)[\s\S]*?\.v2-paper-network-stage\.discovery-mode[^}]*grid-template-columns:\s*1fr/);
 });
 
-test("suggested reading order uses the persisted learning path on desktop and narrow screens", async () => {
-  const [client, styles] = await Promise.all([
-    readNetworkClient(),
-    readFile(stylesPath, "utf8"),
-  ]);
-
-  assert.match(client, /function ReadingOrderWorkbench/);
-  assert.match(client, /learningState: LearningPathState/);
-  assert.match(client, /const path = learningState\.path/);
-  assert.match(client, /activeLearningState\.path\?\.steps\.find/);
-  assert.match(client, /paperNetworkMode === "citations" \? <CitationFlowWorkbench[\s\S]*: <ReadingOrderWorkbench/);
-  assert.doesNotMatch(client, /<PaperNetworkGraph[^>]*mode="path"/);
-  assert.match(client, /不表示严格先后，也不会把 Pi 图谱边冒充可执行计划/);
-  assert.match(client, /<LearningStageWorkspace /);
-  assert.match(client, /LearningStageNavigation steps=\{path.steps\}/);
-  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.v2-learning-now-guidance[^}]*grid-template-columns:\s*1fr/);
-  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.v2-reading-fallback-groups[^}]*grid-template-columns:\s*1fr/);
+test("the reading trail links to the route plan and leaves the learning path on its own page", async () => {
+  const client=await readNetworkClient();
+  assert.match(client,/function ReadingOrderWorkbench/);
+  assert.match(client,/activeLearningState\.path\?\.steps\.find/);
+  assert.match(client,/onAgenda=\{\(\)=>openThread\(routeBrowseTrack,"agenda"\)\}/);
+  assert.match(client,/在研究计划中安排任务/);
+  assert.doesNotMatch(client,/<PaperNetworkGraph[^>]*mode="path"/);
+  assert.doesNotMatch(client,/const needsLearningPath = .*paperNetworkMode/);
 });

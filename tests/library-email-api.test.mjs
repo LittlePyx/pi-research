@@ -4,11 +4,23 @@ import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import ts from 'typescript';
 import {Miniflare} from 'miniflare';
-import {focusCitationRelations,graphIdentifier} from '../lib/library-graph.ts';
+import {focusCitationRelations,graphIdentifier,mergeRouteCitations} from '../lib/library-graph.ts';
 import {nextDigestAt,shanghaiDate,escapeEmail} from '../lib/email-digest.ts';
 
 test('citation focus separates direct, intermediate and disconnected links',()=>{const edges=[{sourcePaperId:'b',targetPaperId:'a'},{sourcePaperId:'c',targetPaperId:'b'},{sourcePaperId:'y',targetPaperId:'x'}];const s=focusCitationRelations(edges,'a');assert.deepEqual(s.direct,[edges[0]]);assert.deepEqual(s.indirect,[edges[1]]);assert.deepEqual(s.others,[edges[2]]);assert.equal(graphIdentifier({doi:null,canonical_id:'arxiv:2401.12345'}),'ARXIV:2401.12345');});
 test('digest uses Beijing 10am boundaries and escapes paper text',()=>{const now=Date.parse('2026-09-16T01:59:00Z');assert.equal(new Date(nextDigestAt('10:00',now)).toISOString(),'2026-09-16T02:00:00.000Z');assert.equal(new Date(nextDigestAt('10:00',now+60000)).toISOString(),'2026-09-17T02:00:00.000Z');assert.equal(shanghaiDate(Date.parse('2026-09-15T18:00:00Z')),'2026-09-16');assert.equal(escapeEmail('<script>"&'),'&lt;script&gt;&quot;&amp;');});
+
+test('route citations combine sources without merging opposite directions',()=>{
+ const item={canonicalId:'doi:10.1234/p1',title:'Work',authors:'',url:'',year:'2021',kind:'reference',provider:'Semantic Scholar'};
+ const merged=mergeRouteCitations([item,{...item,canonicalId:'DOI:10.1234/P1',paperId:'p1',provider:'OpenAlex'},{...item,kind:'citation'}],
+  new Map([[item.canonicalId,{id:'route-p1',inRoute:true}]]));
+ assert.equal(merged.length,2);
+ assert.deepEqual(merged[0].sources,['Semantic Scholar','OpenAlex']);
+ assert.equal(merged[0].paperId,'p1');
+ assert.equal(merged[0].routePaperId,'route-p1');
+ assert.equal(graphIdentifier({doi:null,canonical_id:'title:sample',url:'https://arxiv.org/abs/2401.12345v2'}),'ARXIV:2401.12345');
+ assert.equal(graphIdentifier({doi:null,canonical_id:'title:sample',url:'https://not-arxiv.org/abs/2401.12345'}),'');
+});
 
 test('library, route collections, graph checks and opted-in email delivery isolate users and preserve formal evidence',{timeout:90000},async()=>{
   const root=fileURLToPath(new URL('../dist/server/',import.meta.url)),modules=[];for await(const path of glob('**/*.js',{cwd:root}))modules.push({type:'ESModule',path:root+path});
@@ -39,6 +51,21 @@ test('library, route collections, graph checks and opted-in email delivery isola
     assert.equal((await call('/api/library-graph?spaceId=mine&paperId=p0')).status,'pending');
     const graph=await call('/api/library-graph',{spaceId:'mine',paperId:'p0'});assert.equal(graph.status,'ready');assert.equal(graph.items[0].paperId,'p1');assert.equal(graph.items[0].kind,'reference');assert.equal(graphCalls,2);
     await call('/api/library-graph',{spaceId:'mine',paperId:'p0'},202);assert.equal(graphCalls,2);
+    await sql([
+      ins('research_track_papers',{id:'rp0',space_id:'mine',track_id:'route',canonical_id:'doi:10.1234/p0',title:'Mapped route paper',role:'foundation'}),
+      ins('research_track_papers',{id:'rp-only',space_id:'mine',track_id:'route',canonical_id:'doi:10.1234/route-only',title:'Route-only paper',role:'background'}),
+      ins('research_network_candidates',{id:'external',space_id:'mine',canonical_id:'doi:10.1234/external',title:'External citing work'}),
+      ins('research_network_candidates',{id:'unrelated',space_id:'mine',canonical_id:'doi:10.1234/unrelated',title:'Recommended only'}),
+      ins('research_network_candidate_edges',{id:'direct',space_id:'mine',seed_paper_id:'rp-only',candidate_id:'external',kind:'citation',direction:'candidate_cites_seed',evidence_source:'openalex'}),
+      ins('research_network_candidate_edges',{id:'recommendation',space_id:'mine',seed_paper_id:'rp-only',candidate_id:'unrelated',kind:'recommendation',direction:'undirected'}),
+      ins('research_network_candidate_edges',{id:'wrong-direction',space_id:'mine',seed_paper_id:'rp-only',candidate_id:'unrelated',kind:'reference',direction:'candidate_cites_seed'}),
+    ]);
+    const routeGraph=await call('/api/library-graph?spaceId=mine&routePaperId=rp0');
+    assert.equal(routeGraph.libraryPaperId,'p0');assert.equal(routeGraph.items[0].paperId,'p1');
+    const routeOnly=await call('/api/library-graph?spaceId=mine&routePaperId=rp-only');
+    assert.equal(routeOnly.libraryPaperId,null);
+    assert.deepEqual(routeOnly.items.map(item=>[item.title,item.kind,item.provider]),[['External citing work','citation','OpenAlex']]);
+    await call('/api/library-graph?spaceId=mine&routePaperId=rp-only',null,404,'other-library-owner-0002');
     const email=await call('/api/email-subscription?spaceId=mine');assert.equal(email.configured,true);assert.equal(email.subscription,null);await call('/api/email-subscription?spaceId=other',null,404);
     await call('/api/email-subscription',{spaceId:'mine',action:'save',email:'reader@example.test',enabled:true},409);assert.equal(messages.length,0);
     await call('/api/email-subscription',{spaceId:'mine',action:'request-code',email:'reader@example.test',sendTime:'10:00'});assert.equal(messages.length,1);

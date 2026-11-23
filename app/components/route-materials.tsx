@@ -58,8 +58,8 @@ export function RouteMaterialsContext({spaceId,track,tracks,locale,selection,onT
         {tracks.map(item=><option key={item.id} value={item.id}>{zh?item.titleZh:item.titleEn}</option>)}
       </select>
     </label>
-    {question&&<div className="pi-materials-question"><small>{zh?'研究问题':'Research question'}</small><p><MathText inline>{question}</MathText></p></div>}
-    {error&&<p className="pi-materials-notice" role="status">{zh?'研究问题暂未载入。':'Could not load the research question.'} <button type="button" onClick={reload}>{zh?'重试':'Retry'}</button></p>}
+    {showEditor&&question&&<div className="pi-materials-question"><small>{zh?'研究问题':'Research question'}</small><p><MathText inline>{question}</MathText></p></div>}
+    {showEditor&&error&&<p className="pi-materials-notice" role="status">{zh?'研究问题暂未载入。':'Could not load the research question.'} <button type="button" onClick={reload}>{zh?'重试':'Retry'}</button></p>}
     {showEditor&&<details className="pi-materials-edit-question" ref={questionEditor}>
       <summary>{selection.value.question&&selection.value.question!==question?(zh?'查看本次比较问题':'View the comparison question'):(zh?'设置本次比较问题':'Set the comparison question')}</summary>
       <label>{zh?'本次比较问题':'Comparison question'}<textarea maxLength={1000} rows={2}

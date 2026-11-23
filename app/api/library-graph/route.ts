@@ -1,6 +1,6 @@
 import {ensureSchema,getApiUser,getDatabase} from '../../../db/repository';
 import {refreshLibraryGraph} from '../../../lib/library-graph-refresh';
-import {emptyLibraryGraph,type LibraryGraphResult} from '../../../lib/library-graph';
+import {emptyLibraryGraph,graphIdentifier,type LibraryGraphResult,type LibraryGraphNeighbor,type RouteCitationSnapshot} from '../../../lib/library-graph';
 import {buildCitationSimilarity,citationProfile,type ProfiledPaper,type LibrarySimilaritySnapshot} from '../../../lib/library-similarity';
 
 type LibraryGraphPaper={id:string;canonical_id:string;doi:string|null;title:string;authors:string;published_at:string|null;url:string};
@@ -12,9 +12,63 @@ async function context(request:Request,spaceId:string,paperId:string) {
 async function projection(db:D1Database,spaceId:string,paperId:string) {
   const row=await db.prepare('SELECT status,result_json,checked_at,retry_at,lease_until FROM library_graph_checks WHERE paper_id=? AND space_id=?').bind(paperId,spaceId).first<{status:string;result_json:string;checked_at:string|null;retry_at:number;lease_until:number}>();
   const result:LibraryGraphResult=row?JSON.parse(row.result_json):emptyLibraryGraph();
-  const links=await db.prepare(`SELECT id,canonical_id FROM monitored_papers WHERE space_id=? AND lower(canonical_id) IN (SELECT lower(value) FROM json_each(?))`).bind(spaceId,JSON.stringify(result.items.map(i=>i.canonicalId))).all<{id:string;canonical_id:string}>();
-  const ids=new Map(links.results.map(p=>[p.canonical_id.toLowerCase(),p.id]));
-  return {status:row?.status||'pending',checkedAt:row?.checked_at,retryAt:row?.retry_at||0,busy:(row?.lease_until||0)>Date.now(),...result,items:result.items.map(i=>({...i,paperId:ids.get(i.canonicalId.toLowerCase())}))};
+  return {status:row?.status||'pending',checkedAt:row?.checked_at,retryAt:row?.retry_at||0,busy:(row?.lease_until||0)>Date.now(),...result,items:await linkLibraryPapers(db,spaceId,result.items)};
+}
+
+async function linkLibraryPapers(db:D1Database,spaceId:string,items:LibraryGraphNeighbor[]){
+  if(!items.length)return items;
+  const keys=JSON.stringify([...new Set(items.map(item=>item.canonicalId.toLowerCase()))]);
+  const links=await db.prepare(`SELECT id,canonical_id,doi FROM monitored_papers WHERE space_id=? AND (
+    lower(canonical_id) IN (SELECT value FROM json_each(?)) OR 'doi:'||lower(doi) IN (SELECT value FROM json_each(?))) ORDER BY id`)
+    .bind(spaceId,keys,keys).all<{id:string;canonical_id:string;doi:string|null}>();
+  const byId=new Map(links.results.map(paper=>[paper.canonical_id.toLowerCase(),paper]));
+  for(const paper of links.results){
+    const doi=paper.doi?'doi:'+paper.doi.toLowerCase():'';
+    if(doi&&!byId.has(doi))byId.set(doi,paper);
+  }
+  return items.map(item=>{
+    const match=byId.get(item.canonicalId.toLowerCase());
+    return match?{...item,paperId:match.id,libraryCanonicalId:match.canonical_id}:item;
+  });
+}
+
+async function routeCitations(request:Request,spaceId:string,routePaperId:string) {
+  const user=getApiUser(request);
+  if(!user)return Response.json({error:'Paper not found'},{status:404});
+  const db=getDatabase();await ensureSchema(db);
+  const seed=await db.prepare(`SELECT rp.id,rp.canonical_id,rp.doi FROM research_track_papers rp
+    JOIN research_spaces s ON s.id=rp.space_id
+    WHERE rp.id=? AND rp.space_id=? AND s.owner_user_id=? AND rp.curation_status='active'`)
+    .bind(routePaperId,spaceId,user.userId).first<{id:string;canonical_id:string;doi:string|null}>();
+  if(!seed)return Response.json({error:'Paper not found'},{status:404});
+  const [library,edges,checked]=await Promise.all([
+    db.prepare(`SELECT p.id,p.canonical_id,p.doi,p.title,p.authors,p.published_at,p.url FROM monitored_papers p
+      WHERE p.space_id=? AND (lower(p.canonical_id)=lower(?) OR (?<>'' AND lower(p.doi)=lower(?)))
+      ORDER BY (lower(p.canonical_id)=lower(?)) DESC,p.id LIMIT 1`)
+      .bind(spaceId,seed.canonical_id,seed.doi||'',seed.doi||'',seed.canonical_id).first<LibraryGraphPaper>(),
+    db.prepare(`SELECT c.canonical_id AS canonicalId,c.title,c.authors,c.url,substr(c.published_at,1,4) AS year,e.kind,e.evidence_source AS source
+      FROM research_network_candidate_edges e
+      JOIN research_track_papers rp ON rp.id=e.seed_paper_id AND rp.space_id=e.space_id AND rp.curation_status='active'
+      JOIN research_network_candidates c ON c.id=e.candidate_id AND c.space_id=e.space_id
+      WHERE e.space_id=? AND rp.canonical_id=? AND ((e.kind='reference' AND e.direction='seed_cites_candidate')
+        OR (e.kind='citation' AND e.direction='candidate_cites_seed'))
+        AND e.evidence_source IN ('openalex','semantic-scholar')
+      GROUP BY c.id,e.kind,e.evidence_source ORDER BY MAX(e.last_seen_at) DESC,c.id LIMIT 401`)
+      .bind(spaceId,seed.canonical_id).all<LibraryGraphNeighbor&{source:string}>(),
+    db.prepare(`SELECT n.last_expanded_at AS checkedAt,n.status
+      FROM research_network_seed_expansion_states n JOIN research_track_papers rp ON rp.id=n.seed_paper_id AND rp.space_id=n.space_id
+      WHERE n.space_id=? AND rp.canonical_id=? ORDER BY n.last_expanded_at DESC LIMIT 1`).bind(spaceId,seed.canonical_id).first<{checkedAt:string|null;status:string}>(),
+  ]);
+  const stored=library?await projection(db,spaceId,library.id):null;
+  const found=edges.results.slice(0,400).map(({source,...item})=>({...item,provider:source==='openalex'?'OpenAlex':'Semantic Scholar'}));
+  const result:RouteCitationSnapshot={
+    focusId:seed.id,libraryPaperId:library?.id||null,canQueryLibrary:Boolean(library&&graphIdentifier(library)),
+    libraryStatus:stored?.status||null,libraryRetryAt:stored?.retryAt||0,libraryBusy:Boolean(stored?.busy),
+    checkedAt:stored?.checkedAt||checked?.checkedAt||null,networkStatus:checked?.status||null,
+    items:[...(stored?.items||[]),...await linkLibraryPapers(db,spaceId,found)],
+    capped:Boolean(stored?.limited||edges.results.length>400),
+  };
+  return Response.json(result,{headers:{'Cache-Control':'private, no-store'}});
 }
 const similarityScanLimit=240;
 const cachedPaper=(paper:LibraryGraphPaper,links:ProfiledPaper['links']):ProfiledPaper=>({id:paper.id,canonicalId:paper.canonical_id,title:paper.title,authors:paper.authors,year:paper.published_at?.slice(0,4)||'',url:paper.url,links});
@@ -49,6 +103,8 @@ async function similarity(db:D1Database,spaceId:string,paper:LibraryGraphPaper):
 
 export async function GET(request:Request) {
   const u=new URL(request.url),s=u.searchParams.get('spaceId')||'',p=u.searchParams.get('paperId')||'';
+  const routePaper=u.searchParams.get('routePaperId');
+  if(routePaper)return routeCitations(request,s,routePaper);
   const c=await context(request,s,p);
   if(!c)return Response.json({error:'Paper not found'},{status:404});
   const headers={'Cache-Control':'private, no-store'};

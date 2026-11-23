@@ -1,0 +1,44 @@
+.pi-workspace .pi-route-citations { min-width:0; color:#233850; }
+.v2-app.pi-workspace .pi-graph-explorer-page:has(.pi-route-citations) .v2-map-head :is(.v2-kicker,.pi-page-purpose) { display:none; }
+.pi-workspace .pi-route-material-workbench:has(.pi-route-citations) .pi-materials-context:not(:has(.pi-materials-edit-question)) { padding:0; border:0; background:transparent; }
+.pi-workspace .pi-route-material-workbench:has(.pi-route-citations) .pi-route-evidence-map { margin-top:8px; }
+.pi-workspace .pi-route-citations .pi-route-citation-focus { padding:14px 16px; }
+.pi-workspace .pi-route-citations .pi-route-citation-focus .pi-route-evidence-actions { margin-bottom:0; align-items:center; }
+.pi-workspace .pi-route-citation-toolbar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.pi-workspace .pi-route-citation-toolbar > div, .pi-workspace .pi-route-citation-row-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.pi-workspace .pi-route-citations :is(button,a) { font-size:13px; }
+.pi-workspace .pi-route-citation-toolbar button { min-height:38px; padding:6px 10px; border:1px solid transparent; border-radius:8px; background:#fff; color:#345678; }
+.pi-workspace .pi-route-citation-toolbar button[aria-pressed="true"] { background:#edf4fb; border-color:#d8e4f1; }
+.pi-workspace .pi-route-citation-lookup button:first-child { background:#28527e; color:#fff; border-color:#28527e; }
+.pi-workspace .pi-route-citation-lookup button:disabled { opacity:.65; cursor:wait; }
+.pi-workspace .pi-route-citation-status { margin:10px 0; color:#52677d; font-size:13px; }
+.pi-workspace .pi-route-citations .pi-route-citation-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.pi-workspace .pi-route-citations .pi-route-citation-columns > section { padding:0; overflow:hidden; background:#fff; }
+.pi-workspace .pi-route-citations .pi-route-citation-columns header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 14px; border-bottom:1px solid #e3e9f1; background:#f7f9fc; }
+.pi-workspace .pi-route-citations .pi-route-citation-columns h4, .pi-workspace .pi-reading-trail h3 { font-size:17px; margin:0; }
+.pi-workspace .pi-route-citations :is(.pi-route-citation-columns,.pi-reading-trail) ul { list-style:none; margin:0; padding:0; }
+.pi-workspace .pi-route-citation-columns li { padding:12px 14px; border-bottom:1px solid #edf1f5; }
+.pi-workspace .pi-route-citation-columns p { margin:4px 0; overflow-wrap:anywhere; color:#52677d; font-size:13px; }
+.pi-workspace .pi-route-citation-columns section > p { padding:10px 14px; }
+.pi-workspace .pi-route-citation-columns h5 { margin:4px 0; font-size:15px; line-height:1.45; overflow-wrap:anywhere; }
+.pi-workspace .pi-route-citation-meta { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 10px; color:#51657b; font-size:12px; }
+.pi-workspace .pi-route-citation-row-actions button { padding:0 5px; min-height:34px; color:#275282; background:none; border:0; }
+.pi-workspace .pi-route-citation-row-actions button[aria-pressed="true"] { background:#edf4fb; border-radius:4px; }
+.pi-workspace .pi-route-citation-row-actions a { padding:0 5px; display:inline-flex; align-items:center; }
+.pi-workspace .pi-route-citation-columns details summary { cursor:pointer; padding:10px 14px; color:#315c86; font-size:13px; }
+.pi-workspace .pi-reading-trail { margin-top:16px; }
+.pi-workspace .pi-reading-trail p { margin:6px 0 8px; font-size:13px; line-height:1.55; color:#52677d; overflow-wrap:anywhere; }
+.pi-workspace .pi-reading-trail-stages { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:12px 0; }
+.pi-workspace .pi-reading-trail-stages > section { padding:12px; border:1px solid #e1e7ef; border-radius:10px; background:white; }
+.pi-workspace .pi-reading-trail-stages > .pi-reading-trail-focus { border-color:#cbdcf0; background:#f2f7fd; }
+.pi-workspace .pi-reading-trail h4, .pi-workspace .pi-reading-trail h5 { margin:0 0 8px; font-size:15px; line-height:1.5; overflow-wrap:anywhere; }
+.pi-workspace .pi-reading-trail li { padding:6px 0; border-top:1px solid #e8edf3; overflow-wrap:anywhere; }
+.pi-workspace .pi-reading-trail li small { display:block; font-size:12px; color:#52677d; }
+.pi-workspace .pi-reading-trail li button { text-align:left; padding:0; background:none; border:0; color:#275282; }
+.pi-workspace .pi-route-citations :is(a,button,summary):focus-visible { outline:2px solid #426a94; outline-offset:2px; }
+@media(max-width:670px) {
+ .pi-workspace .pi-route-citations .pi-route-citation-columns, .pi-workspace .pi-reading-trail-stages { grid-template-columns:minmax(0,1fr); }
+ .pi-workspace .pi-route-material-workbench:has(.pi-route-citations) > .pi-graph-tasks { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:2px; }
+ .pi-workspace .pi-route-material-workbench:has(.pi-route-citations) > .pi-graph-tasks button { padding:5px 2px; white-space:normal; }
+ .pi-workspace .pi-route-material-workbench:has(.pi-route-citations) .pi-route-evidence-map { padding:10px; }
+}

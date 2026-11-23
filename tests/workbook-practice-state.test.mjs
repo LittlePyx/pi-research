@@ -67,10 +67,10 @@ test('a late response from a previous space cannot populate the new practice edi
  const h=harness(),old=h.requests.shift();h.props.spaceId='new-space';h.props.workbookId='v2';h.render();const current=h.requests.shift();
  current.resolve(ready('v2'));await settle();h.render();h.input('New-space result');old.resolve(ready('v1'));await settle();h.render();assert.match(h.text(),/New-space result/);
 });
-test('comparison practice does not trigger normal learning-path discovery',()=>{
+test('comparison practice and the reading trail do not trigger normal learning-path discovery',()=>{
  const ast=ts.createSourceFile('app.tsx',readFileSync(new URL('../app/research-app.tsx',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);const expressions=[];
  function visit(node){if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==='needsLearningPath')expressions.push(node.initializer.getText(ast));ts.forEachChild(node,visit)}visit(ast);assert.equal(expressions.length,2);
- for(const expression of expressions){const needs=new Function('view','comparisonPractice','researchMapMode','paperNetworkMode','return '+expression);assert.equal(needs('learn',{},'directions','similarity'),false);assert.equal(needs('learn',null,'directions','similarity'),true);assert.equal(needs('threads',null,'papers','path'),true);}
+ for(const expression of expressions){const needs=new Function('view','comparisonPractice','researchMapMode','paperNetworkMode','return '+expression);assert.equal(needs('learn',{},'directions','similarity'),false);assert.equal(needs('learn',null,'directions','similarity'),true);assert.equal(needs('threads',null,'papers','path'),false);}
 });
 
 test('save and return navigates only after confirmed persistence and retains local result on conflict',async()=>{

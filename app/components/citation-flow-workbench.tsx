@@ -1,164 +1,187 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo } from "react";
-import { focusCitationRelations } from "../../lib/library-graph";
-import { isDatabaseVerifiedCitationEdge } from "../../lib/paper-network";
-import type { ResearchMapState, ResearchPaperEdge } from "../../lib/research-map";
-import { researchPaperYear, researchRoleLabel } from "../../lib/research-workspace-presentation";
-import { focusWorkspaceSection } from "../../lib/workspace-section-navigation";
-import { MathText } from "./math-text";
-import { buildNetworkPaperNodes, citationEvidenceProviderLabel, type NetworkPaperNode } from "./paper-network-graph";
-import { GraphPaperChoice } from "./graph-paper-choice";
-import type { RouteSelection } from "./use-route-selection";
+import {useEffect,useMemo,useRef,useState} from 'react';
+import {citationSourceHref,mergeRouteCitations,type LibraryGraphNeighbor,type RouteCitationPaper,type RouteCitationSnapshot} from '../../lib/library-graph';
+import {isDatabaseVerifiedCitationEdge} from '../../lib/paper-network';
+import type {ResearchMapState} from '../../lib/research-map';
+import {researchPaperYear} from '../../lib/research-workspace-presentation';
+import {workspaceFetch} from '../../lib/workspace-request';
+import {GraphPaperChoice} from './graph-paper-choice';
+import {MathText} from './math-text';
+import {buildNetworkPaperNodes,citationEvidenceProviderLabel,type NetworkPaperNode} from './paper-network-graph';
+import {ReadingOrderWorkbench} from './reading-order-workbench';
+import {useSavedRead} from './use-saved-read';
+import type {RouteSelection} from './use-route-selection';
+import './route-citation-explorer.css';
 
-type Locale = "zh" | "en";
+type Locale='zh'|'en';
+type FocusActions={
+  spaceId:string;trackFilter:string;locale:Locale;mode:'citations'|'path';demo?:boolean;
+  onSelect:(id:string)=>void;onRead:(id:string)=>void;onAgenda:()=>void;onCitations:()=>void;
+  selection?:RouteSelection;
+};
 
-export function CitationFlowWorkbench({
-  map,
-  trackFilter,
-  locale,
-  selectedPaperId,
-  onSelect,
-  onExpandFocus,
-  onOpenFocus,
-  onAskFocus,
-  expanding,
-  selection,
-  onRead,
-}: {
-  map: ResearchMapState;
-  trackFilter: string;
-  locale: Locale;
-  selectedPaperId: string | null;
-  onSelect: (paperId: string) => void;
-  onExpandFocus: (node: NetworkPaperNode) => void;
-  onOpenFocus: (node: NetworkPaperNode) => void;
-  onAskFocus: (node: NetworkPaperNode) => void;
-  expanding: boolean;
-  selection?: RouteSelection;
-  onRead?: (id: string) => void;
-}) {
-  const model = useMemo(() => {
-    const nodes = buildNetworkPaperNodes(map).filter((node) => trackFilter === "all" || node.trackIds.includes(trackFilter));
-    const nodeById = new Map(nodes.map((node) => [node.paper.id, node]));
-    const edges = map.paperEdges.filter((edge) => isDatabaseVerifiedCitationEdge(edge)
-      && nodeById.has(edge.sourcePaperId) && nodeById.has(edge.targetPaperId));
-    const connectedIds = new Set(edges.flatMap((edge) => [edge.sourcePaperId, edge.targetPaperId]));
-    const connectedNodes = nodes.filter((node) => connectedIds.has(node.paper.id));
-    const degree = new Map<string, number>();
-    for (const edge of edges) {
-      degree.set(edge.sourcePaperId, (degree.get(edge.sourcePaperId) || 0) + 1);
-      degree.set(edge.targetPaperId, (degree.get(edge.targetPaperId) || 0) + 1);
+function decode(value:unknown):RouteCitationSnapshot {
+  const snapshot=value as RouteCitationSnapshot|null;
+  if(!snapshot?.focusId||!Array.isArray(snapshot.items))throw Error('Invalid citation snapshot');
+  return snapshot;
+}
+
+export function CitationFlowWorkbench({map,selectedPaperId,...props}:FocusActions&{map:ResearchMapState;selectedPaperId:string|null}){
+  const {trackFilter,spaceId,onSelect,locale}=props;
+  const model=useMemo(()=>{
+    const nodes=buildNetworkPaperNodes(map);
+    const allowed=nodes.filter(node=>node.trackIds.includes(trackFilter));
+    const focus=allowed.find(node=>node.paper.id===selectedPaperId)||allowed[0];
+    const byId=new Map(map.tracks.flatMap(track=>track.papers.map(paper=>[paper.id,paper] as const)));
+    const routePapers=new Map(nodes.map(node=>[node.paper.canonicalId.toLowerCase(),{id:node.paper.id,inRoute:node.trackIds.includes(trackFilter)}]));
+    const local:LibraryGraphNeighbor[]=[];
+    if(focus){
+      const canonical=focus.paper.canonicalId.toLowerCase();
+      for(const edge of map.paperEdges.filter(isDatabaseVerifiedCitationEdge)){
+        const source=byId.get(edge.sourcePaperId),target=byId.get(edge.targetPaperId);
+        const outward=source?.canonicalId.toLowerCase()===canonical;
+        const inward=target?.canonicalId.toLowerCase()===canonical;
+        const paper=outward?target:inward?source:undefined;
+        if(!paper||paper.canonicalId.toLowerCase()===canonical)continue;
+        local.push({canonicalId:paper.canonicalId,title:paper.title,authors:paper.authors,
+          url:paper.url,year:researchPaperYear(paper),kind:outward?'reference':'citation',
+          provider:citationEvidenceProviderLabel(edge.evidenceSource)});
+      }
     }
-    const focus = selectedPaperId && nodeById.has(selectedPaperId)
-      ? nodeById.get(selectedPaperId) || null
-      : [...connectedNodes].sort((left, right) => (degree.get(right.paper.id) || 0) - (degree.get(left.paper.id) || 0)
-        || right.paper.citationCount - left.paper.citationCount)[0] || nodes[0] || null;
-    const rankRelations = (relations: ResearchPaperEdge[], otherId: (edge: ResearchPaperEdge) => string) => relations
-      .map((edge) => ({ edge, node: nodeById.get(otherId(edge)) }))
-      .filter((item): item is { edge: ResearchPaperEdge; node: NetworkPaperNode } => Boolean(item.node))
-      .sort((left, right) => Number(researchPaperYear(left.node.paper)) - Number(researchPaperYear(right.node.paper))
-        || right.node.paper.citationCount - left.node.paper.citationCount);
-    const priorAll = focus ? rankRelations(edges.filter((edge) => edge.sourcePaperId === focus.paper.id), (edge) => edge.targetPaperId) : [];
-    const laterAll = focus ? rankRelations(edges.filter((edge) => edge.targetPaperId === focus.paper.id), (edge) => edge.sourcePaperId) : [];
-    const scope = focusCitationRelations(edges, focus?.paper.id || "");
-    const ledger = [...scope.direct].sort((left, right) => {
-      const leftLater = nodeById.get(left.sourcePaperId);
-      const rightLater = nodeById.get(right.sourcePaperId);
-      return (leftLater ? Number(researchPaperYear(leftLater.paper)) : 0) - (rightLater ? Number(researchPaperYear(rightLater.paper)) : 0);
-    });
-    return {
-      focus,
-      prior: priorAll.slice(0, 8),
-      later: laterAll.slice(0, 8),
-      priorAll,
-      laterAll,
-      ledger,
-      otherRelationCount: scope.indirect.length + scope.others.length,
-      indirect: scope.indirect,
-      otherRelations: scope.others,
-      nodeById,
-    };
-  }, [map, selectedPaperId, trackFilter]);
+    return {focus,routePapers,local};
+  },[map,trackFilter,selectedPaperId]);
+  const focusId=model.focus?.paper.id;
+  useEffect(()=>{
+    if(focusId&&focusId!==selectedPaperId)onSelect(focusId);
+  },[focusId,selectedPaperId,onSelect]);
+  if(!model.focus)return <p className="pi-citation-empty">{locale==='zh'?'这条路线暂无可作为起点的论文。':'This route has no starting papers yet.'}</p>;
+  return <FocusCitations key={spaceId+':'+trackFilter+':'+focusId} {...props} focus={model.focus} routePapers={model.routePapers} local={model.local}/>;
+}
 
-  useEffect(() => {
-    if (model.focus && selectedPaperId !== model.focus.paper.id) onSelect(model.focus.paper.id);
-  }, [model.focus, onSelect, selectedPaperId]);
-
-  if (!model.focus) return <div className="v2-specialized-network-empty citation"><span>↗</span><div><strong>{locale === "zh" ? "当前范围还没有可核验的引用链" : "No verified citation chain in this scope"}</strong><p>{locale === "zh" ? "先核验已有论文关系。没有数据库证据时，Pi 不会用推断连线代替真实引用。" : "Verify saved paper links first. Pi will not replace missing database evidence with inferred citations."}</p></div></div>;
-
-  const relationCard = (item: { edge: ResearchPaperEdge; node: NetworkPaperNode }, side: "prior" | "later") => <div className="pi-citation-route-choice" key={item.edge.id}><button
-    type="button"
-    className="v2-citation-paper-card"
-    onClick={() => onSelect(item.node.paper.id)}
-  >
-    <small>{side === "prior" ? (locale === "zh" ? "本论文引用" : "Cited by focus") : (locale === "zh" ? "后续引用本论文" : "Cites the focus")}</small>
-    <strong><MathText inline>{item.node.paper.title}</MathText></strong>
-    <span className="authors">{item.node.paper.authors || (locale === "zh" ? "作者信息未提供" : "Authors unavailable")}</span>
-    <span>{[researchPaperYear(item.node.paper), item.node.paper.venue, `${item.node.paper.citationCount} ${locale === "zh" ? "次被引" : "citations"}`].filter(Boolean).join(" · ")}</span>
-    <em>{locale === "zh" ? `直接引用 · ${citationEvidenceProviderLabel(item.edge.evidenceSource)} 核验` : `Direct citation · verified by ${citationEvidenceProviderLabel(item.edge.evidenceSource)}`}</em>
-  </button><GraphPaperChoice paper={item.node.paper} selection={selection} locale={locale} /></div>;
-
-  return <section className="v2-citation-workbench" aria-label={locale === "zh" ? "知识引用流工作台" : "Citation flow workbench"}>
-    <article id="citation-focus-paper" className="pi-route-citation-focus">
-      <small>{researchRoleLabel(model.focus.paper.role,locale)} · {researchPaperYear(model.focus.paper)}</small>
-      <h3><MathText inline>{model.focus.paper.title}</MathText></h3>
-      <p>{[model.focus.paper.authors,model.focus.paper.venue].filter(Boolean).join(" · ")}</p>
-      <div className="pi-route-evidence-actions">
-        {onRead&&<button type="button" onClick={()=>onRead(model.focus!.paper.id)}>{locale==="zh"?"阅读论文":"Read paper"}</button>}
-        <GraphPaperChoice paper={model.focus.paper} selection={selection} locale={locale} />
-      </div>
-      <details className="pi-route-citation-more">
-        <summary>{locale==="zh"?"更多论文操作":"More paper actions"}</summary>
-        <div className="pi-route-evidence-actions">
-          {model.focus.paper.url&&<a href={model.focus.paper.url} target="_blank" rel="noreferrer" onClick={()=>onOpenFocus(model.focus!)}>{locale==="zh"?"打开原文":"Open original"} ↗</a>}
-          <button type="button" onClick={()=>onAskFocus(model.focus!)}>{locale==="zh"?"询问 Pi":"Ask Pi"}</button>
-          <button type="button" disabled={expanding} onClick={()=>onExpandFocus(model.focus!)}>{expanding?(locale==="zh"?"正在查询…":"Searching…"):(locale==="zh"?"展开外部引用邻居":"Expand external citation neighbors")}</button>
-        </div>
-        <p>{locale==="zh"?"新候选进入质量评审，收录后才会进入路线。":"Discovered candidates enter quality review. Add a paper to include it in the route."}</p>
-      </details>
-    </article>
-    <div className="v2-citation-lineage-grid pi-route-citation-columns">
-      <section className="prior"><header><h4>{locale==="zh"?"参考文献":"References"}</h4><b>{model.priorAll.length}</b></header>
-        <div>{model.prior.length ? <>{model.prior.map(item=>relationCard(item,"prior"))}
-        {model.priorAll.length > model.prior.length && <details className="v2-citation-more"><summary>{locale === "zh" ? `展开其余 ${model.priorAll.length - model.prior.length} 篇` : `Show ${model.priorAll.length - model.prior.length} more`}</summary>
-          <div>{model.priorAll.slice(model.prior.length).map(item=>relationCard(item,"prior"))}</div></details>}</>
-        : <p className="v2-citation-gap">{locale==="zh"?"当前路线暂无已核验的参考文献。":"No references to other route papers have been verified."}</p>}</div>
-      </section>
-      <section className="later"><header><h4>{locale==="zh"?"引用本文的论文":"Citing papers"}</h4><b>{model.laterAll.length}</b></header>
-        <div>{model.later.length ? <>{model.later.map(item=>relationCard(item,"later"))}
-        {model.laterAll.length > model.later.length && <details className="v2-citation-more"><summary>{locale === "zh" ? `展开其余 ${model.laterAll.length - model.later.length} 篇` : `Show ${model.laterAll.length - model.later.length} more`}</summary>
-          <div>{model.laterAll.slice(model.later.length).map(item=>relationCard(item,"later"))}</div></details>}</>
-        : <p className="v2-citation-gap">{locale==="zh"?"当前路线暂无已核验的后续引用。":"No later citations from other route papers have been verified."}</p>}</div>
-      </section>
+function FocusCitations({focus,spaceId,locale,mode,demo,onSelect,onRead,onAgenda,onCitations,selection,routePapers,local}:
+  FocusActions&{focus:NetworkPaperNode;routePapers:Map<string,{id:string;inRoute:boolean}>;local:LibraryGraphNeighbor[]}){
+  const zh=locale==='zh',paper=focus.paper;
+  const key=spaceId+':'+paper.id;
+  const url='/api/library-graph?'+new URLSearchParams({spaceId,routePaperId:paper.id});
+  const saved=useSavedRead(key,url,decode);
+  const remote=saved.data?.focusId===paper.id?saved.data:null;
+  const [scope,setScope]=useState<'all'|'route'>('all');
+  const [lookup,setLookup]=useState<'library'|'expanded'|null>(null);
+  const [message,setMessage]=useState('');
+  const [alternate,setAlternate]=useState(false);
+  const lookupRequest=useRef<AbortController|null>(null);
+  useEffect(()=>()=>lookupRequest.current?.abort(),[]);
+  const [clock,setClock]=useState(()=>Date.now());
+  useEffect(()=>{
+    const delay=(remote?.libraryRetryAt||0)-Date.now();
+    if(delay<=0)return;
+    const timer=setTimeout(()=>setClock(Date.now()),delay+100);
+    return ()=>clearTimeout(timer);
+  },[remote?.libraryRetryAt]);
+  const items=mergeRouteCitations([...local,...(remote?.items||[])],routePapers);
+  const scoped=scope==='route'?items.filter(item=>item.inRoute):items;
+  const cooling=Boolean(remote&&remote.libraryRetryAt>clock);
+  const libraryOnly=Boolean(remote?.canQueryLibrary&&!alternate&&remote.libraryStatus!=='error'&&remote.libraryStatus!=='missing_id');
+  const sourceStatus=demo?(zh?'演示显示已保存的示例引用。':'Showing saved example citations.'):
+    remote?.libraryStatus==='partial'||remote?.networkStatus==='partial'?(zh?'部分来源已返回，可继续查询。':'Some sources have returned. You can continue checking.'):
+    remote?.libraryStatus==='error'||remote?.networkStatus==='unavailable'?(zh?'部分来源暂不可查，已有引用仍可查看。':'Some providers are unavailable. Saved citations remain visible.'):
+    remote?.checkedAt||remote?.items.length?(zh?'显示已查到的直接引用。':'Showing direct citations found so far.'):
+    (zh?'库外引用尚未查询。':'External citations have not been checked yet.');
+  const requestCitations=async(otherSource=false)=>{
+    if(lookupRequest.current&&!lookupRequest.current.signal.aborted)return;
+    const request=new AbortController();
+    lookupRequest.current=request;
+    const library=Boolean(libraryOnly&&!otherSource&&remote?.libraryPaperId);
+    setLookup(library?'library':'expanded');setMessage('');
+    try{
+      if(library){
+        const response=await workspaceFetch('/api/library-graph',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({spaceId,paperId:remote!.libraryPaperId}),signal:AbortSignal.any([request.signal,AbortSignal.timeout(65000)])});
+        if(!response.ok)throw Error('Citation provider unavailable');
+        const data=await response.json() as {status:string;errors?:string[]};
+        if(request.signal.aborted)return;
+        if(response.status===202)setMessage(zh?'来源查询已在进行，可稍后刷新结果。':'Sources are already being checked. Refresh the results shortly.');
+        if(['error','missing_id','empty'].includes(data.status)||data.errors?.length)setAlternate(true);
+        if(data.status==='empty')setMessage(zh?'该来源未返回引用，可换其他来源。':'This provider returned no citations. You can try other sources.');
+        if(data.errors?.length)setMessage(zh?'部分结果暂不可用，已保存的引用仍可查看。':'Some results are unavailable. Saved citations remain visible.');
+      }else{
+        const response=await workspaceFetch('/api/research-network',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({action:'expand',spaceId,originCanonicalIds:[paper.canonicalId],limit:60,force:true}),
+          signal:AbortSignal.any([request.signal,AbortSignal.timeout(120000)])});
+        const result=await response.json() as {status?:string};
+        if(request.signal.aborted)return;
+        if(!result?.status||result.status==='unavailable'||result.status==='rate_limited')setMessage(zh?'部分来源暂不可查，可稍后再试。':'Some providers are temporarily unavailable. Try again later.');
+        else if(result.status==='partial')setMessage(zh?'已读取可用结果，部分来源尚未返回。':'Available results loaded. Some providers have yet to respond.');
+        else if(result.status==='no_matches')setMessage(zh?'本次来源没有返回新的直接引用。':'The providers returned no new direct citations.');
+      }
+    }catch{
+      if(!request.signal.aborted){
+        setMessage(zh?'查询未完成，已有引用仍可查看。':'The query did not complete. Saved citations remain visible.');
+        if(library)setAlternate(true);
+      }
+    }finally{
+      if(!request.signal.aborted){
+        lookupRequest.current=null;
+        setLookup(null);
+        setClock(Date.now());
+        saved.reload();
+      }
+    }
+  };
+  const groups=[
+    {id:'reference',title:zh?'参考文献':'References',items:scoped.filter(item=>item.kind==='reference')},
+    {id:'citation',title:zh?'引用本文的论文':'Citing papers',items:scoped.filter(item=>item.kind==='citation')},
+  ] as const;
+  const renderPaper=(item:RouteCitationPaper)=><li key={item.canonicalId}>
+    <div className="pi-route-citation-meta"><span>{item.inRoute?(zh?'本路线':'On this route'):item.routePaperId?(zh?'其他路线':'Other route'):item.paperId?(zh?'论文库':'In library'):(zh?'库外':'Outside library')}</span>
+      <span>{[item.year,item.sources.join(' / ')].filter(Boolean).join(' · ')}</span></div>
+    <h5><MathText inline>{item.title}</MathText></h5>
+    {item.authors&&<p>{item.authors}</p>}
+    <div className="pi-route-citation-row-actions">
+      {item.paperId&&<button type="button" onClick={()=>onRead(item.paperId!)}>{zh?'阅读':'Read'}</button>}
+      {item.routePaperId&&item.inRoute&&<button type="button" onClick={()=>onSelect(item.routePaperId!)}>{zh?'设为焦点':'Set as focus'}</button>}
+      {item.paperId&&<GraphPaperChoice paper={item} selection={selection} locale={locale}/>}
+      {citationSourceHref(item)&&<a href={citationSourceHref(item)} target="_blank" rel="noreferrer">{zh?'原文':'Original'} ↗</a>}
     </div>
-    {model.ledger.length>0&&<details className="pi-graph-secondary">
-      <summary>{locale==="zh"?"查看引用关系清单":"View citation ledger"}</summary>
-    <section className="pi-citation-ledger" aria-label={locale === "zh" ? "已核验引用关系" : "Verified citation links"}>
-      <header className="pi-citation-ledger-heading">
-        <div><h4>{locale === "zh" ? "当前焦点的直接引用清单" : "Direct citations of the current focus"}</h4><p>{locale === "zh" ? `只显示与当前焦点直接相连的关系；本范围另有 ${model.otherRelationCount} 条关系未混入此处。点击其他论文可切换焦点。` : `Only direct links to this focus are shown; ${model.otherRelationCount} other links are outside this view. Select another paper to change focus.`}</p></div>
-        <span>{locale === "zh" ? `${model.ledger.length} 条关系` : `${model.ledger.length} links`}</span>
-      </header>
-      <div className="pi-citation-ledger-list">{model.ledger.map((edge) => {
-        const prior = model.nodeById.get(edge.targetPaperId);
-        const later = model.nodeById.get(edge.sourcePaperId);
-        if (!prior || !later) return null;
-        return <article className="pi-citation-link" key={edge.id}>
-          <div className="pi-citation-link-papers">
-            <button className="pi-citation-link-paper" type="button" aria-pressed={selectedPaperId === prior.paper.id} onClick={() => { onSelect(prior.paper.id); requestAnimationFrame(() => focusWorkspaceSection("citation-focus-paper")); }}>
-              <span className="pi-citation-link-meta"><span>{locale === "zh" ? "被引用论文" : "Cited paper"}</span><span>{researchPaperYear(prior.paper)}</span>{selectedPaperId === prior.paper.id && <em>{locale === "zh" ? "当前焦点" : "Current focus"}</em>}</span>
-              <strong><MathText inline>{prior.paper.title}</MathText></strong>
-            </button>
-            <span className="pi-citation-link-arrow" aria-hidden="true">→</span>
-            <button className="pi-citation-link-paper" type="button" aria-pressed={selectedPaperId === later.paper.id} onClick={() => { onSelect(later.paper.id); requestAnimationFrame(() => focusWorkspaceSection("citation-focus-paper")); }}>
-              <span className="pi-citation-link-meta"><span>{locale === "zh" ? "引用它的论文" : "Paper citing it"}</span><span>{researchPaperYear(later.paper)}</span>{selectedPaperId === later.paper.id && <em>{locale === "zh" ? "当前焦点" : "Current focus"}</em>}</span>
-              <strong><MathText inline>{later.paper.title}</MathText></strong>
-            </button>
-          </div>
-          <footer className="pi-citation-link-source"><span>{locale === "zh" ? "直接引用" : "Direct citation"}</span><span>{locale === "zh" ? "核验来源" : "Verified by"} · {citationEvidenceProviderLabel(edge.evidenceSource)}</span></footer>
-        </article>;
-      })}</div>
-      {([model.indirect, model.otherRelations] as ResearchPaperEdge[][]).map((relations, index) => relations.length > 0 && <details className="pi-citation-other" key={index}><summary>{index === 0 ? (locale === "zh" ? "经由中间论文相连（不代表发展顺序）" : "Connected through an intermediate paper, not a development sequence") : (locale === "zh" ? "本方向其他引用关系" : "Other citations in this direction")} · {relations.length}</summary>{relations.map(edge => { const prior=model.nodeById.get(edge.targetPaperId),later=model.nodeById.get(edge.sourcePaperId);if(!prior||!later)return null;const via=[prior,later].filter(n=>model.priorAll.some(p=>p.node.paper.id===n.paper.id)||model.laterAll.some(p=>p.node.paper.id===n.paper.id));return <article key={edge.id}>{index===0&&<p>{locale === "zh" ? "经由" : "Via"}：{via.map(n=>n.paper.title).join(" / ")}</p>}<button type="button" onClick={()=>onSelect(prior.paper.id)}>{prior.paper.title}</button><span> → </span><button type="button" onClick={()=>onSelect(later.paper.id)}>{later.paper.title}</button><small>{citationEvidenceProviderLabel(edge.evidenceSource)}</small></article>;})}</details>)}
-    </section></details>}
+  </li>;
+  return <section className="pi-route-citations" aria-label={zh?'知识引用流工作台':'Citation flow workbench'}>
+    <article className="pi-route-citation-focus" id="citation-focus-paper">
+      <h3><MathText inline>{paper.title}</MathText></h3>
+      <p>{[paper.authors,paper.venue].filter(Boolean).join(' · ')}</p>
+      <div className="pi-route-evidence-actions">
+        {remote?.libraryPaperId&&<><button type="button" onClick={()=>onRead(remote.libraryPaperId!)}>{zh?'阅读论文':'Read paper'}</button>
+          <GraphPaperChoice paper={paper} selection={selection} locale={locale}/></>}
+        {citationSourceHref(paper)&&<a href={citationSourceHref(paper)} target="_blank" rel="noreferrer">{zh?'打开原文':'Open original'} ↗</a>}
+      </div>
+    </article>
+    {mode==='path'?<ReadingOrderWorkbench focus={paper} references={items.filter(item=>item.kind==='reference')}
+      citations={items.filter(item=>item.kind==='citation')} locale={locale} onOpen={onRead} onCitations={onCitations} onAgenda={onAgenda}/>:<>
+      <div className="pi-route-citation-toolbar">
+        <div role="group" aria-label={zh?'引用范围':'Citation scope'}>
+          <button type="button" aria-pressed={scope==='all'} onClick={()=>setScope('all')}>{zh?'全部已查到':'All found'}</button>
+          <button type="button" aria-pressed={scope==='route'} onClick={()=>setScope('route')}>{zh?'仅本路线':'This route'}</button>
+        </div>
+        {!demo&&<div className="pi-route-citation-lookup">
+          <button type="button" disabled={Boolean(lookup)||saved.loading||Boolean(libraryOnly&&(cooling||remote?.libraryBusy))}
+            onClick={()=>void requestCitations()}>
+            {lookup?(zh?'正在查询…':'Checking…'):libraryOnly&&cooling?(zh?'等待可再次查询':'Waiting to retry'):
+              remote?.canQueryLibrary&&!libraryOnly?(zh?'换其他来源查询':'Check other providers'):
+              remote?.checkedAt?(zh?'继续查询上下游':'Find more upstream and downstream papers'):(zh?'查询上下游':'Find upstream and downstream papers')}
+          </button>
+          {libraryOnly&&Boolean(remote?.checkedAt)&&<button type="button" disabled={Boolean(lookup)} onClick={()=>void requestCitations(true)}>{zh?'扩展其他来源':'Check other providers'}</button>}
+        </div>}
+      </div>
+      <p className="pi-route-citation-status" role="status">{saved.loading?(zh?'正在读取已保存的关系…':'Loading saved citations…'):
+        message||sourceStatus}{remote?.capped&&(zh?' 已达到显示上限。':' Display limit reached.')}</p>
+      {saved.error&&<p role="alert">{zh?'已保存的库外引用暂未载入。':'Saved external links could not load.'} <button type="button" onClick={saved.reload}>{zh?'重试':'Retry'}</button></p>}
+      <div className="pi-route-citation-columns" role="region" aria-label={zh?'已核验引用关系':'Verified citation links'}>
+        {groups.map(group=><section key={group.id} data-kind={group.id}><header><h4>{group.title}</h4><span>{group.items.length}</span></header>
+          {group.items.length?<ul>{group.items.slice(0,5).map(renderPaper)}</ul>:
+            <p>{zh?'这个范围暂无已查到的记录。':'No links found in this scope.'}</p>}
+          {group.items.length>5&&<details><summary>{zh?`展开其余 ${group.items.length-5} 篇`:`Show ${group.items.length-5} more`}</summary><ul>{group.items.slice(5).map(renderPaper)}</ul></details>}
+        </section>)}
+      </div>
+    </>}
   </section>;
 }

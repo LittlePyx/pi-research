@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const appPath = new URL("../app/research-app.tsx", import.meta.url);
 const workbenchPath = new URL("../app/components/citation-flow-workbench.tsx", import.meta.url);
 const routePath = new URL("../app/api/research-map/route.ts", import.meta.url);
-const stylesPath = new URL("../app/globals.css", import.meta.url);
+const stylesPath = new URL("../app/components/route-citation-explorer.css", import.meta.url);
 
 test("citation API and workbench share one fail-closed verification contract", async () => {
   const [app, route, workbench] = await Promise.all([readFile(appPath, "utf8"), readFile(routePath, "utf8"), readFile(workbenchPath, "utf8")]);
@@ -13,31 +13,22 @@ test("citation API and workbench share one fail-closed verification contract", a
   assert.match(route, /cachedEdges\.filter\(\(edge\) => edge\.kind === "similarity" \|\| isDatabaseVerifiedCitationEdge\(edge\)\)/);
   assert.match(route, /edge\.kind !== "citation" \|\| isDatabaseVerifiedCitationEdge\(edge\)/);
   assert.match(route, /paperEdges\.filter\(isDatabaseVerifiedCitationEdge\)\.length/);
-  assert.match(workbench, /map\.paperEdges\.filter\(\(edge\) => isDatabaseVerifiedCitationEdge\(edge\)/);
+  assert.match(workbench, /map\.paperEdges\.filter\(isDatabaseVerifiedCitationEdge\)/);
   assert.match(app, /researchMap\.paperEdges\.filter\(isDatabaseVerifiedCitationEdge\)/);
 });
 
-test("citation flow keeps direction, provider, and quality-queue semantics explicit", async () => {
+test("citation flow keeps direction and provider provenance and reads external links in place", async () => {
   const [app, workbench] = await Promise.all([readFile(appPath, "utf8"), readFile(workbenchPath, "utf8")]);
-
-  assert.match(workbench, /被引用论文/);
-  assert.match(workbench, /引用它的论文/);
-  assert.match(workbench, /const prior = model\.nodeById\.get\(edge\.targetPaperId\)/);
-  assert.match(workbench, /const later = model\.nodeById\.get\(edge\.sourcePaperId\)/);
+  assert.match(workbench, /kind:outward\?'reference':'citation'/);
   assert.match(workbench, /citationEvidenceProviderLabel\(edge\.evidenceSource\)/);
-  assert.match(workbench, /当前路线暂无已核验的参考文献/);
-  assert.match(workbench, /新候选进入质量评审，收录后才会进入路线/);
-  assert.match(workbench, /展开外部引用邻居/);
-  assert.match(app, /expandResearchNetwork\(\[node\.paper\.canonicalId\], true, true\)/);
+  assert.match(workbench, /routePaperId:paper\.id/);
+  assert.match(workbench, /查询上下游/);
+  assert.match(workbench, /mergeRouteCitations/);
+  assert.match(app, /showNetworkPaperDrawer = Boolean\(selectedNetworkNode && paperNetworkMode === "similarity"\)/);
 });
 
-test("citation focus owns its detail actions without opening the duplicate side drawer", async () => {
-  const [app, styles] = await Promise.all([readFile(appPath, "utf8"), readFile(stylesPath, "utf8")]);
-
-  assert.match(app, /showNetworkPaperDrawer = Boolean\(selectedNetworkNode && paperNetworkMode !== "citations"\)/);
-  assert.match(app, /onOpenFocus=\{\(node\) => recordMapPaperOpen\(node\.track\.id\)\}/);
-  assert.match(app, /onAskFocus=\{askAboutNetworkPaper\}/);
-  assert.match(styles, /\.v2-citation-focus-actions\s*\{[^}]*grid-template-columns:\s*1fr 1fr/s);
-  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.v2-citation-lineage-grid[^}]*grid-template-columns:\s*1fr/);
-  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.v2-citation-source-summary[^}]*flex-direction:\s*column/);
+test("citation flow and reading trail have a single column on narrow screens", async () => {
+  const styles = await readFile(stylesPath,"utf8");
+  assert.match(styles,/\.pi-route-citation-columns \{[^}]*repeat\(2,minmax\(0,1fr\)\)/s);
+  assert.match(styles,/@media\(max-width:670px\)[\s\S]*?\.pi-reading-trail-stages[^}]*grid-template-columns:minmax\(0,1fr\)/);
 });

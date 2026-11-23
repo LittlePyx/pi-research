@@ -1,6 +1,6 @@
 import {fetchSemanticScholar} from './semantic-scholar';
 import {emptyLibraryGraph,graphIdentifier,type LibraryGraphResult} from './library-graph';
-export async function refreshLibraryGraph(db:D1Database,spaceId:string,paper:{id:string;canonical_id:string;doi:string|null;title:string},refreshLimited=false) {
+export async function refreshLibraryGraph(db:D1Database,spaceId:string,paper:{id:string;canonical_id:string;doi:string|null;title:string;url?:string},refreshLimited=false) {
   const now=Date.now(),token=crypto.randomUUID();
   await db.prepare("INSERT OR IGNORE INTO library_graph_checks(paper_id,space_id,result_json) VALUES (?,?,?)").bind(paper.id,spaceId,JSON.stringify(emptyLibraryGraph())).run();
   const lock=await db.prepare('UPDATE library_graph_checks SET lock_token=?,lease_until=? WHERE paper_id=? AND space_id=? AND lease_until<=? AND retry_at<=?').bind(token,now+65000,paper.id,spaceId,now,now).run();

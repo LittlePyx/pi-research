@@ -19,14 +19,23 @@ const root=fileURLToPath(new URL('../dist/server/',import.meta.url)),modules=[];
 for await(const path of glob('**/*.js',{cwd:root}))modules.push({type:'ESModule',path:root+path});
 const owner='browser-acceptance-owner-001',space='acceptance-library',track='acceptance-quantum';
 let mode='',failed=false,corrected=false,counts={draft:0,review:0,repair:0};
+const graphNeighbor=(source,kind)=>({canonicalId:source.canonicalId,title:source.title,authors:source.authors,url:source.url,year:'2021',kind,provider:'Semantic Scholar'});
+const references=[graphNeighbor(sources[1],'reference'),...Array.from({length:3},(_,index)=>({
+  canonicalId:'fixture:reference-'+index,title:'External reference '+(index+1),authors:'Fixture author',url:'https://example.test/reference/'+index,year:'2020',kind:'reference',provider:'Semantic Scholar',
+}))];
 const mf=new Miniflare({host:'127.0.0.1',port:8146,cf:false,d1Databases:['DB'],compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],bindings:{DEEPSEEK_API_KEY:'sk-isolated-browser-fixture-no-provider-access'},modulesRoot:root,assets:{directory:fileURLToPath(new URL('../dist/client/',import.meta.url)),binding:'ASSETS',routerConfig:{has_user_worker:true,invoke_user_worker_ahead_of_assets:true}},modules:[{type:'ESModule',path:root+'browser-acceptance-entry.js',contents:`import app from './index.js';export default{async fetch(r,e,c){const u=new URL(r.url);
 if(u.pathname==='/__acceptance/start')return new Response(null,{status:302,headers:{Location:'/#library?space=${space}&q=erasure','Set-Cookie':'pi_anonymous_workspace=${owner}; Path=/; SameSite=Lax'}});
-if(u.pathname==='/__acceptance/reset'){await e.DB.batch(['DELETE FROM research_comparison_artifacts','DELETE FROM research_workbook_attempts','DELETE FROM research_comparison_workbooks'].map(sql=>e.DB.prepare(sql)));return new Response('reset');}
+if(u.pathname==='/__acceptance/reset'){await e.DB.batch(['DELETE FROM research_comparison_artifacts','DELETE FROM research_workbook_attempts','DELETE FROM research_comparison_workbooks'].map(sql=>e.DB.prepare(sql)));await e.DB.prepare("UPDATE library_graph_checks SET status='ready',result_json=?,retry_at=0,lease_until=0,lock_token=NULL WHERE paper_id=?").bind(${JSON.stringify(JSON.stringify({items:[graphNeighbor(sources[0],'citation'),references[1],references[2]],offsets:{references:-1,citations:-1},errors:[],limited:false}))},${JSON.stringify(sources[1].id)}).run();return new Response('reset');}
 if(u.pathname==='/__acceptance/release'){await e.DB.prepare('UPDATE research_comparison_workbooks SET retry_at=0,lease_until=0').run();return new Response('released');}
 if(u.pathname==='/_next/image'&&u.searchParams.get('url')?.startsWith('/pi-'))return e.ASSETS.fetch(new Request(new URL(u.searchParams.get('url'),r.url)));
 if(u.pathname.startsWith('/_next/')||/\\.(png|svg|ico|woff2?)$/.test(u.pathname))return e.ASSETS.fetch(r);
 return app.fetch(r,e,c)}}`},...modules],outboundService:async request=>{
   const url=new URL(request.url);
+  if(url.hostname==='api.semanticscholar.org'&&decodeURIComponent(url.pathname).startsWith('/graph/v1/paper/ARXIV:2610.01941/')){
+    const work=(suffix,title)=>({paperId:'test-'+suffix,externalIds:{DOI:'10.1234/'+suffix},title,year:2026,authors:[]});
+    if(url.pathname.endsWith('/references'))return Response.json({data:[{citedPaper:work('ref','New external reference')}]});
+    if(url.pathname.endsWith('/citations'))return Response.json({data:[{citingPaper:work('cite','New external citing work')}]});
+  }
   if(!url.hostname.endsWith('deepseek.com'))return new Response('External services disabled in isolated browser acceptance',{status:503});
   if(url.pathname.endsWith('/models'))return Response.json({data:[{id:'deepseek-chat'},{id:'deepseek-reasoner'},{id:'deepseek-v4.1-flash'}]});
   const body=await request.json();
@@ -78,10 +87,6 @@ await db.batch([
   insert('research_paper_edges',{id:'acceptance-cites',space_id:space,source_paper_id:'acceptance-route-0',target_paper_id:'acceptance-route-1',kind:'citation',relation_kind:'cites',confidence:100,evidence_source:'semantic-scholar'}),
   insert('research_paper_edges',{id:'acceptance-similarity',space_id:space,source_paper_id:'acceptance-route-0',target_paper_id:'acceptance-route-1',kind:'similarity',relation_kind:'bibliographic_coupling',confidence:48,evidence_source:'semantic-scholar',relationship_zh:'共享 2 篇参考文献',relationship_en:'2 shared references'}),
 ]);
-const graphNeighbor=(source,kind)=>({canonicalId:source.canonicalId,title:source.title,authors:source.authors,url:source.url,year:'2021',kind,provider:'Semantic Scholar'});
-const references=[graphNeighbor(sources[1],'reference'),...Array.from({length:3},(_,index)=>({
-  canonicalId:'fixture:reference-'+index,title:'External reference '+(index+1),authors:'Fixture author',url:'https://example.test/reference/'+index,year:'2020',kind:'reference',provider:'Semantic Scholar',
-}))];
 const storedGraph=(source,items)=>insert('library_graph_checks',{
   paper_id:source.id,space_id:space,status:'ready',checked_at:'2026-10-20T00:00:00.000Z',
   result_json:JSON.stringify({items,offsets:{references:-1,citations:-1},errors:[],limited:false}),
