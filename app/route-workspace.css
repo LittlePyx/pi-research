@@ -81,9 +81,6 @@
 .v2-app.pi-workspace .v2-route-workspace .v2-problem-actions > article { border:0; border-top:1px solid var(--route-line); border-radius:0; padding:24px 0; background:none; }
 .v2-app.pi-workspace .v2-route-workspace .v2-problem-editor { gap:20px; margin:20px 0; }
 .v2-app.pi-workspace .v2-route-workspace .v2-problem-editor textarea { background:#fff; border:1px solid #cbd2dc; border-radius:5px; padding:12px; font-size:14px; min-height:100px; }
-.v2-app.pi-workspace .v2-route-workspace .v2-route-gap-layout { display:block; }
-.v2-app.pi-workspace .v2-route-workspace .v2-route-gap-primary { padding:0; background:none; border:0; }
-.v2-app.pi-workspace .v2-route-workspace .v2-route-gap-primary h3 { font-size:21px; line-height:1.6; }
 .v2-app.pi-workspace .v2-route-workspace .pi-route-next-actions { padding:8px 0 24px; border:0; background:none; max-width:760px; }
 .v2-app.pi-workspace .v2-route-workspace .pi-route-next-actions h3 { font-size:21px; }
 .v2-app.pi-workspace .v2-route-workspace .pi-route-next-actions p { font-size:15px; line-height:1.8; }
@@ -129,8 +126,5 @@
 .v2-app.pi-workspace .v2-route-workspace .v2-route-panel-empty { border:0; background:#f7f8fa; border-radius:4px; padding:20px; min-height:0; gap:16px; }
 .v2-app.pi-workspace .v2-route-workspace .v2-route-panel-empty strong { font-size:16px; font-family:inherit; }
 .v2-app.pi-workspace .v2-route-workspace .v2-route-panel-empty p { font-size:14px; line-height:1.75; }
-.v2-app.pi-workspace .v2-route-workspace .v2-route-evidence-status { display:flex; gap:20px; }
-.v2-app.pi-workspace .v2-route-workspace .v2-route-evidence-status span { display:flex; flex-direction:row; align-items:baseline; gap:6px; padding:0; border:0; background:none; font:13px/1.5 inherit; }
-.v2-app.pi-workspace .v2-route-workspace .v2-route-evidence-status strong { font-size:18px; }
 .v2-app.pi-workspace .v2-route-workspace .pi-route-next-actions h3 { font-family:inherit; font-weight:550; }
 .v2-app.pi-workspace .v2-route-workspace .pi-synthesis-reading > .pi-section-navigation { margin:0 0 20px; padding:0 0 16px; }

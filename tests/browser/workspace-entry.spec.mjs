@@ -99,3 +99,32 @@ test('the route task is the only route learning entry and restores its origin af
   await expect.poll(()=>new URL(page.url()).hash).toBe(origin);
   await expect(page.getByRole('button',{name:'补充基础阅读',exact:true})).toBeVisible();
 });
+
+test('route materials show the exact pending papers and keep old search links usable',async({page})=>{
+  await page.goto('/__acceptance/start');
+  const route='/#thread/acceptance-quantum/';
+  await page.goto(route+'evidence?space=acceptance-library');
+  const supplement=page.locator('.pi-materials-supplement');
+  const list=page.getByRole('region',{name:'路线论文列表'});
+  await expect(supplement).not.toHaveAttribute('open','');
+  await expect(list.getByRole('heading',{name:'Search intake fixture Alpha'})).toHaveCount(0);
+  await list.getByRole('button',{name:/^待确认\s*1$/}).click();
+  await expect(page).toHaveURL(/materialGroup=pending/);
+  const paper=list.getByRole('button',{name:'Search intake fixture Alpha'});
+  await expect(paper).toBeVisible();
+  await expect(list.getByText('核对擦除信道的反馈约束。')).toBeVisible();
+  await expect(list.getByRole('heading',{name:'Search intake fixture Beta'})).toHaveCount(0);
+  await list.getByRole('searchbox').fill('intake fixture');
+  await paper.click();
+  await expect(page).toHaveURL(/#paper\/acceptance-intake-alpha/);
+  await page.reload();
+  await page.getByRole('button',{name:'← 返回原路线',exact:true}).click();
+  await expect(list.getByRole('searchbox')).toHaveValue('intake fixture');
+  await expect(list.getByRole('button',{name:/^待确认\s*1$/})).toHaveAttribute('aria-pressed','true');
+  await expect(paper).toBeVisible();
+  await page.goto(route+'gaps?space=acceptance-library');
+  await expect(supplement).toHaveAttribute('open','');
+  await supplement.locator(':scope > summary').click();
+  await expect(supplement).not.toHaveAttribute('open','');
+  await expect(page).toHaveURL(/#thread\/acceptance-quantum\/evidence/);
+});

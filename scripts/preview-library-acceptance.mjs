@@ -87,6 +87,12 @@ await db.batch([
   insert('research_paper_edges',{id:'acceptance-cites',space_id:space,source_paper_id:'acceptance-route-0',target_paper_id:'acceptance-route-1',kind:'citation',relation_kind:'cites',confidence:100,evidence_source:'semantic-scholar'}),
   insert('research_paper_edges',{id:'acceptance-similarity',space_id:space,source_paper_id:'acceptance-route-0',target_paper_id:'acceptance-route-1',kind:'similarity',relation_kind:'bibliographic_coupling',confidence:48,evidence_source:'semantic-scholar',relationship_zh:'共享 2 篇参考文献',relationship_en:'2 shared references'}),
 ]);
+await db.batch([
+  insert('monitored_papers',{id:'acceptance-intake-alpha',space_id:space,canonical_id:'fixture:intake-alpha',title:'Search intake fixture Alpha',authors:'Example author',url:'https://example.test/intake-alpha',venue:'Fixture',horizon:'years'}),
+  insert('monitored_papers',{id:'acceptance-intake-beta',space_id:space,canonical_id:'fixture:intake-beta',title:'Search intake fixture Beta',authors:'Example author',url:'https://example.test/intake-beta',venue:'Fixture',horizon:'years'}),
+  insert('research_map_evidence_proposals',{id:'acceptance-pending',space_id:space,track_id:track,paper_id:'acceptance-intake-alpha',rationale_zh:'核对擦除信道的反馈约束。'}),
+  insert('research_map_evidence_proposals',{id:'acceptance-pending-other',space_id:space,track_id:'acceptance-other',paper_id:'acceptance-intake-beta',rationale_zh:'核对通用编码的先验条件。'}),
+]);
 const storedGraph=(source,items)=>insert('library_graph_checks',{
   paper_id:source.id,space_id:space,status:'ready',checked_at:'2026-10-20T00:00:00.000Z',
   result_json:JSON.stringify({items,offsets:{references:-1,citations:-1},errors:[],limited:false}),

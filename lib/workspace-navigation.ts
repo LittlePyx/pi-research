@@ -4,8 +4,8 @@ export type PaperPanel='reading'|'notes'|'record';
 export type LibraryScope='related'|'all';
 export type GraphMode='similarity'|'citations';
 type SavedGraphMode=GraphMode|'materials'|'path';
-export type RouteMaterialLocation={ materialQuery?:string; materialPage?:number; materialPaper?:string; materialGroup?:'backbone'|'supplement'|'library' };
-export const routeMaterialLocation = ({materialQuery,materialPage,materialPaper,materialGroup}:RouteMaterialLocation):RouteMaterialLocation=>({materialQuery,materialPage,materialPaper,materialGroup});
+export type RouteMaterialLocation={ materialQuery?:string; materialPage?:number; materialPaper?:string; materialGroup?:'backbone'|'supplement'|'library'|'pending'; materialSearch?:true };
+export const routeMaterialLocation = ({materialQuery,materialPage,materialPaper,materialGroup,materialSearch}:RouteMaterialLocation):RouteMaterialLocation=>({materialQuery,materialPage,materialPaper,materialGroup,materialSearch});
 export type GraphScope='all'|'one-hop'|'multi-seed';
 export type WorkbookPanel='evidence'|'relations'|'task';
 export type MemorySection='comparisons'|'reading'|'insights'|'preferences';
@@ -71,7 +71,11 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     if(page)location.materialPage=page;
     if(paper)location.materialPaper=paper;
     const group=params.get('materialGroup');
-    if(group==='backbone'||group==='supplement'||group==='library')location.materialGroup=group;
+    if(group==='backbone'||group==='supplement'||group==='library'||group==='pending')location.materialGroup=group;
+    if(view==='thread-detail'&&(tab==='gaps'||tab==='evidence'&&params.get('materialSearch')==='1')){
+      location.tab='evidence';
+      location.materialSearch=true;
+    }
   }
   if(view==='memory'){
     const section=params.get('section') as MemorySection;
@@ -134,6 +138,7 @@ export function workspaceHash(location: WorkspaceLocation): string {
     if(location.materialPage&&location.materialPage>1)params.set('materialPage',String(location.materialPage));
     if(identifier(location.materialPaper))params.set('materialPaper',location.materialPaper!);
     if(location.materialGroup)params.set('materialGroup',location.materialGroup);
+    if(location.view==='thread-detail'&&location.tab==='evidence'&&location.materialSearch)params.set('materialSearch','1');
   }
   if(location.view==='threads'&&location.graph){
     if(location.graphSurface==='routes')params.set('graphSurface','routes');

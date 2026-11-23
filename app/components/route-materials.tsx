@@ -78,7 +78,8 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
   },[query]);
   const page=location.materialPage||1;
   const group=location.materialGroup||'';
-  const groupLabels={all:zh?'全部材料':'All materials',backbone:zh?'路线主干':'Route papers',supplement:zh?'补充材料':'Supplementary'};
+  const groupLabels={all:zh?'全部材料':'All materials',backbone:zh?'路线主干':'Route papers',supplement:zh?'补充材料':'Supplementary',pending:zh?'待确认':'Pending confirmation'};
+  const groups=['all','backbone','supplement','pending'] as const;
   const url='/api/library-catalog?'+new URLSearchParams({spaceId,trackId:track.id,view:'route-materials',q:settledQuery,group,offset:String((page-1)*24)});
   const paperIds=track.papers.map(paper=>paper.id).join(',');
   const {data,dataUrl,error,loading,reload}=useSavedRead(spaceId+':'+track.id+':'+paperIds,url,decodeCatalog,active);
@@ -115,8 +116,10 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
           placeholder={zh?'论文标题、作者或摘要':'Title, author, or abstract'} />
       </label>
       <div className="pi-materials-groups" role="group" aria-label={zh?'材料范围':'Material scope'}>
-        {(['all','backbone','supplement'] as const).map(item=><button key={item} type="button" aria-pressed={(group||'all')===item}
-          onClick={()=>update({materialGroup:item==='all'?undefined:item,materialPage:undefined},'push')}>{groupLabels[item]}</button>)}
+        {groups.filter(item=>item!=='pending'||track.pendingEvidenceCount>0||group==='pending').map(item=><button key={item} type="button" aria-pressed={(group||'all')===item}
+          onClick={()=>update({materialGroup:item==='all'?undefined:item,materialPage:undefined},'push')}>
+            {groupLabels[item]}{item==='pending'&&<span className="pi-materials-group-count">{group===item&&!query&&result?result.total:track.pendingEvidenceCount}</span>}
+          </button>)}
       </div>
       <button type="button" className="pi-material-library-link" onClick={onLibrary}>{zh?'从论文库补充':'Add from the library'}</button>
     </div>
@@ -126,7 +129,7 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
     {result&&<>
       <p className="pi-materials-count" role="status">{zh?`${result.total} 篇论文`:`${result.total} papers`}</p>
       {!result.items.length&&<div className="pi-materials-empty">
-        <strong>{query?(zh?'没有匹配的论文':'No matching papers'):group?(zh?'此分类暂无材料':'No papers in this group'):(zh?'这条路线还没有材料':'No materials on this route yet')}</strong>
+        <strong>{query?(zh?'没有匹配的论文':'No matching papers'):group==='pending'?(zh?'这条路线暂无待确认论文':'No papers awaiting confirmation on this route'):group?(zh?'此分类暂无材料':'No papers in this group'):(zh?'这条路线还没有材料':'No materials on this route yet')}</strong>
         <div>{query&&<button type="button" onClick={()=>update({materialQuery:undefined,materialPage:undefined},'replace')}>{zh?'清除搜索':'Clear search'}</button>}
         {group&&<button type="button" onClick={()=>update({materialGroup:undefined,materialPage:undefined},'push')}>{zh?'查看全部材料':'Show all materials'}</button>}
         {page>1&&<button type="button" onClick={()=>update({materialPage:undefined},'push')}>{zh?'返回第一页':'Back to first page'}</button>}</div>
@@ -136,8 +139,8 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
         const routePaper=byCanonical.get(canonical);
         const relationshipId=relationPaperIds.get(canonical);
         const assessment=reviewedAssessment(paper);
-        const reason=(zh?routePaper?.rationaleZh:routePaper?.rationaleEn)||(zh?assessment?.reasonZh:assessment?.reasonEn);
-        const category=routePaper?researchRoleLabel(routePaper.role,locale):paper.membership==='included'?(zh?'已收录':'Added to route'):
+        const reason=(zh?paper.proposalRationaleZh:paper.proposalRationaleEn)||(zh?routePaper?.rationaleZh:routePaper?.rationaleEn)||(zh?assessment?.reasonZh:assessment?.reasonEn);
+        const category=group==='pending'?groupLabels.pending:routePaper?researchRoleLabel(routePaper.role,locale):paper.membership==='included'?(zh?'已收录':'Added to route'):
           paper.membership==='excluded'?(zh?'已排除':'Excluded'):paper.relevance==='direct'?(zh?'已核对 · 直接相关':'Reviewed · directly related'):
           paper.relevance==='partial'?(zh?'已核对 · 部分相关':'Reviewed · partially related'):(zh?'论文库材料':'Library paper');
         const selected=selection.value.papers.some(item=>item.canonicalId.toLowerCase()===canonical);

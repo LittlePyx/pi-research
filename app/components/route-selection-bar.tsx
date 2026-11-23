@@ -6,7 +6,7 @@ import {useComparisonTask} from './use-comparison-task';
 import {workbookStatusLabel} from '../../lib/workbook-presentation';
 import {comparisonTaskTarget} from '../../lib/comparison-task';
 
-export function RouteSelectionBar({userId,spaceId,trackId,locale,selection,onCompare,onMaterials,onResume,onResumeDraft,requireQuestion=false}:{userId:string;spaceId:string;trackId:string;locale:'zh'|'en';selection:RouteSelection;onCompare:()=>void;onMaterials:()=>void;onResume?:(id:string)=>void;onResumeDraft?:(draft:GraphTaskContext)=>void;requireQuestion?:boolean}) {
+export function RouteSelectionBar({userId,spaceId,trackId,locale,selection,onCompare,onMaterials,onResume,onResumeDraft,requireQuestion=false,showSavedWithoutSelection=true}:{userId:string;spaceId:string;trackId:string;locale:'zh'|'en';selection:RouteSelection;onCompare:()=>void;onMaterials:()=>void;onResume?:(id:string)=>void;onResumeDraft?:(draft:GraphTaskContext)=>void;requireQuestion?:boolean;showSavedWithoutSelection?:boolean}) {
   const zh=locale==='zh';
   const task=useComparisonTask(userId,spaceId,trackId,selection.value);
   const scope=JSON.stringify([userId,spaceId,trackId]);
@@ -14,7 +14,7 @@ export function RouteSelectionBar({userId,spaceId,trackId,locale,selection,onCom
   const expanded=disclosure.scope===scope&&disclosure.open;
   const latest=task.continuation;
   const routeTitle=(zh?task.overview?.titleZh:task.overview?.titleEn)||(zh?'当前研究路线':'Current research route');
-  if(!selection.value.papers.length&&!latest&&!task.draft)return null;
+  if(!selection.value.papers.length&&!task.draft&&(!latest||latest.savedRevision&&!showSavedWithoutSelection))return null;
   const loaded=task.materialsReady;
   const ready=loaded&&task.intentReady&&(!requireQuestion||Boolean(selection.value.question.trim()))&&selection.value.papers.length>=2&&selection.value.papers.every(p=>task.materials.some(m=>m.canonicalId.toLowerCase()===p.canonicalId.toLowerCase()&&m.eligibility==='eligible'));
   const compareLabel=task.matching?(zh?'继续这次比较':'Resume this comparison'):(zh?'开始新比较':'Start new comparison');

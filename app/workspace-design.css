@@ -238,8 +238,6 @@
 .v2-app.pi-workspace .v2-route-evidence-chain article h3 { font-size:20px; }
 .v2-app.pi-workspace .v2-route-evidence-chain article p { font-size:15px; }
 .v2-app.pi-workspace .v2-route-evidence-chain article footer { flex-wrap:wrap; gap:8px 18px; }
-.v2-app.pi-workspace .v2-route-gap-layout { grid-template-columns:minmax(0,1fr) 270px; gap:24px; }
-.v2-app.pi-workspace .v2-route-gap-primary h3 { font-size:22px; line-height:1.65; }
 /* Synthesis and research questions: prose, cited support, then a concrete action. */
 .v2-app.pi-workspace .pi-synthesis-reading { max-width:880px; margin:0; color:var(--pi-ink); }
 .v2-app.pi-workspace .pi-synthesis-reading h3 { font:600 20px/1.55 var(--font-geist-sans, system-ui),sans-serif; }
@@ -375,7 +373,6 @@
  .v2-app.pi-workspace .pi-lead-reading { padding:16px 0 0; border:0; border-top:1px solid var(--pi-line); }
  .v2-app.pi-workspace .pi-workbook { width:calc(100% - 40px); }
  .v2-app.pi-workspace .pi-workbook-layout { grid-template-columns:minmax(0,1fr); }
- .v2-app.pi-workspace .v2-route-gap-layout { grid-template-columns:minmax(0,1fr); }
 }
 @media(max-width:800px) {
  .v2-app.pi-workspace .v2-today-hero { flex-direction:column; gap:12px; }

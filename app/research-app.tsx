@@ -2261,7 +2261,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const setResearchRouteTab = (tab: ResearchRouteTab) => {
     const next = tab === "gaps" ? "evidence" : tab === "assessment" ? "problem" : tab;
     updateResearchRouteTab(next);
-    if (view === "thread-detail" && selectedThread) navigate("thread-detail", workbookTrackId, { id: selectedThread.id, tab: next });
+    if (view === "thread-detail" && selectedThread) navigate("thread-detail", workbookTrackId, { id: selectedThread.id, tab: next, materialSearch:tab==="gaps"?true:undefined });
   };
   const {workbookTask,setWorkbookTask,workbookVersionId,setWorkbookVersionId,workbookTrackId,setWorkbookTrackId,workbookReturnView,setWorkbookReturnView,workbookViewState,setWorkbookViewState,loadedWorkbookRef,beginComparison,rememberVersion}=useComparisonWorkspace(user.userId,activeSpaceId);
   const [readingComparisonBusy,setReadingComparisonBusy]=useState(false);
@@ -4599,7 +4599,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if (selectedThread?.id !== thread.id) setResearchProblemState(null);
     setResearchSynthesis(null);
     updateResearchRouteTab(tab === "gaps" ? "evidence" : tab === "assessment" ? "problem" : tab);
-    navigate("thread-detail", workbookTrackId, { id: thread.id, tab: tab === "gaps" ? "evidence" : tab === "assessment" ? "problem" : tab });
+    navigate("thread-detail", workbookTrackId, { id: thread.id, tab: tab === "gaps" ? "evidence" : tab === "assessment" ? "problem" : tab, materialSearch:tab==="gaps"?true:undefined });
     void fetch("/api/research-map", {
       method: "POST",
       headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
@@ -5749,7 +5749,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         )}
 
         {!demo && libraryComparisonTrackId && (view === "library" || view === "paper-detail" && paperReturnView === "library") && <RouteSelectionBar userId={user.userId} onResumeDraft={draft=>openWorkbook(libraryComparisonTrackId,draft,{view:"library",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash})} onResume={id=>openWorkbook(libraryComparisonTrackId,undefined,{view:"library",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash},id)} requireQuestion key={`library:${user.userId}:${activeSpace.id}:${libraryComparisonTrackId}`} spaceId={activeSpace.id} trackId={libraryComparisonTrackId} locale={locale} selection={librarySelection} onMaterials={()=>{if(view!=="library")navigate("library");else{const input=document.querySelector<HTMLInputElement>(".v2-library-toolbar input");input?.scrollIntoView({block:"center"});input?.focus();}}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(libraryComparisonTrackId,librarySelection.value,{view:"library",hash:origin||workspaceHash({view:"library",space:activeSpace.id,track:libraryComparisonTrackId})});}} />}
-        {routeSelectionTrackId && (view === "thread-detail" && researchRouteTab !== "start" || view === "paper-detail" && paperReturnView === "thread-detail") && <RouteSelectionBar userId={user.userId} onResumeDraft={draft=>openWorkbook(routeSelectionTrackId,draft,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash})} onResume={id=>openWorkbook(routeSelectionTrackId,undefined,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash},id)} key={`${user.userId}:${activeSpace.id}:${routeSelectionTrackId}:${view}`} spaceId={activeSpace.id} trackId={routeSelectionTrackId} locale={locale} selection={routeSelection} onMaterials={()=>{if(view==="paper-detail")navigate("thread-detail",undefined,{id:routeSelectionTrackId,tab:"evidence"});else setResearchRouteTab("evidence");}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(routeSelectionTrackId,routeSelection.value,{view:"thread-detail",hash:origin||workspaceHash({view:"thread-detail",space:activeSpace.id,id:routeSelectionTrackId,tab:"start"})});}} />}
+        {routeSelectionTrackId && (view === "thread-detail" && researchRouteTab !== "start" || view === "paper-detail" && paperReturnView === "thread-detail") && <RouteSelectionBar userId={user.userId} showSavedWithoutSelection={researchRouteTab!=="evidence"} onResumeDraft={draft=>openWorkbook(routeSelectionTrackId,draft,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash})} onResume={id=>openWorkbook(routeSelectionTrackId,undefined,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash},id)} key={`${user.userId}:${activeSpace.id}:${routeSelectionTrackId}:${view}`} spaceId={activeSpace.id} trackId={routeSelectionTrackId} locale={locale} selection={routeSelection} onMaterials={()=>{if(view==="paper-detail")navigate("thread-detail",undefined,{id:routeSelectionTrackId,tab:"evidence"});else setResearchRouteTab("evidence");}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(routeSelectionTrackId,routeSelection.value,{view:"thread-detail",hash:origin||workspaceHash({view:"thread-detail",space:activeSpace.id,id:routeSelectionTrackId,tab:"start"})});}} />}
         {(view === "thread-detail" || view === "paper-detail" && paperReturnView === "thread-detail" || view === "workbook" && workbookReturnView === "thread-detail" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "thread-detail") && (
           <main hidden={view !== "thread-detail"} className="v2-page v2-detail-page v2-map-detail v2-route-workspace">
             <button className="v2-back" type="button" onClick={() => navigate("threads")}>← {locale === "zh" ? "返回路线总览" : "Back to route overview"}</button>
@@ -5774,6 +5774,39 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
               {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-evidence-panel pi-route-material-workbench" role="tabpanel">
                 <header><h2>{locale === "zh" ? "路线材料" : "Route materials"}</h2></header>
+                <details className="pi-materials-supplement" key={activeSpace.id+":"+selectedThread.id} open={Boolean(materialLocation.materialSearch)}
+                  onToggle={event=>{
+                    const value=event.currentTarget.open?true:undefined;
+                    if(value===materialLocation.materialSearch||view!=="thread-detail")return;
+                    setMaterialLocation(current=>({...current,materialSearch:value}));
+                    updateWorkspaceHash({materialSearch:value},"replace");
+                  }}>
+                  <summary>{locale === "zh" ? "补充检索" : "Find more papers"}</summary>
+                  <div className="pi-materials-supplement-body">
+                    {selectedThread.intelligence ? <>
+                      <p><MathText>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</MathText></p>
+                      {selectedThread.gapDiscovery&&<ResearchGapDiscoveryStatus track={selectedThread} locale={locale} />}
+                      {selectedThread.intelligence.nextSearchQuery&&<details className="v2-gap-query">
+                        <summary>{locale === "zh" ? "查看检索式" : "View search query"}</summary>
+                        <code>{selectedThread.intelligence.nextSearchQuery}</code>
+                      </details>}
+                      <div className="pi-materials-supplement-actions">
+                        <button type="button" className="pi-research-primary" onClick={()=>void scanResearchRouteGap(selectedThread)}
+                          disabled={Boolean(mapAction||selectedThread.monitoringStatus==="paused"||!selectedThread.intelligence.nextSearchQuery)}>
+                          {mapAction===`gap:${selectedThread.id}`?(locale==="zh"?"正在检索…":"Searching…"):selectedThread.monitoringStatus==="paused"?
+                            (locale==="zh"?"恢复路线后检索":"Resume the route to search"):(locale==="zh"?"开始定向检索":"Run targeted search")}
+                        </button>
+                        <button type="button" onClick={()=>askAboutResearchRoute(selectedThread,"gap")}>{locale==="zh"?"解释材料需求":"Explain material needs"}</button>
+                      </div>
+                    </> : <>
+                      <p>{locale==="zh"?"暂无定向检索建议。可基于路线材料生成建议。":"No targeted search suggestion yet. Build one from the route papers."}</p>
+                      <button type="button" className="pi-research-primary" onClick={()=>void refreshDirectionIntelligence(selectedThread)}
+                        disabled={!selectedThread.papers.length||Boolean(mapAction)||selectedThread.monitoringStatus==="paused"}>
+                        {locale==="zh"?"生成检索建议":"Build search suggestion"}
+                      </button>
+                    </>}
+                  </div>
+                </details>
                 {view==="thread-detail"&&<RouteComparisonQuestion key={activeSpace.id+":"+selectedThread.id}
                   spaceId={activeSpace.id} trackId={selectedThread.id} locale={locale} selection={routeSelection}
                   showEditor={routeSelection.value.papers.length>0}/>}
@@ -5789,11 +5822,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                   onDeactivate={paper=>void curateResearchTrackPaperNode(selectedThread,paper,"deactivated")} curationBusy={Boolean(mapAction)} demo={demo}/>
                 {(selectedThread.deactivatedPapers || []).length > 0 && <details className="v2-route-deactivated-nodes"><summary><span><small>{locale === "zh" ? "保留在审计历史中" : "RETAINED IN AUDIT HISTORY"}</small><strong>{locale === "zh" ? "已停用路线节点" : "Deactivated route nodes"}</strong></span><b>{selectedThread.deactivatedPapers?.length || 0}</b></summary><div>{(selectedThread.deactivatedPapers || []).map((paper) => <article key={paper.id}><header><span>{locale === "zh" ? "不参与路线供稿" : "Excluded from active route supply"}</span><small>{paper.curationUpdatedAt ? formatNotificationTime(paper.curationUpdatedAt, locale) : ""}</small></header><h3><MathText inline>{paper.title}</MathText></h3><p>{locale === "zh" ? paper.curationReasonZh : paper.curationReasonEn}</p><footer><span>{routePaperCurationSourceLabel(paper, locale)} · {(paper.curationEvidence || []).length} {locale === "zh" ? "条审计证据" : "audit signals"}</span><button type="button" disabled={Boolean(mapAction)} onClick={() => void curateResearchTrackPaperNode(selectedThread, paper, "active")}>{mapAction === `curate:${paper.id}` ? "…" : (locale === "zh" ? "恢复节点" : "Restore node")}</button></footer></article>)}</div></details>}
               </section>}
-
-                    {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-gap-panel" role="tabpanel">
-                      <header><div><p className="v2-kicker">{locale === "zh" ? "本空间的材料覆盖" : "WORKSPACE COLLECTION"}</p><h2>{locale === "zh" ? "待收录与待核对材料" : "Materials to collect and check"}</h2></div><div className="v2-route-evidence-status"><span><strong>{confirmedRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "已纳入" : "in route"}</span><span className={pendingRouteEvidenceCount(selectedThread) ? "pending" : ""}><strong>{pendingRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "待确认" : "pending"}</span></div></header>
-                      {selectedThread.intelligence ? <div className="v2-route-gap-layout"><article className="v2-route-gap-primary"><small>{locale === "zh" ? "材料检索建议 · 尚未证明是学界空白" : "COLLECTION SUGGESTION · NOT AN ESTABLISHED RESEARCH GAP"}</small><h3>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</h3><ResearchGapDiscoveryStatus track={selectedThread} locale={locale} />{selectedThread.intelligence.nextSearchQuery && <details className="v2-gap-query"><summary>{locale === "zh" ? "查看定向检索式" : "View targeted query"}<b>＋</b></summary><code>{selectedThread.intelligence.nextSearchQuery}</code></details>}<footer><button type="button" onClick={() => void scanResearchRouteGap(selectedThread)} disabled={Boolean(mapAction || selectedThread.monitoringStatus === "paused" || !selectedThread.intelligence.nextSearchQuery)}>{mapAction === `gap:${selectedThread.id}` ? (locale === "zh" ? "正在扫描…" : "Scanning…") : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复后扫描" : "Resume to scan") : (locale === "zh" ? "立即扫描" : "Run scan")} →</button><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "gap")}>{locale === "zh" ? "解释材料需求" : "Explain material needs"}</button></footer></article></div> : <div className="v2-route-panel-empty"><InterfaceIcon name="search" className="pi-state-mark" /><div><strong>{locale === "zh" ? "暂未形成材料检索建议" : "No collection suggestion yet"}</strong><p>{locale === "zh" ? "这表示本空间的整理尚未完成，不表示学界没有相关工作。" : "This workspace is still being organized; this does not mean relevant research is absent."}</p></div><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={!selectedThread.papers.length || selectedThread.monitoringStatus === "paused"}>{selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复后研判" : "Resume to assess") : (locale === "zh" ? "形成研判" : "Build assessment")} →</button></div>}
-                    </section>}
 
               {researchRouteTab === "agenda" && <section className="v2-route-workspace-panel v2-route-agenda-panel" role="tabpanel">
                 <header><div><p className="v2-kicker">{locale === "zh" ? "下一步" : "NEXT"}</p><h2>{locale === "zh" ? "研究计划" : "Research plan"}</h2></div><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "agenda")}>{locale === "zh" ? "拆解行动" : "Break into actions"} →</button></header>
