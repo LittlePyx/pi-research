@@ -27,8 +27,8 @@ test("citation flow keeps direction and provider provenance and reads external l
   assert.match(app, /showNetworkPaperDrawer = Boolean\(selectedNetworkNode && paperNetworkMode === "similarity"\)/);
 });
 
-test("citation flow and reading trail have a single column on narrow screens", async () => {
+test("citation flow has a single column on narrow screens", async () => {
   const styles = await readFile(stylesPath,"utf8");
   assert.match(styles,/\.pi-route-citation-columns \{[^}]*repeat\(2,minmax\(0,1fr\)\)/s);
-  assert.match(styles,/@media\(max-width:670px\)[\s\S]*?\.pi-reading-trail-stages[^}]*grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(styles,/@media\(max-width:670px\)[\s\S]*?\.pi-route-citation-columns[^}]*grid-template-columns:minmax\(0,1fr\)/);
 });

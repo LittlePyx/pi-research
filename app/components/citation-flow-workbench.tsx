@@ -9,15 +9,14 @@ import {workspaceFetch} from '../../lib/workspace-request';
 import {GraphPaperChoice} from './graph-paper-choice';
 import {MathText} from './math-text';
 import {buildNetworkPaperNodes,citationEvidenceProviderLabel,type NetworkPaperNode} from './paper-network-graph';
-import {ReadingOrderWorkbench} from './reading-order-workbench';
 import {useSavedRead} from './use-saved-read';
 import type {RouteSelection} from './use-route-selection';
 import './route-citation-explorer.css';
 
 type Locale='zh'|'en';
 type FocusActions={
-  spaceId:string;trackFilter:string;locale:Locale;mode:'citations'|'path';demo?:boolean;
-  onSelect:(id:string)=>void;onRead:(id:string)=>void;onAgenda:()=>void;onCitations:()=>void;
+  spaceId:string;trackFilter:string;locale:Locale;demo?:boolean;
+  onSelect:(id:string)=>void;onRead:(id:string)=>void;onAgenda:()=>void;
   selection?:RouteSelection;
 };
 
@@ -59,7 +58,7 @@ export function CitationFlowWorkbench({map,selectedPaperId,...props}:FocusAction
   return <FocusCitations key={spaceId+':'+trackFilter+':'+focusId} {...props} focus={model.focus} routePapers={model.routePapers} local={model.local}/>;
 }
 
-function FocusCitations({focus,spaceId,locale,mode,demo,onSelect,onRead,onAgenda,onCitations,selection,routePapers,local}:
+function FocusCitations({focus,spaceId,locale,demo,onSelect,onRead,onAgenda,selection,routePapers,local}:
   FocusActions&{focus:NetworkPaperNode;routePapers:Map<string,{id:string;inRoute:boolean}>;local:LibraryGraphNeighbor[]}){
   const zh=locale==='zh',paper=focus.paper;
   const key=spaceId+':'+paper.id;
@@ -153,10 +152,9 @@ function FocusCitations({focus,spaceId,locale,mode,demo,onSelect,onRead,onAgenda
         {remote?.libraryPaperId&&<><button type="button" onClick={()=>onRead(remote.libraryPaperId!)}>{zh?'阅读论文':'Read paper'}</button>
           <GraphPaperChoice paper={paper} selection={selection} locale={locale}/></>}
         {citationSourceHref(paper)&&<a href={citationSourceHref(paper)} target="_blank" rel="noreferrer">{zh?'打开原文':'Open original'} ↗</a>}
+        <button type="button" onClick={onAgenda}>{zh?'研究计划':'Research plan'} →</button>
       </div>
     </article>
-    {mode==='path'?<ReadingOrderWorkbench focus={paper} references={items.filter(item=>item.kind==='reference')}
-      citations={items.filter(item=>item.kind==='citation')} locale={locale} onOpen={onRead} onCitations={onCitations} onAgenda={onAgenda}/>:<>
       <div className="pi-route-citation-toolbar">
         <div role="group" aria-label={zh?'引用范围':'Citation scope'}>
           <button type="button" aria-pressed={scope==='all'} onClick={()=>setScope('all')}>{zh?'全部已查到':'All found'}</button>
@@ -182,6 +180,5 @@ function FocusCitations({focus,spaceId,locale,mode,demo,onSelect,onRead,onAgenda
           {group.items.length>5&&<details><summary>{zh?`展开其余 ${group.items.length-5} 篇`:`Show ${group.items.length-5} more`}</summary><ul>{group.items.slice(5).map(renderPaper)}</ul></details>}
         </section>)}
       </div>
-    </>}
   </section>;
 }

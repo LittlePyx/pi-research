@@ -1,35 +1,22 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type { GraphMode, GraphScope, RouteMaterialLocation, WorkspaceLocation } from "../../lib/workspace-navigation";
+import type { GraphMode, GraphScope, WorkspaceLocation } from "../../lib/workspace-navigation";
 
 type UpdateWorkspaceHash = (patch: Partial<WorkspaceLocation>, history?: "push" | "replace") => void;
 
 export function usePaperNetworkNavigation(updateWorkspaceHash: UpdateWorkspaceHash) {
   const [surface, setSurfaceState] = useState<"library" | "routes">("library");
-  const [mode, setModeState] = useState<GraphMode>("similarity");
+  const [mode, setModeState] = useState<GraphMode>("citations");
   const [scope, setScopeState] = useState<GraphScope>("all");
   const [trackId, setTrackIdState] = useState("all");
   const [focusId, setFocusIdState] = useState<string | null>(null);
   const [compareTrack, setCompareTrack] = useState('');
-  const [materials,setMaterials]=useState<RouteMaterialLocation>({});
-
-  const changeMaterials=useCallback((patch:RouteMaterialLocation,history:"push"|"replace")=>{
-    setMaterials(current=>({...current,...patch}));
-    updateWorkspaceHash(patch,history);
-  },[updateWorkspaceHash]);
 
   const changeCompareTrack = useCallback((next: string) => {
     setCompareTrack(next);
     updateWorkspaceHash({ graphCompareTrack: next || undefined }, 'push');
   }, [updateWorkspaceHash]);
-
-  const changeSurface = useCallback((next: "library" | "routes") => {
-    setSurfaceState(next);
-    const mode=next==="routes"?"materials":"citations";
-    setModeState(mode);
-    updateWorkspaceHash({graphSurface:next==="library"?undefined:next,graphMode:mode,...(next==="routes"?materials:{})},"push");
-  }, [materials,updateWorkspaceHash]);
 
   const changeMode = useCallback((next: GraphMode) => {
     setModeState(next);
@@ -48,27 +35,27 @@ export function usePaperNetworkNavigation(updateWorkspaceHash: UpdateWorkspaceHa
   }, [updateWorkspaceHash]);
 
   const changeTrack = useCallback((next: string) => {
+    setSurfaceState(next ? 'routes' : 'library');
     setTrackIdState(next);
     setFocusIdState(null);
     setScopeState("all");
-    setMaterials({});
     updateWorkspaceHash({
-      graphTrack: next === "all" ? undefined : next,
+      graphSurface: next ? 'routes' : undefined,
+      graphMode: mode,
+      graphTrack: next || undefined,
       graphFocus: undefined,
       graphScope: undefined,
       libraryNeighbor: undefined,
-      materialQuery:undefined,materialPage:undefined,materialPaper:undefined,materialGroup:undefined,
     }, "push");
-  }, [updateWorkspaceHash]);
+  }, [mode, updateWorkspaceHash]);
 
   const restore = useCallback((location: WorkspaceLocation) => {
     setSurfaceState(location.graphSurface || "library");
-    setModeState(location.graphMode || (location.graphSurface==="routes"?"materials":"citations"));
+    setModeState(location.graphMode === 'similarity' ? 'similarity' : 'citations');
     setScopeState(location.graphScope || "all");
     setTrackIdState(location.graphTrack || "all");
     setFocusIdState(location.graphFocus || null);
     setCompareTrack(location.graphCompareTrack || '');
-    setMaterials({materialQuery:location.materialQuery,materialPage:location.materialPage,materialPaper:location.materialPaper,materialGroup:location.materialGroup});
   }, []);
 
   return {
@@ -78,8 +65,6 @@ export function usePaperNetworkNavigation(updateWorkspaceHash: UpdateWorkspaceHa
     trackId,
     focusId,
     compareTrack,
-    materials,
-    changeMaterials,
     setCompareTrack,
     changeCompareTrack,
     setSurface: setSurfaceState,
@@ -87,7 +72,6 @@ export function usePaperNetworkNavigation(updateWorkspaceHash: UpdateWorkspaceHa
     setScope: setScopeState,
     setTrackId: setTrackIdState,
     setFocus: setFocusIdState,
-    changeSurface,
     changeMode,
     changeScope,
     changeFocus,

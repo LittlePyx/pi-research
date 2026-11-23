@@ -28,7 +28,6 @@ function load(file) {
 }
 
 const { CitationFlowWorkbench } = load(resolve('app/components/citation-flow-workbench.tsx'));
-const { ReadingOrderWorkbench } = load(resolve('app/components/reading-order-workbench.tsx'));
 const paper = (id, year, extra = {}) => ({
   id, canonicalId: `doi:${id}`, title: `Paper ${id}`, authors: 'Author', venue: 'Journal',
   publishedAt: `${year}-01-01`, citationCount: 4, role: 'foundation', position: 0,
@@ -43,8 +42,8 @@ const map = {
   paperEdges: [edge('focus', 'prior'), edge('later', 'focus'), edge('unverified', 'focus', { evidenceSource: 'pi' })],
 };
 const renderCitation = locale => renderToStaticMarkup(createElement(CitationFlowWorkbench, {
-  map, trackFilter: 'route', spaceId:'s', locale, selectedPaperId: 'focus', mode:'citations',
-  onSelect() {}, onRead() {}, onAgenda() {}, onCitations() {},
+  map, trackFilter: 'route', spaceId:'s', locale, selectedPaperId: 'focus',
+  onSelect() {}, onRead() {}, onAgenda() {},
 }));
 
 test('extracted citation workbench preserves reference direction and hides unverified links in both languages', () => {
@@ -61,25 +60,6 @@ test('extracted citation workbench preserves reference direction and hides unver
     assert.doesNotMatch(later, /Paper prior/);
     assert.doesNotMatch(html, /Paper unverified/);
     assert.match(html, /OpenAlex/);
+    assert.match(html, /Research plan|\u7814\u7A76\u8BA1\u5212/);
   }
-});
-
-const neighbor=(id,kind,extra={})=>({canonicalId:'doi:'+id,title:'Paper '+id,kind,sources:['OpenAlex'],year:'2024',url:'',...extra});
-const renderReading=overrides=>renderToStaticMarkup(createElement(ReadingOrderWorkbench,{
-  focus:paper('focus',2010), references:[neighbor('source','reference')], citations:[neighbor('later','citation')],
-  locale:'en', onOpen(){}, onAgenda(){}, onCitations(){}, ...overrides,
-}));
-test('reading trail orders source, focus and later work while linking to the route plan',()=>{
-  const html=renderReading();
-  assert.ok(html.indexOf('Paper source')<html.indexOf('Read the focus'));
-  assert.ok(html.indexOf('Read the focus')<html.indexOf('Paper later'));
-  assert.match(html,/Open route research plan/);
-  assert.match(html,/OpenAlex/);
-  assert.doesNotMatch(html,/Complete stage/);
-});
-test('reading trail explains missing evidence and opens DOI links safely',()=>{
-  const html=renderReading({references:[],citations:[neighbor('10.1234/source','citation',{url:'javascript:alert(1)'})]});
-  assert.match(html,/No references have been found/);
-  assert.match(html,/href="https:\/\/doi.org\/10.1234\/source"/);
-  assert.doesNotMatch(html,/href="javascript:/);
 });

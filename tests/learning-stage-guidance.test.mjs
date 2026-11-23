@@ -39,9 +39,9 @@ test('empty grounded fields create no empty explanation panels', () => {
   assert.equal((html.match(/<article>/g) || []).length, 1);
 });
 
-test('learning stages retain grounded guidance and the reading trail has no stage editor', async () => {
+test('learning stages retain grounded guidance and citation exploration has no stage editor', async () => {
   const app = await readFile(new URL('../app/research-app.tsx', import.meta.url), 'utf8');
-  const reading = await readFile(new URL('../app/components/reading-order-workbench.tsx', import.meta.url), 'utf8');
+  const reading = await readFile(new URL('../app/components/citation-flow-workbench.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(reading, /<LearningStageWorkspace/);
   assert.match(reading, /onAgenda/);
   assert.match(app, /<LearningStageWorkspace step=\{activeLearningStep\}/);

@@ -4,16 +4,19 @@ import { focusWorkspaceSection } from '../lib/workspace-section-navigation.ts';
 import { readWorkspaceLocation, workspaceHash } from '../lib/workspace-navigation.ts';
 
 test('route materials retain search, group, page and paper when returning from reading',()=>{
-  const route=workspaceHash({view:'threads',space:'space-1',graph:'all',graphSurface:'routes',graphMode:'materials',graphTrack:'route-1',
+  const route=workspaceHash({view:'thread-detail',id:'route-1',tab:'evidence',space:'space-1',
     materialQuery:'Gaussian source',materialGroup:'backbone',materialPage:3,materialPaper:'paper-3'});
-  const reader=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'paper-3',space:'space-1',from:'threads',returnTo:route}));
+  const reader=readWorkspaceLocation(workspaceHash({view:'paper-detail',id:'paper-3',space:'space-1',from:'thread-detail',returnTo:route}));
   assert.equal(reader.returnTo,route);
-  assert.equal(readWorkspaceLocation(reader.returnTo).graphMode,'materials');
+  assert.equal(readWorkspaceLocation(reader.returnTo).tab,'evidence');
   assert.equal(readWorkspaceLocation(reader.returnTo).materialPaper,'paper-3');
   assert.equal(readWorkspaceLocation(reader.returnTo).materialGroup,'backbone');
   assert.equal(readWorkspaceLocation(reader.returnTo).materialPage,3);
   assert.equal(readWorkspaceLocation(reader.returnTo).materialQuery,'Gaussian source');
   assert.equal(readWorkspaceLocation('#threads?space=space-1&graph=all&materialPaper=paper-3').materialPaper,undefined);
+  const graph=workspaceHash({view:'threads',space:'space-1',graph:'all',graphSurface:'routes',graphMode:'citations',graphTrack:'route-1',graphFocus:'paper-3',graphFrom:'thread-detail',returnTo:route});
+  assert.equal(readWorkspaceLocation(graph).returnTo,route);
+  assert.equal(readWorkspaceLocation(graph.replace('space-1','space-2')).returnTo,undefined);
 });
 
 test('the graph comparison returns to its route, starting paper and selected neighbor',()=>{

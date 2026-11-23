@@ -13,7 +13,7 @@ export async function GET(request:Request) {
   const routeMaterials=Boolean(trackId)&&url.searchParams.get('view')==='route-materials';
   const group=routeMaterials?url.searchParams.get('group'):null;
   const terms=routeCatalogTerms(track?.title_en||'');
-  const where=catalogWhere(spaceId,q,terms,trackId,!routeMaterials&&url.searchParams.get('scope')==='all');
+  const where=catalogWhere(spaceId,q,terms,trackId,routeMaterials?group==='library':url.searchParams.get('scope')==='all');
   const backbone=`EXISTS(SELECT 1 FROM research_track_papers tp WHERE tp.space_id=p.space_id AND tp.canonical_id=p.canonical_id AND tp.curation_status='active' AND (?='' OR tp.track_id=?))`;
   const matchesGroup=group==='backbone'?backbone:group==='supplement'?`NOT ${backbone}`:'';
   const table=routeMaterials?`(

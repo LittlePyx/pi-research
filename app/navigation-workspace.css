@@ -6,9 +6,8 @@
 .v2-app.pi-workspace .pi-save-state { font-size:13px; line-height:1.7; }
 .v2-app.pi-workspace .v2-ask-panel .pi-ask-context { display:block; overflow-wrap:anywhere; }
 .v2-app.pi-workspace .v2-ask-panel .pi-ask-context button { display:inline-block; white-space:nowrap; margin:8px 12px 0 0; }
-.v2-app.pi-workspace .pi-explorer-scope { display:flex; gap:24px; flex-wrap:wrap; border-bottom:1px solid #dce0e5; margin-bottom:24px; }
-.v2-app.pi-workspace .pi-explorer-scope button { border:0; border-bottom:2px solid transparent; border-radius:0; padding:12px 0; background:none; font-size:14px; color:#62666d; }
-.v2-app.pi-workspace .pi-explorer-scope button[aria-pressed="true"] { border-bottom-color:#245dc1; color:#245dc1; }
+.v2-app.pi-workspace .pi-explorer-scope { display:flex; gap:8px 12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; color:#52647b; font-size:.875rem; }
+.v2-app.pi-workspace .pi-explorer-scope select { min-height:40px; width:min(100%, 26rem); padding:6px 10px; border:1px solid #cbd6e3; border-radius:8px; background:#fff; color:#182a40; font:inherit; }
 .v2-app.pi-workspace :is(.pi-leads-page,.v2-route-workspace) :is(h1,h2,h3,h4) { font-family:var(--font-geist-sans,Arial),sans-serif; }
 .v2-app.pi-workspace .pi-paper-title-link { border:0; padding:0; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
 .v2-app.pi-workspace .pi-paper-title-link:hover { color:#245dc1; }

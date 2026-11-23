@@ -2,13 +2,15 @@ export type WorkspaceView = "today" | "threads" | "thread-detail" | "learn" | "l
 export type TodayPanel = "home"|"reading"|"discovery"|"records"|"settings";
 export type PaperPanel='reading'|'notes'|'record';
 export type LibraryScope='related'|'all';
-export type GraphMode='materials'|'similarity'|'citations'|'path';
-export type RouteMaterialLocation={ materialQuery?:string; materialPage?:number; materialPaper?:string; materialGroup?:'backbone'|'supplement' };
+export type GraphMode='similarity'|'citations';
+type SavedGraphMode=GraphMode|'materials'|'path';
+export type RouteMaterialLocation={ materialQuery?:string; materialPage?:number; materialPaper?:string; materialGroup?:'backbone'|'supplement'|'library' };
+export const routeMaterialLocation = ({materialQuery,materialPage,materialPaper,materialGroup}:RouteMaterialLocation):RouteMaterialLocation=>({materialQuery,materialPage,materialPaper,materialGroup});
 export type GraphScope='all'|'one-hop'|'multi-seed';
 export type WorkbookPanel='evidence'|'relations'|'task';
 export type MemorySection='comparisons'|'reading'|'insights'|'preferences';
 export type MemoryLocation={memorySection?:MemorySection;memoryTrack?:string;memoryQuery?:string;memoryPage?:number;memoryFocus?:string};
-export type WorkspaceLocation = MemoryLocation & RouteMaterialLocation & { graphCompareTrack?:string; libraryNeighbor?:string; libraryDisplay?:'list'; practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:GraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string;workbookDimension?:string };
+export type WorkspaceLocation = MemoryLocation & RouteMaterialLocation & { graphCompareTrack?:string; libraryNeighbor?:string; libraryDisplay?:'list'; practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'|'thread-detail'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:SavedGraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string;workbookDimension?:string };
 const views = new Set<WorkspaceView>(["today", "threads", "thread-detail", "learn", "library", "memory", "paper-detail", "workbook"]);
 const tabs = new Set(["start", "evidence", "problem", "agenda"]);
 const identifier = (value: string | null | undefined) => value && /^[a-zA-Z0-9_-]{1,120}$/.test(value) ? value : undefined;
@@ -35,7 +37,7 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
   const practiceRoute=view==='learn'&&Boolean(identifier(params.get('track')))&&Boolean(text(params.get('workbookId'),240));
   const location: WorkspaceLocation = { view, id,
     ...(view === 'today' && params.get('panel') === 'discovery' && params.get('focus') === 'recovery' ? {focus: 'recovery' as const} : {}),
-    ...((view === 'threads' || view === 'paper-detail' && from === 'threads') && identifier(params.get('graph')) && params.get('graphFrom') === 'library' ? {graphFrom: 'library' as const} : {}),
+    ...((view === 'threads' || view === 'paper-detail' && from === 'threads') && identifier(params.get('graph')) && ['library','thread-detail'].includes(params.get('graphFrom')||'') ? {graphFrom: params.get('graphFrom') as WorkspaceLocation['graphFrom']} : {}),
     ...(view==='paper-detail'&&['reading','notes','record'].includes(paperPanel||'')?{paperPanel:paperPanel as PaperPanel}:{}), ...(["home","reading","discovery","records","settings"].includes(params.get("panel")||"") ? {panel:params.get("panel") as TodayPanel} : {}), tab: tabs.has(tab) ? tab : "start", space: identifier(params.get("space")), from: views.has(from) && from !== "paper-detail" ? from : undefined, track: identifier(params.get("track")), graph: identifier(params.get("graph")), step: identifier(params.get("step")), path: identifier(params.get("path")),
     ...(view==='paper-detail'&&(from==='workbook'||['thread-detail','today'].includes(from)&&identifier(params.get('track')))&&text(params.get('readingFocus'),['thread-detail','today'].includes(from)?1000:600)?{readingFocus:text(params.get('readingFocus'),['thread-detail','today'].includes(from)?1000:600)}:{}),
     ...(libraryRoute&&text(params.get('q'),300)?{libraryQuery:text(params.get('q'),300)}:{}),
@@ -48,7 +50,7 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     ...(view==='library'&&['priority','newest','quality'].includes(params.get('sort')||'')?{librarySort:params.get('sort') as WorkspaceLocation['librarySort']}:{}),
     ...(view==='library'&&['all','saved','notes'].includes(params.get('tag')||'')?{libraryTag:params.get('tag') as WorkspaceLocation['libraryTag']}:{}),
     ...(graphRoute&&params.get('graphSurface')==='routes'?{graphSurface:'routes' as const}:{}),
-    ...(graphRoute&&['materials','similarity','citations','path'].includes(params.get('graphMode')||'')?{graphMode:params.get('graphMode') as GraphMode}:{}),
+    ...(graphRoute&&['materials','similarity','citations','path'].includes(params.get('graphMode')||'')?{graphMode:params.get('graphMode') as SavedGraphMode}:{}),
     ...(graphRoute&&['all','one-hop','multi-seed'].includes(params.get('graphScope')||'')?{graphScope:params.get('graphScope') as GraphScope}:{}),
     ...(graphRoute&&identifier(params.get('graphTrack'))?{graphTrack:identifier(params.get('graphTrack'))}:{}),
     ...(graphRoute&&identifier(params.get('graphFocus'))?{graphFocus:identifier(params.get('graphFocus'))}:{}),
@@ -60,7 +62,7 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     ...(workbookRoute&&identifier(params.get('workbookDimension'))?{workbookDimension:identifier(params.get('workbookDimension'))}:{}),
     ...(workbookRoute&&text(params.get('workbookFocus'),260)?{workbookFocus:text(params.get('workbookFocus'),260)}:{}) };
   if(practiceRoute&&/^(learning|task-[0-9]{1,2})$/.test(params.get('practice')||''))location.practiceId=params.get('practice')!;
-  if(graphRoute&&location.graphSurface==='routes'){
+  if(graphRoute&&location.graphSurface==='routes'||view==='thread-detail'){
     const query=text(params.get('materialQuery'),160);
     const page=positiveInteger(params.get('materialPage'));
     const paper=identifier(params.get('materialPaper'));
@@ -68,7 +70,7 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     if(page)location.materialPage=page;
     if(paper)location.materialPaper=paper;
     const group=params.get('materialGroup');
-    if(group==='backbone'||group==='supplement')location.materialGroup=group;
+    if(group==='backbone'||group==='supplement'||group==='library')location.materialGroup=group;
   }
   if(view==='memory'){
     const section=params.get('section') as MemorySection;
@@ -88,12 +90,12 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
 /** A bounded, same-workspace return chain preserves a reading task across refresh. */
 function validatedReturnHash(location: WorkspaceLocation, depth = 0): string | undefined {
   const hash = location.returnTo;
-  const libraryGraph = location.view === 'threads' && location.graph && location.graphFrom === 'library';
-  if (!hash || !(['paper-detail', 'workbook'].includes(location.view)||location.view==='learn'&&location.workbookId&&location.track||libraryGraph) || !location.space || depth >= 3 || !hash.startsWith('#') || hash.length > 8000) return;
+  const graphOrigin = location.view === 'threads' && location.graph && location.graphFrom;
+  if (!hash || !(['paper-detail', 'workbook'].includes(location.view)||location.view==='learn'&&location.workbookId&&location.track||graphOrigin) || !location.space || depth >= 3 || !hash.startsWith('#') || hash.length > 8000) return;
   try { if (!text(decodeURIComponent(hash), 8000)) return; } catch { return; }
   const segment = hash.slice(1).split(/[/?]/)[0];
   const view = segment === 'thread' ? 'thread-detail' : segment;
-  if (!views.has(view as WorkspaceView) || view === 'paper-detail' || segment === 'paper' || view !== (libraryGraph ? 'library' : location.from)) return;
+  if (!views.has(view as WorkspaceView) || view === 'paper-detail' || segment === 'paper' || view !== (graphOrigin || location.from)) return;
   const origin = parseWorkspaceLocation(hash, depth + 1);
   if (origin.view !== view || origin.space !== location.space) return;
   if (new URLSearchParams(hash.split('?')[1] || '').has('returnTo') && !origin.returnTo) return;
@@ -108,7 +110,7 @@ export function workspaceHash(location: WorkspaceLocation): string {
   if(location.view==='paper-detail'&&location.paperPanel)params.set('paperPanel',location.paperPanel);
   if(location.view==='paper-detail'&&(location.from==='workbook'||['thread-detail','today'].includes(location.from||'')&&location.track||location.from==='learn'&&Boolean(readWorkspaceLocation(location.returnTo||'').workbookId))&&text(location.readingFocus||null,['thread-detail','today'].includes(location.from||'')?1000:600))params.set('readingFocus',location.readingFocus!);
   if(location.view==='today'&&location.panel==='discovery'&&location.focus==='recovery')params.set('focus','recovery');
-  if(location.graph&&(location.view==='threads'||location.view==='paper-detail'&&location.from==='threads')&&location.graphFrom==='library')params.set('graphFrom','library');
+  if(location.graph&&(location.view==='threads'||location.view==='paper-detail'&&location.from==='threads')&&location.graphFrom)params.set('graphFrom',location.graphFrom);
   if(location.view==='library'||location.view==='thread-detail'||location.view==='threads'&&Boolean(location.graph)){
     if(location.libraryQuery)params.set('q',location.libraryQuery);
     if(location.libraryScope==='all')params.set('scope','all');
@@ -122,14 +124,14 @@ export function workspaceHash(location: WorkspaceLocation): string {
     if(location.librarySort&&location.librarySort!=='priority')params.set('sort',location.librarySort);
     if(location.libraryTag&&location.libraryTag!=='all')params.set('tag',location.libraryTag);
   }
+  if(location.view==='thread-detail'||location.view==='threads'&&location.graph&&location.graphSurface==='routes'){
+    if(text(location.materialQuery||null,160))params.set('materialQuery',location.materialQuery!);
+    if(location.materialPage&&location.materialPage>1)params.set('materialPage',String(location.materialPage));
+    if(identifier(location.materialPaper))params.set('materialPaper',location.materialPaper!);
+    if(location.materialGroup)params.set('materialGroup',location.materialGroup);
+  }
   if(location.view==='threads'&&location.graph){
-    if(location.graphSurface==='routes'){
-      params.set('graphSurface','routes');
-      if(text(location.materialQuery||null,160))params.set('materialQuery',location.materialQuery!);
-      if(location.materialPage&&location.materialPage>1)params.set('materialPage',String(location.materialPage));
-      if(identifier(location.materialPaper))params.set('materialPaper',location.materialPaper!);
-      if(location.materialGroup)params.set('materialGroup',location.materialGroup);
-    }
+    if(location.graphSurface==='routes')params.set('graphSurface','routes');
     if(location.graphMode)params.set('graphMode',location.graphMode);
     if(location.graphScope&&location.graphScope!=='all')params.set('graphScope',location.graphScope);
     if(location.graphTrack&&location.graphTrack!=='all')params.set('graphTrack',location.graphTrack);

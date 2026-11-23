@@ -7,11 +7,10 @@ const graphPath = new URL("../app/components/paper-network-graph.tsx", import.me
 const stylesPath = new URL("../app/globals.css", import.meta.url);
 
 async function readNetworkClient() {
-  const [client, graph, reading] = await Promise.all([
+  const [client, graph] = await Promise.all([
     readFile(clientPath, "utf8"), readFile(graphPath, "utf8"),
-    readFile(new URL("../app/components/reading-order-workbench.tsx", import.meta.url), "utf8"),
   ]);
-  return `${client}\n${graph}\n${reading}`;
+  return `${client}\n${graph}`;
 }
 
 test("paper network focus uses the verifiable one-hop evidence contract", async () => {
@@ -45,12 +44,11 @@ test("focus and origin rings remain visually distinct on desktop and narrow scre
   assert.match(styles, /@media \(max-width: 840px\)[\s\S]*?\.v2-paper-network-stage\.discovery-mode[^}]*grid-template-columns:\s*1fr/);
 });
 
-test("the reading trail links to the route plan and leaves the learning path on its own page", async () => {
+test("citation exploration links directly to the route plan", async () => {
   const client=await readNetworkClient();
-  assert.match(client,/function ReadingOrderWorkbench/);
+  assert.doesNotMatch(client,/function ReadingOrderWorkbench/);
   assert.match(client,/activeLearningState\.path\?\.steps\.find/);
   assert.match(client,/onAgenda=\{\(\)=>openThread\(routeBrowseTrack,"agenda"\)\}/);
-  assert.match(client,/在研究计划中安排任务/);
   assert.doesNotMatch(client,/<PaperNetworkGraph[^>]*mode="path"/);
   assert.doesNotMatch(client,/const needsLearningPath = .*paperNetworkMode/);
 });

@@ -101,7 +101,7 @@ test("ships live monitoring, deduplication, and readable type", async () => {
 });
 
 test("continuously explores new discovery branches and grows a connected research map", async () => {
-  const [monitor, mapRoute, schema, repository, clientSource, css, worker, viteConfig, scheduler, paperNetwork, citationWorkbench, readingWorkbench] = await Promise.all([
+  const [monitor, mapRoute, schema, repository, clientSource, css, worker, viteConfig, scheduler, paperNetwork, citationWorkbench] = await Promise.all([
     readFile(new URL("../app/api/monitor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -113,9 +113,8 @@ test("continuously explores new discovery branches and grows a connected researc
     readFile(new URL("../lib/monitor-scheduler.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/components/paper-network-graph.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/citation-flow-workbench.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/components/reading-order-workbench.tsx", import.meta.url), "utf8"),
   ]);
-  const client = `${clientSource}\n${paperNetwork}\n${citationWorkbench}\n${readingWorkbench}`;
+  const client = `${clientSource}\n${paperNetwork}\n${citationWorkbench}`;
 
   assert.match(monitor, /monitor_discovery_pages/);
   assert.match(monitor, /monitor_discovery_coverage/);
@@ -388,10 +387,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /参考文献/);
   assert.match(client, /已核验引用关系/);
   assert.match(client, /查询上下游/);
-  assert.match(client, /"path"|mode==='path'/);
-  assert.match(client, /<ReadingOrderWorkbench/);
-  assert.match(client, /function ReadingOrderWorkbench/);
-  assert.match(client, /在研究计划中安排任务/);
+  assert.match(clientSource, /location\.graphMode === 'path'/);
   assert.match(clientSource, /paperNetworkMode\s*===\s*"similarity"\s*\?\s*<RouteSimilarityExplorer[\s\S]*?: <CitationFlowWorkbench/);
   assert.match(await readFile(new URL("../app/components/learning-stage-guidance.tsx", import.meta.url), "utf8"), /如何决定/);
   assert.match(css, /@keyframes v2-relation-draw/);

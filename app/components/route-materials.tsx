@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { ResearchTrack } from '../../lib/research-map';
+import type { ResearchTrack, ResearchTrackPaper } from '../../lib/research-map';
 import type { LibraryPaper } from '../../lib/library-catalog';
+import type { GraphRelevance } from '../../lib/graph-task';
 import { comparisonEligibilityText } from '../../lib/comparison-eligibility';
 import { researchRoleLabel } from '../../lib/research-workspace-presentation';
 import type { RouteMaterialLocation } from '../../lib/workspace-navigation';
+import { workspaceFetch } from '../../lib/workspace-request';
 import { GraphPaperChoice } from './graph-paper-choice';
 import { MathText } from './math-text';
 import { useSavedRead } from './use-saved-read';
@@ -27,22 +29,19 @@ function decodeQuestion(value:unknown):RouteQuestion {
   return data;
 }
 
-function reviewedReason(paper:LibraryPaper,locale:'zh'|'en'){
-  if(!paper.assessmentJson)return '';
+function reviewedAssessment(paper:LibraryPaper):GraphRelevance|null{
+  if(!paper.assessmentJson)return null;
   try{
-    const reason=JSON.parse(paper.assessmentJson);
-    const text=locale==='zh'?reason.reasonZh:reason.reasonEn;
-    return typeof text==='string'?text:'';
-  }catch{return '';}
+    return JSON.parse(paper.assessmentJson);
+  }catch{return null;}
 }
 
-export function RouteMaterialsContext({spaceId,track,tracks,locale,selection,onTrack,showEditor}:{
-  spaceId:string;track:ResearchTrack;tracks:ResearchTrack[];locale:'zh'|'en';selection:RouteSelection;
-  onTrack:(id:string)=>void;showEditor:boolean;
+export function RouteComparisonQuestion({spaceId,trackId,locale,selection,showEditor}:{
+  spaceId:string;trackId:string;locale:'zh'|'en';selection:RouteSelection;showEditor:boolean;
 }) {
   const zh=locale==='zh';
-  const key=spaceId+':'+track.id;
-  const {data,error,reload}=useSavedRead(key,'/api/research-problem?'+new URLSearchParams({spaceId,trackId:track.id}),decodeQuestion);
+  const key=spaceId+':'+trackId;
+  const {data,error,reload}=useSavedRead(key,'/api/research-problem?'+new URLSearchParams({spaceId,trackId}),decodeQuestion);
   const problem=data?.problemState.problem;
   const question=problem?.status==='active'?problem.question:'';
   const questionEditor=useRef<HTMLDetailsElement>(null);
@@ -52,27 +51,23 @@ export function RouteMaterialsContext({spaceId,track,tracks,locale,selection,onT
     if(needsQuestion&&questionEditor.current)questionEditor.current.open=true;
   },[needsQuestion]);
 
+  if(!showEditor)return null;
   return <div className="pi-materials-context">
-    <label>{zh?'当前路线':'Current route'}
-      <select value={track.id} onChange={event=>onTrack(event.target.value)}>
-        {tracks.map(item=><option key={item.id} value={item.id}>{zh?item.titleZh:item.titleEn}</option>)}
-      </select>
-    </label>
-    {showEditor&&question&&<div className="pi-materials-question"><small>{zh?'研究问题':'Research question'}</small><p><MathText inline>{question}</MathText></p></div>}
-    {showEditor&&error&&<p className="pi-materials-notice" role="status">{zh?'研究问题暂未载入。':'Could not load the research question.'} <button type="button" onClick={reload}>{zh?'重试':'Retry'}</button></p>}
-    {showEditor&&<details className="pi-materials-edit-question" ref={questionEditor}>
-      <summary>{selection.value.question&&selection.value.question!==question?(zh?'查看本次比较问题':'View the comparison question'):(zh?'设置本次比较问题':'Set the comparison question')}</summary>
+    {error&&<p className="pi-materials-notice" role="status">{zh?'研究问题暂未载入。':'Could not load the research question.'} <button type="button" onClick={reload}>{zh?'重试':'Retry'}</button></p>}
+    <details className="pi-materials-edit-question" ref={questionEditor}>
+      <summary>{zh?'本次比较问题':'Comparison question'}</summary>
       <label>{zh?'本次比较问题':'Comparison question'}<textarea maxLength={1000} rows={2}
         value={selection.value.question} onChange={event=>selection.change({...selection.value,question:event.target.value})}
         placeholder={zh?'这些论文要回答什么问题？':'What should these papers help you answer?'} /></label>
-    </details>}
+    </details>
   </div>;
 }
 
-export function RouteMaterials({spaceId,track,locale,selection,location,active,onLocation,onRead,onRelations,relationPaperIds}:{
+export function RouteMaterials({spaceId,track,locale,selection,location,active,onLocation,onRead,onRelations,relationPaperIds,onDeactivate,curationBusy,demo}:{
   spaceId:string;track:ResearchTrack;locale:'zh'|'en';selection:RouteSelection;location:RouteMaterialLocation;active:boolean;
   onLocation:(patch:RouteMaterialLocation,history:'push'|'replace')=>void;
   onRead:(id:string)=>void;onRelations:(id:string)=>void;relationPaperIds:Map<string,string>;
+  onDeactivate:(paper:ResearchTrackPaper)=>void;curationBusy:boolean;demo:boolean;
 }){
   const zh=locale==='zh';
   const query=location.materialQuery||'';
@@ -83,11 +78,24 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
   },[query]);
   const page=location.materialPage||1;
   const group=location.materialGroup||'';
-  const groupLabels={all:zh?'全部材料':'All materials',backbone:zh?'路线主干':'Route papers',supplement:zh?'补充材料':'Supplementary'};
+  const groupLabels={all:zh?'全部材料':'All materials',backbone:zh?'路线主干':'Route papers',supplement:zh?'补充材料':'Supplementary',library:zh?'整个论文库':'Entire library'};
   const url='/api/library-catalog?'+new URLSearchParams({spaceId,trackId:track.id,view:'route-materials',q:settledQuery,group,offset:String((page-1)*24)});
-  const {data,dataUrl,error,loading,reload}=useSavedRead(spaceId+':'+track.id,url,decodeCatalog,active);
+  const paperIds=track.papers.map(paper=>paper.id).join(',');
+  const {data,dataUrl,error,loading,reload}=useSavedRead(spaceId+':'+track.id+':'+paperIds,url,decodeCatalog,active);
   const result=dataUrl===url&&settledQuery===query?data:null;
   const byCanonical=new Map(track.papers.map(paper=>[paper.canonicalId.toLowerCase(),paper]));
+  const [saving,setSaving]=useState('');
+  const [saveError,setSaveError]=useState('');
+  const save=async(paper:LibraryPaper,status:'included'|'excluded',category:string)=>{
+    setSaving(paper.id);setSaveError('');
+    try{
+      const response=await workspaceFetch('/api/library-catalog',{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({spaceId,trackId:track.id,paperId:paper.id,status,category})});
+      if(!response.ok)throw Error('Could not save material');
+      reload();
+    }catch{setSaveError(zh?'材料状态暂未保存，请重试。':'Could not save the paper. Try again.');}
+    finally{setSaving('');}
+  };
 
   useEffect(()=>{
     if(!active||!result||!location.materialPaper)return;
@@ -107,11 +115,12 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
           placeholder={zh?'论文标题、作者或摘要':'Title, author, or abstract'} />
       </label>
       <div className="pi-materials-groups" role="group" aria-label={zh?'材料范围':'Material scope'}>
-        {(['all','backbone','supplement'] as const).map(item=><button key={item} type="button" aria-pressed={(group||'all')===item}
+        {(['all','backbone','supplement','library'] as const).map(item=><button key={item} type="button" aria-pressed={(group||'all')===item}
           onClick={()=>update({materialGroup:item==='all'?undefined:item,materialPage:undefined},'push')}>{groupLabels[item]}</button>)}
       </div>
     </div>
     {error&&<p className="pi-materials-notice" role="alert">{zh?'路线材料暂未载入。':'Could not load route materials.'} <button type="button" onClick={reload}>{zh?'重试':'Retry'}</button></p>}
+    {saveError&&<p className="pi-materials-notice" role="alert">{saveError}</p>}
     {!result&&!error&&(loading||settledQuery!==query)&&<p className="pi-materials-notice" role="status">{zh?'正在载入论文…':'Loading papers…'}</p>}
     {result&&<>
       <p className="pi-materials-count" role="status">{zh?`${result.total} 篇论文`:`${result.total} papers`}</p>
@@ -125,9 +134,11 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
         const canonical=paper.canonicalId.toLowerCase();
         const routePaper=byCanonical.get(canonical);
         const relationshipId=relationPaperIds.get(canonical);
-        const reason=(zh?routePaper?.rationaleZh:routePaper?.rationaleEn)||reviewedReason(paper,locale);
+        const assessment=reviewedAssessment(paper);
+        const reason=(zh?routePaper?.rationaleZh:routePaper?.rationaleEn)||(zh?assessment?.reasonZh:assessment?.reasonEn);
         const category=routePaper?researchRoleLabel(routePaper.role,locale):paper.membership==='included'?(zh?'已收录':'Added to route'):
-          paper.relevance==='direct'?(zh?'已核对 · 直接相关':'Reviewed · directly related'):(zh?'已核对 · 部分相关':'Reviewed · partially related');
+          paper.membership==='excluded'?(zh?'已排除':'Excluded'):paper.relevance==='direct'?(zh?'已核对 · 直接相关':'Reviewed · directly related'):
+          paper.relevance==='partial'?(zh?'已核对 · 部分相关':'Reviewed · partially related'):(zh?'论文库材料':'Library paper');
         const selected=selection.value.papers.some(item=>item.canonicalId.toLowerCase()===canonical);
         const source=/^https?:\/\//i.test(paper.url)?paper.url:paper.doi?`https://doi.org/${encodeURI(paper.doi)}`:'';
         const read=()=>{onLocation({materialPaper:paper.id},'replace');onRead(paper.id);};
@@ -138,12 +149,24 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
               source?<a href={source} target="_blank" rel="noreferrer"><MathText inline>{paper.title}</MathText> ↗</a>:<MathText inline>{paper.title}</MathText>}</h3>
             <p className="pi-material-authors">{[paper.authors,paper.venue].filter(Boolean).join(' · ')}</p>
             {reason&&<p className="pi-material-reason"><MathText inline>{reason}</MathText></p>}
+            {assessment?.quote&&<details className="pi-material-details"><summary>{zh?'摘要依据':'Abstract evidence'}</summary><blockquote>{assessment.quote}</blockquote><p>{zh?assessment.limitationZh:assessment.limitationEn}</p></details>}
           </div>
           <div className="pi-material-actions">
             {(paper.comparisonEligibility==='eligible'||selected)&&<GraphPaperChoice paper={paper} locale={locale} selection={selection}/>}
             {paper.comparisonEligibility!=='eligible'&&<small>{comparisonEligibilityText(paper.comparisonEligibility,zh)}</small>}
             {relationshipId&&<button type="button" className="pi-material-relations" onClick={()=>{onLocation({materialPaper:paper.id},'replace');onRelations(relationshipId);}}>
               {zh?'查看论文关系':'View paper relations'} →</button>}
+            {!demo&&(routePaper?routePaper.provenance!=='user_confirmed':!paper.routeOnly)&&<details className="pi-material-details">
+              <summary>{zh?'管理':'Manage'}</summary>
+              {routePaper?<button type="button" disabled={curationBusy} onClick={()=>onDeactivate(routePaper)}>{zh?'从本路线移除':'Remove from this route'}</button>:<>
+                <select aria-label={zh?'归类并加入文献集合':'Classify and add to collection'} disabled={Boolean(saving)} value={paper.membership==='included'?paper.category||'related':''} onChange={event=>{if(event.target.value)void save(paper,'included',event.target.value);}}>
+                  <option value="">{zh?'加入文献集合…':'Add to collection…'}</option>
+                  <option value="related">{zh?'相关研究':'Related work'}</option><option value="method">{zh?'方法':'Method'}</option>
+                  <option value="background">{zh?'背景':'Background'}</option><option value="evidence">{zh?'待核对证据':'Evidence to examine'}</option>
+                </select>
+                <button type="button" disabled={Boolean(saving)||paper.membership==='excluded'} onClick={()=>void save(paper,'excluded',paper.category||'related')}>{zh?'从集合排除':'Exclude from collection'}</button>
+              </>}
+            </details>}
           </div>
         </li>;
       })}</ul>
