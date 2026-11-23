@@ -50,7 +50,7 @@ test("route overview cards show one summary and one state-aware action", async (
   assert.match(routeCards, /papers\.length/);
   assert.match(routeCards, /aria-label=\{`\$\{zh \? "进入研究："/);
   assert.match(routeCards, /onOpen\(track\)/);
-  assert.match(routeCards, /onLearn\(track\)/);
+  assert.doesNotMatch(routeCards, /onLearn\(track\)/);
   assert.doesNotMatch(routeCards, /intelligence\.assessment|heatLevel|<dl>/);
   assert.doesNotMatch(routeOverview, /<section className="v2-route-explorer-entry">/);
 });

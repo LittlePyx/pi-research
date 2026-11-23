@@ -1,15 +1,16 @@
-.pi-route-start { padding: 24px 0; max-width: 1060px; }
-.pi-route-start h2 { font-size: 21px; font-weight: 500; line-height: 1.5; margin: 0 0 10px; }
-.pi-route-start h3 { font-size: 18px; font-weight: 500; line-height: 1.6; }
-.pi-route-start p { font-size: 16px; line-height: 1.8; color: #58645d; margin: 8px 0 14px; }
-.pi-route-start > section { margin-top: 30px; padding-top: 24px; border-top: 1px solid #dfe3df; }
-.pi-route-start article { padding: 18px 0; border-bottom: 1px solid #e4e7e4; }
-.pi-route-start small { color: #657068; font-size: 14px; }
-.pi-route-start button, .pi-route-start a { display: inline-block; text-align: left; margin-top: 10px; color: #315d48; font-size: 14px; line-height: 1.6; text-decoration: underline; text-underline-offset: 4px; }
-.pi-route-start details { margin-top: 12px; }
-.pi-route-start summary { cursor: pointer; font-size: 14px; color: #5f6b63; }
-.pi-route-start blockquote { margin: 12px 0; padding-left: 16px; border-left: 2px solid #b4c1b7; }
-.pi-route-start-pending { padding-top: 20px; border-top: 1px solid #dfe3df; }
-.pi-route-start li { margin: 10px 0; font-size: 14px; line-height: 1.8; }
-.pi-route-start .pi-route-workflow button { margin:0; text-decoration:none; }
-.pi-route-start .pi-route-working-question { margin:0 0 28px; padding:20px 24px; border:0; background:#eef2ef; }
+.pi-route-start { max-width: 960px; padding-block: 16px 24px; }
+.pi-route-current-card { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:20px; padding:20px 24px; border:1px solid #dce5ef; border-radius:12px; background:#f7f9fc; }
+.pi-route-current-card h2 { margin:0 0 8px; }
+.pi-route-current-card p { margin:6px 0 0; overflow-wrap:anywhere; }
+.pi-route-current-question { font-size:1rem; color:#283849; }
+.pi-route-current-check { color:#50647a; font-size:.875rem; }
+.pi-route-current-check strong { margin-inline-end:6px; }
+.pi-route-current-card .pi-research-primary { min-height:44px; align-self:center; }
+.pi-route-current-summary { display:flex; flex-wrap:wrap; gap:12px 28px; margin:16px 0 0; padding:0 2px; }
+.pi-route-current-summary div { min-width:0; max-width:100%; }
+.pi-route-current-summary dt { color:#54677c; font-size:.8125rem; }
+.pi-route-current-summary dd { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; margin:4px 0 0; overflow-wrap:anywhere; }
+@media(max-width:650px) {
+  .pi-route-current-card { grid-template-columns:minmax(0,1fr); padding:16px; gap:12px; }
+  .pi-route-current-card .pi-research-primary { justify-self:start; }
+}

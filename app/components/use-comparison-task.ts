@@ -7,24 +7,24 @@ import {comparisonInputKey,readComparisonInput} from '../../lib/comparison-input
 import {comparisonLocation,readComparisonLocation} from '../../lib/workbook-continuation';
 
 /** Only expose a response that belongs to the currently selected workspace and route. */
-export function useComparisonTask(userId:string,spaceId:string,trackId:string,selection:GraphTaskContext){
+export function useComparisonTask(userId:string,spaceId:string,trackId:string,selection:GraphTaskContext,enabled=true){
   const scope=JSON.stringify([userId,spaceId,trackId]);
   const [remote,setRemote]=useState<{scope:string;value:RouteOverview|null;failed:boolean}>({scope:'',value:null,failed:false});
   const [retry,setRetry]=useState(0);
   const intentKey=JSON.stringify([scope,selection.question,selection.papers.map(p=>p.canonicalId.toLowerCase())]);
   const [intent,setIntent]=useState<{key:string;id:string|null;failed:boolean}>({key:'',id:null,failed:false});
   useEffect(()=>{
-    if(!trackId)return;
+    if(!enabled||!trackId)return;
     const abort=new AbortController();
     workspaceFetch('/api/research-workbook?'+new URLSearchParams({spaceId,trackId,overview:'1'}),{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]),cache:'no-store'})
       .then(async r=>{const data=await r.json() as {overview:RouteOverview};if(!r.ok||data.overview?.spaceId!==spaceId||data.overview.trackId!==trackId)throw Error();return data.overview;})
       .then(value=>{if(!abort.signal.aborted)setRemote({scope,value,failed:false});})
       .catch(()=>{if(!abort.signal.aborted)setRemote({scope,value:null,failed:true});});
     return()=>abort.abort();
-  },[spaceId,trackId,scope,retry]);
+  },[spaceId,trackId,scope,retry,enabled]);
   useEffect(()=>{
     const [,question,canonicalIds]=JSON.parse(intentKey) as [string,string,string[]];
-    if(!trackId||canonicalIds.length<2)return;
+    if(!enabled||!trackId||canonicalIds.length<2)return;
     const abort=new AbortController();
     const timer=setTimeout(()=>{
       workspaceFetch('/api/research-workbook?'+new URLSearchParams({spaceId,trackId,selection:'1',intent:'1',canonicalIds:canonicalIds.join(','),focus:question}),{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]),cache:'no-store'})
@@ -33,19 +33,19 @@ export function useComparisonTask(userId:string,spaceId:string,trackId:string,se
         .catch(()=>{if(!abort.signal.aborted)setIntent({key:intentKey,id:null,failed:true});});
     },200);
     return()=>{clearTimeout(timer);abort.abort();};
-  },[spaceId,trackId,intentKey,retry]);
+  },[spaceId,trackId,intentKey,retry,enabled]);
   const materialKey=JSON.stringify([scope,selection.papers.map(p=>p.canonicalId.toLowerCase())]);
   const [materialsRemote,setMaterialsRemote]=useState<{key:string;materials:ComparisonMaterial[];failed:boolean}>({key:'',materials:[],failed:false});
   useEffect(()=>{
     const [,canonicalIds]=JSON.parse(materialKey) as [string,string[]];
-    if(!canonicalIds.length)return;
+    if(!enabled||!canonicalIds.length)return;
     const abort=new AbortController();
     workspaceFetch('/api/research-workbook?'+new URLSearchParams({spaceId,trackId,eligibility:'1',canonicalIds:canonicalIds.join(',')}),{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(20000)]),cache:'no-store'})
       .then(async r=>{const data=await r.json() as {spaceId:string;trackId:string;materials:ComparisonMaterial[]};if(!r.ok||data.spaceId!==spaceId||data.trackId!==trackId||!Array.isArray(data.materials))throw Error();return data.materials;})
       .then(materials=>{if(!abort.signal.aborted)setMaterialsRemote({key:materialKey,materials,failed:false});})
       .catch(()=>{if(!abort.signal.aborted)setMaterialsRemote({key:materialKey,materials:[],failed:true});});
     return()=>abort.abort();
-  },[spaceId,trackId,materialKey,retry]);
+  },[spaceId,trackId,materialKey,retry,enabled]);
   const draft=readComparisonInput(comparisonInputKey(userId,spaceId,trackId),spaceId);
   const overview=remote.scope===scope?remote.value:null;
   const remembered=comparisonLocation(readComparisonLocation(userId,spaceId,trackId),spaceId)?.workbook;

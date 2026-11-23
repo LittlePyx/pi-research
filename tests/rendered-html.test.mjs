@@ -364,7 +364,7 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.doesNotMatch(client, /v2-direction-live-relations/);
   assert.doesNotMatch(client, /directionPinnedRelationId/);
   assert.match(client, /onPointerEnter/);
-  assert.match(client, /以此方向规划路径/);
+  assert.doesNotMatch(client, /以此方向规划路径/);
   assert.doesNotMatch(client, /加入学习路径/);
   assert.match(client, /关键机会/);
   assert.match(client, /观察信号/);
@@ -447,7 +447,7 @@ test("builds persistent personalized learning paths from real research papers", 
 
   assert.match(client, /你已切换为从全空间论文中规划/);
   assert.match(client, /按全空间重新规划/);
-  assert.match(client, /onLearn=\{openRouteLearningPath\}/);
+  assert.match(client, /researchRouteTab === "agenda"[\s\S]*?onClick=\{\(\) => openRouteLearningPath\(selectedThread\)\}>\{locale === "zh" \? "补充基础阅读"/);
   assert.match(client, /learningResourceSignals/);
   assert.match(await readFile(new URL("../lib/research-workspace-presentation.ts", import.meta.url), "utf8"), /质量已通过/);
   assert.match(client, /<LearningStageWorkspace /);

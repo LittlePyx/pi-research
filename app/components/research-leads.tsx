@@ -5,9 +5,9 @@ import { routeMaterialState } from "../../lib/route-material-state";
 import { MathText } from "./math-text";
 import "./research-workspace.css";
 
-export function ResearchLeads({ tracks, locale, onOpen, onLearn }: {
+export function ResearchLeads({ tracks, locale, onOpen }: {
   tracks: ResearchTrack[]; locale: "zh" | "en";
-  onOpen: (track: ResearchTrack) => void; onLearn: (track: ResearchTrack) => void;
+  onOpen: (track: ResearchTrack) => void;
 }) {
   const zh = locale === "zh";
   const [query, setQuery] = useState("");
@@ -29,7 +29,6 @@ export function ResearchLeads({ tracks, locale, onOpen, onLearn }: {
             </div>
             <div className="pi-lead-reading">
               <button type="button" className="pi-lead-open" onClick={() => onOpen(track)} aria-label={`${zh ? "进入研究：" : "Open research: "}${zh ? track.titleZh : track.titleEn}`}>{zh ? "进入研究" : "Open research"} <span aria-hidden="true">→</span></button>
-              {papers.length > 0 && <button type="button" onClick={() => onLearn(track)}>{zh ? "学习路径" : "Learning path"}</button>}
             </div>
           </article>;
         })}

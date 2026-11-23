@@ -73,3 +73,26 @@ test('legacy search and Today links reach the consolidated screens',async({page}
   await expect(page).toHaveURL(/#memory\?.*section=reading/);
   await expect(page.getByText('按日期回看阅读')).toBeVisible();
 });
+
+test('the route task is the only route learning entry and restores its origin after refresh',async({page})=>{
+  await page.goto('/__acceptance/start');
+  await research(page);
+  const leads=page.getByRole('region',{name:'研究线索',exact:true});
+  await expect(leads.getByRole('button',{name:'学习路径',exact:true})).toHaveCount(0);
+  await leads.getByRole('button',{name:'进入研究：量子编码条件比较',exact:true}).click();
+  const current=page.getByRole('region',{name:'当前任务',exact:true});
+  await expect(current.getByRole('button')).toHaveCount(1);
+  await expect(page.getByRole('button',{name:'补充基础阅读',exact:true})).toHaveCount(0);
+  await page.getByRole('navigation',{name:'路线工作区'}).getByRole('button',{name:'任务',exact:true}).click();
+  await expect(page).toHaveURL(/#thread\/acceptance-quantum\/agenda/);
+  const origin=new URL(page.url()).hash;
+  await page.getByRole('button',{name:'补充基础阅读',exact:true}).click();
+  await expect(page).toHaveURL(/#learn\?.*track=acceptance-quantum/);
+  await page.reload();
+  const target=page.locator('#learning-goal-fields select').first();
+  await expect(target).toHaveValue('acceptance-quantum');
+  await expect(target.locator('option:checked')).toHaveText('量子编码条件比较');
+  await page.getByRole('link',{name:'返回路线任务',exact:true}).click();
+  await expect.poll(()=>new URL(page.url()).hash).toBe(origin);
+  await expect(page.getByRole('button',{name:'补充基础阅读',exact:true})).toBeVisible();
+});

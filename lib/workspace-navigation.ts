@@ -93,13 +93,15 @@ function validatedReturnHash(location: WorkspaceLocation, depth = 0): string | u
   const hash = location.returnTo;
   const graphOrigin = location.view === 'threads' && location.graph && location.graphFrom;
   const fromMaterials = location.view === 'library' && location.libraryCollection && location.from === 'thread-detail';
-  if (!hash || !(['paper-detail', 'workbook'].includes(location.view)||location.view==='learn'&&location.workbookId&&location.track||graphOrigin||fromMaterials) || !location.space || depth >= 5 || !hash.startsWith('#') || hash.length > 8000) return;
+  const fromRouteTasks = location.view === 'learn' && location.track && !location.workbookId && location.from === 'thread-detail';
+  if (!hash || !(['paper-detail', 'workbook'].includes(location.view)||location.view==='learn'&&location.workbookId&&location.track||graphOrigin||fromMaterials||fromRouteTasks) || !location.space || depth >= 5 || !hash.startsWith('#') || hash.length > 8000) return;
   try { if (!text(decodeURIComponent(hash), 8000)) return; } catch { return; }
   const segment = hash.slice(1).split(/[/?]/)[0];
   const view = segment === 'thread' ? 'thread-detail' : segment;
   if (!views.has(view as WorkspaceView) || view === 'paper-detail' || segment === 'paper' || view !== (graphOrigin || location.from)) return;
   const origin = parseWorkspaceLocation(hash, depth + 1);
   if (origin.view !== view || origin.space !== location.space || (fromMaterials && (origin.id !== location.libraryCollection || origin.tab !== 'evidence'))) return;
+  if (fromRouteTasks && (origin.id !== location.track || origin.tab !== 'agenda')) return;
   if (new URLSearchParams(hash.split('?')[1] || '').has('returnTo') && !origin.returnTo) return;
   return hash;
 }

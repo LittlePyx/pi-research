@@ -341,6 +341,13 @@ test('research memory finds an older saved comparison after a new draft and retu
   const record=memory.getByRole('link',{name:question,exact:true});
   await expect(record).toBeVisible();
   await expect(memory.getByRole('link',{name:newer,exact:true})).toHaveCount(0);
+  const sections=page.getByRole('navigation',{name:'研究记忆分类',exact:true});
+  await expect(sections.getByRole('button')).toHaveCount(4);
+  await expect(page.getByRole('navigation',{name:'研究记录分类',exact:true})).toHaveCount(0);
+  await sections.getByRole('button',{name:'阅读笔记',exact:true}).click();
+  await expect(page).toHaveURL(/section=reading/);
+  await sections.getByRole('button',{name:'比较记录',exact:true}).click();
+  await expect(search).toHaveValue('可核对判断');await expect(filter).toHaveValue('acceptance-quantum');
   await page.reload();await expect(search).toHaveValue('可核对判断');await expect(filter).toHaveValue('acceptance-quantum');
   await record.click();await expect(page).toHaveURL(new RegExp('workbookId='+encodeURIComponent(workbookId)));
   await expect(overview).toContainText(decision);
@@ -511,6 +518,11 @@ test('library and route selection stay synchronized in both directions without m
   await selectFromSearch(page);
   await primaryNavigation(page,/^研究$/);
   await page.getByRole('button',{name:'进入研究：量子编码条件比较',exact:true}).click();
+  const current=page.getByRole('region',{name:'当前任务',exact:true});
+  await expect(current.getByRole('button')).toHaveCount(1);
+  await expect(current.getByRole('button',{name:'开始新比较',exact:true})).toBeEnabled();
+  await expect(tray(page)).toHaveCount(0);
+  await page.getByRole('navigation',{name:'路线工作区'}).getByRole('button',{name:/^材料/}).click();
   await expect(tray(page)).toContainText('2/3');
   await taskClick(page,{name:'移除 '+sample.sources[0].title,exact:true});
   await expect(tray(page)).toContainText('1/3');

@@ -71,7 +71,7 @@ import "./product-design.css";
 import type { WorkbookSource, WorkbookState } from "../lib/research-workbook";
 import { learningBrowseStep, canChangeLearningStep, nextReadableLearningStep } from "../lib/learning-browse";
 import type { ImportSourceKind, ResearchImportRecord, ResearchProfileAnalysis } from "../lib/research-profile";
-import { emptyResearchMapState, researchLeadActionableGap, researchRouteLearningSignal, researchRouteOperationalStatus, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchLeadGapOrigin, type ResearchMapState, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper, type ResearchTrackRole } from "../lib/research-map";
+import { emptyResearchMapState, researchLeadActionableGap, researchRouteLearningSignal, researchRouteOperationalStatus, selectResearchRouteAttention, type ResearchDirectionRole, type ResearchLeadGapOrigin, type ResearchMapState, type ResearchRouteAttentionKind, type ResearchRoutePortfolio, type ResearchTrack, type ResearchTrackPaper } from "../lib/research-map";
 import { learningDiscoveryDelay, learningPathResultMessage, learningResourcePaperId, type LearningPathState, type LearningPathStep, type LearningResource } from "../lib/learning-path";
 import { monitorScanCompletionLabel, shouldWakeLearningQualityQueue } from "../lib/monitor-quality-queue.mjs";
 import { isDatabaseVerifiedCitationEdge, isVerifiableSimilarityNeighborEdge, paperNetworkEdgeKey, selectMultiOriginCandidates, selectVerifiableOneHopEdges, type MultiOriginIntent } from "../lib/paper-network";
@@ -85,6 +85,7 @@ import { activateModalFocus } from "../lib/modal-focus";
 import { briefPaperEntries, remainingBriefEntries, briefRunStatus, datedBriefText, coverageIdentity, scanDisplayProgress, scanFunnel, isReadReference, readingReferences, resumeReading, readingQueueExclusions, nextReadingPaperId } from "../lib/today-presentation.mjs";
 import { TodayContinuation } from './components/today-continuation';
 import { WorkbookPractice } from './components/workbook-practice';
+import { comparisonLocation as savedComparisonLocation, readComparisonLocation } from "../lib/workbook-continuation";
 import { useWorkspaceNavigation } from "./components/use-workspace-navigation";
 import { usePaperNetworkNavigation } from "./components/use-paper-network-navigation";
 import { PrimaryLibrary } from "./components/primary-library";
@@ -1464,7 +1465,6 @@ function ResearchLeadDecisionPanel({
   locale,
   onOpenWorkspace,
   onOpenToday,
-  onOpenLearning,
   onScanGap,
   gapScanning,
   gapScanBlocked,
@@ -1475,7 +1475,6 @@ function ResearchLeadDecisionPanel({
   locale: Locale;
   onOpenWorkspace: (tab: ResearchRouteTab) => void;
   onOpenToday: () => void;
-  onOpenLearning: () => void;
   onScanGap: (origin: ResearchLeadGapOrigin) => void;
   gapScanning: boolean;
   gapScanBlocked: boolean;
@@ -1544,7 +1543,7 @@ function ResearchLeadDecisionPanel({
     <aside className={`v2-research-decision-next ${shouldScanGap ? "actionable" : ""}`}>
       <small>{locale === "zh" ? "下一步" : "NEXT"}</small><h3>{nextAction}</h3>
       {shouldScanGap && <ResearchGapDiscoveryStatus track={track} locale={locale} />}
-      <div className="v2-research-decision-actions">{shouldScanGap && actionableGap ? <button type="button" className="primary" disabled={gapScanBlocked} onClick={() => onScanGap(actionableGap.origin)}>{gapScanning ? (locale === "zh" ? "正在补证据…" : "Finding evidence…") : (locale === "zh" ? "立即检索" : "Search now")} →</button> : <button type="button" className="primary" onClick={() => onOpenWorkspace(primaryTab)}>{primaryLabel} →</button>}{(unresolvedToday > 0 || track.pendingEvidenceCount > 0) && <button type="button" onClick={onOpenToday}>{locale === "zh" ? `今日待决 ${Math.max(unresolvedToday, track.pendingEvidenceCount)}` : `${Math.max(unresolvedToday, track.pendingEvidenceCount)} pending in Today`}</button>}<button type="button" onClick={onOpenLearning}>{locale === "zh" ? "学习路径" : "Learning path"}</button></div>
+      <div className="v2-research-decision-actions">{shouldScanGap && actionableGap ? <button type="button" className="primary" disabled={gapScanBlocked} onClick={() => onScanGap(actionableGap.origin)}>{gapScanning ? (locale === "zh" ? "正在补证据…" : "Finding evidence…") : (locale === "zh" ? "立即检索" : "Search now")} →</button> : <button type="button" className="primary" onClick={() => onOpenWorkspace(primaryTab)}>{primaryLabel} →</button>}{(unresolvedToday > 0 || track.pendingEvidenceCount > 0) && <button type="button" onClick={onOpenToday}>{locale === "zh" ? `今日待决 ${Math.max(unresolvedToday, track.pendingEvidenceCount)}` : `${Math.max(unresolvedToday, track.pendingEvidenceCount)} pending in Today`}</button>}</div>
     </aside>
   </section>;
 }
@@ -2219,6 +2218,12 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [memoryRouteError, setMemoryRouteError] = useState(false);
   const [memoryRouteRetry, setMemoryRouteRetry] = useState(0);
   const [memoryView, setMemoryView] = useState<MemoryLocation>({});
+  const memoryComparisonViews = useRef(new Map<string,MemoryLocation>());
+  const restoreMemoryView = useCallback((location:WorkspaceLocation)=>{
+    const saved=memoryLocation(location);
+    if(location.space&&(!saved.memorySection||saved.memorySection==="comparisons"))memoryComparisonViews.current.set(location.space,saved);
+    setMemoryView(saved);
+  },[]);
   const memorySection = memoryView.memorySection || 'comparisons';
   const [spaces, setSpaces] = useState<Space[]>(fallbackSpaces);
   const [deletedSpaces,setDeletedSpaces]=useState<Space[]>([]);
@@ -2260,6 +2265,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   };
   const {workbookTask,setWorkbookTask,workbookVersionId,setWorkbookVersionId,workbookTrackId,setWorkbookTrackId,workbookReturnView,setWorkbookReturnView,workbookViewState,setWorkbookViewState,loadedWorkbookRef,beginComparison,rememberVersion}=useComparisonWorkspace(user.userId,activeSpaceId);
   const [readingComparisonBusy,setReadingComparisonBusy]=useState(false);
+  const [routeLearningOrigin,setRouteLearningOrigin]=useState<string>();
   const [learningTask, setLearningTask] = useState<GraphTaskContext | undefined>();
   const [graphDetailsOpen, setGraphDetailsOpen] = useState(false);
   const [workbookPaperFocus, setWorkbookPaperFocus] = useState("");
@@ -2452,6 +2458,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const librarySelection=selectionForRoute(libraryComparisonTrackId);
   const researchRouteScope=`${activeSpace.id}:${selectedThread?.id || ''}`;
   const researchProblemState=scopedProblem.scope===researchRouteScope?scopedProblem.value:null;
+  const activeResearchTask=researchProblemState?.actions.find(item=>item.status==="accepted");
   const researchSynthesis=scopedSynthesis.scope===researchRouteScope?scopedSynthesis.value:null;
   const setResearchProblemState=(value:ResearchProblemState|null)=>{researchProblemTrackRef.current=researchRouteScope;setScopedProblem({scope:researchRouteScope,value});};
   const setResearchSynthesis=(value:ResearchSynthesis|null)=>setScopedSynthesis({scope:researchRouteScope,value});
@@ -3090,6 +3097,18 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       const practice = location.returnTo ? readWorkspaceLocation(location.returnTo) : null;
       setComparisonPractice(practice?.view === 'learn' && practice.space === activeSpace.id && practice.workbookId && practice.track ? practice : null);
     }
+    if (location.view === 'learn') {
+      const routeOrigin=!location.workbookId&&location.from==="thread-detail"?location.returnTo:undefined;
+      setRouteLearningOrigin(routeOrigin);
+      if(routeOrigin)setLearningPlannerOpen(true);
+      if(!location.workbookId&&location.track){
+        const intent=learningIntentRef.current;
+        const target=track?(locale==="zh"?track.titleZh:track.titleEn):intent?.spaceId===activeSpace.id&&intent.trackId===location.track?intent.target:"";
+        learningIntentRef.current={spaceId:activeSpace.id,trackId:location.track,target};
+        setLearningTargetTrackId(location.track);
+        setLearningTarget(target);
+      }
+    }
     if (!location.space) { hash = workspaceHash({ ...location, space: activeSpace.id }); window.history.replaceState(null, "", hash); }
     restoredLocationRef.current = activeSpace.id + hash;
     if (track) setSelectedThread(track);
@@ -3099,7 +3118,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if(location.view==='thread-detail')setMaterialLocation(routeMaterialLocation(location));
     setPaperPanel(location.paperPanel||"reading");
     setRecoveryFocusRequested(location.focus === "recovery");
-    if(location.view==='memory')setMemoryView(memoryLocation(location));
+    if(location.view==='memory')restoreMemoryView({...location,space:activeSpace.id});
     if(location.view==='library'||location.view==='thread-detail'||location.view==='threads'&&Boolean(location.graph))setLibraryViewState({query:location.libraryQuery||'',scope:location.libraryScope||'related',page:location.libraryPage||1,focusId:location.libraryFocus||'',neighbor:location.libraryNeighbor,display:location.libraryDisplay});
     if(location.view==='library')restoreLibraryLocation({...location,space:activeSpace.id});
     if (location.graph) { setResearchMapMode("papers"); setLibraryGraphPaperId(location.graph === "all" ? "" : location.graph); setGraphReturnView(location.graphFrom || "threads");restorePaperNetworkNavigation(location);setGraphDetailsOpen(false); }
@@ -3145,7 +3164,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     let cleanup: (() => void) | undefined;
     const frame = requestAnimationFrame(() => { cleanup = restore(); });
     return () => { cancelAnimationFrame(frame); cleanup?.(); };
-  }, [activeSpace.id, researchMap.tracks, mapLoading, mapReadSpaceId, navigationRevision, locale, selectedMonitorPaper?.id, view, navigationScroll, inspectorReturnHash, restoredLocationRef, restorePaperNetworkNavigation, restoreLibraryLocation, setSelectedNetworkPaperId]);
+  }, [activeSpace.id, researchMap.tracks, mapLoading, mapReadSpaceId, navigationRevision, locale, selectedMonitorPaper?.id, view, navigationScroll, inspectorReturnHash, restoredLocationRef, restorePaperNetworkNavigation, restoreLibraryLocation, restoreMemoryView, setSelectedNetworkPaperId]);
 
   useEffect(() => {
     if (!recoveryFocusRequested || view !== "today" || todaySurface !== "discovery" || monitor?.status !== "error") return;
@@ -3367,6 +3386,22 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     void run();
     return () => { cancelled = true; };
   }, [activeSpace.id, locale, researchRouteTab, selectedThread, view]);
+
+  useEffect(()=>{
+    if(view!=="learn"||comparisonPractice||!learningTargetTrackId)return;
+    const intent=learningIntentRef.current;
+    if(!intent||intent.spaceId!==activeSpace.id||intent.trackId!==learningTargetTrackId||intent.target)return;
+    const controller=new AbortController();
+    void readResearchMapState(activeSpace.id,AbortSignal.any([controller.signal,AbortSignal.timeout(20_000)])).then(data=>{
+      if(controller.signal.aborted||learningIntentRef.current!==intent)return;
+      const route=data.tracks.find(item=>item.id===intent.trackId);
+      if(!route)return;
+      const target=locale==="zh"?route.titleZh:route.titleEn;
+      learningIntentRef.current={...intent,target};
+      setLearningTarget(target);
+    }).catch(()=>undefined);
+    return()=>controller.abort();
+  },[view,comparisonPractice,learningTargetTrackId,activeSpace.id,locale]);
 
   useEffect(() => {
     const needsLearningPath = view === "learn" && !comparisonPractice;
@@ -3643,12 +3678,15 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       ...target,
     };
     const hash = returnLocation && Object.keys(target).length === 0 ? currentLocation.returnTo! : workspaceHash(location);
-    if (next === 'learn') setComparisonPractice(location.workbookId && location.track ? location : null);
+    if (next === 'learn') {
+      setComparisonPractice(location.workbookId && location.track ? location : null);
+      setRouteLearningOrigin(!location.workbookId&&location.from==="thread-detail"?readWorkspaceLocation(hash).returnTo:undefined);
+    }
     rememberCurrentLocation(hash);
     if (window.location.hash !== hash) window.history.pushState({ piView: next }, "", hash);
     restoredLocationRef.current = returnLocation ? "" : activeSpace.id + hash;
     if(next === "today") restoreTodaySurface(location.panel);
-    if(next === 'memory')setMemoryView(memoryLocation(location));
+    if(next === 'memory')restoreMemoryView(location);
     if(next === 'library')restoreLibraryLocation(location);
     if(next === 'thread-detail')setMaterialLocation(routeMaterialLocation(location));
     setRecoveryFocusRequested(location.focus === "recovery");
@@ -3659,10 +3697,15 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   };
 
   const changeMemoryLocation = (patch: MemoryLocation) => {
-    setMemoryView(current => ({...current,...patch}));
-    updateWorkspaceHash(patch, 'push');
+    const next={...memoryView,...patch};
+    restoreMemoryView({view:"memory",space:activeSpace.id,...next});
+    updateWorkspaceHash(patch,'push');
   };
-  const selectMemorySection = (memorySection: MemorySection) => changeMemoryLocation({memorySection,memoryTrack:undefined,memoryQuery:undefined,memoryPage:undefined,memoryFocus:undefined});
+  const selectMemorySection = (section:MemorySection) => {
+    if(section===memorySection)return;
+    const previous=section==="comparisons"?memoryComparisonViews.current.get(activeSpace.id):undefined;
+    changeMemoryLocation({...memoryLocation(previous||{}),memorySection:section});
+  };
 
   const navigatePrimary = (next: View) => {
     if (next === "threads") {
@@ -4301,9 +4344,19 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     }catch{setToast(locale==='zh'?'原研究问题暂未载入，已有阅读和输入仍保留。':'The original question could not load. Reading and input are preserved.');}
   };
 
-  const openWorkbook = (trackId: string, task?: GraphTaskContext, origin?:{view:View;hash:string}, workbookId = "") => {
+  const openWorkbook = (trackId: string, task?: GraphTaskContext, origin?:{view:View;hash:string}, workbookId = "",
+    destination?:Pick<WorkspaceLocation,"workbookPanel"|"workbookFocus"|"workbookDimension">) => {
     if(!beginComparison(trackId,task,workbookId,origin?.view||view))setToast(locale==='zh'?'无法暂存比较选择，请保留当前页面。':'Selection storage unavailable; keep this page open.');
-    navigate("workbook", trackId, { from: origin?.view||view, ...(origin?{returnTo:origin.hash}:{}), workbookId: workbookId || undefined, workbookPanel: "evidence", workbookFocus: undefined });
+    const panel=destination?.workbookPanel||"evidence",focus=destination?.workbookFocus,dimension=destination?.workbookDimension;
+    if(destination)setWorkbookViewState({panel,focus:focus||"",dimension:dimension||""});
+    navigate("workbook", trackId, { from: origin?.view||view, ...(origin?{returnTo:origin.hash}:{}), workbookId: workbookId || undefined,
+      workbookPanel:panel,workbookFocus:focus,workbookDimension:dimension });
+  };
+
+  const resumeRouteComparison=(trackId:string,workbookId:string,check:boolean)=>{
+    const saved=savedComparisonLocation(readComparisonLocation(user.userId,activeSpace.id,trackId),activeSpace.id)?.workbook;
+    const target=check?{workbookPanel:"task" as const}:saved?.workbookId===workbookId?saved:undefined;
+    openWorkbook(trackId,undefined,undefined,workbookId,target);
   };
 
   const returnFromWorkbook=async()=>{
@@ -4675,18 +4728,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setAskOpen(true);
   };
 
-  const askAboutRoutePaper = (thread: ResearchTrack, paper: ResearchTrackPaper) => {
-    askRequest.current++;
-    setAsking(false);
-    setAskContext({trackId:thread.id,routePaperId:paper.id});
-    setAskError("");
-    setAnswer("");
-    setQuestion(locale === "zh"
-      ? `请结合“${thread.titleZh}”这条研究路线，解释《${paper.title}》的实际贡献，并核对“${researchRoleLabel(paper.role, locale)}”定位是否成立。先给判断与摘要出处；没有依据就建议调整，不为已有标签推测理由，不把缺少材料当作研究缺口。`
-      : `In the “${thread.titleEn}” route, check the actual contribution of “${paper.title}” and whether its ${researchRoleLabel(paper.role, locale)} classification is justified. Cite abstract evidence, suggest a correction if unsupported, and do not invent research gaps from missing materials.`);
-    setAskOpen(true);
-  };
-
   const openRouteLearningPath = (thread: Pick<ResearchTrack, "id" | "titleZh" | "titleEn">, task?: GraphTaskContext) => {
     setLearningTask(task);
     setLearningPlannerOpen(true);
@@ -4695,7 +4736,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setLearningTarget(target);
     setLearningTargetTrackId(thread.id);
     setLearningScopeDirty(false);
-    navigate("learn");
+    navigate("learn",undefined,{track:thread.id,...(view==="thread-detail"&&researchRouteTab==="agenda"&&selectedThread?.id===thread.id?
+      {from:"thread-detail" as const,returnTo:window.location.hash}:{})});
   };
 
   const startRecommendedResearch = (track: Pick<ResearchTrack, "id" | "titleZh" | "titleEn">, task: GraphTaskContext) => {
@@ -4704,10 +4746,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     void readResearchMapState(task.spaceId).then(data => {
       if (paperNetworkSpaceRef.current === task.spaceId) setResearchMap(data);
     }).catch(() => {});
-  };
-
-  const addNetworkPaperToLearningPath = (node: NetworkPaperNode) => {
-    openRouteLearningPath(node.track, { ...currentGraphTask, papers: [{canonicalId:node.paper.canonicalId,title:node.paper.title}] });
   };
 
   const setResearchDirectionRole = async (thread: ResearchTrack, userRole: ResearchDirectionRole) => {
@@ -5599,7 +5637,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             ) : researchMap.tracks.length ? (
               <>
                 {researchMapMode === "directions" ? <>
-                  <DeferredWorkspacePanel locale={locale}><ResearchLeads tracks={researchMap.tracks} locale={locale} onOpen={openThread} onLearn={openRouteLearningPath} /></DeferredWorkspacePanel>
+                  <DeferredWorkspacePanel locale={locale}><ResearchLeads tracks={researchMap.tracks} locale={locale} onOpen={openThread} /></DeferredWorkspacePanel>
 
                   {routeAttention && routeAttentionTrack && <RoutePortfolioOverview attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={handleRouteAttention} />}
 
@@ -5643,7 +5681,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                     </div>}
                   </section>
                   {paperNetworkMode === "similarity" && <>
-                  <details className="pi-graph-secondary"><summary>{locale==="zh"?"检索与摘要核对":"Discovery and abstract review"}</summary><DeferredWorkspacePanel locale={locale}><GraphResearchDesk key={`${activeSpace.id}:${paperNetworkTrackId}:${graphDeskOrigin?.paper.canonicalId || ""}`} spaceId={activeSpace.id} mode={paperNetworkMode} papers={graphDeskPapers} origins={graphDeskOrigins} originId={graphDeskOrigin?.paper.id || ""} context={currentGraphTask} onContext={value=>{if(graphCompareTrack)graphComparisonSelection.change(value)}} locale={locale} expanding={researchNetworkLoading} discoveryNotice={researchNetworkError || (researchNetworkResponse?.status === "partial" || researchNetworkResponse?.status === "unavailable" || researchNetworkResponse?.status === "rate_limited" ? (locale === "zh" ? "部分来源尚未完成，已有结果仍可查看。具体情况见下方来源与运行状态。" : "Some sources are incomplete; available results remain usable. See source status below.") : "")} onOrigin={id=>{const node=eligibleNetworkPaperNodes.find(n=>n.paper.id===id);if(node)setSingleNetworkOrigin(node);}} onFocus={id=>{changeNetworkFocus(id);setGraphDetailsOpen(true);}} onExpand={()=>void expandResearchNetwork(undefined,true,true)} comparisonEnabled={Boolean(graphCompareTrack)} onLearn={()=>{if(graphDeskOrigin)openRouteLearningPath(paperNetworkTrackId === "all" ? graphDeskOrigin.track : researchMap.tracks.find(t=>t.id===paperNetworkTrackId) || graphDeskOrigin.track,currentGraphTask);}} /></DeferredWorkspacePanel></details>
+                  <details className="pi-graph-secondary"><summary>{locale==="zh"?"检索与摘要核对":"Discovery and abstract review"}</summary><DeferredWorkspacePanel locale={locale}><GraphResearchDesk key={`${activeSpace.id}:${paperNetworkTrackId}:${graphDeskOrigin?.paper.canonicalId || ""}`} spaceId={activeSpace.id} mode={paperNetworkMode} papers={graphDeskPapers} origins={graphDeskOrigins} originId={graphDeskOrigin?.paper.id || ""} context={currentGraphTask} onContext={value=>{if(graphCompareTrack)graphComparisonSelection.change(value)}} locale={locale} expanding={researchNetworkLoading} discoveryNotice={researchNetworkError || (researchNetworkResponse?.status === "partial" || researchNetworkResponse?.status === "unavailable" || researchNetworkResponse?.status === "rate_limited" ? (locale === "zh" ? "部分来源尚未完成，已有结果仍可查看。具体情况见下方来源与运行状态。" : "Some sources are incomplete; available results remain usable. See source status below.") : "")} onOrigin={id=>{const node=eligibleNetworkPaperNodes.find(n=>n.paper.id===id);if(node)setSingleNetworkOrigin(node);}} onFocus={id=>{changeNetworkFocus(id);setGraphDetailsOpen(true);}} onExpand={()=>void expandResearchNetwork(undefined,true,true)} comparisonEnabled={Boolean(graphCompareTrack)} /></DeferredWorkspacePanel></details>
                   <details className="pi-graph-diagnostics"><summary>{locale === "zh" ? "检索来源与运行状态" : "Sources and processing status"}</summary>
                     <div className="v2-paper-network-filters">{paperNetworkMode === "similarity" && <div className="v2-paper-network-scope" role="group" aria-label={locale === "zh" ? "网络范围" : "Network scope"}><button type="button" className={paperNetworkScope === "all" ? "active" : ""} onClick={() => changeNetworkScope("all")}>{locale === "zh" ? "完整图谱" : "Full graph"}</button><button type="button" className={paperNetworkScope === "one-hop" ? "active" : ""} disabled={!selectedNetworkPaperId} onClick={() => changeNetworkScope("one-hop")}>{locale === "zh" ? "可核验一跳" : "Verified one-hop"}</button>{explicitNetworkOriginNodes.length >= 2 && <button type="button" className={paperNetworkScope === "multi-seed" ? "active" : ""} onClick={() => changeNetworkScope("multi-seed")}>{locale === "zh" ? "联合种子" : "Multi-origin"}</button>}</div>}</div>
                   {paperNetworkMode === "similarity" && <div className={`v2-paper-network-context ${paperNetworkMode} ${paperNetworkScope}`}><strong><MathText inline>{paperNetworkContext.title}</MathText></strong><span>{paperNetworkContext.body}</span></div>}
@@ -5693,7 +5731,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                       {selectedNetworkNode.external && <div className="v2-paper-candidate-decision"><span>{networkCandidateFitLabel(selectedNetworkNode.external.score, locale)} · {locale === "zh" ? `${currentOriginEvidenceCount(selectedNetworkNode.external, effectiveNetworkOriginCanonicalIds)} 个当前起点有独立关系证据` : `${currentOriginEvidenceCount(selectedNetworkNode.external, effectiveNetworkOriginCanonicalIds)} active origin(s) with independent relation evidence`}</span><div><button type="button" disabled={researchNetworkDecisions[selectedNetworkNode.external.canonicalId] === "saving" || researchNetworkDecisions[selectedNetworkNode.external.canonicalId] === "accepted"} onClick={() => void decideResearchNetworkCandidate(selectedNetworkNode.external!, "accept")}>{researchNetworkDecisions[selectedNetworkNode.external.canonicalId] === "accepted" ? (locale === "zh" ? "已收录" : "Added") : (locale === "zh" ? "收录到地图" : "Add to map")}</button><button type="button" disabled={researchNetworkDecisions[selectedNetworkNode.external.canonicalId] === "saving"} onClick={() => void decideResearchNetworkCandidate(selectedNetworkNode.external!, "dismiss")}>{locale === "zh" ? "忽略" : "Dismiss"}</button></div></div>}
                       {selectedModeNetworkRelations.length > 0 && <div className="v2-paper-drawer-relations"><b>{locale === "zh" ? "关键关系" : "Key relationships"}</b>{selectedModeNetworkRelations.map((edge) => { const outgoingCitation = edge.kind === "citation" && edge.sourcePaperId === selectedNetworkNode.paper.id; const otherId = edge.sourcePaperId === selectedNetworkNode.paper.id ? edge.targetPaperId : edge.sourcePaperId; const other = allNetworkPaperNodes.find((node) => node.paper.id === otherId); if (!other) return null; const relationLabel = edge.kind === "citation" ? outgoingCitation ? (locale === "zh" ? "本论文引用了" : "This paper cites") : (locale === "zh" ? "后续论文引用了本论文" : "Later paper cites this work") : networkRelationLabel(edge, locale); return <button type="button" key={edge.id} onClick={() => changeNetworkFocus(other.paper.id)}><span>{relationLabel} · {networkEvidenceLabel(edge, locale)}</span><strong><MathText inline>{other.paper.title}</MathText></strong><small>{locale === "zh" ? edge.relationshipZh : edge.relationshipEn}</small></button>; })}</div>}
                       {paperNetworkMode === "similarity" && <div className="v2-paper-origin-actions"><button type="button" className={paperNetworkScope === "one-hop" ? "active" : ""} onClick={() => changeNetworkScope(paperNetworkScope === "one-hop" ? "all" : "one-hop")}>{paperNetworkScope === "one-hop" ? (locale === "zh" ? "返回完整图谱" : "Back to full graph") : (locale === "zh" ? "查看可核验一跳" : "View verified one-hop")}</button><button type="button" onClick={() => void generateResearchNetworkFrom(selectedNetworkNode)} disabled={researchNetworkLoading || Boolean(selectedNetworkNode.external && researchNetworkDecisions[selectedNetworkNode.external.canonicalId] !== "accepted")}>{selectedNetworkNode.external && researchNetworkDecisions[selectedNetworkNode.external.canonicalId] !== "accepted" ? (locale === "zh" ? "收录后可生成新图" : "Add before rebuilding") : (locale === "zh" ? "以此生成新图" : "Build new graph from this")}</button><button type="button" onClick={() => addMultiNetworkOrigin(selectedNetworkNode)} disabled={effectiveNetworkOriginIds.includes(selectedNetworkNode.paper.id) || explicitNetworkOriginNodes.length >= 3 || Boolean(selectedNetworkNode.external && researchNetworkDecisions[selectedNetworkNode.external.canonicalId] !== "accepted")}>{effectiveNetworkOriginIds.includes(selectedNetworkNode.paper.id) ? (locale === "zh" ? "已是起点" : "Already an origin") : (locale === "zh" ? "加入联合种子" : "Add as origin")}</button></div>}
-                      <footer><a href={selectedNetworkNode.paper.url || (selectedNetworkNode.paper.doi ? "https://doi.org/" + selectedNetworkNode.paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedNetworkNode.track.id)}>{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutNetworkPaper(selectedNetworkNode)}>{locale === "zh" ? "让 Pi 解释" : "Ask Pi"}</button><button type="button" onClick={() => addNetworkPaperToLearningPath(selectedNetworkNode)}>{locale === "zh" ? "以此方向规划路径" : "Plan from this direction"}</button></footer>
+                      <footer><a href={selectedNetworkNode.paper.url || (selectedNetworkNode.paper.doi ? "https://doi.org/" + selectedNetworkNode.paper.doi : "#")} target="_blank" rel="noreferrer" onClick={() => recordMapPaperOpen(selectedNetworkNode.track.id)}>{t.openOriginal} ↗</a><button type="button" onClick={() => askAboutNetworkPaper(selectedNetworkNode)}>{locale === "zh" ? "让 Pi 解释" : "Ask Pi"}</button></footer>
                     </aside>}
                   </div>
                   </details>
@@ -5711,7 +5749,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         )}
 
         {!demo && libraryComparisonTrackId && (view === "library" || view === "paper-detail" && paperReturnView === "library") && <RouteSelectionBar userId={user.userId} onResumeDraft={draft=>openWorkbook(libraryComparisonTrackId,draft,{view:"library",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash})} onResume={id=>openWorkbook(libraryComparisonTrackId,undefined,{view:"library",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash},id)} requireQuestion key={`library:${user.userId}:${activeSpace.id}:${libraryComparisonTrackId}`} spaceId={activeSpace.id} trackId={libraryComparisonTrackId} locale={locale} selection={librarySelection} onMaterials={()=>{if(view!=="library")navigate("library");else{const input=document.querySelector<HTMLInputElement>(".v2-library-toolbar input");input?.scrollIntoView({block:"center"});input?.focus();}}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(libraryComparisonTrackId,librarySelection.value,{view:"library",hash:origin||workspaceHash({view:"library",space:activeSpace.id,track:libraryComparisonTrackId})});}} />}
-        {routeSelectionTrackId && (view === "thread-detail" || view === "paper-detail" && paperReturnView === "thread-detail") && <RouteSelectionBar userId={user.userId} onResumeDraft={draft=>openWorkbook(routeSelectionTrackId,draft,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash})} onResume={id=>openWorkbook(routeSelectionTrackId,undefined,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash},id)} key={`${user.userId}:${activeSpace.id}:${routeSelectionTrackId}:${view}`} spaceId={activeSpace.id} trackId={routeSelectionTrackId} locale={locale} selection={routeSelection} onMaterials={()=>{if(view==="paper-detail")navigate("thread-detail",undefined,{id:routeSelectionTrackId,tab:"evidence"});else setResearchRouteTab("evidence");}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(routeSelectionTrackId,routeSelection.value,{view:"thread-detail",hash:origin||workspaceHash({view:"thread-detail",space:activeSpace.id,id:routeSelectionTrackId,tab:"start"})});}} />}
+        {routeSelectionTrackId && (view === "thread-detail" && researchRouteTab !== "start" || view === "paper-detail" && paperReturnView === "thread-detail") && <RouteSelectionBar userId={user.userId} onResumeDraft={draft=>openWorkbook(routeSelectionTrackId,draft,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash})} onResume={id=>openWorkbook(routeSelectionTrackId,undefined,{view:"thread-detail",hash:readWorkspaceLocation(window.location.hash).returnTo||window.location.hash},id)} key={`${user.userId}:${activeSpace.id}:${routeSelectionTrackId}:${view}`} spaceId={activeSpace.id} trackId={routeSelectionTrackId} locale={locale} selection={routeSelection} onMaterials={()=>{if(view==="paper-detail")navigate("thread-detail",undefined,{id:routeSelectionTrackId,tab:"evidence"});else setResearchRouteTab("evidence");}} onCompare={()=>{const location=readWorkspaceLocation(window.location.hash);const origin=view==="paper-detail"?location.returnTo:window.location.hash;openWorkbook(routeSelectionTrackId,routeSelection.value,{view:"thread-detail",hash:origin||workspaceHash({view:"thread-detail",space:activeSpace.id,id:routeSelectionTrackId,tab:"start"})});}} />}
         {(view === "thread-detail" || view === "paper-detail" && paperReturnView === "thread-detail" || view === "workbook" && workbookReturnView === "thread-detail" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "thread-detail") && (
           <main hidden={view !== "thread-detail"} className="v2-page v2-detail-page v2-map-detail v2-route-workspace">
             <button className="v2-back" type="button" onClick={() => navigate("threads")}>← {locale === "zh" ? "返回路线总览" : "Back to route overview"}</button>
@@ -5722,7 +5760,14 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
               <nav className="v2-route-workspace-tabs pi-route-navigation" aria-label={locale === "zh" ? "路线工作区" : "Route workspace"}>{(["start", "evidence", "problem", "agenda"] as ResearchRouteTab[]).map((tab) => <button type="button" aria-current={researchRouteTab === tab ? "page" : undefined} className={researchRouteTab === tab ? "active" : ""} key={tab} onClick={() => setResearchRouteTab(tab)}><strong>{tab === "start" ? (locale === "zh" ? "概览" : "Overview") : tab === "problem" ? (locale === "zh" ? "问题与判断" : "Question & findings") : tab === "assessment" ? (locale === "zh" ? "综合研判" : "Synthesis") : tab === "evidence" ? (locale === "zh" ? "材料" : "Materials") : tab === "gaps" ? (locale === "zh" ? "材料补充" : "Collect materials") : (locale === "zh" ? "任务" : "Tasks")}</strong>{tab === "problem" && researchProblemState?.problem?.status === "active" && <b>✓</b>}{tab === "evidence" && <b>{routeMaterialState(selectedThread).paperIds.length}</b>}{tab === "gaps" && pendingRouteEvidenceCount(selectedThread) > 0 && <b>{pendingRouteEvidenceCount(selectedThread)}</b>}</button>)}</nav>
 
-              {researchRouteTab === "start" && <DeferredWorkspacePanel locale={locale}><RouteStart key={`${user.userId}:${activeSpace.id}:${selectedThread.id}`} spaceId={activeSpace.id} active={view === "thread-detail"} selection={routeSelection} track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} failed={Boolean(researchSynthesisError)} locale={locale} onEvidence={() => setResearchRouteTab("evidence")} onMaterials={() => setResearchRouteTab("gaps")} onSynthesis={() => setResearchRouteTab("assessment")} onPaperOpen={() => recordMapPaperOpen(selectedThread.id)} onRead={id=>void openRoutePaper(id)} onCompare={(id,question) => openWorkbook(selectedThread.id,id?undefined:{spaceId:activeSpace.id,question:routeSelection.value.question||question||"",papers:routeSelection.value.papers}, {view:"thread-detail",hash:workspaceHash({view:"thread-detail",id:selectedThread.id,tab:"start",space:activeSpace.id})},id)} onProblem={() => setResearchRouteTab("problem")} onLearn={() => openRouteLearningPath(selectedThread)} /></DeferredWorkspacePanel>}
+              {researchRouteTab === "start" && <DeferredWorkspacePanel locale={locale}>
+                <RouteStart key={`${user.userId}:${activeSpace.id}:${selectedThread.id}`} userId={user.userId} spaceId={activeSpace.id}
+                  active={view==="thread-detail"} selection={routeSelection} trackId={selectedThread.id} locale={locale}
+                  taskTitle={activeResearchTask?locale==="zh"?activeResearchTask.titleZh:activeResearchTask.titleEn:undefined}
+                  onMaterials={()=>setResearchRouteTab("evidence")} onProblem={()=>setResearchRouteTab("problem")} onTasks={()=>setResearchRouteTab("agenda")}
+                  onCompare={context=>openWorkbook(selectedThread.id,context)}
+                  onResume={(id,check)=>resumeRouteComparison(selectedThread.id,id,check)}/>
+              </DeferredWorkspacePanel>}
 
               <div hidden={!["problem", "agenda"].includes(researchRouteTab)}><ResearchProblemWorkbench draftStorageKey={sessionDraftKey(user.userId, activeSpace.id, `problem:${selectedThread.id}`)} mode={researchRouteTab === "agenda" ? "tasks" : "question"} key={`${selectedThread.id}:${researchProblemState?.problem?.id || "empty"}:${researchProblemState?.problem?.updatedAt || "pending"}`} state={researchProblemState} synthesis={researchSynthesis} loading={researchProblemLoading} action={researchProblemAction || (mapAction === `problem:${selectedThread.id}` ? "scan-problem" : null)} error={researchProblemError} locale={locale} onSynthesis={() => { setResearchRouteTab("problem"); requestAnimationFrame(() => focusWorkspaceSection(".v2-research-synthesis")); }} onDraft={() => void draftResearchProblem()} onConfirm={(draft) => void confirmResearchProblem(draft)} onAssess={() => void assessResearchProblem()} onScanProblem={() => void scanResearchProblemGap(selectedThread)} onUpdateAction={(actionId, status) => void updateResearchProblemAction(actionId, status)} onExecuteAction={(item) => void executeResearchProblemAction(item)} /></div>
               {researchRouteTab === "problem" && <ResearchSynthesisWorkbench reviewStages={Object.fromEntries(historyPapers.map(p => [p.id, p.qualityStage]))} track={selectedThread} synthesis={researchSynthesis} loading={researchSynthesisLoading} error={researchSynthesisError} locale={locale} onMaterials={() => setResearchRouteTab("evidence")} onPaper={(id) => void openRoutePaper(id)} onRefresh={() => void refreshResearchSynthesis(selectedThread)} onScanGap={() => void scanResearchRouteGap(selectedThread)} onExplain={() => askAboutResearchRoute(selectedThread, "gap")} />}
@@ -5754,15 +5799,15 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                 <header><div><p className="v2-kicker">{locale === "zh" ? "下一步" : "NEXT"}</p><h2>{locale === "zh" ? "研究计划" : "Research plan"}</h2></div><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "agenda")}>{locale === "zh" ? "拆解行动" : "Break into actions"} →</button></header>
                 <div className="pi-route-next-actions"><h3>{locale === "zh" ? "从一项具体工作开始" : "Start with one concrete task"}</h3>
                   <p>{locale === "zh" ? "比较已审核论文的适用条件，记录仍需核查的问题。" : "Compare conditions in reviewed papers and record unresolved questions."}</p><button type="button" className="pi-research-primary" onClick={() => openWorkbook(selectedThread.id)}>{locale === "zh" ? "开始一次论文比较" : "Start a paper comparison"} →</button>
-                  <button type="button" onClick={() => openRouteLearningPath(selectedThread)}>{locale === "zh" ? "先补充阅读与基础" : "Start with reading and foundations"}</button>
+                  <button type="button" onClick={() => openRouteLearningPath(selectedThread)}>{locale === "zh" ? "补充基础阅读" : "Build foundations with reading"}</button>
                 </div>
                 {selectedThreadChanges.length > 0 && <section className="v2-route-change-log"><header><strong>{locale === "zh" ? "最近确认的变化" : "Recent confirmed changes"}</strong><span>{selectedThreadChanges.length}</span></header>{selectedThreadChanges.map((change) => <article key={change.id}><InterfaceIcon name={routeChangeKindLabel(change.kind).symbol} /><div><small>{formatNotificationTime(change.createdAt, locale)}</small><strong>{change.kind === "new_evidence" ? change.paperTitle : (locale === "zh" ? change.titleZh : change.titleEn)}</strong><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>)}</section>}
               </section>}
 
               {researchRouteTab === "start" && <details className="pi-route-connections"><summary>{locale === "zh" ? "相关研究路线" : "Related research routes"}<span>{locale === "zh" ? "方向联系与延伸阅读" : "Connections and further reading"}</span></summary><DeferredWorkspacePanel locale={locale}><RouteReferenceViews selectedTrack={selectedThread} mode="connections" tracks={researchMap.tracks} edges={researchMap.edges} locale={locale} onPaper={id => void openRoutePaper(id)} onMaterials={track => openThread(track, "evidence")} /></DeferredWorkspacePanel></details>}
-              {researchRouteTab === "start" && <ResearchMaintenance key={activeSpace.id+selectedThread.id} spaceId={activeSpace.id} trackId={selectedThread.id} locale={locale} />}
               <RouteManagementDrawer key={`${selectedThread.id}:${routeManagementNeedsAttention(selectedThread) ? "attention" : "quiet"}`} track={selectedThread} locale={locale}>
-              <ResearchLeadDecisionPanel track={selectedThread} problemState={researchProblemState} synthesis={researchSynthesis} locale={locale} onOpenWorkspace={setResearchRouteTab} onOpenToday={() => navigate("today")} onOpenLearning={() => openRouteLearningPath(selectedThread)} onScanGap={(origin) => void scanResearchRouteSignal(selectedThread, origin)} gapScanning={mapAction === `gap:${selectedThread.id}` || mapAction === `problem:${selectedThread.id}`} gapScanBlocked={Boolean(mapAction || selectedThread.monitoringStatus === "paused")} />
+              <ResearchMaintenance key={activeSpace.id+selectedThread.id} spaceId={activeSpace.id} trackId={selectedThread.id} locale={locale} />
+              <ResearchLeadDecisionPanel track={selectedThread} problemState={researchProblemState} synthesis={researchSynthesis} locale={locale} onOpenWorkspace={setResearchRouteTab} onOpenToday={() => navigate("today")} onScanGap={(origin) => void scanResearchRouteSignal(selectedThread, origin)} gapScanning={mapAction === `gap:${selectedThread.id}` || mapAction === `problem:${selectedThread.id}`} gapScanBlocked={Boolean(mapAction || selectedThread.monitoringStatus === "paused")} />
                 <section className={`v2-route-role-strip ${selectedThread.userRole} ${selectedThread.monitoringStatus}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级；暂停只停止新发现，不清除任何历史。" : "This role changes future discovery budget and priority; pausing only stops new discovery and clears no history."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}<button type="button" className={`monitor-toggle ${selectedThread.monitoringStatus}`} onClick={() => void setResearchDirectionMonitoring(selectedThread, selectedThread.monitoringStatus === "paused" ? "active" : "paused")} disabled={Boolean(mapAction)}>{mapAction === `monitoring:${selectedThread.id}` ? "…" : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复路线" : "Resume route") : (locale === "zh" ? "暂停路线" : "Pause route")}</button></div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
                 <div className="v2-route-management-actions"><button type="button" onClick={() => askAboutResearchRoute(selectedThread)}>{locale === "zh" ? "让 Pi 解释这条路线" : "Ask Pi about this route"}</button><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || selectedThread.monitoringStatus === "paused")}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在补充…" : "Filling…") : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "已暂停自动发现" : "Automatic discovery paused") : ["queued", "retryable", "empty", "failed"].includes(selectedThread.buildStatus) ? (locale === "zh" ? "重试补充这条路线" : "Retry this route") : selectedThread.buildStatus === "partial" ? (locale === "zh" ? "补全这条路线" : "Complete this route") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></div>
                 <RouteDiscoveryLoop track={selectedThread} locale={locale} />
@@ -5775,7 +5820,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         {(view === "learn" || view === "paper-detail" && paperReturnView === "learn" || view === "workbook" && workbookReturnView === "learn" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "learn") && (
           <main hidden={view !== "learn" || Boolean(comparisonPractice)} className="v2-page v2-learn-page">
             <header className="v2-page-head"><div><h1>{t.learnTitle}</h1><p className="pi-page-purpose">{locale === "zh" ? "确定学习目标，按阶段阅读与练习，完成后再推进下一步。" : "Set your goal, work through reading and exercises, then move to the next stage."}</p></div></header>
-            {activeLearningState.path?.targetTrackId && <div className="pi-study-path-links"><button type="button" onClick={() => { const track = researchMap.tracks.find(t => t.id === activeLearningState.path?.targetTrackId); if (track) openThread(track); }} disabled={!researchMap.tracks.some(t => t.id === activeLearningState.path?.targetTrackId)}>{locale === "zh" ? "返回所属研究路线" : "Back to research route"}</button><button type="button" onClick={() => openWorkbook(activeLearningState.path!.targetTrackId!)}>{locale === "zh" ? "比较论文与学习练习" : "Paper comparison & exercise"}</button></div>}
+            {routeLearningOrigin&&<a className="v2-back" href={routeLearningOrigin}>{locale==="zh"?"返回路线任务":"Back to route tasks"}</a>}
+            {activeLearningState.path?.targetTrackId && <div className="pi-study-path-links">{!routeLearningOrigin&&<a href={workspaceHash({view:"thread-detail",id:activeLearningState.path.targetTrackId,tab:"agenda",space:activeSpace.id})}>{locale==="zh"?"返回所属研究路线":"Back to research route"}</a>}<button type="button" onClick={() => openWorkbook(activeLearningState.path!.targetTrackId!)}>{locale === "zh" ? "比较论文与学习练习" : "Paper comparison & exercise"}</button></div>}
             {activeLearningStep && <LearningSessionEntry step={activeLearningStep} locale={locale} openingId={openingLearningResourceId} onOpen={resource => void openLearningResource(resource)} />}
             <LearningGoalPlanner onRead={id => void openRoutePaper(id, "learn")} key={`${activeSpace.id}:${activeLearningState.path?.id || "new"}:${learningTargetTrackId || "custom"}:${learningTarget}:${JSON.stringify(learningTask || null)}`} spaceId={activeSpace.id} tracks={learningTargetTrackId && !researchMap.tracks.some(t => t.id === learningTargetTrackId) ? [...researchMap.tracks, {id:learningTargetTrackId,titleZh:learningTarget,titleEn:learningTarget}] : researchMap.tracks} target={learningTarget} trackId={learningTargetTrackId} path={activeLearningState.path} taskContext={learningTask?.spaceId === activeSpace.id ? learningTask : undefined} locale={locale} open={learningPlannerOpen || !activeLearningState.path || activeLearningPathDirectionMismatch} onOpen={setLearningPlannerOpen} onCommit={id => generateLearningPath(undefined, undefined, id)} busy={Boolean(learningAction) || activeLearningLoading} />
             {activeLearningLoading ? <section className="v2-learning-loading" role="status"><InterfaceIcon name="loading" className="pi-state-mark" /><div><strong>{locale === "zh" ? "正在载入学习路径" : "Loading the learning path"}</strong><i><b /></i></div></section> : activeLearningError && !activeLearningState.path ? <div className="v2-learning-empty error" role="alert"><InterfaceIcon name="warning" className="pi-state-mark" /><h2>{locale === "zh" ? "学习路径载入失败" : "Learning path failed to load"}</h2><p>{activeLearningError}</p><button type="button" onClick={() => setLearningReloadNonce((current) => current + 1)}>{locale === "zh" ? "重新载入" : "Retry"} →</button></div> : activeLearningState.path ? (
@@ -5888,11 +5934,14 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         {view === "memory" && (
           <main className="v2-page pi-memory-workspace">
             <section className="v2-page-head"><div><h1>{locale === "zh" ? "研究记忆" : "Research memory"}</h1><p className="pi-page-purpose">{locale === "zh" ? "让每一次阅读，成为下一次发现的线索。" : "Let every reading guide your next discovery."}</p></div><div className="pi-memory-tools"><button type="button" onClick={openResearchImport}>{locale === "zh" ? "补充资料" : "Add context"}</button><button type="button" onClick={openSourceSettings} disabled={!monitor?.preferences}>{locale === "zh" ? "关注来源" : "Sources"}</button></div></section>
-            <nav className="pi-memory-nav" aria-label={locale === "zh" ? "研究记忆分类" : "Research memory sections"}>
-              <button type="button" aria-current={memorySection !== "preferences" ? "page" : undefined} onClick={() => {if(memorySection==='preferences')selectMemorySection('comparisons');}}>{locale === "zh" ? "研究记录" : "Research records"}</button>
-              <button type="button" aria-current={memorySection === "preferences" ? "page" : undefined} onClick={() => selectMemorySection('preferences')}>{locale === "zh" ? "研究偏向" : "Research interests"}</button>
+            <nav className="pi-memory-nav" aria-label={locale==="zh"?"研究记忆分类":"Research memory sections"}>
+              {([
+                ["comparisons","比较记录","Saved comparisons"],["reading","阅读笔记","Reading notes"],
+                ["insights","笔记整理","Insights"],["preferences","研究偏向","Research interests"],
+              ] as const).map(([section,zhLabel,enLabel])=><button type="button" key={section}
+                aria-current={memorySection===section?"page":undefined}
+                onClick={()=>selectMemorySection(section)}>{locale==="zh"?zhLabel:enLabel}</button>)}
             </nav>
-            {memorySection !== "preferences" && <nav className="pi-memory-record-nav" aria-label={locale === "zh" ? "研究记录分类" : "Record categories"}>{(["comparisons", "reading", "insights"] as const).map(section => <button key={section} aria-current={memorySection === section ? "page" : undefined} onClick={() => {if(memorySection!==section)selectMemorySection(section);}}>{section === "reading" ? (locale === "zh" ? "阅读笔记" : "Reading notes") : section === "comparisons" ? (locale === "zh" ? "比较记录" : "Comparisons") : (locale === "zh" ? "笔记整理" : "Note insights")}</button>)}</nav>}
 
             {memorySection !== "preferences" && memoryRouteError && <p role="alert">{locale === "zh" ? "路线关联暂未载入，笔记仍可阅读。" : "Route links are unavailable; your notes remain accessible."}<button onClick={() => setMemoryRouteRetry(n => n + 1)}>{locale === "zh" ? "重试" : "Retry"}</button></p>}
             {memorySection === "comparisons" && <MemoryResume key={activeSpace.id} spaceId={activeSpace.id} locale={locale} routes={researchMap.tracks.map(track => ({ id:track.id,title:locale === "zh" ? track.titleZh : track.titleEn }))} location={memoryView} onLocationChange={changeMemoryLocation} />}

@@ -5,10 +5,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { GraphRelevance, GraphTaskContext } from '../../lib/graph-task';
 
 export type GraphDeskPaper = { id:string;canonicalId:string;title:string;authors:string;url:string;year:string;external:boolean;abstractText:string;relations:string[];direct:boolean };
-export function GraphResearchDesk({spaceId,mode,papers,origins,originId,context,onContext,onOrigin,onFocus,onExpand,comparisonEnabled,onLearn,locale,expanding,discoveryNotice}: {
+export function GraphResearchDesk({spaceId,mode,papers,origins,originId,context,onContext,onOrigin,onFocus,onExpand,comparisonEnabled,locale,expanding,discoveryNotice}: {
   spaceId:string;mode:'similarity'|'citations';papers:GraphDeskPaper[];origins:GraphDeskPaper[];originId:string;
   context:GraphTaskContext;onContext:(context:GraphTaskContext)=>void;onOrigin:(id:string)=>void;onFocus:(id:string)=>void;
-  onExpand:()=>void;comparisonEnabled:boolean;onLearn:()=>void;locale:'zh'|'en';expanding:boolean;discoveryNotice?:string;
+  onExpand:()=>void;comparisonEnabled:boolean;locale:'zh'|'en';expanding:boolean;discoveryNotice?:string;
 }) {
   const zh=locale==='zh'; const [limit,setLimit]=useState(8);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   const [review,setReview]=useState<{key:string;items:GraphRelevance[]}|null>(null);const abort=useRef<AbortController|null>(null);
@@ -36,7 +36,6 @@ export function GraphResearchDesk({spaceId,mode,papers,origins,originId,context,
     </div>
     <aside className="pi-graph-selection"><strong>{zh?'2. 选择要继续研究的论文':'2. Select papers for your next task'} · {context.papers.length}/3</strong>{context.papers.length?<ol>{context.papers.map(p=><li key={p.canonicalId}><span>{p.title}</span><button type="button" onClick={()=>onContext({...context,papers:context.papers.filter(x=>x.canonicalId!==p.canonicalId)})} aria-label={`${zh?'移除':'Remove'} ${p.title}`}>×</button></li>)}</ol>:<p>{zh?'从下面选择论文，也可以加入起点。选择不会改变收录或阅读状态。':'Select papers below, including the starting paper. Selection does not change collection or reading status.'}</p>}
       {origins.find(p=>p.id===originId)&&<button type="button" disabled={context.papers.length>=3||context.papers.some(p=>p.canonicalId===origins.find(o=>o.id===originId)?.canonicalId)} onClick={()=>toggle(origins.find(p=>p.id===originId)!)}>{zh?'加入起点论文':'Include starting paper'}</button>}
-      <div><button type="button" disabled={!context.papers.length} onClick={onLearn}>{zh?'规划这些论文的学习':'Plan learning for these papers'}</button></div>
     </aside>
     <section className="pi-graph-results"><header><h3>{mode==='citations'?(zh?'引用邻居':'Citation neighbors'):(zh?'可进一步阅读的论文':'Papers to examine')}</h3><span>{relevant.length} {zh?'篇':'papers'}</span></header><p className="pi-graph-result-note">{items.length?(zh?'按已独立核对的问题相关性排序；这是摘要范围的判断，不是质量推荐。':'Ordered by independently reviewed relevance, limited to abstracts; this is not quality approval.'):(zh?'目前按与起点的已有关系展示；点击“按问题核对”后才会按你的问题重新排序。':'Ordered by existing links to the starting paper. Review against your question to reorder.')}</p>
       {discoveryNotice&&<p role="status">{discoveryNotice}</p>}{error&&<p role="alert">{error}</p>}{!relevant.length&&<p>{zh?'当前范围还没有邻居结果。可展开外部引用；未收录的论文也可以查看。':'No neighbors in this scope yet. Expand external citations to inspect papers outside the collection.'}</p>}
