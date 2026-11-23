@@ -88,6 +88,7 @@ import { WorkbookPractice } from './components/workbook-practice';
 import { useWorkspaceNavigation } from "./components/use-workspace-navigation";
 import { usePaperNetworkNavigation } from "./components/use-paper-network-navigation";
 import { PrimaryLibrary } from "./components/primary-library";
+import { RouteMaterials, RouteMaterialsContext } from "./components/route-materials";
 import { RouteSimilarityExplorer } from "./components/route-similarity-explorer";
 import { CitationFlowWorkbench } from "./components/citation-flow-workbench";
 import { ReadingOrderWorkbench } from "./components/reading-order-workbench";
@@ -2276,9 +2277,13 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const graphSurface = paperNetworkNavigation.surface;
   const paperNetworkMode = paperNetworkNavigation.mode;
   const paperNetworkScope = paperNetworkNavigation.scope;
-  const paperNetworkTrackId = researchMap.tracks.some(track=>track.id===paperNetworkNavigation.trackId)
-    ? paperNetworkNavigation.trackId : "all";
   const selectedNetworkPaperId = paperNetworkNavigation.focusId;
+  const routeBrowseTrack = graphSurface==="routes" ? (
+    researchMap.tracks.find(track=>track.id===paperNetworkNavigation.trackId)
+    || researchMap.tracks.find(track=>track.papers.some(paper=>paper.id===selectedNetworkPaperId))
+    || researchMap.tracks[0]
+  ) : undefined;
+  const paperNetworkTrackId = routeBrowseTrack?.id || "all";
   const setGraphSurface = paperNetworkNavigation.setSurface;
   const setPaperNetworkMode = paperNetworkNavigation.setMode;
   const setPaperNetworkScope = paperNetworkNavigation.setScope;
@@ -2430,7 +2435,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const setResearchProblemState=(value:ResearchProblemState|null)=>{researchProblemTrackRef.current=researchRouteScope;setScopedProblem({scope:researchRouteScope,value});};
   const setResearchSynthesis=(value:ResearchSynthesis|null)=>setScopedSynthesis({scope:researchRouteScope,value});
   useEffect(()=>()=>{savedMonitorReadRef.current?.controller.abort()},[activeSpace.id]);
-  const graphCompareTrack=paperNetworkNavigation.compareTrack;
+  const graphCompareTrack=graphSurface==="routes"?routeBrowseTrack?.id||"":paperNetworkNavigation.compareTrack;
   const graphComparisonSelection=selectionForRoute(graphCompareTrack);
   const currentGraphTask=graphComparisonSelection.value;
   const activeSpaceSupportsLearning = !activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-");
@@ -2626,6 +2631,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const confirmedProfile = latestConfirmedImport?.analysis || null;
 
   const networkPaperNodes = useMemo(() => buildNetworkPaperNodes(researchMap), [researchMap]);
+  const routeMaterialRelationIds = useMemo(()=>new Map(networkPaperNodes
+    .filter(node=>routeBrowseTrack&&node.trackIds.includes(routeBrowseTrack.id))
+    .map(node=>[node.paper.canonicalId.toLowerCase(),node.paper.id])),[networkPaperNodes,routeBrowseTrack]);
   const routePortfolio = researchMap.routePortfolio;
   const monitorReadyLabel = demo ? (locale === "zh" ? "演示样例 · 未执行扫描" : "Demo sample · no scan performed") : monitorScanCompletionLabel(monitor, locale);
   const routeTodayPaperCount = useMemo(() => rankedMonitorPapers.filter((paper) => Boolean(
@@ -2785,14 +2793,21 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setPaperNetworkScope("all");
   }
 
-  function focusRouteGraphPaper(node:NetworkPaperNode) {
+  function focusRouteGraphPaper(node:NetworkPaperNode, mode?:"similarity"|"citations") {
     if(effectiveNetworkOriginNodes[0]?.paper.canonicalId!==node.paper.canonicalId) {
       resetResearchNetworkExpansion([node.paper.canonicalId]);
       setPaperNetworkOriginCanonicalIds([node.paper.canonicalId]);
     }
     setSelectedNetworkPaperId(node.paper.id);
     setLibraryViewState(current=>({...current,neighbor:undefined}));
-    updateWorkspaceHash({graphFocus:node.paper.id,libraryNeighbor:undefined},"push");
+    if(mode){
+      setPaperNetworkMode(mode);
+      setPaperNetworkScope("all");
+      if(routeBrowseTrack)setPaperNetworkTrackId(routeBrowseTrack.id);
+    }
+    updateWorkspaceHash({graphFocus:node.paper.id,libraryNeighbor:undefined,
+      ...(mode?{graphMode:mode,graphScope:undefined,graphTrack:routeBrowseTrack?.id}:{}),
+    },"push");
   }
 
   function addMultiNetworkOrigin(node: NetworkPaperNode) {
@@ -5553,7 +5568,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
           <main hidden={view !== "threads"} className={`v2-page v2-map-page ${researchMapMode === "directions" ? "pi-leads-page" : "pi-graph-explorer-page"}`}>
               <section className="v2-page-head v2-map-head v2-route-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{researchMapMode === "directions" ? (locale === "zh" ? "研究路线" : "Research routes") : (locale === "zh" ? "文献探索" : "Literature explorer")}</h1><p className="pi-page-purpose">{researchMapMode === "directions" ? (locale === "zh" ? "选择一条线索，核对材料，再推进比较、研究问题或学习。" : "Choose a lead, inspect its materials, then compare, investigate or study.") : (locale === "zh" ? "从一篇论文和一个具体问题出发，查找、筛选并比较相关工作。" : "Start with a paper and a question to discover, examine and compare related work.")}</p></div><div className="v2-map-head-actions">{researchMapMode === "papers" ? <button className="v2-route-back-overview" type="button" onClick={() => { setResearchMapMode("directions"); setSelectedNetworkPaperId(null); if (graphReturnView === "library") navigate("library"); else navigate("threads", workbookTrackId, { graph: undefined }); }}>{graphReturnView === "library" ? (locale === "zh" ? "← 返回论文库" : "← Back to library") : (locale === "zh" ? "← 返回路线总览" : "← Back to route overview")}</button> : <><span className="v2-map-total"><strong>{researchMap.tracks.length}</strong>{locale === "zh" ? "条研究路线" : "research routes"}</span><button className="v2-route-head-explorer" type="button" onClick={() => { setGraphReturnView("threads"); setResearchMapMode("papers"); navigate("threads", workbookTrackId, { graph: libraryGraphPaperId || "all" }); }}>{locale === "zh" ? "文献探索" : "Literature explorer"} →</button></>}</div></section>
             {researchMapMode === "papers" && <nav className="pi-explorer-scope" aria-label={locale === "zh" ? "探索范围" : "Exploration scope"}><button type="button" aria-pressed={graphSurface === "library"} onClick={() => paperNetworkNavigation.changeSurface("library")}>{locale === "zh" ? "全部论文" : "All papers"}</button><button type="button" aria-pressed={graphSurface === "routes"} onClick={() => paperNetworkNavigation.changeSurface("routes")}>{locale === "zh" ? "路线材料" : "Route materials"}</button></nav>}
-            {researchMapMode === "papers" && <LibraryComparisonControls graph spaceId={activeSpace.id} trackId={graphCompareTrack} locale={locale} selection={graphComparisonSelection} onTrack={paperNetworkNavigation.changeCompareTrack} onResearch={()=>navigatePrimary("threads")} />}
+            {researchMapMode === "papers" && graphSurface==="library" && <LibraryComparisonControls graph spaceId={activeSpace.id} trackId={graphCompareTrack} locale={locale} selection={graphComparisonSelection} onTrack={paperNetworkNavigation.changeCompareTrack} onResearch={()=>navigatePrimary("threads")} />}
             {researchMapMode === "papers" && graphSurface === "library" && <DeferredWorkspacePanel locale={locale}>
               <LibraryExplorer key={`${activeSpace.id}:${libraryGraphPaperId}`} spaceId={activeSpace.id} locale={locale} active={view==="threads"}
                 graphMode={paperNetworkMode==="similarity"?"similarity":"citations"} onGraphMode={changeNetworkMode}
@@ -5565,7 +5580,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             </DeferredWorkspacePanel>}
             {view==="threads" && researchMapMode==="papers" && graphCompareTrack && currentGraphTask.papers.length>0 &&
               <RouteSelectionBar userId={user.userId} spaceId={activeSpace.id} trackId={graphCompareTrack} locale={locale} selection={graphComparisonSelection} requireQuestion
-                onMaterials={()=>document.querySelector('.pi-library-citation-start, .pi-route-evidence-map, .pi-library-explorer')?.scrollIntoView({block:'start'})}
+                onMaterials={()=>document.querySelector('.pi-materials-list, .pi-library-citation-start, .pi-route-evidence-map, .pi-library-explorer')?.scrollIntoView({block:'start'})}
                 onCompare={()=>openWorkbook(graphCompareTrack,currentGraphTask,{view:"threads",hash:window.location.hash})}
                 onResume={id=>openWorkbook(graphCompareTrack,undefined,{view:"threads",hash:window.location.hash},id)} />
             }
@@ -5587,25 +5602,40 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
                   </RouteUpdateRecords>
 
-                </> : <section className="v2-paper-network-panel">
-                  <header className="v2-paper-network-toolbar">
-                    <GraphTaskNavigation mode={paperNetworkMode} onMode={changeNetworkMode} locale={locale} />
-                  </header>
+                </> : routeBrowseTrack && <section className="pi-route-material-workbench">
+                  {view==="threads"&&<RouteMaterialsContext key={"context:"+activeSpace.id+":"+routeBrowseTrack.id}
+                    spaceId={activeSpace.id} track={routeBrowseTrack} tracks={researchMap.tracks} locale={locale}
+                    selection={graphComparisonSelection} showEditor={paperNetworkMode==="materials"||currentGraphTask.papers.length>0}
+                    onTrack={trackId=>{
+                      paperNetworkNavigation.changeTrack(trackId);
+                      setPaperNetworkOriginCanonicalIds([]);
+                      resetResearchNetworkExpansion([]);
+                      setGraphDetailsOpen(false);
+                      setLibraryViewState(current=>({...current,neighbor:undefined}));
+                    }} />}
+                  <GraphTaskNavigation mode={paperNetworkMode} onMode={changeNetworkMode} locale={locale} />
+                  {paperNetworkMode==="materials" ?
+                    <RouteMaterials key={"papers:"+activeSpace.id+":"+routeBrowseTrack.id} spaceId={activeSpace.id} track={routeBrowseTrack}
+                      locale={locale} selection={graphComparisonSelection} location={paperNetworkNavigation.materials}
+                      active={view==="threads"} onLocation={paperNetworkNavigation.changeMaterials}
+                      onRead={id=>void openRoutePaper(id,"threads")} relationPaperIds={routeMaterialRelationIds}
+                      onRelations={id=>{
+                        const node=eligibleNetworkPaperNodes.find(item=>item.paper.id===id);
+                        if(!node)return;
+                        const routePaperIds=new Set(routeMaterialRelationIds.values());
+                        const similar=researchMap.paperEdges.some(edge=>edge.kind==="similarity"&&edge.relationKind==="bibliographic_coupling"
+                          && (edge.sourcePaperId===id&&routePaperIds.has(edge.targetPaperId)||edge.targetPaperId===id&&routePaperIds.has(edge.sourcePaperId)));
+                        focusRouteGraphPaper(node,similar?"similarity":"citations");
+                      }} />
+                  : <>
                   <section className="pi-route-evidence-map" aria-label={locale==="zh"?"路线材料与论文关系":"Route materials and paper relations"}>
-                    <div className="pi-route-evidence-picker">
-                      <label>{locale==="zh"?"查看路线":"Browse route"}<select value={paperNetworkTrackId} onChange={event=>{
-                        paperNetworkNavigation.changeTrack(event.target.value);
-                        setPaperNetworkOriginCanonicalIds([]);
-                        resetResearchNetworkExpansion([]);
-                        setLibraryViewState(current=>({...current,neighbor:undefined}));
-                      }}><option value="all">{locale==="zh"?"全部路线":"All routes"}</option>{researchMap.tracks.map(track=>
-                        <option value={track.id} key={track.id}>{locale==="zh"?track.titleZh:track.titleEn}</option>)}</select></label>
-                      {paperNetworkMode!=="path"&&eligibleNetworkPaperNodes.some(node=>!node.external)&&<label>{locale==="zh"?"焦点论文":"Focus paper"}<select
+                    {paperNetworkMode!=="path"&&eligibleNetworkPaperNodes.some(node=>!node.external)&&<div className="pi-route-evidence-picker">
+                      <label>{locale==="zh"?"焦点论文":"Focus paper"}<select
                         value={eligibleNetworkPaperNodes.some(node=>!node.external&&node.paper.id===selectedNetworkPaperId)?selectedNetworkPaperId||"":graphDeskOrigin?.paper.id||""}
                         onChange={event=>{const node=eligibleNetworkPaperNodes.find(item=>item.paper.id===event.target.value);if(node)focusRouteGraphPaper(node);}}>
                         {eligibleNetworkPaperNodes.filter(node=>!node.external).map(node=><option key={node.paper.id} value={node.paper.id}>{node.paper.title}</option>)}
-                      </select></label>}
-                    </div>
+                      </select></label>
+                    </div>}
                     {view==="threads"&&<>{paperNetworkMode==="similarity"?<RouteSimilarityExplorer nodes={eligibleNetworkPaperNodes}
                       edges={[...researchMap.paperEdges,...externalResearchNetworkEdges]} focusId={selectedNetworkPaperId||graphDeskOrigin?.paper.id||null}
                       neighborId={libraryViewState.neighbor?.startsWith("route-similar:")?libraryViewState.neighbor.slice(14):""}
@@ -5676,6 +5706,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                     </aside>}
                   </div>
                   </details>
+                  </>}
                 </section>}
               </>
             ) : <section className="v2-map-empty"><InterfaceIcon name="route" className="pi-state-mark" /><h2>{locale === "zh" ? "暂时没有可展示的真实路线" : "No real route is available yet"}</h2><p>{locale === "zh" ? "Pi 不会用演示论文填充这里。稍后重新进入即可再次尝试。" : "Pi will not fill this area with demo papers. Return later to retry."}</p></section>}

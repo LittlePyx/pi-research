@@ -49,8 +49,11 @@ const renderCitation = locale => renderToStaticMarkup(createElement(CitationFlow
 test('extracted citation workbench preserves reference direction and hides unverified links in both languages', () => {
   for (const locale of ['zh', 'en']) {
     const html = renderCitation(locale);
-    const prior = html.slice(html.indexOf('<section class="prior">'), html.indexOf('<article id="citation-focus-paper"'));
-    const later = html.slice(html.indexOf('<section class="later">'), html.indexOf('<section class="pi-citation-ledger"'));
+    const priorStart=html.indexOf('<section class="prior">');
+    const laterStart=html.indexOf('<section class="later">');
+    assert.ok(html.indexOf('<article id="citation-focus-paper"')<priorStart);
+    const prior = html.slice(priorStart,laterStart);
+    const later = html.slice(laterStart,html.indexOf('</section>',laterStart));
     assert.match(prior, /Paper prior/);
     assert.doesNotMatch(prior, /Paper later/);
     assert.match(later, /Paper later/);

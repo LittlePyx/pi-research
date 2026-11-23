@@ -10,15 +10,28 @@ export async function GET(request:Request) {
   if(!await db.prepare('SELECT id FROM research_spaces WHERE id=? AND owner_user_id=?').bind(spaceId,user.userId).first())return Response.json({error:'Space not found'},{status:404});
   const track=trackId?await db.prepare('SELECT title_en FROM research_tracks WHERE id=? AND space_id=?').bind(trackId,spaceId).first<{title_en:string}>():null;
   if(trackId&&!track)return Response.json({error:'Route not found'},{status:404});
-  const terms=routeCatalogTerms(track?.title_en||'');const where=catalogWhere(spaceId,q,terms,trackId,url.searchParams.get('scope')==='all');
-  const from=`FROM monitored_papers p LEFT JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id LEFT JOIN research_tracks t ON t.id=? AND t.space_id=p.space_id LEFT JOIN research_route_library m ON m.paper_id=p.id AND m.space_id=p.space_id AND m.track_id=t.id LEFT JOIN research_route_library_reviews rr ON rr.paper_id=p.id AND rr.track_id=t.id AND (${routeReviewCurrentSql}) LEFT JOIN library_graph_checks g ON g.paper_id=p.id AND g.space_id=p.space_id WHERE ${where.sql}`;
-  const args=[trackId,...where.bindings];
+  const routeMaterials=Boolean(trackId)&&url.searchParams.get('view')==='route-materials';
+  const group=routeMaterials?url.searchParams.get('group'):null;
+  const terms=routeCatalogTerms(track?.title_en||'');
+  const where=catalogWhere(spaceId,q,terms,trackId,!routeMaterials&&url.searchParams.get('scope')==='all');
+  const backbone=`EXISTS(SELECT 1 FROM research_track_papers tp WHERE tp.space_id=p.space_id AND tp.canonical_id=p.canonical_id AND tp.curation_status='active' AND (?='' OR tp.track_id=?))`;
+  const matchesGroup=group==='backbone'?backbone:group==='supplement'?`NOT ${backbone}`:'';
+  const table=routeMaterials?`(
+    SELECT id,space_id,canonical_id,title,authors,venue,url,doi,published_at,discovered_at,0 AS route_only
+    FROM monitored_papers WHERE space_id=?
+    UNION ALL
+    SELECT rp.id,rp.space_id,rp.canonical_id,rp.title,rp.authors,rp.venue,rp.url,rp.doi,rp.published_at,rp.created_at,1
+    FROM research_track_papers rp WHERE rp.space_id=? AND rp.track_id=? AND rp.curation_status='active'
+      AND NOT EXISTS(SELECT 1 FROM monitored_papers p WHERE p.space_id=rp.space_id AND p.canonical_id=rp.canonical_id)
+  )`:'monitored_papers';
+  const from=`FROM ${table} p LEFT JOIN paper_insights i ON i.paper_id=p.id AND i.space_id=p.space_id LEFT JOIN research_tracks t ON t.id=? AND t.space_id=p.space_id LEFT JOIN research_route_library m ON m.paper_id=p.id AND m.space_id=p.space_id AND m.track_id=t.id LEFT JOIN research_route_library_reviews rr ON rr.paper_id=p.id AND rr.track_id=t.id AND (${routeReviewCurrentSql}) LEFT JOIN library_graph_checks g ON g.paper_id=p.id AND g.space_id=p.space_id WHERE ${where.sql}${matchesGroup?' AND '+matchesGroup:''}`;
+  const args=[...(routeMaterials?[spaceId,spaceId,trackId]:[]),trackId,...where.bindings,...(matchesGroup?[trackId,trackId]:[])];
   const [count,rows,coverage]=await Promise.all([
     db.prepare(`SELECT COUNT(*) AS total ${from}`).bind(...args).first<{total:number}>(),
-    db.prepare(`SELECT EXISTS(SELECT 1 FROM paper_feedback f WHERE f.space_id=p.space_id AND f.paper_id=p.id AND f.feedback='not_relevant') AS excluded,rr.relevance,rr.assessment_json AS assessmentJson,rr.checked_at AS reviewedAt,p.id,p.canonical_id AS canonicalId,p.title,p.authors,p.venue,p.url,p.doi,p.published_at AS publishedAt,COALESCE(i.abstract_text,'') AS abstractText,COALESCE(i.ever_recommended,0) AS recommended,CASE WHEN i.verification_status IN ('verified','revised') THEN 1 ELSE 0 END AS verified,m.status AS membership,m.category,g.status AS graphStatus,g.checked_at AS checkedAt,EXISTS(SELECT 1 FROM research_track_papers tp WHERE tp.space_id=p.space_id AND tp.canonical_id=p.canonical_id AND tp.curation_status='active' AND (?='' OR tp.track_id=?)) AS inRoute ${from} ORDER BY COALESCE(i.ever_recommended,0) DESC,p.discovered_at DESC,p.id LIMIT 24 OFFSET ?`).bind(trackId,trackId,...args,offset).all<LibraryPaper & {excluded:number}>(),
+    db.prepare(`SELECT EXISTS(SELECT 1 FROM paper_feedback f WHERE f.space_id=p.space_id AND f.paper_id=p.id AND f.feedback='not_relevant') AS excluded,rr.relevance,rr.assessment_json AS assessmentJson,rr.checked_at AS reviewedAt,p.id,p.canonical_id AS canonicalId,p.title,p.authors,p.venue,p.url,p.doi,p.published_at AS publishedAt,COALESCE(i.abstract_text,'') AS abstractText,COALESCE(i.ever_recommended,0) AS recommended,CASE WHEN i.verification_status IN ('verified','revised') THEN 1 ELSE 0 END AS verified,m.status AS membership,m.category,g.status AS graphStatus,g.checked_at AS checkedAt,${backbone} AS inRoute${routeMaterials?',p.route_only AS routeOnly':''} ${from} ORDER BY ${routeMaterials?'inRoute DESC,':''} COALESCE(i.ever_recommended,0) DESC,p.discovered_at DESC,p.id LIMIT 24 OFFSET ?`).bind(trackId,trackId,...args,offset).all<LibraryPaper & {excluded:number}>(),
     db.prepare(`SELECT COUNT(*) AS total,SUM(CASE WHEN g.status IN ('ready','partial','empty') THEN 1 ELSE 0 END) AS checked,SUM(CASE WHEN g.status='empty' THEN 1 ELSE 0 END) AS noLinks,SUM(CASE WHEN g.status IN ('error','missing_id') THEN 1 ELSE 0 END) AS blocked FROM monitored_papers p LEFT JOIN library_graph_checks g ON g.paper_id=p.id AND g.space_id=p.space_id WHERE p.space_id=?`).bind(spaceId).first(),
   ]);
-  return Response.json({items:rows.results.map(p=>({...p,comparisonEligibility:comparisonEligibility(p),matchTerms:terms.filter(t=>(p.title+' '+p.abstractText).toLowerCase().includes(t))})),total:count?.total||0,nextOffset:offset+rows.results.length<(count?.total||0)?offset+rows.results.length:null,coverage,terms},{headers:{'Cache-Control':'private, no-store'}});
+  return Response.json({items:rows.results.map(p=>({...p,comparisonEligibility:comparisonEligibility(p.routeOnly?null:p),matchTerms:terms.filter(t=>(p.title+' '+p.abstractText).toLowerCase().includes(t))})),total:count?.total||0,nextOffset:offset+rows.results.length<(count?.total||0)?offset+rows.results.length:null,coverage,terms},{headers:{'Cache-Control':'private, no-store'}});
 }
 export async function POST(request:Request) {
   if(request.headers.get('origin')&&request.headers.get('origin')!==new URL(request.url).origin)return Response.json({error:'Origin mismatch'},{status:403});

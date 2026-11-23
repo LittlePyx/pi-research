@@ -1,11 +1,12 @@
 'use client';
 
-type Mode = 'similarity' | 'citations' | 'path';
+import type { GraphMode } from '../../lib/workspace-navigation';
 
 export function GraphTaskNavigation({ mode, onMode, locale }: {
-  mode: Mode; onMode: (mode: Mode) => void; locale: 'zh' | 'en';
+  mode: GraphMode; onMode: (mode: GraphMode) => void; locale: 'zh' | 'en';
 }) {
   const items = [
+    { id: 'materials', zh: '论文列表', en: 'Papers' },
     { id: 'similarity', zh: '相似论文', en: 'Similar papers' },
     { id: 'citations', zh: '直接引用', en: 'Direct citations' },
     { id: 'path', zh: '阅读顺序', en: 'Reading order' },

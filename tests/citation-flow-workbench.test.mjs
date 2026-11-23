@@ -25,10 +25,8 @@ test("citation flow keeps direction, provider, and quality-queue semantics expli
   assert.match(workbench, /const prior = model\.nodeById\.get\(edge\.targetPaperId\)/);
   assert.match(workbench, /const later = model\.nodeById\.get\(edge\.sourcePaperId\)/);
   assert.match(workbench, /citationEvidenceProviderLabel\(edge\.evidenceSource\)/);
-  assert.match(workbench, /只包含数据库确认的直接引用/);
-  assert.match(workbench, /扩展候选会进入共享质量评估/);
-  assert.match(workbench, /只有评审通过才可能出现在今日/);
-  assert.match(workbench, /只有你收录确认后才进入正式路线与引用流/);
+  assert.match(workbench, /当前路线暂无已核验的参考文献/);
+  assert.match(workbench, /新候选进入质量评审，收录后才会进入路线/);
   assert.match(workbench, /展开外部引用邻居/);
   assert.match(app, /expandResearchNetwork\(\[node\.paper\.canonicalId\], true, true\)/);
 });
