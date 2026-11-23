@@ -2,6 +2,8 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import nativeHandler from "vinext/server/app-router-entry";
 import {deletedSpaceRequest} from '../lib/space-deletion';
+import {anonymousWorkspaceId} from '../lib/workspace-identity';
+import {workspaceOverloadResponse} from '../lib/workspace-overload';
 import {
   MONITOR_SCHEDULER_BUCKET_MS,
   SCHEDULED_MONITOR_INCIDENT_SPACE_SQL,
@@ -42,7 +44,13 @@ import {
 
 const handler={fetch:workspaceHandler};
 async function workspaceHandler(request:Request,env:Env,ctx:ExecutionContext){
- if(env.DB&&await deletedSpaceRequest(request,env.DB))return Response.json({error:'Space is deleted; restore it from space management',code:'space_deleted'},{status:410,headers:{'Cache-Control':'private, no-store'}});
+ try {
+  if(env.DB&&await deletedSpaceRequest(request,env.DB))return Response.json({error:'Space is deleted; restore it from space management',code:'space_deleted'},{status:410,headers:{'Cache-Control':'private, no-store'}});
+ } catch(error) {
+  const busy=workspaceOverloadResponse(error);
+  if(busy)return busy;
+  throw error;
+ }
  return nativeHandler.fetch(request,env,ctx);
 }
 
@@ -852,7 +860,7 @@ const worker = {
       }
     }
 
-    if (env.DB && shouldWakeMonitorScheduler(request.method, url.pathname)) {
+    if (env.DB && anonymousWorkspaceId(request) && shouldWakeMonitorScheduler(request.method, url.pathname)) {
       ctx.waitUntil((async () => {
         if (await visitBackstopIsDue(env)) await runScheduledMonitorSweep(env, ctx, "visit_backstop");
       })());

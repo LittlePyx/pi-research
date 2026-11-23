@@ -23,7 +23,7 @@ test("scheduler buckets deduplicate cron, watchdog, and visit wakeups", () => {
   assert.equal(monitorSchedulerBucketId(599_999), "monitor-scheduler:0");
   assert.equal(monitorSchedulerBucketId(600_000), "monitor-scheduler:1");
   assert.equal(shouldWakeMonitorScheduler("GET", "/"), true);
-  assert.equal(shouldWakeMonitorScheduler("GET", "/api/spaces"), true);
+  assert.equal(shouldWakeMonitorScheduler("GET", "/api/spaces"), false);
   assert.equal(shouldWakeMonitorScheduler("POST", "/api/monitor"), false);
 });
 

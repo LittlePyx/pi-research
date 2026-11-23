@@ -270,8 +270,8 @@ test("the API advances one durable job per bounded request and the page never dr
   assert.match(route, /thinking: "disabled", timeoutMs: 36_000/);
   assert.match(route, /const preferredTrackId = payload\.trackId\?\.trim\(\) \|\| undefined/);
   assert.match(route, /payload\.action === "interpret" && preferredTrackId/);
-  assert.match(app, /intelligencePass < 2/);
-  assert.match(app, /action: "advance-intelligence"/);
+  assert.doesNotMatch(app, /action: "advance-intelligence"/);
+  assert.match(app, /refreshDirectionIntelligence/);
   for (const source of [route, feedback, evidence, curation, dismissal]) {
     assert.doesNotMatch(source, /intelligence_json\s*=\s*'\{\}'/);
     assert.match(source, /intelligence_status\s*=\s*'pending'/);

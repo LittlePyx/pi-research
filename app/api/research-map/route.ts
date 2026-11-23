@@ -1,3 +1,4 @@
+import { workspaceOverloadResponse } from '../../../lib/workspace-overload';
 import { BACKGROUND_ROLE_UPDATE_SQL, ROUTE_ROLE_EVIDENCE_PROMPT } from "../../../lib/route-role-evidence";
 import { recoverPaperAbstract } from "../../../lib/abstract-recovery";
 import { ensureSchema, getApiUser, getDatabase, getRuntimeEnv } from "../../../db/repository";
@@ -11,7 +12,7 @@ import { fetchExternalSource } from "../../../lib/external-source-throttle";
 import { enqueueMonitorCandidates, likelySameResearchWork, RESEARCH_ROUTE_DISCOVERY_EFFECT_SQL, RESEARCH_ROUTE_PORTFOLIO_COUNTS_SQL, RESEARCH_ROUTE_REVIEW_QUEUE_COUNTS_SQL } from "../../../lib/monitor-candidate-queue";
 import { readPreferenceSignals } from "../../../lib/preference-memory";
 import { isDatabaseVerifiedCitationEdge } from "../../../lib/paper-network";
-import { researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchRouteRevision, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
+import { emptyResearchMapState, researchPaperCoverageHash, researchPaperSetRevision, selectResearchPaperCoverage, type ResearchDirectionIntelligence, type ResearchDirectionRole, type ResearchHeatLevel, type ResearchMapState, type ResearchPaperCoverageCandidate, type ResearchPaperEdge, type ResearchPaperEdgeKind, type ResearchRouteRevision, type ResearchTrack, type ResearchTrackEdge, type ResearchTrackPaper, type ResearchTrackRole } from "../../../lib/research-map";
 import { defensiveResearchTrackBuildStatus, RESEARCH_TRACK_CLASSIC_RESCUE_ATTEMPT, mergeResearchTrackSourceBatches, nextResearchTrackBuildAttemptCount, researchTrackRetryAt, researchTrackSourcePlan, researchTrackTitleTopicalFit, researchTrackTopicalFit, resolveResearchTrackBuildStatus, type ResearchTrackDiscoveryProvider, type ResearchTrackSourceReport } from "../../../lib/research-map-reliability";
 import { formalResearchMapEvidencePredicate, reconcileConfirmedResearchMapEvidence, researchEvidenceHorizon } from "../../../lib/research-map-evidence";
 import { curateResearchTrackPaper, ResearchTrackPaperCurationError, routePaperSelectionContradiction, type ResearchTrackPaperCurationReasonCode, type ResearchTrackPaperCurationStatus } from "../../../lib/research-map-curation";
@@ -2186,11 +2187,11 @@ async function decideResearchRouteEvolution(
   return { changed: 1 };
 }
 
-async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}) {
-  await ensureResearchRouteBaselines(database, spaceId);
-  const [tracksResult, papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, gapDiscoveryResult, discoveryEffectsResult, routePortfolioCounts, routeRevisionsResult, routeEffectivenessResult, routeExperimentResult] = await Promise.all([
-    database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at")
-      .bind(spaceId).all<TrackRow>(),
+async function readMap(database: D1Database, spaceId: string, extra: Record<string, unknown> = {}, seedBaselines = true) {
+  const tracksResult = await database.prepare("SELECT id, title_zh, title_en, summary_zh, summary_en, search_queries, expansion_count, build_status, build_attempt_count, build_source_status_json, build_error, build_retry_at, user_role, monitoring_status, depth_score, support_score, interaction_score, intelligence_json, intelligence_model, intelligence_updated_at, intelligence_status, intelligence_attempt_count, intelligence_error, intelligence_retry_at, intelligence_lock_token, intelligence_lock_expires_at, intelligence_refresh_requested_at, updated_at FROM research_tracks WHERE space_id = ? ORDER BY position, created_at").bind(spaceId).all<TrackRow>();
+  if (!tracksResult.results.length) return { ...emptyResearchMapState(), ...extra };
+  if (seedBaselines) await ensureResearchRouteBaselines(database, spaceId);
+  const [papersResult, edgesResult, paperEdgesResult, paperNetworkState, evidenceCountsResult, latestChangesResult, reviewQueueCountsResult, gapDiscoveryResult, discoveryEffectsResult, routePortfolioCounts, routeRevisionsResult, routeEffectivenessResult, routeExperimentResult] = await Promise.all([
     database.prepare(
       `SELECT tp.id, tp.track_id, tp.canonical_id, tp.doi, tp.title, tp.authors, tp.venue, tp.url,
        tp.published_at, tp.citation_count, tp.role, tp.summary_zh, tp.summary_en, tp.rationale_zh,
@@ -2555,9 +2556,9 @@ export async function GET(request: Request) {
   try {
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
-    return Response.json(await readMap(context.database, context.space.id));
+    return Response.json(await readMap(context.database, context.space.id, {}, false), { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Unable to load the research map" }, { status: 500 });
+    return workspaceOverloadResponse(error) ?? Response.json({ error: "Unable to load the research map" }, { status: 500 });
   }
 }
 
@@ -2569,7 +2570,7 @@ export async function POST(request: Request) {
     const context = await ownedSpace(request, spaceId);
     if ("error" in context) return context.error;
     const { database, space, user } = context;
-    if (payload.action === "read") return Response.json(await readMap(database, space.id, { cached: true }));
+    if (payload.action === "read") return Response.json(await readMap(database, space.id, { cached: true }, false));
     if (payload.action === "curate-paper") {
       const trackId = payload.trackId?.trim() || "";
       const paperId = payload.paperId?.trim() || "";
@@ -2585,6 +2586,14 @@ export async function POST(request: Request) {
       });
       return Response.json(await readMap(database, space.id, { curationChanged: result.changed, curatedPaperId: paperId }));
     }
+    if (payload.action === "activity") {
+      const weight = payload.activityKind === "paper_opened" ? 2 : 1;
+      await database.prepare("UPDATE research_tracks SET interaction_score = MIN(35, interaction_score + ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
+        .bind(weight, payload.trackId?.trim() || "", space.id).run();
+      if (request.headers.get("Prefer") === "return=minimal") return new Response(null, { status: 204 });
+      return Response.json(await readMap(database, space.id, {}, false));
+    }
+
     const workspaceId = user.userId.replace(/^anonymous:/, "");
     const apiKey = resolveDeepSeekCredential(request).apiKey;
     const scheduledRetry = request.headers.get("x-pi-scheduled-route-retry") === "1";
@@ -2639,13 +2648,6 @@ export async function POST(request: Request) {
     if (payload.action === "reconcile") {
       const reconciled = await reconcileConfirmedResearchMapEvidence(database, space.id);
       return Response.json(await readMap(database, space.id, { reconciledCount: reconciled.changed }));
-    }
-
-    if (payload.action === "activity") {
-      const weight = payload.activityKind === "paper_opened" ? 2 : 1;
-      await database.prepare("UPDATE research_tracks SET interaction_score = MIN(35, interaction_score + ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND space_id = ?")
-        .bind(weight, payload.trackId?.trim() || "", space.id).run();
-      return Response.json(await readMap(database, space.id));
     }
 
     if (payload.action === "structure") {
@@ -3036,7 +3038,7 @@ export async function POST(request: Request) {
     if (error instanceof ResearchTrackPaperCurationError) {
       return Response.json({ error: error.message, code: error.code }, { status: error.code === "not_found" ? 404 : 409 });
     }
-    return Response.json({ error: error instanceof Error ? error.message : "Unable to build the research map" }, { status: 502 });
+    return workspaceOverloadResponse(error) ?? Response.json({ error: error instanceof Error ? error.message : "Unable to build the research map" }, { status: 502 });
   }
 }
 

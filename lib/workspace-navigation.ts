@@ -10,7 +10,7 @@ export type GraphScope='all'|'one-hop'|'multi-seed';
 export type WorkbookPanel='evidence'|'relations'|'task';
 export type MemorySection='comparisons'|'reading'|'insights'|'preferences';
 export type MemoryLocation={memorySection?:MemorySection;memoryTrack?:string;memoryQuery?:string;memoryPage?:number;memoryFocus?:string};
-export type WorkspaceLocation = MemoryLocation & RouteMaterialLocation & { graphCompareTrack?:string; libraryNeighbor?:string; libraryDisplay?:'list'; practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'|'thread-detail'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:SavedGraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string;workbookDimension?:string };
+export type WorkspaceLocation = MemoryLocation & RouteMaterialLocation & { graphCompareTrack?:string; libraryCollection?:string; libraryNeighbor?:string; libraryDisplay?:'list'; practiceId?:string; workbookId?:string; returnTo?:string; readingFocus?:string; focus?: 'recovery'; graphFrom?: 'library'|'thread-detail'; paperPanel?:PaperPanel; panel?:TodayPanel; view: WorkspaceView; id?: string; tab?: string; space?: string; from?: WorkspaceView; track?: string; graph?: string; step?: string; path?: string; libraryQuery?:string; libraryScope?:LibraryScope; libraryPage?:number; libraryFocus?:string; libraryFilter?:'inbox'|'accepted'|'all'|'dismissed'; libraryStage?:'all'|'evaluated'; libraryInbox?:'all'|'unseen'|'seen'|'snoozed'; librarySort?:'priority'|'newest'|'quality'; libraryTag?:'all'|'saved'|'notes'; graphSurface?:'library'|'routes'; graphMode?:SavedGraphMode; graphScope?:GraphScope; graphTrack?:string; graphFocus?:string; workbookPanel?:WorkbookPanel; workbookFocus?:string;workbookDimension?:string };
 const views = new Set<WorkspaceView>(["today", "threads", "thread-detail", "learn", "library", "memory", "paper-detail", "workbook"]);
 const tabs = new Set(["start", "evidence", "problem", "agenda"]);
 const identifier = (value: string | null | undefined) => value && /^[a-zA-Z0-9_-]{1,120}$/.test(value) ? value : undefined;
@@ -45,6 +45,7 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
     ...(libraryRoute&&positiveInteger(params.get('page'))?{libraryPage:positiveInteger(params.get('page'))}:{}),
     ...(libraryRoute&&identifier(params.get('libraryFocus'))?{libraryFocus:identifier(params.get('libraryFocus'))}:{}),
     ...(view==='library'&&['inbox','accepted','all','dismissed'].includes(params.get('filter')||'')?{libraryFilter:params.get('filter') as WorkspaceLocation['libraryFilter']}:{}),
+    ...(view==='library'&&identifier(params.get('collection'))?{libraryCollection:identifier(params.get('collection'))}:{}),
     ...(view==='library'&&params.get('stage')==='evaluated'?{libraryStage:'evaluated' as const}:{}),
     ...(view==='library'&&['all','unseen','seen','snoozed'].includes(params.get('inbox')||'')?{libraryInbox:params.get('inbox') as WorkspaceLocation['libraryInbox']}:{}),
     ...(view==='library'&&['priority','newest','quality'].includes(params.get('sort')||'')?{librarySort:params.get('sort') as WorkspaceLocation['librarySort']}:{}),
@@ -91,13 +92,14 @@ function parseWorkspaceLocation(hash: string, depth: number): WorkspaceLocation 
 function validatedReturnHash(location: WorkspaceLocation, depth = 0): string | undefined {
   const hash = location.returnTo;
   const graphOrigin = location.view === 'threads' && location.graph && location.graphFrom;
-  if (!hash || !(['paper-detail', 'workbook'].includes(location.view)||location.view==='learn'&&location.workbookId&&location.track||graphOrigin) || !location.space || depth >= 3 || !hash.startsWith('#') || hash.length > 8000) return;
+  const fromMaterials = location.view === 'library' && location.libraryCollection && location.from === 'thread-detail';
+  if (!hash || !(['paper-detail', 'workbook'].includes(location.view)||location.view==='learn'&&location.workbookId&&location.track||graphOrigin||fromMaterials) || !location.space || depth >= 5 || !hash.startsWith('#') || hash.length > 8000) return;
   try { if (!text(decodeURIComponent(hash), 8000)) return; } catch { return; }
   const segment = hash.slice(1).split(/[/?]/)[0];
   const view = segment === 'thread' ? 'thread-detail' : segment;
   if (!views.has(view as WorkspaceView) || view === 'paper-detail' || segment === 'paper' || view !== (graphOrigin || location.from)) return;
   const origin = parseWorkspaceLocation(hash, depth + 1);
-  if (origin.view !== view || origin.space !== location.space) return;
+  if (origin.view !== view || origin.space !== location.space || (fromMaterials && (origin.id !== location.libraryCollection || origin.tab !== 'evidence'))) return;
   if (new URLSearchParams(hash.split('?')[1] || '').has('returnTo') && !origin.returnTo) return;
   return hash;
 }
@@ -118,6 +120,7 @@ export function workspaceHash(location: WorkspaceLocation): string {
     if(location.libraryFocus)params.set('libraryFocus',location.libraryFocus);
   }
   if(location.view==='library'){
+    if(identifier(location.libraryCollection))params.set('collection',location.libraryCollection!);
     if(location.libraryFilter&&location.libraryFilter!=='all')params.set('filter',location.libraryFilter);
     if(location.libraryStage==='evaluated')params.set('stage','evaluated');
     if(location.libraryInbox&&location.libraryInbox!=='all')params.set('inbox',location.libraryInbox);

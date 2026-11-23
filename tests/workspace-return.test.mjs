@@ -16,7 +16,7 @@ function harness(hash,overrides={}){
   libraryComparisonTrackId:readWorkspaceLocation(hash).track||'',librarySearch:'',libraryViewState:{query:'',scope:'related',page:1,focusId:''},libraryPageNumber:1,libraryFilter:'all',libraryStageFilter:'all',inboxFilter:'all',librarySort:'priority',libraryTag:'all',
   workbookReturnView:'threads',workbookViewState:{panel:'evidence',focus:''},learningBrowseSelection:null,
   navigationScroll:{current:new Map()},workbookScrollRef:{current:0},restoredLocationRef:{current:''},
-  rememberCurrentLocation(){},setPaperPanel(){},setNavigationIssue(){},setTodaySurface(value){state.todaySurface=value},setRecoveryFocusRequested(){},setView(value){state.view=value},setMobileNav(){},...overrides};
+  rememberCurrentLocation(){},setPaperPanel(){},setNavigationIssue(){},restoreTodaySurface(panel){state.todaySurface=panel},restoreLibraryLocation(location){state.librarySearch=location.libraryQuery||''},setRecoveryFocusRequested(){},setView(value){state.view=value},setMobileNav(){},...overrides};
  browser.scrollTo=options=>scrolls.push(options.top);
  const navigate=new Function('state','window','requestAnimationFrame','readWorkspaceLocation','workspaceHash',`with(state){${code};return navigate;}`)(state,browser,fn=>frames.push(fn),readWorkspaceLocation,workspaceHash);
  return{navigate,state,browser,scrolls,flush(){while(frames.length)frames.shift()()}};

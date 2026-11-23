@@ -29,8 +29,8 @@ test("server-renders a neutral Pi Research loading state before resolving worksp
   assert.doesNotMatch(html, /设置重点来源/);
   const client=await readFile(new URL('../app/research-app.tsx',import.meta.url),'utf8');
   assert.match(client,/发现进度/);
-  assert.match(client,/全部阅读/);
-  assert.match(client,/研究记录/);
+  assert.match(client,/更多阅读与完整简报/);
+  assert.match(client,/回看阅读记录/);
   assert.doesNotMatch(html, /class="v2-isolation"/);
 });
 
@@ -235,12 +235,11 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /辅助价值/);
   assert.match(client, /directionHeatLabel/);
   assert.match(client, /当前发现热度/);
-  assert.match(client, /action: "hydrate"/);
+  assert.match(client, /isInitialFill \? "hydrate" : "expand"/);
   assert.doesNotMatch(client, /action: "reconcile"/);
   assert.match(client, /action: origin === "problem" \? "expand-problem" : "expand-gap"/);
-  assert.match(client, /mapBuildTrackId/);
-  assert.match(client, /正在建立研究路线/);
-  assert.match(client, /已完成内容已经保存/);
+  assert.match(client, /正在读取研究路线/);
+  assert.match(client, /重试读取路线/);
   assert.match(client, /refreshDirectionIntelligence/);
   assert.match(client, /这条路线目前可以怎样判断/);
   assert.match(client, /论文网络/);
@@ -249,7 +248,6 @@ test("continuously explores new discovery branches and grows a connected researc
   assert.match(client, /PaperNetworkGraph/);
   assert.match(client, /PAPER_NETWORK_ACTIVE_NODE_LIMIT = 72/);
   assert.match(client, /selectPaperNetworkActiveNodeIds/);
-  assert.match(client, /builtPaperRevision !== researchMap\.paperNetwork\.paperRevision/);
   assert.doesNotMatch(client, /return Array\.from\(unique\.values\(\)\)\.slice\(0, 40\)/);
   assert.match(await readFile(new URL("../app/components/route-reference-views.tsx", import.meta.url), "utf8"), /RouteStageMap/);
   assert.match(client, /相似性地图/);

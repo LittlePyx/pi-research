@@ -1,6 +1,7 @@
 "use client";
 import './workspace-access.css';
 import {WorkspaceWelcome} from './components/workspace-welcome';
+import {WorkspacePanelBoundary} from "./components/workspace-panel-boundary";
 import {WorkspaceAccess} from './components/workspace-access';
 import {SpaceManagementList,type ManagedSpace} from './components/space-management-list';
 import './space-management.css';
@@ -21,7 +22,6 @@ import { MemoryResume } from "./components/memory-resume";
 import { workspaceFetch as fetch } from "../lib/workspace-request";
 
 
-import { DemoJourney } from "./components/demo-journey";
 import { ModelSettingsPanel } from "./components/model-settings-panel";
 import { DraftRecovery } from "./components/draft-recovery";
 import { sessionDraftKey, writeSessionDraft, clearSessionDraft } from "../lib/session-draft";
@@ -125,7 +125,7 @@ const RouteStart = lazy(() => import("./components/route-start").then(module => 
 const RouteEvolutionWorkbench = lazy(() => import("./components/route-evolution-workbench").then(module => ({ default: module.RouteEvolutionWorkbench })));
 
 function DeferredWorkspacePanel({ locale, children }: { locale: "zh" | "en"; children: ReactNode }) {
-  return <Suspense fallback={<section className="pi-deferred-surface" role="status"><span aria-hidden="true">◌</span>{locale === "zh" ? "正在载入工作区…" : "Loading workspace…"}</section>}>{children}</Suspense>;
+  return <WorkspacePanelBoundary locale={locale}><Suspense fallback={<section className="pi-deferred-surface" role="status"><span aria-hidden="true">◌</span>{locale === "zh" ? "正在载入工作区…" : "Loading workspace…"}</section>}>{children}</Suspense></WorkspacePanelBoundary>;
 }
 
 type Locale = "zh" | "en";
@@ -156,6 +156,7 @@ type RouteDiscoveryType = "route_search" | "gap" | "synthesis" | "citation_netwo
 type MonitorPaper = {
   canonicalId?:string;
   comparisonEligibility?:import("../lib/comparison-eligibility").ComparisonEligibility;
+  routeMembership?:{status:"included"|"excluded";category:string};
   id: string;
   doi: string | null;
   title: string;
@@ -2015,15 +2016,15 @@ async function extractMaterialText(file: File) {
   throw new Error("Unsupported file type");
 }
 
-async function readResearchMapState(spaceId: string) {
+async function readResearchMapState(spaceId: string, signal = AbortSignal.timeout(20_000)) {
   const response = await fetch("/api/research-map", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ spaceId, action: "read" }),
+    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ spaceId, action: "read" }), signal,
   });
-  const data = await response.json() as ResearchMapState & { error?: string };
-  if (!response.ok) throw new Error(data.error || "research map unavailable");
-  return data;
+  if (!response.ok) {
+    if (response.status === 503) throw new Error("workspace_busy");
+    throw new Error("research map unavailable");
+  }
+  return await response.json() as ResearchMapState;
 }
 
 async function requestPaperNetworkBuildPhase(spaceId: string, phase: Exclude<PaperNetworkBuildPhase, null>, force: boolean) {
@@ -2206,8 +2207,15 @@ function ResearchProblemWorkbench({
 export default function ResearchApp({ user, demo = false }: { user: User; demo?: boolean }) {
   const [locale, setLocale] = useState<Locale>("zh");
   const [view, setView] = useState<View>("today");
-  const [todaySurface,setTodaySurface]=useState<"home"|"reading"|"discovery"|"records"|"settings">("home");
-  const openTodaySurface=(surface:typeof todaySurface)=>navigate("today",undefined,{panel:surface});
+  const [todaySurface,setTodaySurface]=useState<"home"|"discovery"|"settings">("home");
+  const [todayMoreOpen,setTodayMoreOpen]=useState(false);
+  const [todayShowReminders,setTodayShowReminders]=useState(false);
+  const openTodaySurface=(panel:"home"|"discovery"|"settings"|"records")=>navigate("today",undefined,{panel});
+  const restoreTodaySurface=(panel:WorkspaceLocation["panel"])=>{
+    setTodaySurface(panel==="discovery"||panel==="settings"?panel:"home");
+    setTodayMoreOpen(panel==="reading");
+    setTodayShowReminders(panel==="records");
+  };
   const [memoryRouteError, setMemoryRouteError] = useState(false);
   const [memoryRouteRetry, setMemoryRouteRetry] = useState(0);
   const [memoryView, setMemoryView] = useState<MemoryLocation>({});
@@ -2305,17 +2313,15 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const [paperNetworkLoading, setPaperNetworkLoading] = useState(false);
   const [paperNetworkBuildPhase, setPaperNetworkBuildPhase] = useState<PaperNetworkBuildPhase>(null);
   const paperNetworkSpaceRef = useRef(activeSpaceId);
-  const paperNetworkAutoAttemptRef = useRef(new Set<string>());
   const researchNetworkContextRef = useRef({ version: 0, spaceId: activeSpaceId, originKey: "" });
   const researchNetworkExpandRequestRef = useRef(0);
   const researchNetworkDecisionSequenceRef = useRef(0);
   const researchNetworkDecisionRequestsRef = useRef(new Map<string, number>());
   const [mapLoading, setMapLoading] = useState(false);
   const [mapAction, setMapAction] = useState<string | null>(null);
-  const [mapOutlinePhase, setMapOutlinePhase] = useState(0);
-  const [mapBuildTrackId, setMapBuildTrackId] = useState<string | null>(null);
-  const [, setMapBuildErrors] = useState<Record<string, boolean>>({});
-  const [mapIntelligenceTrackId, setMapIntelligenceTrackId] = useState<string | null>(null);
+  const [mapReadIssue, setMapReadIssue] = useState<"busy" | "unavailable" | null>(null);
+  const [mapReadRevision, setMapReadRevision] = useState(0);
+  const lastMapRead = useRef({ spaceId: "", loadedAt: 0, revision: -1 });
   const [learningState, setLearningState] = useState<LearningPathState>({ path: null, suggestedTarget: "", availablePaperCount: 0, waitingQualityCount: 0, model: "deepseek-flash" });
   const [learningMonitorWake, setLearningMonitorWake] = useState(0);
   const [learningTarget, setLearningTarget] = useState("");
@@ -2426,7 +2432,22 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const routeSelectionTrackId=view==="paper-detail"&&paperReturnView==="thread-detail"&&typeof window!=="undefined"?readWorkspaceLocation(window.location.hash).track||selectedThread?.id||"":selectedThread?.id||"";
   const selectionForRoute=useRouteSelections(user.userId,activeSpace.id);
   const routeSelection=selectionForRoute(routeSelectionTrackId);
+  const [libraryCollectionScope,setLibraryCollectionScope]=useState({spaceId:"",trackId:""});
+  const libraryCollection=libraryCollectionScope.spaceId===activeSpace.id?libraryCollectionScope.trackId:"";
+  const [collectionSave,setCollectionSave]=useState({key:"",paper:"",error:""});
   const [libraryComparisonScope,setLibraryComparisonScope]=useState({spaceId:"",trackId:""});
+  const restoreLibraryLocation=useCallback((location:WorkspaceLocation)=>{
+    const spaceId=location.space||"";
+    setLibraryCollectionScope({spaceId,trackId:location.libraryCollection||""});
+    setLibraryComparisonScope({spaceId,trackId:location.track||""});
+    setLibrarySearch(location.libraryQuery||"");
+    setLibraryFilter(location.libraryFilter||"all");
+    setLibraryStageFilter(location.libraryStage||"all");
+    setInboxFilter(location.libraryInbox||"all");
+    setLibrarySort(location.librarySort||"priority");
+    setLibraryTag(location.libraryTag||"all");
+    setLibraryPageNumber(location.libraryPage||1);
+  },[]);
   const libraryComparisonTrackId=libraryComparisonScope.spaceId===activeSpace.id?libraryComparisonScope.trackId:"";
   const librarySelection=selectionForRoute(libraryComparisonTrackId);
   const researchRouteScope=`${activeSpace.id}:${selectedThread?.id || ''}`;
@@ -2521,7 +2542,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     });
   }, [historyPapers, inboxFilter, libraryFilter, librarySearch, librarySort, libraryStageFilter,libraryTag]);
   const taskBriefState=useTaskBrief(activeSpace.id,view==='today'&&todaySurface==='home'&&!workspaceLoadFailed&&!activeSpace.id.startsWith('space-')&&!activeSpace.id.startsWith('local-'),`${monitor?.status}:${monitor?.lastRunAt}:${monitor?.newCount}:${selectedMonitorPaper?.feedback}:${selectedMonitorPaper?.readingStatus}:${libraryRevision}`);
-  const libraryPage=useLibrarySearch<MonitorPaper>({spaceId:activeSpace.id,enabled:!demo&&view==='library'&&!workspaceLoadFailed&&!activeSpace.id.startsWith('space-')&&!activeSpace.id.startsWith('local-'),q:librarySearch,filter:libraryFilter,stage:libraryStageFilter,inbox:inboxFilter,sort:librarySort,tag:libraryTag,page:libraryPageNumber,onPage:page=>{setLibraryPageNumber(page);updateWorkspaceHash({libraryPage:page},'push');},refresh:JSON.stringify([libraryRevision,monitor?.lastRunAt,monitor?.historyCounts,selectedMonitorPaper?.id,selectedMonitorPaper?.feedback,selectedMonitorPaper?.saved,selectedMonitorPaper?.readingStatus,selectedMonitorPaper?.readingNote])});
+  const libraryPage=useLibrarySearch<MonitorPaper>({spaceId:activeSpace.id,collection:libraryCollection,enabled:!demo&&view==='library'&&!workspaceLoadFailed&&!activeSpace.id.startsWith('space-')&&!activeSpace.id.startsWith('local-'),q:librarySearch,filter:libraryFilter,stage:libraryStageFilter,inbox:inboxFilter,sort:librarySort,tag:libraryTag,page:libraryPageNumber,onPage:page=>{setLibraryPageNumber(page);updateWorkspaceHash({libraryPage:page},'push');},refresh:JSON.stringify([libraryRevision,monitor?.lastRunAt,monitor?.historyCounts,selectedMonitorPaper?.id,selectedMonitorPaper?.feedback,selectedMonitorPaper?.saved,selectedMonitorPaper?.readingStatus,selectedMonitorPaper?.readingNote])});
   const visibleLibraryPapers = demo?libraryPapers.slice(0,libraryVisibleCount):libraryPage.data?.papers||[];
   const libraryTotal=demo?libraryPapers.length:libraryPage.data?.total;
   const libraryCounts=demo?{...monitor?.historyCounts,total:historyPapers.length}:libraryPage.data?.counts;
@@ -2590,7 +2611,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const nextBriefEntries = dailyBriefEntries.filter(entry => !excludedReadingIds.includes(entry.paper.id));
   const dailyBriefPapers: MonitorPaper[] = nextBriefEntries.map((entry) => entry.paper);
   const resumePaper: MonitorPaper | null = resumeReading(historyPapers);
-  const featuredReadingIds = [...currentQuestionReadingIds, ...(resumePaper && monitor && !monitorLoadFailed ? [resumePaper.id] : [])];
+  const [featuredReadings,setFeaturedReadings]=useState<{spaceId:string;ids:string[]}>({spaceId:"",ids:[]});
+  const featuredReadingIds = [...(featuredReadings.spaceId===activeSpace.id?featuredReadings.ids:[]), ...(resumePaper && monitor && !monitorLoadFailed ? [resumePaper.id] : [])];
   const remainingBrief = remainingBriefEntries(nextBriefEntries, featuredReadingIds);
   const visibleBriefEntries = remainingBrief.slice(0, 6);
   const featuredBriefCount = nextBriefEntries.length - remainingBrief.length;
@@ -3047,6 +3069,19 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       hash=workspaceHash(location);
       window.history.replaceState(window.history.state,'',hash);
     }
+    if(location.view==="threads"&&location.graph==="all"&&location.graphSurface!=="routes"&&!location.libraryFocus){
+      location=location.returnTo&&location.graphFrom==="library"?readWorkspaceLocation(location.returnTo):{
+        view:"library",space:activeSpace.id,track:location.graphCompareTrack,libraryQuery:location.libraryQuery,libraryPage:location.libraryPage,
+      };
+      hash=workspaceHash(location);
+      window.history.replaceState(window.history.state,"",hash);
+    } else if(location.view==="thread-detail"&&location.tab==="evidence"&&location.materialGroup==="library"){
+      const origin=workspaceHash({...location,space:activeSpace.id,materialGroup:undefined,materialQuery:undefined,materialPage:undefined});
+      location={view:"library",space:activeSpace.id,track:location.id,libraryCollection:location.id,from:"thread-detail",
+        libraryQuery:location.materialQuery,libraryPage:location.materialPage,returnTo:origin};
+      hash=workspaceHash(location);
+      window.history.replaceState(window.history.state,"",hash);
+    }
     const track = researchMap.tracks.find(item => item.id === (location.view === "thread-detail" ? location.id : location.track));
     if (location.view === "thread-detail" && !track) { setView("threads"); if (!mapLoading && mapReadSpaceId === activeSpace.id) { setRequestedLocation(location); setNavigationIssue("missing"); } return; }
     setNavigationIssue(null);
@@ -3066,7 +3101,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setRecoveryFocusRequested(location.focus === "recovery");
     if(location.view==='memory')setMemoryView(memoryLocation(location));
     if(location.view==='library'||location.view==='thread-detail'||location.view==='threads'&&Boolean(location.graph))setLibraryViewState({query:location.libraryQuery||'',scope:location.libraryScope||'related',page:location.libraryPage||1,focusId:location.libraryFocus||'',neighbor:location.libraryNeighbor,display:location.libraryDisplay});
-    if(location.view==='library'){setLibraryComparisonScope({spaceId:activeSpace.id,trackId:location.track||''});setLibrarySearch(location.libraryQuery||'');setLibraryFilter(location.libraryFilter||'all');setLibraryStageFilter(location.libraryStage||'all');setInboxFilter(location.libraryInbox||'all');setLibrarySort(location.librarySort||'priority');setLibraryTag(location.libraryTag||'all');setLibraryPageNumber(location.libraryPage||1);}
+    if(location.view==='library')restoreLibraryLocation({...location,space:activeSpace.id});
     if (location.graph) { setResearchMapMode("papers"); setLibraryGraphPaperId(location.graph === "all" ? "" : location.graph); setGraphReturnView(location.graphFrom || "threads");restorePaperNetworkNavigation(location);setGraphDetailsOpen(false); }
     else if (location.view === "threads") {setResearchMapMode("directions");setSelectedNetworkPaperId(null);}
     const returnLocation=location.returnTo?readWorkspaceLocation(location.returnTo):null;
@@ -3084,7 +3119,11 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       // The inspector owns its original trigger and scroll position on close.
       if(inspectorReturnHash.current!==hash&&!(location.view==='workbook'&&(!location.workbookPanel||location.workbookPanel==='evidence')&&location.workbookDimension)&&!(location.view==='memory'&&location.memoryFocus))window.scrollTo({ top: navigationScroll.current.get(hash) || 0, behavior: "auto" });
     }));
-    if (location.view === "today" || location.from === "today") setTodaySurface(location.panel || "home");
+    if(location.view==="today"&&(location.panel==="records"||location.panel==="reading"))requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      const id=location.panel==="records"?"today-reminders":"today-more-reading";
+      document.getElementById(id)?.scrollIntoView({block:"start"});
+    }));
+    if (location.view === "today" || location.from === "today") restoreTodaySurface(location.panel);
     if (location.view !== "paper-detail") { setView(location.view); restoreScroll(); return; }
     setPaperReturnView(location.from || "today");
     setWorkbookPaperFocus(location.readingFocus || "");
@@ -3106,7 +3145,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     let cleanup: (() => void) | undefined;
     const frame = requestAnimationFrame(() => { cleanup = restore(); });
     return () => { cancelAnimationFrame(frame); cleanup?.(); };
-  }, [activeSpace.id, researchMap.tracks, mapLoading, mapReadSpaceId, navigationRevision, locale, selectedMonitorPaper?.id, view, navigationScroll, inspectorReturnHash, restoredLocationRef, restorePaperNetworkNavigation, setSelectedNetworkPaperId]);
+  }, [activeSpace.id, researchMap.tracks, mapLoading, mapReadSpaceId, navigationRevision, locale, selectedMonitorPaper?.id, view, navigationScroll, inspectorReturnHash, restoredLocationRef, restorePaperNetworkNavigation, restoreLibraryLocation, setSelectedNetworkPaperId]);
 
   useEffect(() => {
     if (!recoveryFocusRequested || view !== "today" || todaySurface !== "discovery" || monitor?.status !== "error") return;
@@ -3136,6 +3175,8 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
         })
         .then(() => {
           if (cancelled) return null;
+          const page = readWorkspaceLocation(window.location.hash).view;
+          if (page === "threads" || page === "thread-detail") return null;
           stopPolling = startMonitorPolling(activeSpace.id, (nextMonitor) => {
             if (!cancelled) setMonitor(nextMonitor);
           }, false);
@@ -3227,167 +3268,26 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
   useEffect(() => {
     if (!mapViewActive || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
-    let cancelled = false;
-    const load = async () => {
-      setMapLoading(true);
-      setMapOutlinePhase(0);
-      setMapBuildErrors({});
-      try {
-        let data = await readResearchMapState(activeSpace.id);
-        if (!data.generated) {
-          setMapAction("initialize");
-          const response = await fetch("/api/research-map", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ spaceId: activeSpace.id, action: "initialize" }),
-          });
-          data = await response.json() as ResearchMapState & { error?: string };
-          if (!response.ok) throw new Error(data.error || "map generation failed");
-        } else if (data.needsStructure) {
-          setMapAction("structure");
-          const response = await fetch("/api/research-map", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ spaceId: activeSpace.id, action: "structure" }),
-          });
-          data = await response.json() as ResearchMapState & { error?: string };
-          if (!response.ok) throw new Error(data.error || "map structuring failed");
-        }
-        if (!cancelled) {
-          setResearchMap(data);
-          setMapReadSpaceId(activeSpace.id);
-          setSelectedThread((current) => data.tracks.find((track) => track.id === current?.id) || data.tracks[0] || null);
-          setMapLoading(false);
-          setMapAction(null);
-        }
-        for (const trackId of data.buildProgress?.pendingTrackIds || []) {
-          if (cancelled) break;
-          setMapBuildTrackId(trackId);
-          try {
-            const fillResponse = await fetch("/api/research-map", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ spaceId: activeSpace.id, action: "hydrate", trackId }),
-            });
-            const filled = await fillResponse.json() as ResearchMapState & { error?: string };
-            if (!fillResponse.ok) throw new Error(filled.error || "route fill failed");
-            if (!cancelled) {
-              data = filled;
-              setResearchMap(filled);
-              setSelectedThread((current) => filled.tracks.find((track) => track.id === current?.id) || filled.tracks[0] || null);
-              setMapBuildErrors((current) => { const next = { ...current }; delete next[trackId]; return next; });
-            }
-          } catch {
-            if (!cancelled) setMapBuildErrors((current) => ({ ...current, [trackId]: true }));
-          }
-        }
-        if (!cancelled && data.generated && data.tracks.some((track) => track.papers.length > 0)) {
-          try {
-            const precisionResponse = await fetch("/api/research-map", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ spaceId: activeSpace.id, action: "audit-precision" }),
-            });
-            const audited = await precisionResponse.json() as ResearchMapState & { error?: string };
-            if (!precisionResponse.ok) throw new Error(audited.error || "route precision audit failed");
-            if (!cancelled) {
-              data = audited;
-              setResearchMap(audited);
-              setSelectedThread((current) => audited.tracks.find((track) => track.id === current?.id) || audited.tracks[0] || null);
-            }
-          } catch {
-            // Precision review is private and non-blocking. Existing evidence
-            // remains available and the audit is retried on a later visit.
-          }
-        }
-        for (let intelligencePass = 0; intelligencePass < 2; intelligencePass += 1) {
-          if (cancelled || !data.intelligenceProgress
-            || data.intelligenceProgress.ready >= data.intelligenceProgress.total) break;
-          const trackId = data.intelligenceProgress.pendingTrackIds[0]
-            || data.intelligenceProgress.staleTrackIds?.[0]
-            || data.intelligenceProgress.retryableTrackIds?.[0]
-            || data.intelligenceProgress.runningTrackIds?.[0]
-            || null;
-          setMapIntelligenceTrackId(trackId);
-          try {
-            const interpretationResponse = await fetch("/api/research-map", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ spaceId: activeSpace.id, action: "advance-intelligence" }),
-            });
-            const interpreted = await interpretationResponse.json() as ResearchMapState & {
-              error?: string;
-              intelligenceAdvance?: { status?: "idle" | "ready" | "retryable" | "superseded"; trackId?: string };
-            };
-            if (!interpretationResponse.ok) throw new Error(interpreted.error || "direction interpretation failed");
-            if (!cancelled) {
-              data = interpreted;
-              setResearchMap(interpreted);
-              setSelectedThread((current) => interpreted.tracks.find((track) => track.id === current?.id) || interpreted.tracks[0] || null);
-            }
-            if (interpreted.intelligenceAdvance?.status === "idle" || interpreted.intelligenceAdvance?.status === "superseded") break;
-          } catch {
-            // The saved assessment remains usable; the durable job state is retried later.
-            break;
-          }
-        }
-      } catch {
-        if (!cancelled) setToast(locale === "zh" ? "研究路线暂时无法生成，请稍后重试" : "The research map could not be built just now");
-      } finally {
-        if (!cancelled) { setMapLoading(false); setMapAction(null); setMapBuildTrackId(null); setMapIntelligenceTrackId(null); }
-      }
-    };
-    void load();
-    return () => { cancelled = true; };
-  }, [activeSpace.id, locale, mapViewActive]);
-
-  useEffect(() => {
-    const stale = researchMap.paperNetwork.paperRevision
-      ? researchMap.paperNetwork.builtPaperRevision !== researchMap.paperNetwork.paperRevision
-      : researchMap.paperNetwork.builtPaperCount < researchMap.paperNetwork.paperCount;
-    const outdated = researchMap.paperNetwork.model !== "deepseek-flash+coupling-v2";
-    if (researchMapMode !== "papers" || researchMap.paperNetwork.paperCount < 2
-      || paperNetworkLoading || (!stale && !outdated && !["idle", "building"].includes(researchMap.paperNetwork.status))) return;
     const spaceId = activeSpace.id;
-    const attemptKey = `${spaceId}:${researchMap.paperNetwork.paperRevision || researchMap.paperNetwork.paperCount}:deepseek-flash+coupling-v2`;
-    if (paperNetworkAutoAttemptRef.current.has(attemptKey)) return;
-    paperNetworkAutoAttemptRef.current.add(attemptKey);
-    const resumePi = false;
-    const build = async () => {
-      let failedPhase: Exclude<PaperNetworkBuildPhase, null> = resumePi ? "pi" : "verified";
-      setPaperNetworkLoading(true);
-      try {
-        if (!resumePi) {
-          setPaperNetworkBuildPhase("verified");
-          const verified = await requestPaperNetworkBuildPhase(spaceId, "verified", false);
-          if (paperNetworkSpaceRef.current !== spaceId) {
-            paperNetworkAutoAttemptRef.current.delete(attemptKey);
-            return;
-          }
-          setResearchMap(verified);
-          failedPhase = "pi";
-        }
-
-      } catch {
-        if (paperNetworkSpaceRef.current === spaceId) {
-          setResearchMap((current) => ({ ...current, paperNetwork: { ...current.paperNetwork, status: "partial", error: `${failedPhase === "verified" ? "citation" : "pi"}: network request interrupted` } }));
-          setToast(locale === "zh" ? "论文关系暂时只显示已有节点，可稍后重试" : "Paper nodes remain available; relationships can be retried later");
-        } else paperNetworkAutoAttemptRef.current.delete(attemptKey);
-      } finally {
-        if (paperNetworkSpaceRef.current === spaceId) {
-          setPaperNetworkBuildPhase(null);
-          setPaperNetworkLoading(false);
-        }
-      }
-    };
-    void build();
-  }, [activeSpace.id, locale, paperNetworkLoading, researchMap.paperNetwork.builtPaperCount, researchMap.paperNetwork.builtPaperRevision, researchMap.paperNetwork.model, researchMap.paperNetwork.paperCount, researchMap.paperNetwork.paperRevision, researchMap.paperNetwork.sources, researchMap.paperNetwork.status, researchMapMode]);
-
-  useEffect(() => {
-    if (!mapLoading) return;
-    const timer = window.setInterval(() => setMapOutlinePhase((current) => Math.min(3, current + 1)), 2600);
-    return () => window.clearInterval(timer);
-  }, [mapLoading]);
+    const previous = lastMapRead.current;
+    if (previous.spaceId === spaceId && previous.revision === mapReadRevision && Date.now() - previous.loadedAt < 30_000) return;
+    const request = new AbortController();
+    setMapLoading(true);
+    setMapReadIssue(null);
+    void readResearchMapState(spaceId, AbortSignal.any([request.signal, AbortSignal.timeout(20_000)]))
+      .then(data => {
+        if (request.signal.aborted) return;
+        lastMapRead.current = {spaceId,loadedAt:Date.now(),revision:mapReadRevision};
+        setResearchMap(data);
+        setMapReadSpaceId(spaceId);
+        setSelectedThread(current => data.tracks.find(track => track.id === current?.id) || data.tracks[0] || null);
+      })
+      .catch(error => {
+        if (!request.signal.aborted) setMapReadIssue(error instanceof Error && error.message === "workspace_busy" ? "busy" : "unavailable");
+      })
+      .finally(() => { if (!request.signal.aborted) setMapLoading(false); });
+    return () => request.abort();
+  }, [activeSpace.id, mapViewActive, mapReadRevision]);
 
   useEffect(() => {
     if (view !== "thread-detail" || !["start", "assessment", "problem", "agenda"].includes(researchRouteTab) || !selectedThread
@@ -3701,14 +3601,14 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     if(next==='paper-detail')setPaperPanel(target.paperPanel||'reading');
     setNavigationIssue(null);
     navigationScroll.current.set(window.location.hash, window.scrollY);
-    const returning = view === "paper-detail" || view === "workbook" || (view === "threads" && next === graphReturnView && graphReturnView !== "threads");
+    const returning = view === "paper-detail" || view === "workbook" || (view === "threads" && next === graphReturnView && graphReturnView !== "threads") || (view === "library" && next === "thread-detail" && Boolean(libraryCollection));
     const currentLocation = readWorkspaceLocation(window.location.hash);
     const origin = currentLocation.returnTo ? readWorkspaceLocation(currentLocation.returnTo) : null;
     const returnLocation = returning && origin?.view === next && origin.space === activeSpace.id && (!target.id||target.id===origin.id) ? origin : null;
     const location: WorkspaceLocation = {
       view: next, space: activeSpace.id,
       ...(next==="paper-detail"?{paperPanel:"reading" as PaperPanel}:{}),
-      panel: next === "today" ? (returning ? todaySurface : undefined) : next === "paper-detail" && view === "today" ? todaySurface : undefined,
+      panel: next === "today" ? (returning ? currentLocation.panel || todaySurface : undefined) : next === "paper-detail" && view === "today" ? currentLocation.panel || todaySurface : undefined,
       id: next === "workbook" ? workbookTarget || undefined : next === "thread-detail" ? selectedThread?.id : next === "paper-detail" ? selectedMonitorPaper?.id : undefined,
       tab: next === "thread-detail" || next === "paper-detail" ? researchRouteTab : undefined,
       track: next === "library" ? libraryComparisonTrackId || undefined : next === "paper-detail" && view === "library" ? libraryComparisonTrackId || undefined : next === "paper-detail" ? (view === "workbook" ? workbookTarget || undefined : selectedThread?.id) : undefined,
@@ -3747,8 +3647,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     rememberCurrentLocation(hash);
     if (window.location.hash !== hash) window.history.pushState({ piView: next }, "", hash);
     restoredLocationRef.current = returnLocation ? "" : activeSpace.id + hash;
-    if(next === "today") setTodaySurface(location.panel || "home");
+    if(next === "today") restoreTodaySurface(location.panel);
     if(next === 'memory')setMemoryView(memoryLocation(location));
+    if(next === 'library')restoreLibraryLocation(location);
     if(next === 'thread-detail')setMaterialLocation(routeMaterialLocation(location));
     setRecoveryFocusRequested(location.focus === "recovery");
     setView(next); setMobileNav(false);
@@ -3793,6 +3694,10 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setMonitoring(false);
     setResearchMap(emptyResearchMapState());
     setMapReadSpaceId("");
+    lastMapRead.current = {spaceId:"",loadedAt:0,revision:-1};
+    setMapLoading(false);
+    setMapReadIssue(null);
+    setMapAction(null);
     setSelectedThread(null);
     setResearchSynthesis(null);
     setResearchSynthesisLoading(false);
@@ -4618,6 +4523,24 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     setAskOpen(true);
   };
 
+  const organizeResearchRoutes = async (action: "initialize" | "structure") => {
+    if (mapAction || !activeSpaceSupportsLearning) return;
+    const spaceId = activeSpace.id;
+    setMapAction(action);
+    try {
+      const response = await fetch("/api/research-map", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spaceId, action }),
+      });
+      if (!response.ok) throw new Error("Unable to organize routes");
+      const data = await response.json() as ResearchMapState;
+      if (paperNetworkSpaceRef.current === spaceId) setResearchMap(data);
+    } catch {
+      if (paperNetworkSpaceRef.current === spaceId) setToast(locale === "zh" ? "路线暂未更新，请稍后重试" : "Routes could not be updated. Try again.");
+    } finally {
+      if (paperNetworkSpaceRef.current === spaceId) setMapAction(null);
+    }
+  };
+
   const openThread = (thread: ResearchTrack, tab: ResearchRouteTab = "start") => {
     setSelectedThread(thread);
     if (selectedThread?.id !== thread.id) setResearchProblemState(null);
@@ -4626,9 +4549,42 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     navigate("thread-detail", workbookTrackId, { id: thread.id, tab: tab === "gaps" ? "evidence" : tab === "assessment" ? "problem" : tab });
     void fetch("/api/research-map", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
       body: JSON.stringify({ spaceId: activeSpace.id, action: "activity", trackId: thread.id, activityKind: "track_opened" }),
     }).catch(() => undefined);
+  };
+
+  const openLibraryForExploration = () => {
+    const origin = readWorkspaceLocation(window.location.hash);
+    if (origin.graphFrom === "library" && origin.returnTo) {
+      navigate("library");
+      return;
+    }
+    navigate("library", undefined, {
+      track: origin.graphCompareTrack || origin.graphTrack || libraryComparisonTrackId || undefined,
+      libraryQuery: origin.libraryQuery,
+      libraryPage: origin.libraryPage,
+    });
+  };
+
+  const collectFromLibrary = (trackId:string) => {
+    const origin=readWorkspaceLocation(window.location.hash);
+    navigate("library", undefined, {track:trackId,libraryCollection:trackId,from:"thread-detail",returnTo:window.location.hash,
+      libraryQuery:origin.materialQuery,libraryPage:undefined,libraryFilter:"all",libraryStage:undefined,libraryTag:undefined,libraryInbox:undefined});
+  };
+
+  const saveLibraryCollection = async (paper:MonitorPaper,status:"included"|"excluded",category:string) => {
+    const spaceId=activeSpace.id,trackId=libraryCollection,key=spaceId+":"+trackId;
+    setCollectionSave({key,paper:paper.id,error:""});
+    try {
+      const response=await fetch("/api/library-catalog",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({spaceId,trackId,paperId:paper.id,status,category})});
+      if(!response.ok)throw new Error("Unable to save material");
+      setLibraryRevision(value=>value+1);
+      setCollectionSave(current=>current.key===key?{key,paper:"",error:""}:current);
+    } catch {
+      setCollectionSave(current=>current.key===key?{key,paper:"",error:locale==="zh"?"材料状态暂未保存，请重试。":"Could not save the paper. Try again."}:current);
+    }
   };
 
   const exploreRoutePaper = (track:ResearchTrack, paperId:string) => {
@@ -4649,7 +4605,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const recordMapPaperOpen = (threadId: string) => {
     void fetch("/api/research-map", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
       body: JSON.stringify({ spaceId: activeSpace.id, action: "activity", trackId: threadId, activityKind: "paper_opened" }),
     }).catch(() => undefined);
   };
@@ -4657,7 +4613,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const refreshPaperNetwork = async (refreshMode: "all" | "verified" | "pi" = "verified") => {
     if (paperNetworkLoading || researchMap.paperNetwork.paperCount < 2) return;
     const spaceId = activeSpace.id;
-    paperNetworkAutoAttemptRef.current.add(`${spaceId}:${researchMap.paperNetwork.paperRevision || researchMap.paperNetwork.paperCount}:deepseek-flash+coupling-v2`);
     let failedPhase: Exclude<PaperNetworkBuildPhase, null> = refreshMode === "pi" ? "pi" : "verified";
     setPaperNetworkLoading(true);
     try {
@@ -4878,7 +4833,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   };
 
   const expandResearchTrack = async (thread: ResearchTrack) => {
-    if (thread.monitoringStatus === "paused" || mapAction || mapBuildTrackId || mapIntelligenceTrackId || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
+    if (thread.monitoringStatus === "paused" || mapAction || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     setMapAction(thread.id);
     const isInitialFill = ["queued", "retryable", "empty", "failed"].includes(thread.buildStatus);
     try {
@@ -4892,7 +4847,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
       setResearchMap(data);
       const updated = data.tracks.find((item) => item.id === thread.id) || null;
       setSelectedThread(updated);
-      setMapBuildErrors((current) => { const next = { ...current }; delete next[thread.id]; return next; });
       setToast(locale === "zh"
         ? (data.reviewQueuedCount ? `已找到 ${data.reviewQueuedCount} 篇候选，将在下一次质量评估中审阅` : "本轮没有新的候选进入质量队列，探索位置已保存")
         : (data.reviewQueuedCount ? `${data.reviewQueuedCount} candidates will be reviewed in the next quality pass` : "No new candidate entered the quality queue; the exploration position was saved"));
@@ -4907,7 +4861,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     const hasQuery = origin === "problem"
       ? Boolean(researchProblemState?.assessment?.nextSearchQuery && !researchProblemState.assessment.stale)
       : Boolean((researchSynthesis && selectedThread?.id === thread.id ? researchSynthesis.nextSearchQuery : "") || thread.intelligence?.nextSearchQuery);
-    if (thread.monitoringStatus === "paused" || mapAction || mapBuildTrackId || mapIntelligenceTrackId || !hasQuery
+    if (thread.monitoringStatus === "paused" || mapAction || !hasQuery
       || activeSpace.id.startsWith("space-") || activeSpace.id.startsWith("local-")) return;
     setMapAction(`${origin}:${thread.id}`);
     try {
@@ -4955,7 +4909,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
   const scanResearchProblemGap = (thread: ResearchTrack) => scanResearchRouteSignal(thread, "problem");
 
   const refreshDirectionIntelligence = async (thread: ResearchTrack) => {
-    if (thread.monitoringStatus === "paused" || mapAction || mapBuildTrackId || mapIntelligenceTrackId || !thread.papers.length) return;
+    if (thread.monitoringStatus === "paused" || mapAction || !thread.papers.length) return;
     setMapAction(`interpret:${thread.id}`);
     try {
       const response = await fetch("/api/research-map", {
@@ -5216,12 +5170,6 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
     { id: "memory", label: t.memory, mark: "notes" },
   ];
   const activeNav = view === "workbook" || (view === "paper-detail" && ["workbook", "thread-detail"].includes(paperReturnView)) ? "threads" : view === "paper-detail" ? paperReturnView : view === "thread-detail" ? "threads" : view;
-  const mapOutlineLabels = locale === "zh"
-    ? ["读取研究空间与已确认记忆", "划分主攻、辅助与探索方向", "建立方向之间的主干关系", "保存方向骨架，即将展示"]
-    : ["Reading the research space and confirmed memory", "Separating core, support, and exploratory directions", "Connecting the field backbone", "Saving the outline for immediate display"];
-  const currentBuildTrack = researchMap.tracks.find((track) => track.id === mapBuildTrackId) || null;
-  const currentIntelligenceTrack = researchMap.tracks.find((track) => track.id === mapIntelligenceTrackId) || null;
-
   const refreshModelStatus = async () => {
     if (checkingModel) return;
     setCheckingModel(true);
@@ -5405,16 +5353,29 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
             {monitorReadNotice}
             <section className="pi-home-heading">
-              <div><h1>{locale==="zh"?({home:"今日",reading:"全部阅读",discovery:"发现进度",records:"研究记录",settings:"今日设置"}[todaySurface]):({home:"Today",reading:"All reading",discovery:"Discovery",records:"Research records",settings:"Today settings"}[todaySurface])}</h1><p>{formatTodayDate(locale)}</p></div>
+              <div><h1>{locale==="zh"?({home:"今日",discovery:"发现进度",settings:"今日设置"}[todaySurface]):({home:"Today",discovery:"Discovery",settings:"Today settings"}[todaySurface])}</h1><p>{formatTodayDate(locale)}</p></div>
+              <nav className="pi-today-navigation" aria-label={locale==="zh"?"今日工具":"Today tools"}>
+                {todaySurface!=="home"&&<a href={workspaceHash({view:"today",space:activeSpace.id})}>{locale==="zh"?"返回今日":"Back to Today"}</a>}
+                {todaySurface!=="discovery"&&(todaySurface!=="home"||todayDiscoveryState==="idle")&&
+                  <a href={workspaceHash({view:"today",space:activeSpace.id,panel:"discovery"})}>{locale==="zh"?"发现进度":"Discovery progress"}</a>}
+                {todaySurface!=="settings"&&<a href={workspaceHash({view:"today",space:activeSpace.id,panel:"settings"})}>{locale==="zh"?"设置":"Settings"}</a>}
+              </nav>
             </section>
-            <nav className="pi-today-navigation" aria-label={locale==="zh"?"今日页面导航":"Today navigation"}><div className="pi-today-tabs">{(["home","reading","discovery","records"] as const).map(surface=><a href={workspaceHash({view:"today",space:activeSpace.id,panel:surface})} key={surface} aria-current={todaySurface===surface?"page":undefined} className={todaySurface===surface?"is-active":""}>{locale==="zh"?({home:"今日精选",reading:"全部阅读",discovery:"发现进度",records:"研究记录"}[surface]):({home:"For you",reading:"All reading",discovery:"Discovery",records:"Records"}[surface])}</a>)}</div><a href={workspaceHash({view:"today",space:activeSpace.id,panel:"settings"})} className="pi-today-settings" aria-current={todaySurface==="settings"?"page":undefined} aria-label={locale==="zh"?"今日设置":"Today settings"}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>{locale==="zh"?"设置":"Settings"}</span></a></nav>
 
             {todaySurface==="home"&&!demo&&<TodayDiscoveryStatus state={todayDiscoveryState} hasReading={Boolean(resumePaper || currentQuestionReadingIds.length || dailyBriefPapers.length || additionalTodayPapers.length)} phase={baseScanPhase} discovered={activeScanJob?.discoveredCount} screened={activeScanJob?.reviewedCount} locale={locale} href={workspaceHash({view:"today",space:activeSpace.id,panel:"discovery",focus:monitor?.status==="error"?"recovery":undefined})}/>}
 
 
-            {["home","reading","discovery"].includes(todaySurface) && !workspaceLoadFailed && (activeSpaceSupportsLearning||todaySurface==="home") && <DeferredWorkspacePanel locale={locale}><ResearchEntry discoveryNoticeVisible={todaySurface==="home"&&!demo&&todayDiscoveryState!=="idle"} fieldDescription={activeSpace.description} bibliography={historyPapers} taskBrief={taskBriefState.brief} taskBriefError={taskBriefState.error} overview={monitorLoadFailed?null:taskBriefState.brief?taskBriefOverview(taskBriefState.brief,locale):digestOverview(monitor?.dailyBrief,historyPapers,locale)} searchPapers={monitorLoadFailed?[]:historyPapers} briefDate={monitor?.dailyBrief?.date} onLibrary={()=>{setLibraryFilter("all");setLibraryStageFilter("all");setLibrarySearch("");setLibraryPageNumber(1);navigate("library",undefined,{libraryQuery:undefined,libraryFilter:undefined,libraryStage:undefined,libraryInbox:undefined,librarySort:undefined,libraryTag:undefined,libraryPage:undefined});}} mode={todaySurface as "home"|"reading"|"discovery"} onAll={()=>openTodaySurface("reading")} fallbackPapers={fieldBriefReading([...dailyBriefPapers,...rankedMonitorPapers,...historyPapers],excludedReadingIds,8).map(p=>({id:p.id,title:p.title,whyZh:p.whyReadZh||"",whyEn:p.whyReadEn||"",focusZh:p.readingFocusZh||"",focusEn:p.readingFocusEn||"",checkZh:p.limitationsZh||"",checkEn:p.limitationsEn||"",contributionZh:p.contributionZh||"",contributionEn:p.contributionEn||""}))} key={`entry:${activeSpace.id}`} spaceId={activeSpace.id} spaceName={activeSpace.name} locale={locale} demo={demo} resume={monitor && !monitorLoadFailed ? resumePaper : null} onProgress={() => openTodaySurface("discovery")} excludedReadingIds={excludedReadingIds} refreshKey={`${monitor?.status}:${monitor?.lastRunAt}:${monitor?.newCount}:${readingQueueKey}`} scanStatus={scanIsActive ? scanPhase : monitor?.status === "error" ? monitorFailureMessage(failedScanError, locale) : ""} blocked={!monitor || monitorLoadFailed ? (locale === "zh" ? "先载入空间内容，再开始检索。" : "Load workspace content before searching.") : scanIsActive ? (locale === "zh" ? "当前扫描进行中，新问题用于后续新扫描。" : "A scan is running; the new question applies to a future new scan.") : analysisBudgetBlocked ? (locale === "zh" ? "今日额度已用完，问题已保留。" : "Today's budget is exhausted; your question is saved.") : manualCooldownBlocked ? (locale === "zh" ? "扫描暂在冷却期，稍后可继续。" : "Discovery is cooling down; continue later.") : resumeAvailable ? (locale === "zh" ? "当前有待恢复的扫描，请先在下方从断点继续；新问题用于之后的新扫描。" : "Resume the saved scan below first. The new question applies to a subsequent new scan.") : ""} onDiscover={() => void runManualMonitor()} onRead={(id,task) => void openRoutePaper(id, "today",task)} onReadingList={ids=>setQuestionReadingIds(current=>current.spaceId===activeSpace.id && current.ids.join("|")===ids.join("|") ? current : {spaceId:activeSpace.id,ids})} onSaved={() => { setLibraryRevision(n=>n+1); void readResearchMapState(activeSpace.id).then(data => { if(paperNetworkSpaceRef.current === activeSpace.id)setResearchMap(data); }).catch(() => {}); }} onRoute={id => void openResearchQuestion(id)} /></DeferredWorkspacePanel>}
-            {todaySurface==="home"&&!demo&&!workspaceLoadFailed&&<TodayContinuation key={`${user.userId}:${activeSpace.id}`} userId={user.userId} spaceId={activeSpace.id} locale={locale} onResume={hash=>{navigationScroll.current.set(window.location.hash,window.scrollY);window.location.hash=hash;setMobileNav(false);}}/>}
-            {todaySurface==="reading"&&<>
+            {todaySurface!=="settings" && !workspaceLoadFailed && (activeSpaceSupportsLearning||todaySurface==="home") && <DeferredWorkspacePanel locale={locale}><ResearchEntry discoveryNoticeVisible={todaySurface==="home"&&!demo&&todayDiscoveryState!=="idle"} fieldDescription={activeSpace.description} bibliography={historyPapers} taskBrief={taskBriefState.brief} taskBriefError={taskBriefState.error} overview={monitorLoadFailed?null:taskBriefState.brief?taskBriefOverview(taskBriefState.brief,locale):digestOverview(monitor?.dailyBrief,historyPapers,locale)} searchPapers={monitorLoadFailed?[]:historyPapers} briefDate={monitor?.dailyBrief?.date} onLibrary={()=>{setLibraryFilter("all");setLibraryStageFilter("all");setLibrarySearch("");setLibraryPageNumber(1);navigate("library",undefined,{libraryQuery:undefined,libraryFilter:undefined,libraryStage:undefined,libraryInbox:undefined,librarySort:undefined,libraryTag:undefined,libraryPage:undefined});}} mode={todaySurface} onFeaturedReadings={ids=>setFeaturedReadings(current=>current.spaceId===activeSpace.id&&current.ids.join("|")===ids.join("|")?current:{spaceId:activeSpace.id,ids})} fallbackPapers={fieldBriefReading([...dailyBriefPapers,...rankedMonitorPapers,...historyPapers],excludedReadingIds,8).map(p=>({id:p.id,title:p.title,whyZh:p.whyReadZh||"",whyEn:p.whyReadEn||"",focusZh:p.readingFocusZh||"",focusEn:p.readingFocusEn||"",checkZh:p.limitationsZh||"",checkEn:p.limitationsEn||"",contributionZh:p.contributionZh||"",contributionEn:p.contributionEn||""}))} key={`entry:${activeSpace.id}`} spaceId={activeSpace.id} spaceName={activeSpace.name} locale={locale} demo={demo} resume={monitor && !monitorLoadFailed ? resumePaper : null} onProgress={() => openTodaySurface("discovery")} excludedReadingIds={excludedReadingIds} refreshKey={`${monitor?.status}:${monitor?.lastRunAt}:${monitor?.newCount}:${readingQueueKey}`} scanStatus={scanIsActive ? scanPhase : monitor?.status === "error" ? monitorFailureMessage(failedScanError, locale) : ""} blocked={!monitor || monitorLoadFailed ? (locale === "zh" ? "先载入空间内容，再开始检索。" : "Load workspace content before searching.") : scanIsActive ? (locale === "zh" ? "当前扫描进行中，新问题用于后续新扫描。" : "A scan is running; the new question applies to a future new scan.") : analysisBudgetBlocked ? (locale === "zh" ? "今日额度已用完，问题已保留。" : "Today's budget is exhausted; your question is saved.") : manualCooldownBlocked ? (locale === "zh" ? "扫描暂在冷却期，稍后可继续。" : "Discovery is cooling down; continue later.") : resumeAvailable ? (locale === "zh" ? "当前有待恢复的扫描，请先在下方从断点继续；新问题用于之后的新扫描。" : "Resume the saved scan below first. The new question applies to a subsequent new scan.") : ""} onDiscover={() => void runManualMonitor()} onRead={(id,task) => void openRoutePaper(id, "today",task)} onReadingList={ids=>setQuestionReadingIds(current=>current.spaceId===activeSpace.id && current.ids.join("|")===ids.join("|") ? current : {spaceId:activeSpace.id,ids})} onSaved={() => { setLibraryRevision(n=>n+1); void readResearchMapState(activeSpace.id).then(data => { if(paperNetworkSpaceRef.current === activeSpace.id)setResearchMap(data); }).catch(() => {}); }} onRoute={id => void openResearchQuestion(id)} /></DeferredWorkspacePanel>}
+            {todaySurface==="home"&&!demo&&!workspaceLoadFailed&&!resumePaper&&<TodayContinuation key={`${user.userId}:${activeSpace.id}`} userId={user.userId} spaceId={activeSpace.id} locale={locale} onResume={hash=>{navigationScroll.current.set(window.location.hash,window.scrollY);window.location.hash=hash;setMobileNav(false);}}/>}
+            {todaySurface==="home"&&(monitor?.dailyBrief||additionalTodayPapers.length>0||readReferencePapers.length>0)&&
+              <details id="today-more-reading" className="pi-today-secondary" open={todayMoreOpen}
+                onToggle={event=>{
+                  const open=event.currentTarget.open;
+                  if(open===todayMoreOpen)return;
+                  setTodayMoreOpen(open);
+                  if(!todayShowReminders)updateWorkspaceHash({panel:open?"reading":undefined},"replace");
+                }}>
+              <summary>{locale==="zh"?"更多阅读与完整简报":"More reading and the full brief"}</summary>
             {monitor?.dailyBrief && <section className={`v2-ai-daily-brief ${monitor.dailyBrief.status}`}>
               <div className="v2-daily-brief-lead">
                 <header><div><p className="v2-kicker">{monitor.dailyBrief.date}</p><h2>{demo ? (locale === "zh" ? "示例研究简报" : "Sample research brief") : monitor.dailyBrief.isCurrent ? (locale === "zh" ? "今日研究简报" : "Today’s research brief") : (locale === "zh" ? "最近研究简报" : "Latest research brief")}</h2></div><span>{nextBriefEntries.length} {demo ? (locale === "zh" ? "篇样例" : "sample papers") : (locale === "zh" ? "篇入选" : "selected")}</span></header>
@@ -5462,16 +5423,13 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               {readReferencePapers.map(paper => <article key={paper.id}><div><button type="button" onClick={() => openMonitorPaper(paper)}><MathText inline>{paper.title}</MathText></button><p>{readingStatusLabel(paper.readingStatus, locale)}{paper.authors ? ` · ${paper.authors}` : ""}</p></div><button type="button" onClick={() => openMonitorPaper(paper)}>{locale === "zh" ? "回看与笔记" : "Revisit & notes"} →</button></article>)}
             </section>}
 
-            </>}
-            {todaySurface==="reading" && demo && <DemoJourney view={view} locale={locale} space={activeSpace.id} />}
-            {todaySurface==="records" && !workspaceLoadFailed && activeSpaceSupportsLearning && <DeferredWorkspacePanel locale={locale}><ReadingCalendar key={`calendar:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} onPaper={id => void openRoutePaper(id, "today")} /></DeferredWorkspacePanel>}
-            {todaySurface==="reading" && historyPapers.length > 0 && !activeSpace.id.startsWith("space-") && !activeSpace.id.startsWith("local-") && <DeferredWorkspacePanel locale={locale}><ResearchStart key={activeSpace.id} spaceId={activeSpace.id} locale={locale} onRead={id => void openRoutePaper(id, "today")} onStart={startRecommendedResearch} /></DeferredWorkspacePanel>}
+              </details>}
 
             {todaySurface==="discovery"&&<QualityReviewStatus monitor={monitor} locale={locale} phase={scanPhase} failureMessage={monitorFailureMessage(failedScanError, locale)} formatTime={formatMonitorDate} onOpenPaper={id => void openRoutePaper(id, "today")} onContinueReview={() => void runManualMonitor(true)} reviewDisabled={demo || !monitor || scanIsActive || monitoring || analysisBudgetBlocked} />}
             {todaySurface==="settings" && !workspaceLoadFailed && activeSpaceSupportsLearning && <ResearchMaintenance key={`maintenance:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />}
             {todaySurface==="settings" && !workspaceLoadFailed && activeSpaceSupportsLearning && <EmailSubscription key={`email:${activeSpace.id}`} spaceId={activeSpace.id} locale={locale} />}
 
-            {todaySurface==="records" && monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
+            {todaySurface==="discovery" && monitor?.weeklyReview && <details className={`v2-weekly-review ${monitor.weeklyReview.status}`}>
               <summary><span><p className="v2-kicker">7D {locale === "zh" ? "阶段研究回顾" : "RESEARCH REVIEW"}</p><strong>{locale === "zh" ? monitor.weeklyReview.titleZh : monitor.weeklyReview.titleEn}</strong><small>{locale === "zh" ? `来自 ${monitor.weeklyReview.sourceDays} 天真实记录` : `Based on ${monitor.weeklyReview.sourceDays} days of real activity`}</small></span><b>＋</b></summary>
               <div className="v2-weekly-review-body"><p>{locale === "zh" ? monitor.weeklyReview.overviewZh : monitor.weeklyReview.overviewEn}</p><div><article><h3>{locale === "zh" ? "已经获得" : "What advanced"}</h3><ul>{(locale === "zh" ? monitor.weeklyReview.gainsZh : monitor.weeklyReview.gainsEn).map((item) => <li key={item}>{item}</li>)}</ul></article><article><h3>{locale === "zh" ? "仍有缺口" : "Remaining gaps"}</h3><ul>{(locale === "zh" ? monitor.weeklyReview.gapsZh : monitor.weeklyReview.gapsEn).map((item) => <li key={item}>{item}</li>)}</ul></article><article><h3>{locale === "zh" ? "下一步行动" : "Next moves"}</h3><ol>{(locale === "zh" ? monitor.weeklyReview.nextStepsZh : monitor.weeklyReview.nextStepsEn).map((item) => <li key={item}>{item}</li>)}</ol></article></div></div>
             </details>}
@@ -5574,21 +5532,22 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               </div>
             </section>}
 
-            {todaySurface==="records" && Boolean(monitor?.notifications?.length) && <section className={`v2-research-catchup v2-action-inbox ${pendingActionNotifications.length ? "has-items" : "is-empty"}`}>
+            {todaySurface==="home" && (pendingActionNotifications.length>0||todayShowReminders) && <section id="today-reminders" className={`v2-research-catchup v2-action-inbox ${pendingActionNotifications.length ? "has-items" : "is-empty"}`}>
               <header><div><p className="v2-kicker warm">{locale === "zh" ? "研究提醒" : "RESEARCH ALERTS"}</p><h2>{pendingActionNotifications.length ? (locale === "zh" ? `${pendingActionNotifications.length} 项需要你处理` : `${pendingActionNotifications.length} items need your attention`) : (locale === "zh" ? "今天没有待处理事项" : "Nothing needs attention today")}</h2></div>{pendingActionNotifications.length > 0 && <button type="button" onClick={() => void markNotificationsRead()}>{locale === "zh" ? "全部处理" : "Handle all"}</button>}</header>
               <div className="v2-action-inbox-list">
                 {pendingActionNotifications.slice(0, 4).map((notification) => <article className={notification.kind} key={notification.id}><span>{notification.kind === "weekly_review" ? "7D" : notification.kind === "route_change" ? "↗" : notification.kind === "must_read" ? "!" : "◷"}</span><div><small>{notification.kind === "must_read" ? (locale === "zh" ? "优先阅读" : "Priority reading") : notification.kind === "route_change" ? (locale === "zh" ? "路线变化" : "Route change") : notification.kind === "weekly_review" ? (locale === "zh" ? "阶段回顾" : "Research review") : (locale === "zh" ? "阅读提醒" : "Reading reminder")} · {formatNotificationTime(notification.createdAt, locale)}</small><strong>{locale === "zh" ? notification.titleZh : notification.titleEn}</strong><p>{locale === "zh" ? notification.bodyZh : notification.bodyEn}</p></div><button type="button" onClick={() => openResearchNotification(notification)}>{notificationActionLabel(notification.kind, locale)} →</button></article>)}
                 {!pendingActionNotifications.length && <div className="v2-action-inbox-empty"><span>✓</span><p>{locale === "zh" ? "新的必读论文、路线变化和阅读提醒会出现在这里。" : "New must-reads, route changes, and reading reminders will appear here."}</p></div>}
               </div>
-              {Boolean(activityGroups.length) && <details className="v2-activity-log" open={notificationsExpanded} onToggle={(event) => setNotificationsExpanded(event.currentTarget.open)}><summary><span><strong>{locale === "zh" ? "Pi 运行记录" : "Pi activity"}</strong><small>{locale === "zh" ? "扫描和恢复信息，不计入待处理" : "Scan activity, not an action item"}</small></span><b>{notificationsExpanded ? (locale === "zh" ? "收起" : "Close") : (locale === "zh" ? "查看" : "View")} ＋</b></summary><div>{activityGroups.slice(0, 7).map((activity) => <article key={activity.key}><span>✓</span><div><strong>{locale === "zh" ? "扫描完成" : "Scan complete"}{activity.recovered ? (locale === "zh" ? " · 已从断点续跑" : " · resumed from checkpoint") : ""}</strong><p>{locale === "zh" ? activity.primary.bodyZh : activity.primary.bodyEn}</p><small>{formatNotificationTime(activity.primary.createdAt, locale)}</small></div><button type="button" onClick={() => openTodaySurface("discovery")}>{locale === "zh" ? "扫描详情" : "Scan details"} →</button></article>)}</div></details>}
+              <button type="button" onClick={()=>navigate("memory",undefined,{memorySection:"reading"})}>{locale==="zh"?"回看阅读记录":"Browse reading records"}</button>
             </section>}
+              {todaySurface==="discovery" && <> {Boolean(activityGroups.length) && <details className="v2-activity-log" open={notificationsExpanded} onToggle={(event) => setNotificationsExpanded(event.currentTarget.open)}><summary><span><strong>{locale === "zh" ? "Pi 运行记录" : "Pi activity"}</strong><small>{locale === "zh" ? "扫描和恢复信息，不计入待处理" : "Scan activity, not an action item"}</small></span><b>{notificationsExpanded ? (locale === "zh" ? "收起" : "Close") : (locale === "zh" ? "查看" : "View")} ＋</b></summary><div>{activityGroups.slice(0, 7).map((activity) => <article key={activity.key}><span>✓</span><div><strong>{locale === "zh" ? "扫描完成" : "Scan complete"}{activity.recovered ? (locale === "zh" ? " · 已从断点续跑" : " · resumed from checkpoint") : ""}</strong><p>{locale === "zh" ? activity.primary.bodyZh : activity.primary.bodyEn}</p><small>{formatNotificationTime(activity.primary.createdAt, locale)}</small></div><button type="button" onClick={() => openTodaySurface("discovery")}>{locale === "zh" ? "扫描详情" : "Scan details"} →</button></article>)}</div></details>} </>}
             </div>
 
             {SHOW_INTERNAL_QUALITY_UI && monitor?.pilotEvaluation && <section className="v2-pilot-evaluation"><header><div><p className="v2-kicker warm">{locale === "zh" ? "7 天真实试运行" : "7-DAY LIVE PILOT"}</p><h2>{monitor.pilotEvaluation.complete ? (locale === "zh" ? "试运行周期已完成" : "Pilot period complete") : (locale === "zh" ? `第 ${monitor.pilotEvaluation.elapsedDays || 0} / 7 天` : `Day ${monitor.pilotEvaluation.elapsedDays || 0} of 7`)}</h2></div><strong>{monitor.pilotEvaluation.succeeded}/{monitor.pilotEvaluation.attempts}<small>{locale === "zh" ? "成功扫描" : "successful scans"}</small></strong></header><div>{monitor.pilotEvaluation.criteria.map((criterion) => <article className={criterion.status} key={criterion.id}><span>{criterion.status === "pass" ? "✓" : criterion.status === "watch" ? "!" : "·"}</span><div><strong>{pilotCriterionLabel(criterion.id, locale)}</strong><small>{criterion.id === "paperQuality" ? (locale === "zh" ? `${criterion.value} 次错误类型反馈` : `${criterion.value} wrong-type reports`) : criterion.id === "horizons" ? `${criterion.value}/3` : criterion.id === "deduplication" ? (locale === "zh" ? `${criterion.value} 次重复已避免` : `${criterion.value} duplicates avoided`) : `${criterion.value}%`}</small></div><b>{criterion.status === "pass" ? (locale === "zh" ? "达标" : "Pass") : criterion.status === "watch" ? (locale === "zh" ? "观察" : "Watch") : (locale === "zh" ? "等待数据" : "Waiting")}</b></article>)}</div><footer><span>{locale === "zh" ? `可靠性 ${monitor.pilotEvaluation.summary.reliability}% · 接受率 ${monitor.pilotEvaluation.summary.acceptanceRate}% · 每篇有效推荐约 ${monitor.pilotEvaluation.summary.tokensPerRecommendation || 0} token` : `${monitor.pilotEvaluation.summary.reliability}% reliability · ${monitor.pilotEvaluation.summary.acceptanceRate}% acceptance · ${monitor.pilotEvaluation.summary.tokensPerRecommendation || 0} tokens per useful recommendation`}</span></footer></section>}
 
             {todaySurface==="discovery" && SHOW_INTERNAL_QUALITY_UI && monitor?.operationsDashboard && <section className="v2-operations-dashboard"><header><div><p className="v2-kicker">{locale === "zh" ? "发现质量" : "DISCOVERY QUALITY"}</p><h2>{locale === "zh" ? "每次扫描是否真的带来新的、有用的论文" : "Whether each scan finds genuinely new, useful work"}</h2></div><small>{locale === "zh" ? `近 ${monitor.operationsDashboard.periodDays} 天真实运行数据` : `Last ${monitor.operationsDashboard.periodDays} days of real activity`}</small></header><div className="v2-operations-metrics"><article><span>{locale === "zh" ? "新候选" : "New candidates"}</span><strong>{monitor.operationsDashboard.totals.newCandidates}</strong><small>{monitor.operationsDashboard.totals.candidates} {locale === "zh" ? "篇独立候选" : "unique candidates"}</small></article><article><span>{locale === "zh" ? "去重节省" : "Duplicates avoided"}</span><strong>{monitor.operationsDashboard.totals.duplicatesAvoided}</strong><small>{monitor.operationsDashboard.totals.duplicateAvoidanceRate}% {locale === "zh" ? "无需重复交给 LLM" : "kept away from the LLM"}</small></article><article><span>{locale === "zh" ? "深审入选率" : "Review yield"}</span><strong>{monitor.operationsDashboard.totals.recommendationYield}%</strong><small>{monitor.operationsDashboard.totals.recommended} / {monitor.operationsDashboard.totals.reviewed} {locale === "zh" ? "篇入选" : "selected"}</small></article><article><span>{locale === "zh" ? "用户接受率" : "Acceptance"}</span><strong>{monitor.operationsDashboard.totals.acceptanceRate}%</strong><small>{monitor.operationsDashboard.totals.tokensPerRecommendation ? `${Math.round(monitor.operationsDashboard.totals.tokensPerRecommendation / 100) / 10}k token / ${locale === "zh" ? "推荐" : "recommendation"}` : (locale === "zh" ? "等待更多反馈" : "Awaiting feedback")}</small></article></div><div className="v2-operations-body"><div className="v2-scan-trend"><h3>{locale === "zh" ? "每日发现趋势" : "Daily discovery trend"}</h3>{monitor.operationsDashboard.daily.length ? monitor.operationsDashboard.daily.map((day) => <div key={day.date}><time>{day.date.slice(5)}</time><i><b style={{ width: `${Math.max(3, day.candidates / operationsMaxCandidates * 100)}%` }} /></i><span>+{day.newCandidates}</span><em>{day.recommended} {locale === "zh" ? "入选" : "selected"}</em></div>) : <p>{locale === "zh" ? "完成第一轮新版本扫描后，这里会开始记录趋势。" : "Trend data will appear after the first scan on this version."}</p>}</div><div className="v2-horizon-performance"><h3>{locale === "zh" ? "三层覆盖效率" : "Three-horizon efficiency"}</h3>{monitor.operationsDashboard.horizons.map((item) => <article key={item.horizon}><span>{item.horizon === "days" ? t.daysHorizon : item.horizon === "months" ? t.monthsHorizon : t.yearsHorizon}</span><strong>{item.discoveryYield}%</strong><small>{item.branches} {locale === "zh" ? "条分支" : "branches"} · {item.cooling} {locale === "zh" ? "条降频" : "cooling"}</small></article>)}</div></div>{Boolean(monitor.explorationLedger?.length) && <details className="v2-exploration-ledger"><summary><span><b>{locale === "zh" ? "持续探索账本" : "Continuous exploration ledger"}</b><small>{locale === "zh" ? "Pi 记录每条检索分支的位置；低收益分支自动降频，之后再回访。" : "Pi remembers each branch position, cools low-yield paths, and revisits them later."}</small></span><strong>{monitor.explorationLedger?.length} →</strong></summary><div>{monitor.explorationLedger?.slice(0, 16).map((branch) => <article className={branch.status} key={`${branch.horizon}:${branch.id}`}><header><span>{branch.horizon === "days" ? t.daysHorizon : branch.horizon === "months" ? t.monthsHorizon : t.yearsHorizon} · {branch.channel}</span><b>{explorationStatusLabel(branch.status, locale)}</b></header><p>{branch.queryText || branch.sourceKey.replace(/_/g, " ")}</p><footer><span>{locale === "zh" ? "游标" : "cursor"} {branch.nextCursor}</span><span>{branch.attempts} {locale === "zh" ? "轮" : "rounds"}</span><span>{branch.newCandidates}/{branch.candidates} {locale === "zh" ? "新发现" : "new"}</span><strong>{branch.discoveryYield}%</strong></footer></article>)}</div></details>}</section>}
 
-            {todaySurface==="records" && !!monitor?.mapChanges?.length && <details className="v2-route-changes v2-route-changes-compact"><summary><span><strong>{locale === "zh" ? "研究路线变化" : "Research route changes"}</strong><small>{monitor.mapChanges.length} {locale === "zh" ? "项更新" : "updates"}</small></span><b>＋</b></summary><div>{monitor.mapChanges.slice(0, 3).map((change) => { const kind = routeChangeKindLabel(change.kind); return <article key={change.id}><InterfaceIcon name={kind.symbol} /><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {locale === "zh" ? kind.zh : kind.en}{change.kind === "new_evidence" ? ` · ${change.confidence}%` : ""}</small><h3>{change.kind === "new_evidence" ? change.paperTitle : locale === "zh" ? change.titleZh : change.titleEn}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>; })}</div><footer><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "查看研究路线" : "Open research routes"} →</button></footer></details>}
+            {todaySurface==="discovery" && !!monitor?.mapChanges?.length && <details className="v2-route-changes v2-route-changes-compact"><summary><span><strong>{locale === "zh" ? "研究路线变化" : "Research route changes"}</strong><small>{monitor.mapChanges.length} {locale === "zh" ? "项更新" : "updates"}</small></span><b>＋</b></summary><div>{monitor.mapChanges.slice(0, 3).map((change) => { const kind = routeChangeKindLabel(change.kind); return <article key={change.id}><InterfaceIcon name={kind.symbol} /><div><small>{locale === "zh" ? change.trackTitleZh : change.trackTitleEn} · {locale === "zh" ? kind.zh : kind.en}{change.kind === "new_evidence" ? ` · ${change.confidence}%` : ""}</small><h3>{change.kind === "new_evidence" ? change.paperTitle : locale === "zh" ? change.titleZh : change.titleEn}</h3><p>{locale === "zh" ? change.summaryZh : change.summaryEn}</p></div></article>; })}</div><footer><button type="button" onClick={() => navigate("threads")}>{locale === "zh" ? "查看研究路线" : "Open research routes"} →</button></footer></details>}
 
 
 
@@ -5597,28 +5556,31 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
         {(view === "threads" || view === "paper-detail" && paperReturnView === "threads" || view === "workbook" && workbookReturnView === "threads" || view === "paper-detail" && paperReturnView === "workbook" && workbookReturnView === "threads") && (
           <main hidden={view !== "threads"} className={`v2-page v2-map-page ${researchMapMode === "directions" ? "pi-leads-page" : "pi-graph-explorer-page"}`}>
-              <section className="v2-page-head v2-map-head v2-route-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{researchMapMode === "directions" ? (locale === "zh" ? "研究路线" : "Research routes") : (locale === "zh" ? "文献探索" : "Literature explorer")}</h1><p className="pi-page-purpose">{researchMapMode === "directions" ? (locale === "zh" ? "选择一条线索，核对材料，再推进比较、研究问题或学习。" : "Choose a lead, inspect its materials, then compare, investigate or study.") : (locale === "zh" ? "从一篇论文和一个具体问题出发，查找、筛选并比较相关工作。" : "Start with a paper and a question to discover, examine and compare related work.")}</p></div><div className="v2-map-head-actions">{researchMapMode === "papers" ? <button className="v2-route-back-overview" type="button" onClick={() => { setResearchMapMode("directions"); setSelectedNetworkPaperId(null); if (graphReturnView !== "threads") navigate(graphReturnView); else navigate("threads", workbookTrackId, { graph: undefined }); }}>{graphReturnView === "library" ? (locale === "zh" ? "← 返回论文库" : "← Back to library") : graphReturnView === "thread-detail" ? (locale === "zh" ? "← 返回路线材料" : "← Back to route materials") : (locale === "zh" ? "← 返回路线总览" : "← Back to route overview")}</button> : <><span className="v2-map-total"><strong>{researchMap.tracks.length}</strong>{locale === "zh" ? "条研究路线" : "research routes"}</span><button className="v2-route-head-explorer" type="button" onClick={() => { setGraphReturnView("threads"); setResearchMapMode("papers"); restorePaperNetworkNavigation({view:"threads"}); setLibraryGraphPaperId(""); setLibraryViewState({query:"",scope:"related",page:1,focusId:""}); navigate("threads", workbookTrackId, { graph:"all", graphFrom:undefined, graphMode:"citations", graphSurface:undefined, graphTrack:undefined, graphFocus:undefined, graphCompareTrack:undefined, libraryFocus:undefined, libraryNeighbor:undefined }); }}>{locale === "zh" ? "文献探索" : "Literature explorer"} →</button></>}</div></section>
+              <section className="v2-page-head v2-map-head v2-route-page-head"><div><p className="v2-kicker">{defaultSpaceName(activeSpace.name, locale)}</p><h1>{researchMapMode === "directions" ? (locale === "zh" ? "研究路线" : "Research routes") : (locale === "zh" ? "文献探索" : "Literature explorer")}</h1><p className="pi-page-purpose">{researchMapMode === "directions" ? (locale === "zh" ? "选择一条线索，核对材料，再推进比较、研究问题或学习。" : "Choose a lead, inspect its materials, then compare, investigate or study.") : (locale === "zh" ? "从一篇论文和一个具体问题出发，查找、筛选并比较相关工作。" : "Start with a paper and a question to discover, examine and compare related work.")}</p></div><div className="v2-map-head-actions">{researchMapMode === "papers" ? <button className="v2-route-back-overview" type="button" onClick={() => { setResearchMapMode("directions"); setSelectedNetworkPaperId(null); if (graphReturnView !== "threads") navigate(graphReturnView); else navigate("threads", workbookTrackId, { graph: undefined }); }}>{graphReturnView === "library" ? (locale === "zh" ? "← 返回论文库" : "← Back to library") : graphReturnView === "thread-detail" ? (locale === "zh" ? "← 返回路线材料" : "← Back to route materials") : (locale === "zh" ? "← 返回路线总览" : "← Back to route overview")}</button> : <><span className="v2-map-total"><strong>{researchMap.tracks.length}</strong>{locale === "zh" ? "条研究路线" : "research routes"}</span><button className="v2-route-head-explorer" type="button" onClick={openLibraryForExploration}>{locale === "zh" ? "去论文库选论文探索" : "Choose a paper to explore"}</button></>}</div></section>
             {researchMapMode==="papers"&&researchMap.tracks.length>0&&<label className="pi-explorer-scope">
               <span>{locale==="zh"?"探索范围":"Explore papers from"}</span>
               <select value={routeBrowseTrack?.id||""} onChange={event=>{
+                if(!event.target.value){openLibraryForExploration();return;}
                 paperNetworkNavigation.changeTrack(event.target.value);
                 setPaperNetworkOriginCanonicalIds([]);
                 resetResearchNetworkExpansion([]);
                 setGraphDetailsOpen(false);
                 setLibraryViewState(current=>({...current,neighbor:undefined}));
               }}>
-                <option value="">{locale==="zh"?"全部论文":"All papers"}</option>
+                <option value="">{locale==="zh"?"论文库焦点":"Library focus"}</option>
                 {researchMap.tracks.map(track=><option key={track.id} value={track.id}>{locale==="zh"?track.titleZh:track.titleEn}</option>)}
               </select>
             </label>}
             {researchMapMode === "papers" && graphSurface==="library" && <LibraryComparisonControls graph spaceId={activeSpace.id} trackId={graphCompareTrack} locale={locale} selection={graphComparisonSelection} onTrack={paperNetworkNavigation.changeCompareTrack} onResearch={()=>navigatePrimary("threads")} />}
             {researchMapMode === "papers" && graphSurface === "library" && <DeferredWorkspacePanel locale={locale}>
-              <LibraryExplorer key={`${activeSpace.id}:${libraryGraphPaperId}`} spaceId={activeSpace.id} locale={locale} active={view==="threads"}
-                graphMode={paperNetworkMode==="similarity"?"similarity":"citations"} onGraphMode={changeNetworkMode}
-                compareTrackId={graphCompareTrack} controlledSelection={graphComparisonSelection} initialPaperId={libraryGraphPaperId} initialState={libraryViewState}
+              <LibraryExplorer spaceId={activeSpace.id} locale={locale} active={view==="threads"}
+                graphMode={paperNetworkMode} onGraphMode={changeNetworkMode} onLibrary={openLibraryForExploration}
+                controlledSelection={graphCompareTrack?graphComparisonSelection:undefined}
+                location={{focusId:libraryViewState.focusId||libraryGraphPaperId||undefined,neighbor:libraryViewState.neighbor,display:libraryViewState.display}}
                 onStateChange={(state,history)=>{
-                  setLibraryViewState({query:state.query||'',scope:state.scope||'related',page:state.page||1,focusId:state.focusId||'',neighbor:state.neighbor,display:state.display});
-                  updateWorkspaceHash({libraryQuery:state.query,libraryScope:state.scope,libraryPage:state.page,libraryFocus:state.focusId,libraryNeighbor:state.neighbor,libraryDisplay:state.display},history);
+                  setLibraryViewState(current=>({...current,...state,focusId:"focusId" in state?state.focusId||"":current.focusId}));
+                  updateWorkspaceHash({ ...("focusId" in state?{libraryFocus:state.focusId}:{}),
+                    ...("neighbor" in state?{libraryNeighbor:state.neighbor}:{}),...("display" in state?{libraryDisplay:state.display}:{}) },history);
                 }} onOpen={id => void openRoutePaper(id,"threads")} />
             </DeferredWorkspacePanel>}
             {view==="threads" && researchMapMode==="papers" && graphCompareTrack && currentGraphTask.papers.length>0 &&
@@ -5628,8 +5590,12 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                 onResume={id=>openWorkbook(graphCompareTrack,undefined,{view:"threads",hash:window.location.hash},id)} />
             }
             <section className="pi-route-graph-legacy" hidden={researchMapMode === "papers" && graphSurface !== "routes"}>
-            {mapLoading ? (
-              <section className="v2-map-loading v2-outline-loading" role="status"><InterfaceIcon name="loading" className="pi-state-mark" /><div><strong>{locale === "zh" ? "正在建立研究路线" : "Building research routes"}</strong><p>{mapOutlineLabels[mapOutlinePhase]}</p><i><b style={{ width: `${22 + mapOutlinePhase * 21}%` }} /></i><small>{locale === "zh" ? "已识别的路线先显示，论文证据随后补充。" : "Identified routes appear first; paper evidence follows."}</small></div></section>
+            {mapReadIssue && <section className="pi-content-loading" role="alert">
+              <strong>{mapReadIssue === "busy" ? (locale === "zh" ? "研究数据暂时繁忙" : "Research storage is busy") : (locale === "zh" ? "研究路线暂未载入" : "Research routes could not load")}</strong>
+              <button type="button" onClick={() => setMapReadRevision(value => value + 1)}>{locale === "zh" ? "重试读取路线" : "Retry loading routes"}</button>
+            </section>}
+            {mapLoading && mapReadSpaceId !== activeSpace.id ? (
+              <section className="v2-map-loading" role="status"><InterfaceIcon name="loading" className="pi-state-mark" /><strong>{locale === "zh" ? "正在读取研究路线…" : "Loading research routes…"}</strong></section>
             ) : researchMap.tracks.length ? (
               <>
                 {researchMapMode === "directions" ? <>
@@ -5638,8 +5604,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                   {routeAttention && routeAttentionTrack && <RoutePortfolioOverview attentionKind={routeAttention.kind} attentionTrack={routeAttentionTrack} locale={locale} onAction={handleRouteAttention} />}
 
                   <RouteUpdateRecords portfolio={routePortfolio} todayCount={routeTodayPaperCount} locale={locale}>
-                  {(researchMap.buildProgress?.pendingTrackIds.length || mapBuildTrackId) ? <section className="v2-map-build-progress v2-route-build-progress" role="status"><div><span className={mapBuildTrackId ? "working" : "paused"}><i /></span><div><strong>{mapBuildTrackId ? (locale === "zh" ? `正在补充第 ${(researchMap.buildProgress?.ready || 0) + 1} / ${researchMap.buildProgress?.total || researchMap.tracks.length} 条路线` : `Filling route ${(researchMap.buildProgress?.ready || 0) + 1} of ${researchMap.buildProgress?.total || researchMap.tracks.length}`) : (locale === "zh" ? `${researchMap.buildProgress?.pendingTrackIds.length || 0} 条路线等待补充` : `${researchMap.buildProgress?.pendingTrackIds.length || 0} routes await evidence`)}</strong><p>{currentBuildTrack ? (locale === "zh" ? currentBuildTrack.titleZh : currentBuildTrack.titleEn) : (locale === "zh" ? "已完成内容已经保存" : "Completed work is saved")}</p></div></div><i><b style={{ width: `${researchMap.buildProgress?.total ? Math.round((researchMap.buildProgress.ready / researchMap.buildProgress.total) * 100) : 0}%` }} /></i></section> : null}
-                  {((researchMap.intelligenceProgress && researchMap.intelligenceProgress.ready < researchMap.intelligenceProgress.total) || mapIntelligenceTrackId) ? <section className="v2-map-build-progress v2-intelligence-progress v2-route-build-progress" role="status"><div><InterfaceIcon name={mapIntelligenceTrackId ? "loading" : "clock"} className="pi-state-mark" /><div><strong>{mapIntelligenceTrackId ? (locale === "zh" ? "方向研判中" : "Assessing direction") : (locale === "zh" ? "部分方向待更新" : "Some assessments need refresh")}</strong><p>{currentIntelligenceTrack ? (locale === "zh" ? currentIntelligenceTrack.titleZh : currentIntelligenceTrack.titleEn) : (locale === "zh" ? "已有路线和研判已保留" : "Existing routes and assessments are retained")}</p></div></div><i><b style={{ width: `${researchMap.intelligenceProgress?.total ? Math.round((researchMap.intelligenceProgress.ready / researchMap.intelligenceProgress.total) * 100) : 0}%` }} /></i></section> : null}
+                  {researchMap.needsStructure && <button type="button" disabled={Boolean(mapAction)} onClick={() => void organizeResearchRoutes("structure")}>{locale === "zh" ? "整理路线关系" : "Organize route connections"}</button>}
                   {Boolean((researchMap.buildProgress?.partialTrackIds?.length || 0) + (researchMap.buildProgress?.emptyTrackIds?.length || 0) + (researchMap.buildProgress?.failedTrackIds?.length || 0)) && <section className="v2-map-build-progress v2-route-build-degraded"><div><span className="paused"><i>!</i></span><div><strong>{locale === "zh" ? "部分路线待补充" : "Some routes need evidence"}</strong><p>{locale === "zh" ? "已有论文已保留；无可见证据的路线不会标记为完成。" : "Existing papers are retained; routes without visible evidence are not marked complete."}</p></div></div></section>}
 
 
@@ -5735,7 +5700,12 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                   </>}
                 </section>}
               </>
-            ) : <section className="v2-map-empty"><InterfaceIcon name="route" className="pi-state-mark" /><h2>{locale === "zh" ? "暂时没有可展示的真实路线" : "No real route is available yet"}</h2><p>{locale === "zh" ? "Pi 不会用演示论文填充这里。稍后重新进入即可再次尝试。" : "Pi will not fill this area with demo papers. Return later to retry."}</p></section>}
+            ) : mapReadIssue ? null : <section className="v2-map-empty"><InterfaceIcon name="route" className="pi-state-mark" />
+              <h2>{locale === "zh" ? "还没有研究路线" : "No research routes yet"}</h2>
+              <p>{locale === "zh" ? "从一个研究问题开始，也可以按当前研究空间生成路线。" : "Start from a research question or generate routes for this workspace."}</p>
+              <button type="button" onClick={() => navigatePrimary("today")}>{locale === "zh" ? "从研究问题开始" : "Start with a question"}</button>
+              {!demo && <button type="button" disabled={Boolean(mapAction)} onClick={() => void organizeResearchRoutes("initialize")}>{mapAction === "initialize" ? (locale === "zh" ? "正在生成…" : "Generating…") : (locale === "zh" ? "生成研究路线" : "Generate research routes")}</button>}
+            </section>}
             </section>
           </main>
         )}
@@ -5768,6 +5738,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
                     setMaterialLocation(current=>({...current,...patch}));
                     updateWorkspaceHash(patch,history);
                   }}
+                  onLibrary={()=>collectFromLibrary(selectedThread.id)}
                   onRead={id=>void openRoutePaper(id)}
                   onRelations={id=>exploreRoutePaper(selectedThread,id)} relationPaperIds={routeMaterialRelationIds}
                   onDeactivate={paper=>void curateResearchTrackPaperNode(selectedThread,paper,"deactivated")} curationBusy={Boolean(mapAction)} demo={demo}/>
@@ -5776,7 +5747,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
 
                     {researchRouteTab === "evidence" && <section className="v2-route-workspace-panel v2-route-gap-panel" role="tabpanel">
                       <header><div><p className="v2-kicker">{locale === "zh" ? "本空间的材料覆盖" : "WORKSPACE COLLECTION"}</p><h2>{locale === "zh" ? "待收录与待核对材料" : "Materials to collect and check"}</h2></div><div className="v2-route-evidence-status"><span><strong>{confirmedRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "已纳入" : "in route"}</span><span className={pendingRouteEvidenceCount(selectedThread) ? "pending" : ""}><strong>{pendingRouteEvidenceCount(selectedThread)}</strong>{locale === "zh" ? "待确认" : "pending"}</span></div></header>
-                      {selectedThread.intelligence ? <div className="v2-route-gap-layout"><article className="v2-route-gap-primary"><small>{locale === "zh" ? "材料检索建议 · 尚未证明是学界空白" : "COLLECTION SUGGESTION · NOT AN ESTABLISHED RESEARCH GAP"}</small><h3>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</h3><ResearchGapDiscoveryStatus track={selectedThread} locale={locale} />{selectedThread.intelligence.nextSearchQuery && <details className="v2-gap-query"><summary>{locale === "zh" ? "查看定向检索式" : "View targeted query"}<b>＋</b></summary><code>{selectedThread.intelligence.nextSearchQuery}</code></details>}<footer><button type="button" onClick={() => void scanResearchRouteGap(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || selectedThread.monitoringStatus === "paused" || !selectedThread.intelligence.nextSearchQuery)}>{mapAction === `gap:${selectedThread.id}` ? (locale === "zh" ? "正在扫描…" : "Scanning…") : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复后扫描" : "Resume to scan") : (locale === "zh" ? "立即扫描" : "Run scan")} →</button><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "gap")}>{locale === "zh" ? "解释材料需求" : "Explain material needs"}</button></footer></article></div> : <div className="v2-route-panel-empty"><InterfaceIcon name="search" className="pi-state-mark" /><div><strong>{locale === "zh" ? "暂未形成材料检索建议" : "No collection suggestion yet"}</strong><p>{locale === "zh" ? "这表示本空间的整理尚未完成，不表示学界没有相关工作。" : "This workspace is still being organized; this does not mean relevant research is absent."}</p></div><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={!selectedThread.papers.length || selectedThread.monitoringStatus === "paused"}>{selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复后研判" : "Resume to assess") : (locale === "zh" ? "形成研判" : "Build assessment")} →</button></div>}
+                      {selectedThread.intelligence ? <div className="v2-route-gap-layout"><article className="v2-route-gap-primary"><small>{locale === "zh" ? "材料检索建议 · 尚未证明是学界空白" : "COLLECTION SUGGESTION · NOT AN ESTABLISHED RESEARCH GAP"}</small><h3>{locale === "zh" ? selectedThread.intelligence.evidenceGapZh : selectedThread.intelligence.evidenceGapEn}</h3><ResearchGapDiscoveryStatus track={selectedThread} locale={locale} />{selectedThread.intelligence.nextSearchQuery && <details className="v2-gap-query"><summary>{locale === "zh" ? "查看定向检索式" : "View targeted query"}<b>＋</b></summary><code>{selectedThread.intelligence.nextSearchQuery}</code></details>}<footer><button type="button" onClick={() => void scanResearchRouteGap(selectedThread)} disabled={Boolean(mapAction || selectedThread.monitoringStatus === "paused" || !selectedThread.intelligence.nextSearchQuery)}>{mapAction === `gap:${selectedThread.id}` ? (locale === "zh" ? "正在扫描…" : "Scanning…") : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复后扫描" : "Resume to scan") : (locale === "zh" ? "立即扫描" : "Run scan")} →</button><button type="button" onClick={() => askAboutResearchRoute(selectedThread, "gap")}>{locale === "zh" ? "解释材料需求" : "Explain material needs"}</button></footer></article></div> : <div className="v2-route-panel-empty"><InterfaceIcon name="search" className="pi-state-mark" /><div><strong>{locale === "zh" ? "暂未形成材料检索建议" : "No collection suggestion yet"}</strong><p>{locale === "zh" ? "这表示本空间的整理尚未完成，不表示学界没有相关工作。" : "This workspace is still being organized; this does not mean relevant research is absent."}</p></div><button type="button" onClick={() => void refreshDirectionIntelligence(selectedThread)} disabled={!selectedThread.papers.length || selectedThread.monitoringStatus === "paused"}>{selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复后研判" : "Resume to assess") : (locale === "zh" ? "形成研判" : "Build assessment")} →</button></div>}
                     </section>}
 
               {researchRouteTab === "agenda" && <section className="v2-route-workspace-panel v2-route-agenda-panel" role="tabpanel">
@@ -5791,9 +5762,9 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               {researchRouteTab === "start" && <details className="pi-route-connections"><summary>{locale === "zh" ? "相关研究路线" : "Related research routes"}<span>{locale === "zh" ? "方向联系与延伸阅读" : "Connections and further reading"}</span></summary><DeferredWorkspacePanel locale={locale}><RouteReferenceViews selectedTrack={selectedThread} mode="connections" tracks={researchMap.tracks} edges={researchMap.edges} locale={locale} onPaper={id => void openRoutePaper(id)} onMaterials={track => openThread(track, "evidence")} /></DeferredWorkspacePanel></details>}
               {researchRouteTab === "start" && <ResearchMaintenance key={activeSpace.id+selectedThread.id} spaceId={activeSpace.id} trackId={selectedThread.id} locale={locale} />}
               <RouteManagementDrawer key={`${selectedThread.id}:${routeManagementNeedsAttention(selectedThread) ? "attention" : "quiet"}`} track={selectedThread} locale={locale}>
-              <ResearchLeadDecisionPanel track={selectedThread} problemState={researchProblemState} synthesis={researchSynthesis} locale={locale} onOpenWorkspace={setResearchRouteTab} onOpenToday={() => navigate("today")} onOpenLearning={() => openRouteLearningPath(selectedThread)} onScanGap={(origin) => void scanResearchRouteSignal(selectedThread, origin)} gapScanning={mapAction === `gap:${selectedThread.id}` || mapAction === `problem:${selectedThread.id}`} gapScanBlocked={Boolean(mapAction || mapBuildTrackId || mapIntelligenceTrackId || selectedThread.monitoringStatus === "paused")} />
+              <ResearchLeadDecisionPanel track={selectedThread} problemState={researchProblemState} synthesis={researchSynthesis} locale={locale} onOpenWorkspace={setResearchRouteTab} onOpenToday={() => navigate("today")} onOpenLearning={() => openRouteLearningPath(selectedThread)} onScanGap={(origin) => void scanResearchRouteSignal(selectedThread, origin)} gapScanning={mapAction === `gap:${selectedThread.id}` || mapAction === `problem:${selectedThread.id}`} gapScanBlocked={Boolean(mapAction || selectedThread.monitoringStatus === "paused")} />
                 <section className={`v2-route-role-strip ${selectedThread.userRole} ${selectedThread.monitoringStatus}`}><div><small>{locale === "zh" ? "当前定位" : "CURRENT ROLE"}</small><strong>{directionRoleLabel(selectedThread.userRole, locale)}</strong><p>{locale === "zh" ? "定位会改变后续扫描预算和路线优先级；暂停只停止新发现，不清除任何历史。" : "This role changes future discovery budget and priority; pausing only stops new discovery and clears no history."}</p></div><div className="v2-direction-role-control" role="group" aria-label={locale === "zh" ? "设置方向定位" : "Set direction role"}>{(["core", "support", "explore"] as ResearchDirectionRole[]).map((role) => <button type="button" className={selectedThread.userRole === role ? "active" : ""} key={role} onClick={() => void setResearchDirectionRole(selectedThread, role)} disabled={Boolean(mapAction)}>{directionRoleLabel(role, locale)}</button>)}<button type="button" className={`monitor-toggle ${selectedThread.monitoringStatus}`} onClick={() => void setResearchDirectionMonitoring(selectedThread, selectedThread.monitoringStatus === "paused" ? "active" : "paused")} disabled={Boolean(mapAction)}>{mapAction === `monitoring:${selectedThread.id}` ? "…" : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "恢复路线" : "Resume route") : (locale === "zh" ? "暂停路线" : "Pause route")}</button></div><dl><div><dt>{locale === "zh" ? "研究深度" : "Depth"}</dt><dd>{selectedThread.depthScore}</dd></div><div><dt>{locale === "zh" ? "辅助价值" : "Support"}</dt><dd>{selectedThread.supportScore}</dd></div><div><dt>{locale === "zh" ? "近期证据" : "Recent"}</dt><dd>{selectedThread.recentPaperCount}</dd></div></dl></section>
-                <div className="v2-route-management-actions"><button type="button" onClick={() => askAboutResearchRoute(selectedThread)}>{locale === "zh" ? "让 Pi 解释这条路线" : "Ask Pi about this route"}</button><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || mapBuildTrackId || selectedThread.monitoringStatus === "paused")}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在补充…" : "Filling…") : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "已暂停自动发现" : "Automatic discovery paused") : ["queued", "retryable", "empty", "failed"].includes(selectedThread.buildStatus) ? (locale === "zh" ? "重试补充这条路线" : "Retry this route") : selectedThread.buildStatus === "partial" ? (locale === "zh" ? "补全这条路线" : "Complete this route") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></div>
+                <div className="v2-route-management-actions"><button type="button" onClick={() => askAboutResearchRoute(selectedThread)}>{locale === "zh" ? "让 Pi 解释这条路线" : "Ask Pi about this route"}</button><button type="button" onClick={() => void expandResearchTrack(selectedThread)} disabled={Boolean(mapAction || selectedThread.monitoringStatus === "paused")}>{mapAction === selectedThread.id ? (locale === "zh" ? "正在补充…" : "Filling…") : selectedThread.monitoringStatus === "paused" ? (locale === "zh" ? "已暂停自动发现" : "Automatic discovery paused") : ["queued", "retryable", "empty", "failed"].includes(selectedThread.buildStatus) ? (locale === "zh" ? "重试补充这条路线" : "Retry this route") : selectedThread.buildStatus === "partial" ? (locale === "zh" ? "补全这条路线" : "Complete this route") : (locale === "zh" ? "继续填充这条路线" : "Continue this route")} ＋</button></div>
                 <RouteDiscoveryLoop track={selectedThread} locale={locale} />
                 <DeferredWorkspacePanel locale={locale}><RouteEvolutionWorkbench track={selectedThread} locale={locale} action={mapAction} formatNotificationTime={formatNotificationTime} onPropose={() => void proposeResearchRouteEvolution(selectedThread)} onDecision={(revisionId, decision) => void decideResearchRouteEvolution(selectedThread, revisionId, decision)} /></DeferredWorkspacePanel>
               </RouteManagementDrawer>
@@ -5832,6 +5803,13 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
             visible={view === "library"}
             comparisonSelection={demo?undefined:librarySelection}
             comparisonTrackId={libraryComparisonTrackId}
+            collection={libraryCollection?{pending:collectionSave.key===activeSpace.id+":"+libraryCollection?collectionSave.paper:"",
+              error:collectionSave.key===activeSpace.id+":"+libraryCollection?collectionSave.error:"",
+              onSave:(paper,status,category)=>void saveLibraryCollection(paper,status,category),
+              onBack:()=>{const origin=readWorkspaceLocation(window.location.hash).returnTo;if(origin)navigate("thread-detail");else{
+                window.location.hash=workspaceHash({view:"thread-detail",id:libraryCollection,tab:"evidence",space:activeSpace.id});
+              }}
+            }:undefined}
             comparisonControls={demo?undefined:<LibraryComparisonControls spaceId={activeSpace.id} trackId={libraryComparisonTrackId} locale={locale} selection={librarySelection} onTrack={trackId=>{setLibraryComparisonScope({spaceId:activeSpace.id,trackId});updateWorkspaceHash({track:trackId||undefined},"push");}} onResearch={()=>navigatePrimary("threads")} />}
             demo={demo}
             locale={locale}
@@ -5982,7 +5960,7 @@ export default function ResearchApp({ user, demo = false }: { user: User; demo?:
               </div>
 
               <div className="pi-paper-panel" hidden={paperPanel!=="notes"}><section className="pi-paper-reading-tools"><header><h2>{locale === "zh" ? "我的笔记" : "My notes"}</h2></header><aside className="v2-detail-aside v2-real-detail-aside"><p className="v2-kicker">{locale === "zh" ? "阅读工作台" : "READING WORKBENCH"}</p><label className="v2-reading-field"><span>{locale === "zh" ? "阅读状态" : "Reading status"}</span><select disabled={readingSaving} value={selectedMonitorPaper.readingStatus || "unread"} onChange={(event) => void updateReadingProgress(selectedMonitorPaper, event.target.value as MonitorPaper["readingStatus"], paperNoteDraft)}><option value="unread">{readingStatusLabel("unread", locale)}</option><option value="queued">{readingStatusLabel("queued", locale)}</option><option value="reading">{readingStatusLabel("reading", locale)}</option><option value="read">{readingStatusLabel("read", locale)}</option><option value="mastered">{readingStatusLabel("mastered", locale)}</option><option value="cited">{readingStatusLabel("cited", locale)}</option></select></label><DraftRecovery key={noteDraftKey} storageKey={noteDraftKey} current={paperNoteDraft} base={selectedMonitorPaper.readingNote || ""} locale={locale} onRestore={editPaperNote} /><label className="v2-reading-field"><span>{locale === "zh" ? "我的阅读笔记" : "My reading note"}</span><textarea disabled={readingSaving} value={paperNoteDraft} maxLength={3000} onChange={(event) => editPaperNote(event.target.value)} placeholder={locale === "zh" ? "记录可复用的方法、疑问或与自己项目的连接…" : "Capture reusable methods, questions, or links to your work…"} /></label><small className="v2-memory-hint">{demo ? (locale === "zh" ? "修改后，原示例整理会失效；演示不生成新的整理。" : "Editing invalidates preset insights; the demo does not generate new ones.") : (locale === "zh" ? "保存笔记后即可在研究记忆中找到；选择让 Pi 整理，会进一步提取方法与疑问。" : "Saved notes appear in research memory. Ask Pi to organize them when you want methods and questions extracted.")}</small><p className="pi-save-state" role="status">{noteSaveError || (readingSaving ? (locale === "zh" ? "正在保存…" : "Saving…") : paperNoteDraft !== (selectedMonitorPaper.readingNote || "") ? (locale === "zh" ? "有未保存修改" : "Unsaved changes") : (locale === "zh" ? "与已保存内容一致" : "Matches saved content"))}{noteDraftUnavailable && (locale === "zh" ? " · 本标签页无法暂存，请保存后再离开。" : " · Draft storage unavailable. Save before leaving.")}</p>{!paperNoteDraft && selectedMonitorPaper.readingNote && <button type="button" disabled={readingSaving} onClick={() => editPaperNote(selectedMonitorPaper.readingNote)}>{locale === "zh" ? "撤销清空" : "Undo clearing"}</button>}<div className="pi-note-actions"><button type="button" disabled={readingSaving || paperNoteDraft === (selectedMonitorPaper.readingNote || "")} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft)}>{readingSaving && !readingMemoryAnalyzing ? (locale === "zh" ? "正在保存…" : "Saving…") : (locale === "zh" ? "保存笔记" : "Save note")}</button><button className="v2-save-note" type="button" title={demo ? (locale === "zh" ? "演示仅提供预设整理" : "Only preset insights are available in the demo") : undefined} disabled={demo || readingSaving || readingMemoryAnalyzing || !paperNoteDraft.trim()} onClick={() => void updateReadingProgress(selectedMonitorPaper, selectedMonitorPaper.readingStatus || "queued", paperNoteDraft, true)}>{readingMemoryAnalyzing ? (locale === "zh" ? "正在整理…" : "Synthesizing…") : (locale === "zh" ? "保存并让 Pi 整理" : "Save and organize with Pi")}</button></div><button type="button" onClick={() => askAboutMonitorPaper(selectedMonitorPaper)}>{t.askAboutPaper} →</button></aside></section>
-                {savedReadingId === `${activeSpace.id}:${selectedMonitorPaper.id}` && !noteSaveError && !readingSaving && paperNoteDraft === (selectedMonitorPaper.readingNote || "") && <section className="pi-after-reading" aria-label={locale === "zh" ? "读后下一步" : "After reading"}><h2>{locale === "zh" ? "记录已保存，接下来" : "Saved. Next step"}</h2><p>{locale === "zh" ? "笔记与反馈供后续发现参考，当前推荐没有重新计算。" : "Notes and feedback can inform future discovery. Current recommendations have not been recalculated."}</p><div>{nextReadingId && <button type="button" onClick={() => void openRoutePaper(nextReadingId, "today")}>{locale === "zh" ? "继续下一篇推荐" : "Next recommended paper"} →</button>}<button type="button" onClick={() => {setResearchMapMode("papers");setGraphSurface("library");navigate("threads",workbookTrackId,{graph:"all"});}}>{locale === "zh" ? "选择材料进行比较" : "Choose papers to compare"}</button><button type="button" onClick={() => void openRecommendationMemory()}>{locale === "zh" ? "检查研究偏向" : "Review research interests"}</button></div></section>}
+                {savedReadingId === `${activeSpace.id}:${selectedMonitorPaper.id}` && !noteSaveError && !readingSaving && paperNoteDraft === (selectedMonitorPaper.readingNote || "") && <section className="pi-after-reading" aria-label={locale === "zh" ? "读后下一步" : "After reading"}><h2>{locale === "zh" ? "记录已保存，接下来" : "Saved. Next step"}</h2><p>{locale === "zh" ? "笔记与反馈供后续发现参考，当前推荐没有重新计算。" : "Notes and feedback can inform future discovery. Current recommendations have not been recalculated."}</p><div>{nextReadingId && <button type="button" onClick={() => void openRoutePaper(nextReadingId, "today")}>{locale === "zh" ? "继续下一篇推荐" : "Next recommended paper"} →</button>}<button type="button" onClick={openLibraryForExploration}>{locale === "zh" ? "选择材料进行比较" : "Choose papers to compare"}</button><button type="button" onClick={() => void openRecommendationMemory()}>{locale === "zh" ? "检查研究偏向" : "Review research interests"}</button></div></section>}
                 {selectedMonitorPaper.qualityStage === "recommended" && paperReturnView !== "learn" && <DeferredWorkspacePanel locale={locale}><ResearchStart key={activeSpace.id+selectedMonitorPaper.id} spaceId={activeSpace.id} paperId={selectedMonitorPaper.id} locale={locale} onRead={() => {changePaperPanel("reading");requestAnimationFrame(()=>document.querySelector(".v2-paper-analysis")?.scrollIntoView({behavior:"smooth"}));}} onStart={startRecommendedResearch} /></DeferredWorkspacePanel>}
 
               </div>

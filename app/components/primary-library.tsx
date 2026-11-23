@@ -18,6 +18,7 @@ type LibraryPaper = {
   id: string;
   canonicalId?: string;
   comparisonEligibility?: ComparisonEligibility;
+  routeMembership?: {status:'included'|'excluded';category:string};
   title: string;
   authors: string;
   venue: string;
@@ -49,6 +50,7 @@ type PrimaryLibraryProps<Paper extends LibraryPaper> = {
   comparisonSelection?: RouteSelection;
   comparisonControls?: ReactNode;
   comparisonTrackId?: string;
+  collection?: { pending:string; error:string; onSave:(paper:Paper,status:'included'|'excluded',category:string)=>void; onBack?:()=>void };
   demo: boolean;
   locale: Locale;
   spaceId: string;
@@ -128,6 +130,11 @@ export function PrimaryLibrary<Paper extends LibraryPaper>(props: PrimaryLibrary
   return <main hidden={!props.visible} className="v2-page v2-library-page pi-library-workspace">
     {props.monitorReadNotice}
     <section className="v2-page-head"><div><p className="v2-kicker">{props.spaceName}</p><h1>{locale === "zh" ? "论文库" : "Library"}</h1><p className="pi-page-purpose">{locale === "zh" ? "查找已发现的论文，查看评审结果，安排阅读并留下笔记。" : "Find discovered papers, inspect reviews, plan reading and keep notes."}</p></div><LibraryExport spaceId={props.spaceId} locale={locale}/></section>
+    {props.collection&&<section className="pi-content-loading" aria-label={locale==='zh'?'补充路线材料':'Add route materials'}>
+      <strong>{locale==='zh'?'从论文库补充路线材料':'Add material from the library'}</strong>
+      {props.collection.onBack&&<button type="button" onClick={props.collection.onBack}>{locale==='zh'?'返回路线材料':'Back to route materials'}</button>}
+      {props.collection.error&&<p role="alert">{props.collection.error}</p>}
+    </section>}
     <div className="v2-library-tabs">
       <button className={props.filter === "inbox" ? "active" : ""} aria-pressed={props.filter === "inbox"} type="button" onClick={() => props.onFilter("inbox")}>{labels.inbox}<span>{props.counts?.inbox ?? "—"}</span></button>
       <button className={props.filter === "accepted" ? "active" : ""} aria-pressed={props.filter === "accepted"} type="button" onClick={() => props.onFilter("accepted")}>{labels.accepted}<span>{props.counts?.accepted ?? "—"}</span></button>
@@ -135,7 +142,7 @@ export function PrimaryLibrary<Paper extends LibraryPaper>(props: PrimaryLibrary
       <button className={props.allFilterActive ? "active" : ""} aria-pressed={props.allFilterActive} type="button" onClick={() => props.onFilter("all")}>{locale === "zh" ? "全部发现" : "All discoveries"}<span>{props.counts?.total ?? "—"}</span></button>
     </div>
     <div className="v2-library-toolbar">
-      <label><span aria-hidden="true">⌕</span><input maxLength={240} value={props.search} onChange={(event) => props.onSearch(event.target.value, "replace")} placeholder={locale === "zh" ? "搜索题名、作者、DOI 或笔记" : "Search title, author, DOI or notes"} aria-label={labels.historySearch} /></label>
+      <label><span aria-hidden="true">⌕</span><input maxLength={240} value={props.search} onChange={(event) => props.onSearch(event.target.value, "replace")} placeholder={locale === "zh" ? "搜索题名、作者、DOI、摘要或笔记" : "Search title, author, DOI, abstract or notes"} aria-label={labels.historySearch} /></label>
       {props.search && <button className="pi-clear-search" type="button" onClick={() => props.onSearch("", "push")}>{locale === "zh" ? "清除搜索" : "Clear search"}</button>}
       <select value={props.sort} onChange={(event) => props.onSort(event.target.value as LibrarySort)} aria-label={locale === "zh" ? "历史记录排序" : "Sort history"}><option value="priority">{labels.sortPriority}</option><option value="newest">{labels.sortNewest}</option><option value="quality">{labels.sortQuality}</option></select>
       <select value={props.tag} onChange={(event) => props.onTag(event.target.value as LibraryTag)} aria-label={locale === "zh" ? "资料筛选" : "Filter records"}><option value="all">{locale === "zh" ? "所有资料" : "All records"}</option><option value="saved">{locale === "zh" ? "仅收藏" : "Saved"}</option><option value="notes">{locale === "zh" ? "有笔记" : "With notes"}</option></select>
@@ -151,9 +158,18 @@ export function PrimaryLibrary<Paper extends LibraryPaper>(props: PrimaryLibrary
           {props.comparisonSelection&&<div className="pi-library-compare-choice"><label><input type="checkbox" aria-label={`${locale==='zh'?'选择比较':'Select for comparison'} ${paper.title}`} checked={props.comparisonSelection.value.papers.some(p=>p.canonicalId.toLowerCase()===paper.canonicalId?.toLowerCase())} disabled={!props.comparisonSelection.value.papers.some(p=>p.canonicalId.toLowerCase()===paper.canonicalId?.toLowerCase())&&(!props.comparisonTrackId||!paper.canonicalId||paper.comparisonEligibility!=='eligible'||props.comparisonSelection.value.papers.length>=3)} onChange={()=>{if(paper.canonicalId)props.comparisonSelection?.toggle({canonicalId:paper.canonicalId,title:paper.title});}} />{locale==='zh'?'加入比较':'Select to compare'}</label><small>{!props.comparisonTrackId?(locale==='zh'?'先选择比较所属路线':'Choose a comparison route first'):comparisonEligibilityText(paper.comparisonEligibility,locale==='zh')}</small></div>}
           <button className="v2-library-paper-main" type="button" onClick={() => {rememberReading(paper.id);props.onOpen(paper);}}><h2><MathText inline>{paper.title}</MathText></h2><p className="v2-library-paper-meta">{paper.authors} · {paper.venue} · {formatPaperDate(paper.publishedAt, locale)}</p><div className="v2-library-paper-flags"><span className={`v2-history-state ${paper.userState}`}>{paper.userState === "unseen" ? labels.unseen : paper.userState === "accepted" ? labels.accepted : paper.userState === "dismissed" ? labels.ignored : paper.userState === "snoozed" ? labels.snoozed : labels.seenPending}</span><span className={`v2-tier-badge ${paper.qualityStage === "recommended" ? paper.recommendationTier || "browse" : paper.qualityStage === "reviewing" ? "reserve" : "browse"}`}>{paper.qualityStage === "recommended" ? recommendationTierLabel(paper.recommendationTier || "browse", locale) : paper.qualityStage === "reviewing" ? recommendationAuditPhaseLabel(paper, locale) : archiveQualityStagePresentation(paper.qualityStage, locale).label}</span><span>{readingStatusLabel(paper.readingStatus || "unread", locale)}</span></div><footer><b>{labels.viewAnalysis} →</b></footer></button>
           <div className="pi-library-row-actions">
-            <button type="button" onClick={() => props.onExploreGraph(paper)}>{locale === "zh" ? "在图谱中探索" : "Explore in graph"}</button>
+            <button type="button" onClick={() => {rememberReading(paper.id);props.onExploreGraph(paper);}}>{locale === "zh" ? "在图谱中探索" : "Explore in graph"}</button>
             <button type="button" className="pi-library-manage-button" aria-expanded={managing} aria-controls={managementId} onClick={() => setOpenManagement(managing ? '' : managementId)}>{locale === "zh" ? "管理" : "Manage"} <span aria-hidden="true">{managing ? '−' : '+'}</span></button>
           </div>
+          {props.collection&&<div className="pi-library-management" role="group" aria-label={locale==='zh'?'路线收录':'Route collection'}>
+            <select aria-label={locale==='zh'?'归类并加入文献集合':'Classify and add to collection'} disabled={Boolean(props.collection.pending)} value={paper.routeMembership?.status==='included'?paper.routeMembership.category:''}
+              onChange={event=>{if(event.target.value)props.collection?.onSave(paper,'included',event.target.value);}}>
+              <option value="">{locale==='zh'?'加入文献集合…':'Add to collection…'}</option>
+              <option value="related">{locale==='zh'?'相关研究':'Related work'}</option><option value="method">{locale==='zh'?'方法':'Method'}</option>
+              <option value="background">{locale==='zh'?'背景':'Background'}</option><option value="evidence">{locale==='zh'?'待核对证据':'Evidence to examine'}</option>
+            </select>
+            {paper.routeMembership?.status==='included'&&<button type="button" disabled={Boolean(props.collection.pending)} onClick={()=>props.collection?.onSave(paper,'excluded',paper.routeMembership!.category)}>{locale==='zh'?'从集合排除':'Exclude from collection'}</button>}
+          </div>}
           <div className="pi-library-management" id={managementId} hidden={!managing} role="group" aria-label={locale === "zh" ? "论文管理操作" : "Paper management actions"}>
             <select disabled={props.readingSaving} value={paper.readingStatus || "unread"} onChange={(event) => props.onReadingStatus(paper, event.target.value as ReadingStatus)} aria-label={locale === "zh" ? "阅读状态" : "Reading status"}>{(["unread", "queued", "reading", "read", "mastered", "cited"] as ReadingStatus[]).map((status) => <option value={status} key={status}>{readingStatusLabel(status, locale)}</option>)}</select>
             {!["accepted", "dismissed"].includes(paper.userState) ? <>

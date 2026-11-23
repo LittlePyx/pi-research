@@ -186,6 +186,6 @@ test("the precision migration is additive and the API gates persistence before q
   assert.match(route, /auditedIdentities\.size < rows\.results\.length/);
   assert.match(route, /papers\.slice\(index \* 8, index \* 8 \+ 8\)/);
   assert.ok(route.indexOf("applyStoredResearchRoutePrecisionAudits") < route.indexOf("const rows = await database.prepare"));
-  assert.ok(app.indexOf('action: "audit-precision"')
-    < app.indexOf("for (let intelligencePass = 0; intelligencePass < 2"));
+  assert.match(route, /payload\.action === "audit-precision"/);
+  assert.doesNotMatch(app, /action: "audit-precision"/);
 });

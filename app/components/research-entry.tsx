@@ -23,7 +23,7 @@ function checkedResult(value:unknown, requireGoal=false):Result {
  if(data.papers.some(p=>!p||typeof p.id!=='string'||typeof p.title!=='string'))throw Error('Invalid reading response');
  return data;
 }
-export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onAll,bibliography=[],searchPapers=[],briefDate,onLibrary,overview,taskBrief,taskBriefError,discoveryNoticeVisible=false}: {
+export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,refreshKey,scanStatus,blocked,resume,onProgress,onDiscover,onRead,onRoute,onSaved,onReadingList,excludedReadingIds=[],mode="reading",fallbackPapers=[],onFeaturedReadings,bibliography=[],searchPapers=[],briefDate,onLibrary,overview,taskBrief,taskBriefError,discoveryNoticeVisible=false}: {
  spaceId:string;spaceName?:string;fieldDescription?:string;locale:'zh'|'en';demo:boolean;refreshKey:string;scanStatus:string;blocked:string;
  onDiscover:()=>void;onRead:(id:string,task?:{trackId:string;question:string})=>void;onRoute:(id:string)=>void;onSaved:()=>void;onReadingList:(ids:string[])=>void;
  resume:{id:string;title:string;readingNote:string}|null;onProgress:()=>void;
@@ -31,7 +31,7 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
  bibliography?:{id:string;venue:string;authors:string;publishedAt:string|null;recommendedAt?:string|null}[];
  searchPapers?:{id:string;title:string;venue?:string;authors?:string;publishedAt?:string|null;discoveredAt?:string;qualityStage?:string|null;screeningReason?:string;researchProblemId?:string;discoverySources?:{key:string;labelZh:string;labelEn:string}[];userState?:string;feedback?:string|null;readingStatus?:string}[];
  taskBrief?:TaskBriefView|null;taskBriefError?:boolean;overview?:DigestOverviewData|null;briefDate?:string;onLibrary?:()=>void;discoveryNoticeVisible?:boolean;
- mode?:"home"|"reading"|"discovery";fallbackPapers?:Reading[];onAll?:()=>void;
+ mode?:"home"|"reading"|"discovery";fallbackPapers?:Reading[];onFeaturedReadings?:(ids:string[])=>void;
 }) {
  const zh=locale==='zh';
  const [result,setResult]=useState<Result|null>(null),[editing,setEditing]=useState(false),[question,setQuestion]=useState(''),[seed,setSeed]=useState('');
@@ -126,6 +126,10 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
  const usingTaskReadings=Boolean(taskReadings?.some(p=>p.id!==resume?.id));
  const homeReadings=(usingTaskReadings?taskReadings!:(goal?queued:fallbackPapers)).filter((p,i,a)=>p.id!==resume?.id&&!excludedReadingIds.includes(p.id)&&a.findIndex(x=>x.id===p.id)===i);
  const digestPapers=homeReadings.slice(0,6);
+ const featuredKey=mode==='home'&&!editing&&!readError&&result?digestPapers.map(p=>p.id).join('|'):'';
+ const featuredCallback=useRef(onFeaturedReadings);
+ useEffect(()=>{featuredCallback.current=onFeaturedReadings},[onFeaturedReadings]);
+ useEffect(()=>{featuredCallback.current?.(featuredKey?featuredKey.split('|'):[])},[spaceId,featuredKey]);
  const emptyHome=mode==='home'&&!resume&&!digestPapers.length;
  const viewProgress=Boolean(scanStatus||blocked||inactive||demo);
  const showNextAction=emptyHome&&result&&!readError&&!editing&&!(viewProgress&&discoveryNoticeVisible);
@@ -136,6 +140,7 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
   {mode==="home"&&<PaperFigure key={spaceId+resume.id} spaceId={spaceId} paperId={resume.id} demo={demo} locale={locale}/>}
   <button className="primary" type="button" onClick={()=>readPaper(resume.id)}>{zh?'继续阅读与笔记':'Continue reading & notes'} →</button>
  </article>;
+ if(mode==="discovery")return goal&&!demo?<ProblemDiscovery key={spaceId+goal.id} spaceId={spaceId} problemId={goal.id} locale={locale} onRead={readPaper} expanded/>:null;
  return <section className={`pi-question-entry ${mode==="home"?"pi-home-entry":""}`} aria-label={zh?'问题与第一批阅读':'Question and first reading'}>
 
   <div className="pi-today-question">
@@ -206,11 +211,8 @@ export function ResearchEntry({spaceId,spaceName,fieldDescription,locale,demo,re
      <p className="pi-digest-caption">{demo?(zh?'空间检索样例，未执行真实检索或评审。':'Sample discovery materials; no live search or review.'):(currentBrief?(zh?'参与本次任务的材料，状态按简报保存时记录；包含此前候选，不等于新发现或正式推荐。':'Materials used in this task, with review status at capture; may include backlog candidates and are not formal recommendations.'):(zh?'来自本空间已有来源记录，按发现时间排列；不等于本轮新增或当前问题的推荐。':'From saved source records in this space, ordered by discovery date; not necessarily new this run or recommended for this question.'))}</p>
      {discoveries.length?<ul>{discoveries.map(p=><li key={p.id}><div><p className="pi-digest-meta">{p.discoverySources?.map(source=>zh?source.labelZh:source.labelEn).filter(Boolean).join(' · ')}{p.discoveredAt?' · '+(zh?'发现于 ':'Found ')+p.discoveredAt.slice(0,10):''}</p><h4><button type="button" onClick={()=>readPaper(p.id)}><MathText inline>{p.title}</MathText></button></h4>{p.venue&&<p className="pi-digest-authors">{p.venue}{p.publishedAt?' · '+p.publishedAt.slice(0,4):''}</p>}{p.qualityStage==='reviewed'&&p.screeningReason&&<p className="pi-digest-reason">{p.screeningReason}</p>}</div><span className="pi-digest-stage">{p.qualityStage==='reviewed'?(zh?'已评审 · 未入选':'Reviewed · not selected'):p.qualityStage==='reviewing'?(zh?'核验中':'Under verification'):p.qualityStage==='awaiting_evidence'?(zh?'待补证据':'Evidence needed'):(zh?'待评审':'Awaiting review')}</span></li>)}</ul>:<p className="pi-digest-empty">{zh?'暂无可展示的未入选检索材料。可在发现进度中查看任务及来源记录。':'No unselected discovery materials are available. See Discovery for tasks and source records.'}</p>}
     </section></details>
-    <footer className="pi-digest-footer"><button type="button" onClick={onAll}>{zh?'全部阅读':'All reading'}</button><button type="button" onClick={onLibrary||onProgress}>{zh?'查看检索文献库':'Browse discovered papers'}</button></footer>
+    <footer className="pi-digest-footer"><button type="button" onClick={onLibrary||onProgress}>{zh?'查看检索文献库':'Browse discovered papers'}</button></footer>
    </section>
-  </>:mode==="discovery"&&goal?<>
-   {!demo&&<ProblemDiscovery key={spaceId+goal.id} spaceId={spaceId} problemId={goal.id} locale={locale} onRead={readPaper} expanded/>}
-   {demo&&<p>{zh?'演示空间不执行检索。':'The demo does not run searches.'}</p>}
   </>:goal?<>
    {spaceName&&<p className="pi-question-status">{zh?'研究空间：':'Research space: '}{spaceName}</p>}
    <p className="pi-question-status" role="status">{demo?(zh?'示例流程 · 未执行检索或模型评审':'Example flow · no search or model review'):inactive?(zh?'该问题已暂停或结束。':'This question is paused or resolved.'):result.papers.length>0?(zh?'已有关联阅读 · 根据当前问题的评审结果推荐':'Related readings are available from reviews linked to this question'):saved?(zh?'问题已保存，等待已核验的关联阅读。':'Question saved; awaiting verified related readings.'): (zh?'已确认的研究目标 · 最多展示 5 篇关联阅读':'Confirmed research goal · up to 5 related readings')}</p>

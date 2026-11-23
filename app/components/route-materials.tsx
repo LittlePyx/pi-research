@@ -63,10 +63,10 @@ export function RouteComparisonQuestion({spaceId,trackId,locale,selection,showEd
   </div>;
 }
 
-export function RouteMaterials({spaceId,track,locale,selection,location,active,onLocation,onRead,onRelations,relationPaperIds,onDeactivate,curationBusy,demo}:{
+export function RouteMaterials({spaceId,track,locale,selection,location,active,onLocation,onLibrary,onRead,onRelations,relationPaperIds,onDeactivate,curationBusy,demo}:{
   spaceId:string;track:ResearchTrack;locale:'zh'|'en';selection:RouteSelection;location:RouteMaterialLocation;active:boolean;
   onLocation:(patch:RouteMaterialLocation,history:'push'|'replace')=>void;
-  onRead:(id:string)=>void;onRelations:(id:string)=>void;relationPaperIds:Map<string,string>;
+  onLibrary:()=>void;onRead:(id:string)=>void;onRelations:(id:string)=>void;relationPaperIds:Map<string,string>;
   onDeactivate:(paper:ResearchTrackPaper)=>void;curationBusy:boolean;demo:boolean;
 }){
   const zh=locale==='zh';
@@ -78,7 +78,7 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
   },[query]);
   const page=location.materialPage||1;
   const group=location.materialGroup||'';
-  const groupLabels={all:zh?'全部材料':'All materials',backbone:zh?'路线主干':'Route papers',supplement:zh?'补充材料':'Supplementary',library:zh?'整个论文库':'Entire library'};
+  const groupLabels={all:zh?'全部材料':'All materials',backbone:zh?'路线主干':'Route papers',supplement:zh?'补充材料':'Supplementary'};
   const url='/api/library-catalog?'+new URLSearchParams({spaceId,trackId:track.id,view:'route-materials',q:settledQuery,group,offset:String((page-1)*24)});
   const paperIds=track.papers.map(paper=>paper.id).join(',');
   const {data,dataUrl,error,loading,reload}=useSavedRead(spaceId+':'+track.id+':'+paperIds,url,decodeCatalog,active);
@@ -115,9 +115,10 @@ export function RouteMaterials({spaceId,track,locale,selection,location,active,o
           placeholder={zh?'论文标题、作者或摘要':'Title, author, or abstract'} />
       </label>
       <div className="pi-materials-groups" role="group" aria-label={zh?'材料范围':'Material scope'}>
-        {(['all','backbone','supplement','library'] as const).map(item=><button key={item} type="button" aria-pressed={(group||'all')===item}
+        {(['all','backbone','supplement'] as const).map(item=><button key={item} type="button" aria-pressed={(group||'all')===item}
           onClick={()=>update({materialGroup:item==='all'?undefined:item,materialPage:undefined},'push')}>{groupLabels[item]}</button>)}
       </div>
+      <button type="button" className="pi-material-library-link" onClick={onLibrary}>{zh?'从论文库补充':'Add from the library'}</button>
     </div>
     {error&&<p className="pi-materials-notice" role="alert">{zh?'路线材料暂未载入。':'Could not load route materials.'} <button type="button" onClick={reload}>{zh?'重试':'Retry'}</button></p>}
     {saveError&&<p className="pi-materials-notice" role="alert">{saveError}</p>}

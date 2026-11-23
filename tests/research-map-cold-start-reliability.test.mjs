@@ -328,7 +328,7 @@ test("the route workspace reads existing maps without a query-string GET or mode
     readFile(new URL("../app/api/research-map/route.ts", import.meta.url), "utf8"),
   ]);
   assert.doesNotMatch(app, /fetch\("\/api\/research-map\?spaceId="/);
-  assert.match(app, /async function readResearchMapState\(spaceId: string\)/);
+  assert.match(app, /async function readResearchMapState\(spaceId: string, signal/);
   assert.match(app, /JSON\.stringify\(\{ spaceId, action: "read" \}\)/);
   const readBranch = route.indexOf('if (payload.action === "read")');
   const credentialResolution = route.indexOf("const apiKey = resolveDeepSeekCredential(request).apiKey", readBranch);
